@@ -33,6 +33,10 @@ enum Cmd {
     Status,
     /// Render hooks.json for the current hook endpoint (for a manual session).
     RenderHooks,
+    /// Stay in the foreground doing nothing. The Gherkin suite copies this binary under the name
+    /// `claude` as a stand-in pane process; it must not depend on coreutils.
+    #[command(hide = true)]
+    Idle,
 }
 
 #[tokio::main]
@@ -114,6 +118,9 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Idle => loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        },
         Cmd::RenderHooks => {
             let text = std::fs::read_to_string(HookEndpoint::path(&state_dir))
                 .context("daemon not running (no hook endpoint file)")?;
