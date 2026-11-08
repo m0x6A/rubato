@@ -1,0 +1,33 @@
+{
+  "seq": 4,
+  "sent_at": "2026-11-08T12:01:30Z",
+  "message": {
+    "type": "sessions",
+    "sessions": [
+      {
+        "session_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "companion_id": "6f1c3a2e-9b1d-4c8e-8f7a-2d3b4c5d6e7f",
+        "user": "m0x6A",
+        "tmux": { "session": "rubato@issue-1-protocol", "window": 1, "pane": "%12" },
+        "cwd": "/home/xdr/develop/rubato-worktrees/issue-1-protocol",
+        "worktree": "/home/xdr/develop/rubato-worktrees/issue-1-protocol",
+        "branch": "issue/1-protocol",
+        "repo": "m0x6A/rubato",
+        "issue": { "repo": "m0x6A/rubato", "number": 1 },
+        "status": "working",
+        "source": "hook",
+        "last_seen": "2026-11-08T12:01:29Z",
+        "spend_usd": 1.25
+      },
+      {
+        "companion_id": "6f1c3a2e-9b1d-4c8e-8f7a-2d3b4c5d6e7f",
+        "user": "m0x6A",
+        "tmux": { "session": "Claude Agents", "window": 4, "pane": "%7" },
+        "cwd": "/home/xdr/develop/goldilocks",
+        "status": "blocked",
+        "source": "scraped",
+        "last_seen": "2026-11-08T12:01:29Z"
+      }
+    ]
+  }
+}

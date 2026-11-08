@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionState",
+  "description": "One session as the companion sees it. Identity comes from the branch (ADR 0006).",
+  "type": "object",
+  "properties": {
+    "branch": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "companion_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "issue": {
+      "description": "Resolved from the branch, or from the launch when the branch does not follow the convention.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IssueRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "last_seen": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repo": {
+      "description": "`owner/name` from `origin`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session_id": {
+      "description": "Claude Code session id, when known.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "$ref": "#/$defs/StateSource"
+    },
+    "spend_usd": {
+      "description": "Spend so far, summed from the transcript (A11).",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "status": {
+      "$ref": "#/$defs/SessionStatus"
+    },
+    "tmux": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TmuxLocation"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "user": {
+      "description": "GitHub login of the paired user.",
+      "type": "string"
+    },
+    "worktree": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "companion_id",
+    "user",
+    "cwd",
+    "status",
+    "source",
+    "last_seen"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    },
+    "SessionStatus": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "working",
+            "idle",
+            "blocked",
+            "ended"
+          ]
+        },
+        {
+          "description": "No trustworthy signal. Never rendered as working.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "StateSource": {
+      "description": "Where a status came from. Anything not hook-derived is rendered *unknown* (A10).",
+      "oneOf": [
+        {
+          "description": "A Claude Code hook forwarded by the companion.",
+          "type": "string",
+          "const": "hook"
+        },
+        {
+          "description": "tmux-ide state with hook authority (`since` set).",
+          "type": "string",
+          "const": "tmux_ide"
+        },
+        {
+          "description": "tmux-ide state from screen matching. Not trusted.",
+          "type": "string",
+          "const": "scraped"
+        },
+        {
+          "description": "The companion just launched it; no event yet.",
+          "type": "string",
+          "const": "launch"
+        }
+      ]
+    },
+    "TmuxLocation": {
+      "type": "object",
+      "properties": {
+        "pane": {
+          "description": "tmux pane id such as `%12`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "type": "string"
+        },
+        "socket": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "window": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "session"
+      ]
+    }
+  }
+}

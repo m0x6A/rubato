@@ -1,0 +1,12 @@
+{
+  "seq": 1,
+  "sent_at": "2026-11-08T12:00:00Z",
+  "message": {
+    "type": "hello",
+    "companion_id": "6f1c3a2e-9b1d-4c8e-8f7a-2d3b4c5d6e7f",
+    "user": "m0x6A",
+    "companion_version": "0.1.0",
+    "protocol_version": 1,
+    "last_seen_server_seq": 0
+  }
+}

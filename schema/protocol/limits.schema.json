@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Limits",
+  "type": "object",
+  "properties": {
+    "companion_silent_secs": {
+      "description": "A companion silent for longer than this fires `CompanionSilent`.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 600,
+      "minimum": 0
+    },
+    "github_poll_interval_secs": {
+      "description": "How often the server polls GitHub for PRs, checks and decision comments per live issue.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 60,
+      "minimum": 0
+    },
+    "heartbeat_interval_secs": {
+      "description": "Companion heartbeat interval.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 30,
+      "minimum": 0
+    },
+    "plan_poll_interval_secs": {
+      "description": "How often the server looks for a plan file on a live branch.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 60,
+      "minimum": 0
+    },
+    "session_stale_secs": {
+      "description": "A *working* session with no hook event for longer than this renders *unknown*.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 120,
+      "minimum": 0
+    },
+    "team_poll_interval_secs": {
+      "description": "Reconciliation poll of `tmux-ide team --json`.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 30,
+      "minimum": 0
+    }
+  }
+}

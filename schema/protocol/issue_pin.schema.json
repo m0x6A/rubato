@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IssuePin",
+  "description": "An issue pinned to a node or seam. The one piece of state GitHub does not hold (ADR 0008).",
+  "type": "object",
+  "properties": {
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "pinned_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pinned_by": {
+      "description": "GitHub login of who pinned it.",
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/MapRef"
+    }
+  },
+  "required": [
+    "issue",
+    "target",
+    "pinned_by",
+    "pinned_at"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    },
+    "MapRef": {
+      "description": "A reference into the system map: a node or a seam. Ids come from `system-map.yml` (ADR 0007).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "node"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "seam"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ]
+    }
+  }
+}

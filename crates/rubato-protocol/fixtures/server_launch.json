@@ -1,0 +1,26 @@
+{
+  "seq": 2,
+  "sent_at": "2026-11-08T12:00:10Z",
+  "message": {
+    "type": "launch",
+    "id": "9b2e4d1a-3c5f-4e6a-9b7c-8d9e0f1a2b3c",
+    "user": "m0x6A",
+    "issue": { "repo": "m0x6A/rubato", "number": 1 },
+    "repo_url": "https://github.com/m0x6A/rubato.git",
+    "branch": "issue/1-protocol",
+    "base_ref": "origin/main",
+    "node_ids": ["rubato-protocol"],
+    "spend_cap_usd": 25.0,
+    "attempt_limit": 3,
+    "attempt": 1,
+    "session_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "prompt": "Work on m0x6A/rubato#1. Start with /rubato plan.",
+    "otel_resource": {
+      "rubato.branch": "issue/1-protocol",
+      "rubato.issue": "m0x6A/rubato#1",
+      "rubato.node": "rubato-protocol",
+      "rubato.repo": "m0x6A/rubato"
+    },
+    "map_version": "277fcfa"
+  }
+}

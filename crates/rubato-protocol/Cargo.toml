@@ -1,0 +1,14 @@
+[package]
+name = "rubato-protocol"
+description = "Shared types for Rubato: the contract between companion, server and web. No I/O."
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true

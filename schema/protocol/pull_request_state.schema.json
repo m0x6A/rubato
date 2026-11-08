@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PullRequestState",
+  "description": "The pull request for an issue branch.",
+  "type": "object",
+  "properties": {
+    "branch": {
+      "type": "string"
+    },
+    "checks": {
+      "$ref": "#/$defs/ChecksStatus"
+    },
+    "draft": {
+      "type": "boolean"
+    },
+    "merged_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "number": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "open": {
+      "type": "boolean"
+    },
+    "repo": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "url": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "repo",
+    "number",
+    "branch",
+    "open",
+    "draft",
+    "checks",
+    "updated_at",
+    "url"
+  ],
+  "$defs": {
+    "ChecksStatus": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "green",
+            "red",
+            "pending"
+          ]
+        },
+        {
+          "description": "No checks configured.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heartbeat",
+  "description": "The companion's liveness signal.",
+  "type": "object",
+  "properties": {
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "claude_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "companion_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "companion_version": {
+      "type": "string"
+    },
+    "hostname": {
+      "type": "string"
+    },
+    "tmux_ide_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "user": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "companion_id",
+    "user",
+    "at",
+    "hostname",
+    "companion_version"
+  ]
+}

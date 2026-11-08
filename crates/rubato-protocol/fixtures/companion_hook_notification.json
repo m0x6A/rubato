@@ -1,0 +1,21 @@
+{
+  "seq": 3,
+  "sent_at": "2026-11-08T12:01:00Z",
+  "message": {
+    "type": "hook",
+    "session_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "hook_event_name": "Notification",
+    "cwd": "/home/xdr/develop/rubato-worktrees/issue-1-protocol",
+    "transcript_path": "/home/xdr/.claude/projects/x/0f8fad5b.jsonl",
+    "permission_mode": "default",
+    "notification_type": "permission_prompt",
+    "received_at": "2026-11-08T12:01:00Z",
+    "payload": {
+      "session_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "hook_event_name": "Notification",
+      "cwd": "/home/xdr/develop/rubato-worktrees/issue-1-protocol",
+      "notification_type": "permission_prompt",
+      "message": "Claude needs your permission to use Bash"
+    }
+  }
+}
