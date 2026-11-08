@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WebEvent",
+  "description": "Pushed to browsers over `/ws/web`. Clients refetch the overview on `Changed`.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "changed"
+        }
+      },
+      "required": [
+        "type",
+        "at",
+        "reason"
+      ]
+    }
+  ]
+}
