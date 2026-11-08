@@ -1,0 +1,19 @@
+{
+  "name": "@rubato/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "End to end: two connected repos, three issues through the flow, real companion and server, a Claude Code stand-in, an OTLP receiver.",
+  "scripts": {
+    "test": "echo 'run: pnpm e2e (needs cargo build --workspace)'",
+    "typecheck": "tsc -p tsconfig.json",
+    "e2e": "node --experimental-strip-types run.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0"
+  }
+}

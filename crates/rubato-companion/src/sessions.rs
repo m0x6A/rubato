@@ -125,7 +125,8 @@ impl Registry {
         })
     }
 
-    /// A launch we performed: identity is known before the first hook.
+    /// A launch we performed: identity is known before the first hook. A tmux server that
+    /// restarted reuses pane ids, so an older entry on the same pane is retired first.
     pub fn apply_launch(
         &mut self,
         cmd: &LaunchCommand,
@@ -134,6 +135,15 @@ impl Registry {
         worktree: &Path,
         now: DateTime<Utc>,
     ) {
+        for e in self
+            .entries
+            .iter_mut()
+            .filter(|e| e.pane_id.as_deref() == Some(pane_id) && !e.ended)
+        {
+            e.status = SessionStatus::Ended;
+            e.ended = true;
+            e.last_seen = now;
+        }
         self.entries.push(Entry {
             session_id: Some(cmd.session_id.to_string()),
             pane_id: Some(pane_id.to_owned()),

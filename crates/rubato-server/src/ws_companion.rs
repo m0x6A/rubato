@@ -15,6 +15,7 @@ use rubato_protocol::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
 };
 use tokio::sync::mpsc;
+use tracing::Instrument;
 use uuid::Uuid;
 
 pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUpgrade) -> Response {
@@ -139,113 +140,116 @@ async fn on_envelope(
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!("rubato.inbound_event", rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
-    let _g = span.enter();
-    let now = Utc::now();
-    if !matches!(env.message, CompanionMessage::Ack { .. }) {
-        let payload = serde_json::to_value(&env.message).unwrap_or_default();
-        match db::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
-            Ok(false) => {
-                tracing::debug!(seq = env.seq, "replayed envelope already recorded");
-                return Some(ServerMessage::Ack { seq: env.seq });
+    async move {
+        let now = Utc::now();
+        if !matches!(env.message, CompanionMessage::Ack { .. }) {
+            let payload = serde_json::to_value(&env.message).unwrap_or_default();
+            match db::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
+                Ok(false) => {
+                    tracing::debug!(seq = env.seq, "replayed envelope already recorded");
+                    return Some(ServerMessage::Ack { seq: env.seq });
+                }
+                Ok(true) => {}
+                Err(e) => tracing::error!(error = %e, "recording event"),
             }
-            Ok(true) => {}
-            Err(e) => tracing::error!(error = %e, "recording event"),
+            let _ = db::set_last_companion_seq(&app.db, companion_id, env.seq).await;
         }
-        let _ = db::set_last_companion_seq(&app.db, companion_id, env.seq).await;
-    }
-    let _ = db::touch_pairing(&app.db, companion_id, now).await;
-    match env.message {
-        CompanionMessage::Hello {
-            companion_id: claimed,
-            protocol_version,
-            user,
-            ..
-        } => {
-            if claimed != companion_id || user != pairing.user {
-                app.metrics
-                    .events_dropped
-                    .add(1, &[KeyValue::new(attr::DROP_REASON, "auth")]);
-                return Some(ServerMessage::Error {
-                    code: "auth".into(),
-                    message: "hello does not match the pairing".into(),
-                });
+        let _ = db::touch_pairing(&app.db, companion_id, now).await;
+        match env.message {
+            CompanionMessage::Hello {
+                companion_id: claimed,
+                protocol_version,
+                user,
+                ..
+            } => {
+                if claimed != companion_id || user != pairing.user {
+                    app.metrics
+                        .events_dropped
+                        .add(1, &[KeyValue::new(attr::DROP_REASON, "auth")]);
+                    return Some(ServerMessage::Error {
+                        code: "auth".into(),
+                        message: "hello does not match the pairing".into(),
+                    });
+                }
+                if protocol_version != PROTOCOL_VERSION {
+                    return Some(ServerMessage::Error {
+                        code: "protocol".into(),
+                        message: format!(
+                            "server speaks protocol {PROTOCOL_VERSION}, companion {protocol_version}"
+                        ),
+                    });
+                }
+                Some(ServerMessage::Welcome {
+                    server_version: crate::VERSION.to_owned(),
+                    protocol_version: PROTOCOL_VERSION,
+                    last_seen_companion_seq: pairing.last_companion_seq,
+                    limits: app.config.limits,
+                })
             }
-            if protocol_version != PROTOCOL_VERSION {
-                return Some(ServerMessage::Error {
-                    code: "protocol".into(),
-                    message: format!(
-                        "server speaks protocol {PROTOCOL_VERSION}, companion {protocol_version}"
-                    ),
-                });
-            }
-            Some(ServerMessage::Welcome {
-                server_version: crate::VERSION.to_owned(),
-                protocol_version: PROTOCOL_VERSION,
-                last_seen_companion_seq: pairing.last_companion_seq,
-                limits: app.config.limits,
-            })
-        }
-        CompanionMessage::Heartbeat(h) => {
-            app.metrics.companion_heartbeat.record(
-                h.at.timestamp() as u64,
-                &[
-                    KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
-                    KeyValue::new(attr::USER, pairing.user.clone()),
-                ],
-            );
-            Some(ServerMessage::Ack { seq: env.seq })
-        }
-        CompanionMessage::Hook(h) => {
-            tracing::info!(rubato.session_id = %h.session_id, rubato.hook_event = ?h.hook_event_name, "hook");
-            Some(ServerMessage::Ack { seq: env.seq })
-        }
-        CompanionMessage::Sessions { sessions } => {
-            if let Err(e) = db::store_snapshot(&app.db, companion_id, &sessions, now).await {
-                tracing::error!(error = %e, "storing snapshot");
-            }
-            let mut counts = std::collections::BTreeMap::new();
-            for s in &sessions {
-                *counts
-                    .entry(format!("{:?}", s.status).to_lowercase())
-                    .or_insert(0u64) += 1;
-            }
-            for (state, n) in counts {
-                app.metrics.sessions_by_state.record(
-                    n,
+            CompanionMessage::Heartbeat(h) => {
+                app.metrics.companion_heartbeat.record(
+                    h.at.timestamp() as u64,
                     &[
-                        KeyValue::new(attr::SESSION_STATE, state),
                         KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
+                        KeyValue::new(attr::USER, pairing.user.clone()),
                     ],
                 );
+                Some(ServerMessage::Ack { seq: env.seq })
             }
-            app.notify("sessions");
-            Some(ServerMessage::Ack { seq: env.seq })
-        }
-        CompanionMessage::Launch(result) => {
-            match db::store_launch_result(&app.db, &result).await {
-                Ok(Some(issue)) => {
-                    tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result")
+            CompanionMessage::Hook(h) => {
+                tracing::info!(rubato.session_id = %h.session_id, rubato.hook_event = ?h.hook_event_name, "hook");
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::Sessions { sessions } => {
+                if let Err(e) = db::store_snapshot(&app.db, companion_id, &sessions, now).await {
+                    tracing::error!(error = %e, "storing snapshot");
                 }
-                Ok(None) => tracing::warn!("launch result for an unknown command"),
-                Err(e) => tracing::error!(error = %e, "storing launch result"),
+                let mut counts = std::collections::BTreeMap::new();
+                for s in &sessions {
+                    *counts
+                        .entry(format!("{:?}", s.status).to_lowercase())
+                        .or_insert(0u64) += 1;
+                }
+                for (state, n) in counts {
+                    app.metrics.sessions_by_state.record(
+                        n,
+                        &[
+                            KeyValue::new(attr::SESSION_STATE, state),
+                            KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
+                        ],
+                    );
+                }
+                app.notify("sessions");
+                Some(ServerMessage::Ack { seq: env.seq })
             }
-            app.notify("launch");
-            Some(ServerMessage::Ack { seq: env.seq })
-        }
-        CompanionMessage::CapHit(hit) => {
-            tracing::warn!(rubato.issue = %hit.issue, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
-            if let Err(e) = db::store_cap_hit(&app.db, &hit).await {
-                tracing::error!(error = %e, "storing cap hit");
+            CompanionMessage::Launch(result) => {
+                match db::store_launch_result(&app.db, &result).await {
+                    Ok(Some(issue)) => {
+                        tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result")
+                    }
+                    Ok(None) => tracing::warn!("launch result for an unknown command"),
+                    Err(e) => tracing::error!(error = %e, "storing launch result"),
+                }
+                app.notify("launch");
+                Some(ServerMessage::Ack { seq: env.seq })
             }
-            app.notify("cap hit");
-            Some(ServerMessage::Ack { seq: env.seq })
+            CompanionMessage::CapHit(hit) => {
+                tracing::warn!(rubato.issue = %hit.issue, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
+                if let Err(e) = db::store_cap_hit(&app.db, &hit).await {
+                    tracing::error!(error = %e, "storing cap hit");
+                }
+                app.notify("cap hit");
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::Stale(s) => {
+                tracing::warn!(rubato.session_id = ?s.session_id, silent_for_secs = s.silent_for_secs, "{}", rubato_protocol::otel::event::SESSION_STALE);
+                let _ = db::store_stale(&app.db, &s).await;
+                app.notify("stale");
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::Ack { .. } => None,
         }
-        CompanionMessage::Stale(s) => {
-            tracing::warn!(rubato.session_id = ?s.session_id, silent_for_secs = s.silent_for_secs, "{}", rubato_protocol::otel::event::SESSION_STALE);
-            let _ = db::store_stale(&app.db, &s).await;
-            app.notify("stale");
-            Some(ServerMessage::Ack { seq: env.seq })
-        }
-        CompanionMessage::Ack { .. } => None,
     }
+    .instrument(span)
+    .await
 }

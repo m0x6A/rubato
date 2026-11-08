@@ -72,3 +72,35 @@ jobs:
       - run: cd web && pnpm exec playwright install --with-deps chromium
       - name: End to end against the real server
         run: cd web && ./e2e/run.sh
+
+  e2e:
+    name: End to end (two repos, three issues) and alert rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install tmux 3.8 and tmux-ide
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libevent-dev libncurses-dev bison
+          wget -q https://github.com/tmux/tmux/releases/download/3.8/tmux-3.8.tar.gz
+          tar xzf tmux-3.8.tar.gz && cd tmux-3.8 && ./configure --prefix="$HOME/.local" -q && make -s -j && make -s install
+          npm install -g tmux-ide
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+      - run: cargo build --workspace
+      - run: pnpm observability:check
+      - name: Alert rules fire on purpose (promtool)
+        run: |
+          VERSION=$(curl -fsSL https://api.github.com/repos/prometheus/prometheus/releases/latest | jq -r .tag_name | sed "s/^v//")
+          wget -q "https://github.com/prometheus/prometheus/releases/download/v$VERSION/prometheus-$VERSION.linux-amd64.tar.gz"
+          tar xzf "prometheus-$VERSION.linux-amd64.tar.gz"
+          "prometheus-$VERSION.linux-amd64/promtool" check rules observability/alerts/rubato.rules.yml
+          "prometheus-$VERSION.linux-amd64/promtool" test rules observability/alerts/tests/rubato.test.yml
+      - run: pnpm e2e

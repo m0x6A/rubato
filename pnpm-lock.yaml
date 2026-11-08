@@ -17,6 +17,9 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@24.19.2)(jsdom@26.1.0)(yaml@2.9.1)
+      yaml:
+        specifier: ^2.8.0
+        version: 2.9.1
 
   actions/plan-check:
     dependencies:
@@ -26,6 +29,19 @@ importers:
       yaml:
         specifier: ^2.8.0
         version: 2.9.1
+
+  e2e:
+    dependencies:
+      ws:
+        specifier: ^8.18.0
+        version: 8.22.1
+      yaml:
+        specifier: ^2.8.0
+        version: 2.9.1
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.2
 
   skills/rubato:
     dependencies:

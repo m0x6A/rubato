@@ -8,6 +8,7 @@ use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use opentelemetry::KeyValue;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::Instrument;
 
 static WEB_CLIENTS: AtomicU64 = AtomicU64::new(0);
 
@@ -27,8 +28,8 @@ async fn handle(app: App, socket: WebSocket) {
             ev = rx.recv() => match ev {
                 Ok(ev) => {
                     let span = tracing::debug_span!("rubato.ws.fanout", rubato.subscribers = app.web_tx.receiver_count());
-                    let _g = span.enter();
-                    if sink.send(Message::Text(serde_json::to_string(&ev).unwrap_or_default().into())).await.is_err() {
+                    let text = serde_json::to_string(&ev).unwrap_or_default();
+                    if sink.send(Message::Text(text.into())).instrument(span).await.is_err() {
                         break;
                     }
                 }

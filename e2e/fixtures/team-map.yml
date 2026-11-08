@@ -1,0 +1,53 @@
+# The demo team's map: an auth provider and one consumer. Repos are the code behind the nodes.
+version: 1
+name: acme
+owner_rule: >
+  The owner side of a seam is the node whose team is woken when the seam breaks.
+repos:
+  - name: acme/auth
+    plan_path: docs/plans/{issue}.md
+  - name: acme/pantry
+    plan_path: docs/plans/{issue}.md
+nodes:
+  - id: auth-service
+    kind: context
+    repo: acme/auth
+    path: src
+    description: Issues and validates tokens for every acme service.
+  - id: auth-contract
+    kind: contract
+    repo: acme/auth
+    path: contract/openapi.yml
+    description: The token and introspection API other services call.
+  - id: pantry-api
+    kind: context
+    repo: acme/pantry
+    path: api
+    description: The pantry backend; validates tokens through auth-contract.
+  - id: pantry-web
+    kind: context
+    repo: acme/pantry
+    path: web
+    description: The pantry frontend.
+  - id: github
+    kind: external
+    description: Issues, PRs, checks.
+seams:
+  - id: auth-contract-pantry
+    from: pantry-api
+    to: auth-contract
+    carries: bearer token validation and introspection
+    owner: auth-contract
+    guard: contract tests in acme/auth run against pantry-api fixtures
+  - id: auth-service-contract
+    from: auth-service
+    to: auth-contract
+    carries: the implementation behind the contract
+    owner: auth-contract
+    guard: openapi diff in CI
+  - id: pantry-web-api
+    from: pantry-web
+    to: pantry-api
+    carries: REST and session cookies
+    owner: pantry-api
+    guard: generated client types diffed in CI
