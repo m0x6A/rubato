@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LaunchRequest",
+  "description": "Start a session on an issue. Only the caller's own companions are eligible (ADR 0004).",
+  "type": "object",
+  "properties": {
+    "attempt_limit": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
+    "companion_id": {
+      "description": "One of the caller's companions; the only connected one when omitted.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "prompt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "slug": {
+      "description": "Branch slug; derived from the issue title when omitted.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "spend_cap_usd": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    }
+  },
+  "required": [
+    "issue"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

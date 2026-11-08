@@ -1,0 +1,1065 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Overview",
+  "description": "The whole picture in one payload: what the web view renders.",
+  "type": "object",
+  "properties": {
+    "companions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PairingInfo"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Finding"
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/IssueSummary"
+      }
+    },
+    "map": {
+      "$ref": "#/$defs/MapResponse"
+    },
+    "unpinned_sessions": {
+      "description": "Sessions not attached to any issue (branch outside the convention).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SessionState"
+      }
+    }
+  },
+  "required": [
+    "map",
+    "issues",
+    "findings",
+    "companions",
+    "generated_at"
+  ],
+  "$defs": {
+    "AffectedPart": {
+      "description": "One row of the affected-parts table. This is what paints the map.",
+      "type": "object",
+      "properties": {
+        "change": {
+          "description": "What changes, in one line.",
+          "type": "string"
+        },
+        "node": {
+          "description": "Node id from the map.",
+          "type": "string"
+        },
+        "seams": {
+          "description": "Seam ids this change touches. Each needs an O-row.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "$ref": "#/$defs/PartStatus"
+        }
+      },
+      "required": [
+        "node",
+        "status",
+        "change"
+      ]
+    },
+    "Assumption": {
+      "description": "A decision the plan had to make that nothing settled.",
+      "type": "object",
+      "properties": {
+        "alternatives": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chosen": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/AssumptionScope"
+        }
+      },
+      "required": [
+        "id",
+        "decision",
+        "chosen",
+        "scope"
+      ]
+    },
+    "AssumptionScope": {
+      "oneOf": [
+        {
+          "description": "Inside one node: assumed and labelled.",
+          "type": "string",
+          "const": "node"
+        },
+        {
+          "description": "On a seam: blocks until a human answers.",
+          "type": "string",
+          "const": "seam"
+        }
+      ]
+    },
+    "ChecksStatus": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "green",
+            "red",
+            "pending"
+          ]
+        },
+        {
+          "description": "No checks configured.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "DecisionRecord": {
+      "description": "A decision recorded as an issue comment with the `Decision:` template (ADR 0014).",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "chosen": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comment_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "context": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "options": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "why": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "issue",
+        "comment_id",
+        "author",
+        "title",
+        "created_at",
+        "url"
+      ]
+    },
+    "Finding": {
+      "description": "Map versus territory, and plans that disagree with the map. Shown, never suppressed.",
+      "oneOf": [
+        {
+          "description": "A plan names ids the map does not declare.",
+          "type": "object",
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknown_ids"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "ids"
+          ]
+        },
+        {
+          "description": "Two or more open plans touch the same seam.",
+          "type": "object",
+          "properties": {
+            "issues": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IssueRef"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "seam_collision"
+            },
+            "seam": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "seam",
+            "issues"
+          ]
+        },
+        {
+          "description": "A plan file exists but does not parse.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "plan_parse_error"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "path",
+            "error"
+          ]
+        },
+        {
+          "description": "A session was launched against a different map version than the server holds.",
+          "type": "object",
+          "properties": {
+            "current": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "map_version_mismatch"
+            },
+            "launched_with": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "launched_with",
+            "current"
+          ]
+        }
+      ]
+    },
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    },
+    "IssueSummary": {
+      "description": "Everything the map view needs about one issue.",
+      "type": "object",
+      "properties": {
+        "decisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DecisionRecord"
+          }
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "pins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapRef"
+          }
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Plan"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "progress": {
+          "$ref": "#/$defs/Progress"
+        },
+        "pull_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PullRequestState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionState"
+          }
+        },
+        "spend_usd": {
+          "description": "Sum over this issue's sessions.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "issue",
+        "pins",
+        "progress"
+      ]
+    },
+    "MapNode": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/NodeKind"
+        },
+        "path": {
+          "description": "Path inside that repository.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "description": "`owner/name` of the repository holding the code, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ]
+    },
+    "MapRef": {
+      "description": "A reference into the system map: a node or a seam. Ids come from `system-map.yml` (ADR 0007).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "node"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "seam"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ]
+    },
+    "MapResponse": {
+      "type": "object",
+      "properties": {
+        "loaded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "map": {
+          "$ref": "#/$defs/SystemMap"
+        },
+        "version": {
+          "description": "Git sha the map was loaded from.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "map",
+        "version",
+        "loaded_at"
+      ]
+    },
+    "NodeKind": {
+      "oneOf": [
+        {
+          "description": "Owned code with behaviour.",
+          "type": "string",
+          "const": "context"
+        },
+        {
+          "description": "A format or schema others agree on.",
+          "type": "string",
+          "const": "contract"
+        },
+        {
+          "description": "Something we stitch, not build.",
+          "type": "string",
+          "const": "external"
+        }
+      ]
+    },
+    "ORow": {
+      "description": "The 3 am question for one seam: which signal leads back to it, where, and who is woken.",
+      "type": "object",
+      "properties": {
+        "breaks_like": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner": {
+          "description": "Node id of the side that owns the fix.",
+          "type": "string"
+        },
+        "panel": {
+          "description": "Dashboard panel the signal appears on.",
+          "type": "string"
+        },
+        "seam": {
+          "type": "string"
+        },
+        "signal": {
+          "description": "Span, metric or log line, with the `rubato.*` attributes it carries.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seam",
+        "signal",
+        "panel",
+        "owner"
+      ]
+    },
+    "PairingInfo": {
+      "type": "object",
+      "properties": {
+        "companion_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "connected": {
+          "description": "A websocket is open right now.",
+          "type": "boolean"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "last_seen": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "revoked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "companion_id",
+        "user",
+        "hostname",
+        "created_at",
+        "connected"
+      ]
+    },
+    "PartStatus": {
+      "type": "string",
+      "enum": [
+        "affected",
+        "new",
+        "quiet"
+      ]
+    },
+    "Plan": {
+      "type": "object",
+      "properties": {
+        "affected_parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AffectedPart"
+          }
+        },
+        "assumed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Assumption"
+          }
+        },
+        "attempt_limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "git_ref": {
+          "description": "Git ref the plan was read from (branch name or commit sha).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "o_rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ORow"
+          }
+        },
+        "path": {
+          "description": "Path of the plan file inside the repository.",
+          "type": "string"
+        },
+        "spend_cap_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "issue",
+        "path",
+        "affected_parts"
+      ]
+    },
+    "Progress": {
+      "description": "Derived progress of one issue, with the time of the newest signal behind it.",
+      "type": "object",
+      "properties": {
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "last_seen": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pinned_to": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapRef"
+          }
+        },
+        "reason": {
+          "description": "One line on why, for *Blocked* and *Unknown*.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "state": {
+          "$ref": "#/$defs/ProgressState"
+        }
+      },
+      "required": [
+        "issue",
+        "state",
+        "last_seen"
+      ]
+    },
+    "ProgressState": {
+      "oneOf": [
+        {
+          "description": "Issue exists and is pinned to the map.",
+          "type": "string",
+          "const": "planned"
+        },
+        {
+          "description": "Session launched for the issue.",
+          "type": "string",
+          "const": "started"
+        },
+        {
+          "description": "Session working, no plan file yet.",
+          "type": "string",
+          "const": "designing"
+        },
+        {
+          "description": "Plan file on the branch; affected nodes lit.",
+          "type": "string",
+          "const": "designed"
+        },
+        {
+          "description": "Session working after the plan.",
+          "type": "string",
+          "const": "building"
+        },
+        {
+          "description": "Session blocked (hook) or a cap hit.",
+          "type": "string",
+          "const": "blocked"
+        },
+        {
+          "description": "PR open, checks green.",
+          "type": "string",
+          "const": "in_review"
+        },
+        {
+          "description": "Merged.",
+          "type": "string",
+          "const": "done"
+        },
+        {
+          "description": "The signal is not flowing. Trust check first.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "PullRequestState": {
+      "description": "The pull request for an issue branch.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "checks": {
+          "$ref": "#/$defs/ChecksStatus"
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "merged_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "open": {
+          "type": "boolean"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "branch",
+        "open",
+        "draft",
+        "checks",
+        "updated_at",
+        "url"
+      ]
+    },
+    "RepoRef": {
+      "description": "A repository behind one or more nodes.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "`owner/name`.",
+          "type": "string"
+        },
+        "plan_path": {
+          "description": "Plan path template with `{issue}` and `{slug}` placeholders. Default `docs/plans/{issue}.md`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Seam": {
+      "description": "A seam between two nodes. The owner side is woken when it breaks.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "guard": {
+          "description": "The check that guards this seam.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "owner": {
+          "description": "Node id of the owner side; must be `from` or `to`.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "owner"
+      ]
+    },
+    "SessionState": {
+      "description": "One session as the companion sees it. Identity comes from the branch (ADR 0006).",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "companion_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "issue": {
+          "description": "Resolved from the branch, or from the launch when the branch does not follow the convention.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IssueRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_seen": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "repo": {
+          "description": "`owner/name` from `origin`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "description": "Claude Code session id, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/StateSource"
+        },
+        "spend_usd": {
+          "description": "Spend so far, summed from the transcript (A11).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        },
+        "tmux": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TmuxLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user": {
+          "description": "GitHub login of the paired user.",
+          "type": "string"
+        },
+        "worktree": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "companion_id",
+        "user",
+        "cwd",
+        "status",
+        "source",
+        "last_seen"
+      ]
+    },
+    "SessionStatus": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "working",
+            "idle",
+            "blocked",
+            "ended"
+          ]
+        },
+        {
+          "description": "No trustworthy signal. Never rendered as working.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "StateSource": {
+      "description": "Where a status came from. Anything not hook-derived is rendered *unknown* (A10).",
+      "oneOf": [
+        {
+          "description": "A Claude Code hook forwarded by the companion.",
+          "type": "string",
+          "const": "hook"
+        },
+        {
+          "description": "tmux-ide state with hook authority (`since` set).",
+          "type": "string",
+          "const": "tmux_ide"
+        },
+        {
+          "description": "tmux-ide state from screen matching. Not trusted.",
+          "type": "string",
+          "const": "scraped"
+        },
+        {
+          "description": "The companion just launched it; no event yet.",
+          "type": "string",
+          "const": "launch"
+        }
+      ]
+    },
+    "SystemMap": {
+      "description": "`system-map.yml`. Node and seam ids are the only identifiers pins and plans may use.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Team or system name.",
+          "type": "string"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapNode"
+          }
+        },
+        "owner_rule": {
+          "description": "Prose rule for who owns a seam. Informational.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repos": {
+          "description": "Repositories behind the nodes, with per-repo overrides (ADR 0009).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RepoRef"
+          }
+        },
+        "seams": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Seam"
+          }
+        },
+        "version": {
+          "description": "Map format version. v0 is `1`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "version",
+        "name",
+        "nodes"
+      ]
+    },
+    "TmuxLocation": {
+      "type": "object",
+      "properties": {
+        "pane": {
+          "description": "tmux pane id such as `%12`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "type": "string"
+        },
+        "socket": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "window": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "session"
+      ]
+    }
+  }
+}

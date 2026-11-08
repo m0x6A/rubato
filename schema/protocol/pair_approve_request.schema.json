@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PairApproveRequest",
+  "type": "object",
+  "properties": {
+    "user_code": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_code"
+  ]
+}
