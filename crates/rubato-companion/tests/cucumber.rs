@@ -200,17 +200,15 @@ impl RubatoWorld {
         std::fs::create_dir_all(&tmux_tmpdir).unwrap();
         std::fs::create_dir_all(&state_dir).unwrap();
         std::fs::create_dir_all(&fake_bin).unwrap();
-        // The stand-in claude: a script that records argv and env, then execs a copy of `sleep`
-        // named `claude`, so tmux reports the pane's command as `claude` (a script shows as `sh`).
+        // The stand-in claude: a script that records argv and env, then execs a copy of this very
+        // companion binary named `claude` running its hidden `idle` command, so tmux reports the
+        // pane's command as `claude` (a script shows as `sh`). Not coreutils: on Ubuntu 26.04
+        // `sleep` is a multicall binary that dispatches on its own name and exits as `claude`.
         let real = fake_bin.join("real");
         std::fs::create_dir_all(&real).unwrap();
-        let sleep_bin = ["/usr/bin/sleep", "/bin/sleep"]
-            .iter()
-            .find(|p| Path::new(p).exists())
-            .expect("sleep binary");
-        std::fs::copy(sleep_bin, real.join("claude")).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_rubato-companion"), real.join("claude")).unwrap();
         let script = format!(
-            "#!/bin/sh\n{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log\" 2>&1\nexec '{}' infinity\n",
+            "#!/bin/sh\n{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log\" 2>&1\nexec '{}' idle\n",
             real.join("claude").display()
         );
         let claude = fake_bin.join("claude");
