@@ -27,5 +27,9 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::limits::Limits>("limits"),
         one::<crate::message::CompanionEnvelope>("companion_envelope"),
         one::<crate::message::ServerEnvelope>("server_envelope"),
+        one::<crate::pairing::PairStartRequest>("pair_start_request"),
+        one::<crate::pairing::PairStartResponse>("pair_start_response"),
+        one::<crate::pairing::PairPollRequest>("pair_poll_request"),
+        one::<crate::pairing::PairPollResponse>("pair_poll_response"),
     ]
 }

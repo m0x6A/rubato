@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/rubato-protocol"]
+members = ["crates/rubato-protocol", "crates/rubato-companion"]
 
 [workspace.package]
 edition = "2024"

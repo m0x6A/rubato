@@ -12,6 +12,7 @@ pub mod limits;
 pub mod map;
 pub mod message;
 pub mod otel;
+pub mod pairing;
 pub mod plan;
 pub mod progress;
 pub mod schema;
@@ -26,6 +27,7 @@ pub use map::{MapNode, NodeKind, RepoRef, Seam, SystemMap};
 pub use message::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
 };
+pub use pairing::{PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse};
 pub use plan::{AffectedPart, Assumption, AssumptionScope, ORow, PartStatus, Plan};
 pub use progress::{Progress, ProgressInputs, ProgressState, derive_progress};
 pub use session::{
