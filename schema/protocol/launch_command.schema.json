@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LaunchCommand",
+  "description": "Server → companion: start a session. Addressed to exactly one pairing; the companion refuses\nany command whose `user` is not its paired user.",
+  "type": "object",
+  "properties": {
+    "attempt": {
+      "description": "Which attempt this is, 1-based.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "attempt_limit": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "base_ref": {
+      "description": "Ref to branch from, such as `origin/main`.",
+      "type": "string"
+    },
+    "branch": {
+      "description": "`issue/<n>-<slug>`.",
+      "type": "string"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "map_version": {
+      "description": "Git sha of the map the server resolved pins against.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "node_ids": {
+      "description": "Map node ids the issue is pinned to.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "otel_resource": {
+      "description": "OTel resource attributes for the session (`rubato.repo`, `rubato.issue`, ...).",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "prompt": {
+      "description": "Initial prompt for the session.",
+      "type": "string"
+    },
+    "repo_url": {
+      "description": "Clone URL of the repository.",
+      "type": "string"
+    },
+    "session_id": {
+      "description": "Claude Code `--session-id` the companion must use, so `session_id → issue` is known up front.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "spend_cap_usd": {
+      "type": "number",
+      "format": "double"
+    },
+    "user": {
+      "description": "GitHub login the command is addressed to.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "user",
+    "issue",
+    "repo_url",
+    "branch",
+    "base_ref",
+    "spend_cap_usd",
+    "attempt_limit",
+    "attempt",
+    "session_id",
+    "prompt"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

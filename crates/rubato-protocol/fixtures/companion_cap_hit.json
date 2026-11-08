@@ -1,0 +1,13 @@
+{
+  "seq": 6,
+  "sent_at": "2026-11-08T12:03:00Z",
+  "message": {
+    "type": "cap_hit",
+    "issue": { "repo": "m0x6A/rubato", "number": 1 },
+    "session_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "kind": "spend",
+    "value": 25.4,
+    "limit": 25.0,
+    "at": "2026-11-08T12:03:00Z"
+  }
+}

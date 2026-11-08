@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HookEvent",
+  "description": "One hook invocation. Common stdin fields are lifted; the full payload travels in `payload`.",
+  "type": "object",
+  "properties": {
+    "cwd": {
+      "description": "`cwd` from the payload: the worktree, not the original project dir.",
+      "type": "string"
+    },
+    "hook_event_name": {
+      "$ref": "#/$defs/HookEventKind"
+    },
+    "notification_type": {
+      "description": "`notification_type` for `Notification` events, such as `permission_prompt` or `idle_prompt`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "payload": {
+      "description": "The raw hook payload, for traces and for fields this version does not lift."
+    },
+    "permission_mode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "received_at": {
+      "description": "When the companion received it.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "session_id": {
+      "description": "Claude Code `session_id`.",
+      "type": "string"
+    },
+    "tool_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "transcript_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "session_id",
+    "hook_event_name",
+    "cwd",
+    "received_at"
+  ],
+  "$defs": {
+    "HookEventKind": {
+      "description": "Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.",
+      "type": "string",
+      "enum": [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "Notification",
+        "Stop",
+        "StopFailure",
+        "SessionEnd",
+        "Unknown"
+      ]
+    }
+  }
+}

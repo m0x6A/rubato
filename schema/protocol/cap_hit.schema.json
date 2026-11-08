@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CapHit",
+  "description": "A cap was hit. An event, not a log line; the issue becomes *Blocked*.",
+  "type": "object",
+  "properties": {
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "kind": {
+      "$ref": "#/$defs/CapKind"
+    },
+    "limit": {
+      "type": "number",
+      "format": "double"
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "value": {
+      "type": "number",
+      "format": "double"
+    }
+  },
+  "required": [
+    "issue",
+    "kind",
+    "value",
+    "limit",
+    "at"
+  ],
+  "$defs": {
+    "CapKind": {
+      "type": "string",
+      "enum": [
+        "spend",
+        "attempts"
+      ]
+    },
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "seq": 2,
+  "sent_at": "2026-11-08T12:00:30Z",
+  "message": {
+    "type": "heartbeat",
+    "companion_id": "6f1c3a2e-9b1d-4c8e-8f7a-2d3b4c5d6e7f",
+    "user": "m0x6A",
+    "at": "2026-11-08T12:00:30Z",
+    "hostname": "fedora",
+    "companion_version": "0.1.0",
+    "tmux_ide_version": "2.9.18",
+    "claude_version": "2.1.319"
+  }
+}

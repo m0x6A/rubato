@@ -1,0 +1,18 @@
+{
+  "seq": 1,
+  "sent_at": "2026-11-08T12:00:00Z",
+  "message": {
+    "type": "welcome",
+    "server_version": "0.1.0",
+    "protocol_version": 1,
+    "last_seen_companion_seq": 0,
+    "limits": {
+      "heartbeat_interval_secs": 30,
+      "session_stale_secs": 120,
+      "companion_silent_secs": 600,
+      "team_poll_interval_secs": 30,
+      "plan_poll_interval_secs": 60,
+      "github_poll_interval_secs": 60
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "seq": 5,
+  "sent_at": "2026-11-08T12:02:00Z",
+  "message": {
+    "type": "launch",
+    "outcome": "refused",
+    "command_id": "9b2e4d1a-3c5f-4e6a-9b7c-8d9e0f1a2b3c",
+    "reason": "not_paired_user",
+    "detail": "command addressed to alice, this companion is paired with m0x6A",
+    "at": "2026-11-08T12:02:00Z"
+  }
+}

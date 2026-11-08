@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LaunchResult",
+  "description": "Companion → server: what happened to a launch command.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "command_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "outcome": {
+          "type": "string",
+          "const": "started"
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tmux_session": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "command_id",
+        "session_id",
+        "worktree",
+        "tmux_session",
+        "at"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "command_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string",
+          "const": "refused"
+        },
+        "reason": {
+          "$ref": "#/$defs/RefusalReason"
+        }
+      },
+      "required": [
+        "outcome",
+        "command_id",
+        "reason",
+        "detail",
+        "at"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "command_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "error": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string",
+          "const": "failed"
+        }
+      },
+      "required": [
+        "outcome",
+        "command_id",
+        "error",
+        "at"
+      ]
+    }
+  ],
+  "$defs": {
+    "RefusalReason": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "attempt_limit_reached"
+          ]
+        },
+        {
+          "description": "The command's user is not this companion's paired user.",
+          "type": "string",
+          "const": "not_paired_user"
+        },
+        {
+          "description": "A session for this issue is already running on this machine.",
+          "type": "string",
+          "const": "already_running"
+        },
+        {
+          "description": "tmux-ide or claude missing or below the pinned version.",
+          "type": "string",
+          "const": "missing_dependency"
+        }
+      ]
+    }
+  }
+}

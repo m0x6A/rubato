@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionRecord",
+  "description": "A decision recorded as an issue comment with the `Decision:` template (ADR 0014).",
+  "type": "object",
+  "properties": {
+    "author": {
+      "type": "string"
+    },
+    "chosen": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "comment_id": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "context": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "options": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "why": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "issue",
+    "comment_id",
+    "author",
+    "title",
+    "created_at",
+    "url"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

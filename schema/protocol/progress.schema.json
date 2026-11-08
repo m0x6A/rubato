@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Progress",
+  "description": "Derived progress of one issue, with the time of the newest signal behind it.",
+  "type": "object",
+  "properties": {
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "last_seen": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pinned_to": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MapRef"
+      }
+    },
+    "reason": {
+      "description": "One line on why, for *Blocked* and *Unknown*.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "state": {
+      "$ref": "#/$defs/ProgressState"
+    }
+  },
+  "required": [
+    "issue",
+    "state",
+    "last_seen"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    },
+    "MapRef": {
+      "description": "A reference into the system map: a node or a seam. Ids come from `system-map.yml` (ADR 0007).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "node"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "seam"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ]
+    },
+    "ProgressState": {
+      "oneOf": [
+        {
+          "description": "Issue exists and is pinned to the map.",
+          "type": "string",
+          "const": "planned"
+        },
+        {
+          "description": "Session launched for the issue.",
+          "type": "string",
+          "const": "started"
+        },
+        {
+          "description": "Session working, no plan file yet.",
+          "type": "string",
+          "const": "designing"
+        },
+        {
+          "description": "Plan file on the branch; affected nodes lit.",
+          "type": "string",
+          "const": "designed"
+        },
+        {
+          "description": "Session working after the plan.",
+          "type": "string",
+          "const": "building"
+        },
+        {
+          "description": "Session blocked (hook) or a cap hit.",
+          "type": "string",
+          "const": "blocked"
+        },
+        {
+          "description": "PR open, checks green.",
+          "type": "string",
+          "const": "in_review"
+        },
+        {
+          "description": "Merged.",
+          "type": "string",
+          "const": "done"
+        },
+        {
+          "description": "The signal is not flowing. Trust check first.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    }
+  }
+}
