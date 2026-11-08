@@ -4,3 +4,5 @@ node_modules/
 web/dist/
 *.log
 .DS_Store
+web/test-results/
+web/playwright-report/

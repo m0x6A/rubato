@@ -1,0 +1,109 @@
+# promtool test rules tests/rubato.test.yml — every rule fires on purpose once, and stays quiet once.
+rule_files:
+  - ../rubato.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      # Heartbeat stamped at unix second 0 and never again: silent.
+      - series: 'rubato_companion_heartbeat{rubato_companion_id="c1", rubato_user="m0x6A"}'
+        values: "0x20"
+      # A companion whose heartbeat keeps up with the clock.
+      - series: 'rubato_companion_heartbeat{rubato_companion_id="c2", rubato_user="alice"}'
+        values: "0+60x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: CompanionSilent
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: companion-server
+              owner: rubato-server
+              rubato_companion_id: c1
+              rubato_user: m0x6A
+            exp_annotations:
+              summary: "Companion c1 (m0x6A) has not reported for over 10 minutes"
+              panel: Companions
+      - eval_time: 5m
+        alertname: CompanionSilent
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'rubato_sessions_by_state{rubato_companion_id="c1", rubato_session_state="working"}'
+        values: "1x10"
+      - series: 'rubato_hook_forwarded_total{rubato_companion_id="c1", rubato_hook_event="PreToolUse"}'
+        values: "5x10"
+      - series: 'rubato_sessions_by_state{rubato_companion_id="c2", rubato_session_state="working"}'
+        values: "1x10"
+      - series: 'rubato_hook_forwarded_total{rubato_companion_id="c2", rubato_hook_event="PreToolUse"}'
+        values: "0+3x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SessionWorkingNoHooks
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: companion-claude-code
+              owner: rubato-companion
+              rubato_companion_id: c1
+            exp_annotations:
+              summary: "A session on companion c1 reports working but no hook has arrived"
+              panel: Hooks/min vs working sessions
+
+  - interval: 1m
+    input_series:
+      - series: 'rubato_plan_unknown_id_count'
+        values: "0 0 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: PlanUnknownNodes
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: PlanUnknownNodes
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-plan-file
+              owner: plan-file
+            exp_annotations:
+              summary: "1 plan id(s) are not in the map"
+              panel: Plan checks
+
+  - interval: 1m
+    input_series:
+      - series: 'rubato_seam_open_plans{rubato_seam="companion-server"}'
+        values: "2x5"
+      - series: 'rubato_seam_open_plans{rubato_seam="web-server"}'
+        values: "1x5"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SeamCollision
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              owner: rubato-server
+              rubato_seam: companion-server
+            exp_annotations:
+              summary: "2 open plans touch seam companion-server"
+              panel: Map
+
+  - interval: 1m
+    input_series:
+      - series: 'rubato_github_rate_limit_remaining'
+        values: "400x5"
+      - series: 'rubato_github_rate_limit_limit'
+        values: "5000x5"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: GitHubRateLimitLow
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "GitHub rate limit under 10% (8%)"
+              panel: GitHub calls · Rate limit

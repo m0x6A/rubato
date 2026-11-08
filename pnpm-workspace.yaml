@@ -2,3 +2,4 @@ packages:
   - actions/plan-check
   - skills/rubato
   - web
+  - e2e
