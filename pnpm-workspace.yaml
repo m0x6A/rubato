@@ -1,0 +1,4 @@
+packages:
+  - actions/plan-check
+  - skills/rubato
+  - web

@@ -7,6 +7,12 @@ fn schema_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../schema/protocol")
 }
 
+/// The two schemas AGENTS.md names at the top of `schema/`. Same content as their protocol export.
+const ALIASES: &[(&str, &str)] = &[
+    ("system_map", "../../schema/system-map.schema.json"),
+    ("plan", "../../schema/plan.schema.json"),
+];
+
 #[test]
 fn exported_schemas_match_committed_snapshots() {
     let update = std::env::var_os("UPDATE_SCHEMAS").is_some();
@@ -28,7 +34,31 @@ fn exported_schemas_match_committed_snapshots() {
             Err(_) => drifted.push(format!("{name}: missing {}", path.display())),
         }
     }
-    println!("checked {} schemas against {}", all.len(), dir.display());
+    for (name, rel) in ALIASES {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
+        let schema = all
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, s)| s)
+            .expect("alias names an exported schema");
+        let mut rendered = serde_json::to_string_pretty(schema).unwrap();
+        rendered.push('\n');
+        if update {
+            std::fs::write(&path, &rendered).unwrap();
+            continue;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(on_disk) if on_disk == rendered => {}
+            Ok(_) => drifted.push(format!("{name}: alias differs from {}", path.display())),
+            Err(_) => drifted.push(format!("{name}: missing alias {}", path.display())),
+        }
+    }
+    println!(
+        "checked {} schemas and {} aliases against {}",
+        all.len(),
+        ALIASES.len(),
+        dir.display()
+    );
     assert!(
         drifted.is_empty(),
         "schema snapshots drifted (run with UPDATE_SCHEMAS=1 to rewrite):\n{}",

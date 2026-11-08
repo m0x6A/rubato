@@ -1,0 +1,15 @@
+{
+  "name": "@rubato/skill",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code skill installed in every connected repo: map, node ids, ADRs, plan path, plan format, hook config.",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "ajv": "^8.17.0",
+    "yaml": "^2.8.0"
+  }
+}

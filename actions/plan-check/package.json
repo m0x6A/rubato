@@ -1,0 +1,16 @@
+{
+  "name": "@rubato/plan-check",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fails a PR whose plan names an unknown map id or lacks an O-row per seam.",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "node --experimental-strip-types src/cli.ts"
+  },
+  "dependencies": {
+    "ajv": "^8.17.0",
+    "yaml": "^2.8.0"
+  }
+}

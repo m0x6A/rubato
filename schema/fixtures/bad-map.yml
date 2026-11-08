@@ -1,0 +1,12 @@
+version: 1
+name: broken
+nodes:
+  - id: a
+    kind: context
+  - id: a
+    kind: contract
+seams:
+  - id: a-b
+    from: a
+    to: b
+    owner: zzz

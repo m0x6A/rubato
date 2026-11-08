@@ -1,0 +1,31 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "curl -sS -m 2 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "async": true } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "curl -sS -m 2 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "async": true } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "curl -sS -m 2 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "async": true } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "curl -sS -m 2 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "async": true } ] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "curl -sS -m 2 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "async": true } ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "curl -sS -m 2 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "async": true } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "curl -sS -m 2 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "async": true } ] }
+    ],
+    "StopFailure": [
+      { "hooks": [ { "type": "command", "command": "curl -sS -m 2 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "async": true } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "curl -sS -m 1 -H 'Authorization: Bearer {token}' -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:{port}/hook", "timeout": 2 } ] }
+    ]
+  }
+}

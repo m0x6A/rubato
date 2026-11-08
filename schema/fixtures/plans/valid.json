@@ -1,0 +1,36 @@
+{
+  "issue": { "repo": "m0x6A/rubato", "number": 42 },
+  "title": "Fixture plan that passes",
+  "path": "schema/fixtures/plans/valid.md",
+  "spend_cap_usd": 10,
+  "attempt_limit": 2,
+  "affected_parts": [
+    {
+      "node": "rubato-companion",
+      "status": "affected",
+      "change": "forwards one more hook field",
+      "seams": ["companion-server", "companion-claude-code"]
+    },
+    { "node": "rubato-server", "status": "affected", "change": "reads the new field", "seams": ["companion-server"] },
+    { "node": "web", "status": "quiet", "change": "—" }
+  ],
+  "o_rows": [
+    {
+      "seam": "companion-server",
+      "breaks_like": "server drops the event",
+      "signal": "counter `rubato.events.dropped`",
+      "panel": "Companions",
+      "owner": "rubato-server"
+    },
+    {
+      "seam": "companion-claude-code",
+      "breaks_like": "hook stops firing",
+      "signal": "counter `rubato.hook.forwarded` at zero",
+      "panel": "Hooks/min",
+      "owner": "rubato-companion"
+    }
+  ],
+  "assumed": [
+    { "id": "F1", "decision": "Field name", "chosen": "`tool_name`", "alternatives": "`tool`", "scope": "node" }
+  ]
+}
