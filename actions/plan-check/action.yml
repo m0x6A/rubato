@@ -1,0 +1,26 @@
+name: rubato plan check
+description: Fail a PR whose plan names an unknown map id or lacks an O-row per seam it touches.
+inputs:
+  map:
+    description: Path to system-map.yml
+    required: true
+  plans:
+    description: Glob of plan files to check
+    required: false
+    default: docs/plans/*.md
+  node-version:
+    description: Node version (needs --experimental-strip-types, 22.6 or newer)
+    required: false
+    default: "22"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    - name: Install plan-check dependencies
+      shell: bash
+      run: cd "${{ github.action_path }}" && npm install --no-audit --no-fund --omit=dev
+    - name: Check plans
+      shell: bash
+      run: node --experimental-strip-types "${{ github.action_path }}/src/cli.ts" --map "${{ inputs.map }}" --schema-dir "${{ github.action_path }}/../../schema" --plans "${{ inputs.plans }}"

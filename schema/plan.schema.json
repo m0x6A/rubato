@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plan",
+  "type": "object",
+  "properties": {
+    "affected_parts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AffectedPart"
+      }
+    },
+    "assumed": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Assumption"
+      }
+    },
+    "attempt_limit": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
+    "git_ref": {
+      "description": "Git ref the plan was read from (branch name or commit sha).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "o_rows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ORow"
+      }
+    },
+    "path": {
+      "description": "Path of the plan file inside the repository.",
+      "type": "string"
+    },
+    "spend_cap_usd": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "issue",
+    "path",
+    "affected_parts"
+  ],
+  "$defs": {
+    "AffectedPart": {
+      "description": "One row of the affected-parts table. This is what paints the map.",
+      "type": "object",
+      "properties": {
+        "change": {
+          "description": "What changes, in one line.",
+          "type": "string"
+        },
+        "node": {
+          "description": "Node id from the map.",
+          "type": "string"
+        },
+        "seams": {
+          "description": "Seam ids this change touches. Each needs an O-row.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "$ref": "#/$defs/PartStatus"
+        }
+      },
+      "required": [
+        "node",
+        "status",
+        "change"
+      ]
+    },
+    "Assumption": {
+      "description": "A decision the plan had to make that nothing settled.",
+      "type": "object",
+      "properties": {
+        "alternatives": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chosen": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/AssumptionScope"
+        }
+      },
+      "required": [
+        "id",
+        "decision",
+        "chosen",
+        "scope"
+      ]
+    },
+    "AssumptionScope": {
+      "oneOf": [
+        {
+          "description": "Inside one node: assumed and labelled.",
+          "type": "string",
+          "const": "node"
+        },
+        {
+          "description": "On a seam: blocks until a human answers.",
+          "type": "string",
+          "const": "seam"
+        }
+      ]
+    },
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    },
+    "ORow": {
+      "description": "The 3 am question for one seam: which signal leads back to it, where, and who is woken.",
+      "type": "object",
+      "properties": {
+        "breaks_like": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner": {
+          "description": "Node id of the side that owns the fix.",
+          "type": "string"
+        },
+        "panel": {
+          "description": "Dashboard panel the signal appears on.",
+          "type": "string"
+        },
+        "seam": {
+          "type": "string"
+        },
+        "signal": {
+          "description": "Span, metric or log line, with the `rubato.*` attributes it carries.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seam",
+        "signal",
+        "panel",
+        "owner"
+      ]
+    },
+    "PartStatus": {
+      "type": "string",
+      "enum": [
+        "affected",
+        "new",
+        "quiet"
+      ]
+    }
+  }
+}
