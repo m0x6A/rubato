@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Finding",
+  "description": "Map versus territory, and plans that disagree with the map. Shown, never suppressed.",
+  "oneOf": [
+    {
+      "description": "A plan names ids the map does not declare.",
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "unknown_ids"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "ids"
+      ]
+    },
+    {
+      "description": "Two or more open plans touch the same seam.",
+      "type": "object",
+      "properties": {
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IssueRef"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "const": "seam_collision"
+        },
+        "seam": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "seam",
+        "issues"
+      ]
+    },
+    {
+      "description": "A plan file exists but does not parse.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "plan_parse_error"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "path",
+        "error"
+      ]
+    },
+    {
+      "description": "A session was launched against a different map version than the server holds.",
+      "type": "object",
+      "properties": {
+        "current": {
+          "type": "string"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "map_version_mismatch"
+        },
+        "launched_with": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "launched_with",
+        "current"
+      ]
+    }
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PairStartRequest",
+  "type": "object",
+  "properties": {
+    "companion_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "companion_version": {
+      "type": "string"
+    },
+    "hostname": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "companion_id",
+    "hostname",
+    "companion_version"
+  ]
+}

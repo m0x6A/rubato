@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PairPollRequest",
+  "type": "object",
+  "properties": {
+    "device_code": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "device_code"
+  ]
+}

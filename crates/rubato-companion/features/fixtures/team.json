@@ -1,0 +1,62 @@
+{
+  "projects": [
+    {
+      "name": "Claude Agents",
+      "dir": "/home/dev/develop/rubato",
+      "registered": false,
+      "running": true,
+      "status": "blocked",
+      "sessions": [
+        {
+          "name": "Claude Agents",
+          "status": "blocked",
+          "panes": 4,
+          "attached": true,
+          "windows": [
+            { "index": 2, "name": "claude", "active": false, "panes": 1, "status": "idle" },
+            { "index": 4, "name": "goldilocks", "active": false, "panes": 1, "status": "blocked" },
+            { "index": 5, "name": "pantry", "active": true, "panes": 1, "status": "working" }
+          ],
+          "agents": [
+            {
+              "paneId": "%2",
+              "windowIndex": 2,
+              "session": "Claude Agents",
+              "kind": "claude",
+              "state": "idle",
+              "confidence": "tuned",
+              "since": null,
+              "title": "✳ PantryPilot issue #600",
+              "command": "claude",
+              "dir": "/home/dev/develop/Projects/PantryPilot/.claude/worktrees/misty-watching-ladybug"
+            },
+            {
+              "paneId": "%7",
+              "windowIndex": 4,
+              "session": "Claude Agents",
+              "kind": "claude",
+              "state": "blocked",
+              "confidence": "tuned",
+              "since": null,
+              "title": "✳ goldilocks",
+              "command": "claude",
+              "dir": "/home/dev/develop/goldilocks"
+            },
+            {
+              "paneId": "%5",
+              "windowIndex": 5,
+              "session": "Claude Agents",
+              "kind": "claude",
+              "state": "working",
+              "confidence": "authority",
+              "since": 1762603200,
+              "title": "✳ acme/pantry#7",
+              "command": "claude",
+              "dir": "/home/dev/pantry-worktrees/issue-7-restock"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

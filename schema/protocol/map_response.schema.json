@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MapResponse",
+  "type": "object",
+  "properties": {
+    "loaded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "map": {
+      "$ref": "#/$defs/SystemMap"
+    },
+    "version": {
+      "description": "Git sha the map was loaded from.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "map",
+    "version",
+    "loaded_at"
+  ],
+  "$defs": {
+    "MapNode": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/NodeKind"
+        },
+        "path": {
+          "description": "Path inside that repository.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "description": "`owner/name` of the repository holding the code, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ]
+    },
+    "NodeKind": {
+      "oneOf": [
+        {
+          "description": "Owned code with behaviour.",
+          "type": "string",
+          "const": "context"
+        },
+        {
+          "description": "A format or schema others agree on.",
+          "type": "string",
+          "const": "contract"
+        },
+        {
+          "description": "Something we stitch, not build.",
+          "type": "string",
+          "const": "external"
+        }
+      ]
+    },
+    "RepoRef": {
+      "description": "A repository behind one or more nodes.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "`owner/name`.",
+          "type": "string"
+        },
+        "plan_path": {
+          "description": "Plan path template with `{issue}` and `{slug}` placeholders. Default `docs/plans/{issue}.md`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Seam": {
+      "description": "A seam between two nodes. The owner side is woken when it breaks.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "guard": {
+          "description": "The check that guards this seam.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "owner": {
+          "description": "Node id of the owner side; must be `from` or `to`.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "owner"
+      ]
+    },
+    "SystemMap": {
+      "description": "`system-map.yml`. Node and seam ids are the only identifiers pins and plans may use.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Team or system name.",
+          "type": "string"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapNode"
+          }
+        },
+        "owner_rule": {
+          "description": "Prose rule for who owns a seam. Informational.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repos": {
+          "description": "Repositories behind the nodes, with per-repo overrides (ADR 0009).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RepoRef"
+          }
+        },
+        "seams": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Seam"
+          }
+        },
+        "version": {
+          "description": "Map format version. v0 is `1`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "version",
+        "name",
+        "nodes"
+      ]
+    }
+  }
+}

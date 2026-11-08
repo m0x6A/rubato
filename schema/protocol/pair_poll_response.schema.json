@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PairPollResponse",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "pending"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    {
+      "description": "The human approved. `token` is shown once; the server keeps only its hash.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "approved"
+        },
+        "token": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "token",
+        "user"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "denied"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "expired"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    }
+  ]
+}

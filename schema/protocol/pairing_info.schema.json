@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PairingInfo",
+  "type": "object",
+  "properties": {
+    "companion_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "connected": {
+      "description": "A websocket is open right now.",
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "hostname": {
+      "type": "string"
+    },
+    "last_seen": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "revoked_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "user": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "companion_id",
+    "user",
+    "hostname",
+    "created_at",
+    "connected"
+  ]
+}
