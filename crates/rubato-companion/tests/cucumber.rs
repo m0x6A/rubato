@@ -477,6 +477,16 @@ async fn given_daemon(w: &mut RubatoWorld) {
     })
     .await
     .expect("daemon connected to the test server");
+    // The client reports connected once its hello is sent; the server handler subscribes to the
+    // push channel before reading. Wait for the hello to be processed so a pushed launch is not
+    // lost in that gap.
+    let got = w
+        .server()
+        .wait_for(Duration::from_secs(10), |m| {
+            matches!(m, CompanionMessage::Hello { .. }).then_some(())
+        })
+        .await;
+    assert!(got.is_some(), "server processed the hello");
 }
 
 #[given(
