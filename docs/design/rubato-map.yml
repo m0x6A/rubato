@@ -1,0 +1,143 @@
+# Rubato's own system map. Every id here is one that plans, pins and the plan check may use.
+# Shape: first draft of schema/system-map.schema.json (docs/plans/v0.md, task 2).
+version: 1
+name: rubato
+owner_rule: >
+  The owner side of a seam is the node whose team is woken when the seam breaks.
+  For a seam with an external node, the owner is always the Rubato side.
+
+repos:
+  - name: m0x6A/rubato
+    plan_path: docs/plans/{issue}.md
+
+nodes:
+  - id: rubato-protocol
+    kind: contract
+    repo: m0x6A/rubato
+    path: crates/rubato-protocol
+    description: Shared serde types, JSON Schema export, OTel attribute names and limits. No I/O.
+
+  - id: rubato-companion
+    kind: context
+    repo: m0x6A/rubato
+    path: crates/rubato-companion
+    description: One per developer machine. Outbound only. Runs tmux, git worktree and claude for its paired user.
+
+  - id: rubato-server
+    kind: context
+    repo: m0x6A/rubato
+    path: crates/rubato-server
+    description: One per team. Map, pins, plans, progress derivation, decisions, GitHub OAuth, websocket fan-out, embeds web.
+
+  - id: web
+    kind: context
+    repo: m0x6A/rubato
+    path: web
+    description: React map view served by the server.
+
+  - id: skill-rubato
+    kind: context
+    repo: m0x6A/rubato
+    path: skills/rubato
+    description: Claude Code skill installed in every connected repo. Loads map and ADRs, writes the plan, ships hook config.
+
+  - id: plan-check
+    kind: context
+    repo: m0x6A/rubato
+    path: actions/plan-check
+    description: GitHub Action. Fails a PR whose plan names an unknown id or lacks an O-row per seam.
+
+  - id: plan-file
+    kind: contract
+    repo: m0x6A/rubato
+    path: schema/plan.schema.json
+    description: The plan Markdown on an issue branch. Affected-parts and O-rows tables parsed to JSON.
+
+  - id: system-map
+    kind: contract
+    repo: m0x6A/rubato
+    path: schema/system-map.schema.json
+    description: A team's system-map.yml. Node and seam ids referenced by pins and plans.
+
+  - id: github
+    kind: external
+    description: Issues, comments, PRs, checks, OAuth, REST, Projects v2 GraphQL, plan files on branches.
+
+  - id: tmux-ide
+    kind: external
+    description: Session runner (TypeScript CLI, npm tmux-ide, tmux >= 3.7). worktree create, events, team --json, send, wait, MCP. Version pinned by the companion.
+
+  - id: claude-code
+    kind: external
+    description: The only agent in v0. Hooks are the event source. Exports its own OTel.
+
+seams:
+  - id: companion-server
+    from: rubato-companion
+    to: rubato-server
+    carries: CompanionMessage / ServerMessage envelopes, JSON over one outbound websocket
+    owner: rubato-server
+    guard: protocol JSON Schema snapshot test; both suites replay crates/rubato-protocol/fixtures/
+
+  - id: server-github
+    from: rubato-server
+    to: github
+    carries: OAuth login, REST (issues, comments, PRs, checks, contents), Projects v2 GraphQL later
+    owner: rubato-server
+    guard: one GitHubApi trait with recorded-response tests; rubato.github.rate_limit.remaining alert
+
+  - id: companion-tmux-ide
+    from: rubato-companion
+    to: tmux-ide
+    carries: worktree create, events --follow --json, team --json, send, wait
+    owner: rubato-companion
+    guard: Gherkin against real tmux-ide on tmux -L rubato-test; version pinned (2.9.x), reported as rubato.tmux_ide.version; low-confidence state renders unknown
+
+  - id: companion-claude-code
+    from: rubato-companion
+    to: claude-code
+    carries: hook stdin JSON (async hooks); launch flags (--session-id, --settings, --permission-mode); OTel env (OTEL_RESOURCE_ATTRIBUTES)
+    owner: rubato-companion
+    guard: Gherkin replays recorded hook payloads per event name; fixtures refreshed on Claude Code upgrade
+
+  - id: skill-plan-file
+    from: skill-rubato
+    to: plan-file
+    carries: plan Markdown at the agreed path with the agreed sections
+    owner: plan-file
+    guard: skill Vitest writes a plan and runs the plan check on it
+
+  - id: server-plan-file
+    from: rubato-server
+    to: plan-file
+    carries: plan parsed from the branch
+    owner: plan-file
+    guard: schema/fixtures/plans/ parsed identically by Rust and TypeScript
+
+  - id: plan-check-plan-file
+    from: plan-check
+    to: plan-file
+    carries: plan parsed in the Action
+    owner: plan-check
+    guard: same fixtures; a fixture that must fail, asserted in CI
+
+  - id: skill-system-map
+    from: skill-rubato
+    to: system-map
+    carries: node and seam ids offered to the session
+    owner: system-map
+    guard: schema validation before use; rubato.map.version on every launch
+
+  - id: server-system-map
+    from: rubato-server
+    to: system-map
+    carries: map loaded; pins and plans resolved against it
+    owner: system-map
+    guard: schema validation on load; rubato.map.load_failures counter
+
+  - id: web-server
+    from: web
+    to: rubato-server
+    carries: REST and websocket; TS types generated from the protocol schema
+    owner: rubato-server
+    guard: generated web/src/protocol.ts diffed in CI
