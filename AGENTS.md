@@ -69,6 +69,32 @@ docs/
   decisions/               # ADRs, one file each, numbered; 0000-template.md; see "Decisions are records"
 ```
 
+### Inside a deployable: vertical slices
+
+Decided in ADR 0015, designed in `docs/plans/20-vertical-slices/design.md`, landing one PR per
+deployable. Each of `rubato-server`, `rubato-companion` and `web` is organised as:
+
+- one folder per **capability** a user or companion exercises (the slice), holding its routes,
+  store queries, websocket arms, task bodies, telemetry sites and tests;
+- a `kernel/` of leaf infrastructure (config, telemetry, storage connection, shared state holder,
+  adapters to other people's tools) that names no slice;
+- a small **composition root** (`lib.rs`, `app.rs`, `tasks.rs`; `runtime.rs`; `App.tsx`) that
+  names every slice and is named by nobody but `main.rs` and the test crates.
+
+A slice names another slice only through its root module, never the composition root; the slice
+graph is acyclic; one slice owns each SQLite table. A test in each deployable checks this layout,
+prints how many slices and edges it inspected, and compares the folders with that deployable's
+block below, so keep the blocks in step with the code. `rubato-protocol` is regrouped by
+capability as flat modules; `skills/rubato` and `actions/plan-check` are already one file per
+capability.
+
+Each deployable's block appears here with the PR that slices it:
+
+<!-- slices: rubato-server --> _arrives with PR 1_ <!-- /slices -->
+<!-- slices: rubato-companion --> _arrives with PR 2_ <!-- /slices -->
+<!-- slices: web --> _arrives with PR 3_ <!-- /slices -->
+<!-- slices: rubato-protocol --> _arrives with PR 4_ <!-- /slices -->
+
 ## The progress model
 
 One state per issue, derived; never stored by hand.
