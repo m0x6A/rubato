@@ -65,5 +65,8 @@ fn tampered_snapshot_is_detected() {
     rendered.push('\n');
     assert_eq!(on_disk, rendered, "precondition: snapshot is current");
     on_disk.insert(1, ' ');
-    assert_ne!(on_disk, rendered, "a tampered snapshot must not compare equal");
+    assert_ne!(
+        on_disk, rendered,
+        "a tampered snapshot must not compare equal"
+    );
 }
