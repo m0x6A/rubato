@@ -50,3 +50,25 @@ jobs:
       - run: pnpm test
       - name: Plan check on this repo's own plans
         run: pnpm plan-check --map docs/design/rubato-map.yml --plans "docs/plans/*.md"
+
+  web:
+    name: Web (types in step, build, e2e against the server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generated protocol types are in step with the schemas
+        run: cd web && pnpm gen:types && git diff --exit-code -- src/protocol.ts
+      - run: cd web && pnpm build
+      - run: cargo build -p rubato-server
+      - run: cd web && pnpm exec playwright install --with-deps chromium
+      - name: End to end against the real server
+        run: cd web && ./e2e/run.sh

@@ -17,6 +17,9 @@ use tokio::sync::watch;
 /// Fetch, validate and cache the map. Falls back to the cached copy when GitHub fails.
 pub async fn reload_map(app: &App) -> Result<LoadedMap> {
     let cfg = &app.config;
+    if let Some(file) = &cfg.map_file {
+        return load_map_from_file(app, file).await;
+    }
     let fetched = async {
         let sha = app
             .github
@@ -70,6 +73,47 @@ pub async fn reload_map(app: &App) -> Result<LoadedMap> {
         .map_loaded
         .record(1, &[KeyValue::new(attr::MAP_VERSION, version.clone())]);
     tracing::info!(version = %version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
+    Ok(loaded)
+}
+
+/// Local-file mode (`RUBATO_MAP_FILE`): the version is a content hash, since there may be no git.
+async fn load_map_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> {
+    let yaml = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("reading {}", file.display()))?;
+    let map: SystemMap = serde_yaml_ng::from_str(&yaml).context("system-map.yml does not parse")?;
+    if let Err(errors) = map.validate() {
+        app.metrics.map_load_failures.add(1, &[]);
+        anyhow::bail!(
+            "system map invalid: {}",
+            errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(yaml.as_bytes());
+    let version = format!(
+        "file-{}",
+        digest
+            .iter()
+            .take(4)
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    let loaded = LoadedMap {
+        map,
+        version: version.clone(),
+        loaded_at: Utc::now(),
+    };
+    db::store_map(&app.db, &version, &yaml, loaded.loaded_at).await?;
+    *app.map.write().await = Some(loaded.clone());
+    app.metrics
+        .map_loaded
+        .record(1, &[KeyValue::new(attr::MAP_VERSION, version.clone())]);
+    tracing::info!(version = %version, file = %file.display(), "map loaded from file");
     Ok(loaded)
 }
 

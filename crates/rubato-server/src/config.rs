@@ -19,6 +19,8 @@ pub struct Config {
     pub map_repo: String,
     pub map_path: String,
     pub map_ref: String,
+    /// Local file to load the map from instead of GitHub (local runs and e2e tests).
+    pub map_file: Option<PathBuf>,
     pub session_secret: String,
     /// Development only: every request is this login, no OAuth. Never set in production.
     pub dev_user: Option<String>,
@@ -63,6 +65,7 @@ impl Config {
             map_repo: env("RUBATO_MAP_REPO").unwrap_or_else(|| "m0x6A/rubato".into()),
             map_path: env("RUBATO_MAP_PATH").unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
             map_ref: env("RUBATO_MAP_REF").unwrap_or_else(|| "main".into()),
+            map_file: env("RUBATO_MAP_FILE").map(PathBuf::from),
             session_secret: env("RUBATO_SESSION_SECRET").unwrap_or_else(|| {
                 tracing::warn!(
                     "RUBATO_SESSION_SECRET unset; web sessions will not survive a restart"
@@ -97,6 +100,7 @@ impl Config {
             map_repo: "m0x6A/rubato".into(),
             map_path: "docs/design/rubato-map.yml".into(),
             map_ref: "main".into(),
+            map_file: None,
             session_secret: "test-secret".into(),
             dev_user: Some(dev_user.into()),
             web_dist: PathBuf::from("web/dist"),
