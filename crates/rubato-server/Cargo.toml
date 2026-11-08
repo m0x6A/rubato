@@ -18,7 +18,7 @@ serde_json.workspace = true
 serde_yaml_ng = "0.10"
 uuid.workspace = true
 chrono = { version = "0.4", features = ["serde", "clock"], default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "sync", "time", "signal", "process"] }
 axum = { version = "0.8", features = ["ws", "json", "macros", "query"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "chrono", "uuid", "json", "migrate", "macros"] }

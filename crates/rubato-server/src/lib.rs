@@ -6,6 +6,7 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod github;
+pub mod github_local;
 pub mod pairing;
 pub mod plan_parse;
 pub mod poller;

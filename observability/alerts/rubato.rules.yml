@@ -1,0 +1,62 @@
+# Things that must never be silent (AGENTS.md). Metric names are the OTLP names from
+# crates/rubato-protocol/src/otel.rs after the Prometheus conversion (dots to underscores,
+# _total on counters). Each rule has a unit test in tests/ that makes it fire on purpose.
+groups:
+  - name: rubato
+    rules:
+      - alert: CompanionSilent
+        expr: time() - max by (rubato_companion_id, rubato_user) (rubato_companion_heartbeat) > 600
+        for: 0m
+        labels:
+          severity: page
+          seam: companion-server
+          owner: rubato-server
+        annotations:
+          summary: "Companion {{ $labels.rubato_companion_id }} ({{ $labels.rubato_user }}) has not reported for over 10 minutes"
+          panel: Companions
+
+      - alert: SessionWorkingNoHooks
+        expr: |
+          sum by (rubato_companion_id) (rubato_sessions_by_state{rubato_session_state="working"}) > 0
+          and
+          sum by (rubato_companion_id) (rate(rubato_hook_forwarded_total[2m])) == 0
+        for: 2m
+        labels:
+          severity: page
+          seam: companion-claude-code
+          owner: rubato-companion
+        annotations:
+          summary: "A session on companion {{ $labels.rubato_companion_id }} reports working but no hook has arrived"
+          panel: Hooks/min vs working sessions
+
+      - alert: PlanUnknownNodes
+        expr: rubato_plan_unknown_id_count > 0
+        for: 0m
+        labels:
+          severity: ticket
+          seam: server-plan-file
+          owner: plan-file
+        annotations:
+          summary: "{{ $value }} plan id(s) are not in the map"
+          panel: Plan checks
+
+      - alert: SeamCollision
+        expr: rubato_seam_open_plans > 1
+        for: 0m
+        labels:
+          severity: ticket
+          owner: rubato-server
+        annotations:
+          summary: "{{ $value }} open plans touch seam {{ $labels.rubato_seam }}"
+          panel: Map
+
+      - alert: GitHubRateLimitLow
+        expr: rubato_github_rate_limit_remaining / rubato_github_rate_limit_limit < 0.10
+        for: 0m
+        labels:
+          severity: page
+          seam: server-github
+          owner: rubato-server
+        annotations:
+          summary: "GitHub rate limit under 10% ({{ $value | humanizePercentage }})"
+          panel: GitHub calls · Rate limit

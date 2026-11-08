@@ -15,6 +15,8 @@ pub struct Config {
     pub github_client_secret: Option<String>,
     /// Token the server itself uses to read repos, plans, PRs and comments.
     pub github_token: Option<String>,
+    /// `owner/name=/path/to/repo.git,...`: read plans and branches from local repos instead of GitHub.
+    pub local_repos: Option<String>,
     /// `owner/name` of the repo holding `system-map.yml` (ADR 0010).
     pub map_repo: String,
     pub map_path: String,
@@ -62,6 +64,7 @@ impl Config {
             github_client_id: env("GITHUB_CLIENT_ID"),
             github_client_secret: env("GITHUB_CLIENT_SECRET"),
             github_token: env("RUBATO_GITHUB_TOKEN"),
+            local_repos: env("RUBATO_LOCAL_REPOS"),
             map_repo: env("RUBATO_MAP_REPO").unwrap_or_else(|| "m0x6A/rubato".into()),
             map_path: env("RUBATO_MAP_PATH").unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
             map_ref: env("RUBATO_MAP_REF").unwrap_or_else(|| "main".into()),
@@ -97,6 +100,7 @@ impl Config {
             github_client_id: None,
             github_client_secret: None,
             github_token: None,
+            local_repos: None,
             map_repo: "m0x6A/rubato".into(),
             map_path: "docs/design/rubato-map.yml".into(),
             map_ref: "main".into(),

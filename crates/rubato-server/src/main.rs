@@ -15,9 +15,15 @@ async fn main() -> Result<()> {
         );
     }
     let pool = db::connect(&config.database_url).await?;
-    let github: Arc<dyn GitHubApi> = match &config.github_token {
-        Some(t) => Arc::new(Octo::new(t)?),
-        None => {
+    let github: Arc<dyn GitHubApi> = match (&config.github_token, &config.local_repos) {
+        (_, Some(spec)) => {
+            tracing::warn!(
+                "RUBATO_LOCAL_REPOS is set: branches and plan files come from local repositories, not GitHub"
+            );
+            Arc::new(rubato_server::github_local::LocalGit::from_spec(spec)?)
+        }
+        (Some(t), None) => Arc::new(Octo::new(t)?),
+        (None, None) => {
             tracing::warn!(
                 "RUBATO_GITHUB_TOKEN unset: GitHub reads are disabled; map comes from the database copy only"
             );

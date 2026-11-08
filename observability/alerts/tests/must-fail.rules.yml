@@ -1,0 +1,8 @@
+# A rule set the structural check must reject: an alert with no firing test and no panel.
+groups:
+  - name: rubato
+    rules:
+      - alert: CompanionSilent
+        expr: vector(1)
+      - alert: SomethingNobodyTests
+        expr: vector(1)
