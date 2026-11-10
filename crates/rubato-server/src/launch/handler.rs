@@ -9,12 +9,42 @@ use crate::{github_poll, pairing, pins, plans};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use rubato_protocol::otel::{attr, span};
-use rubato_protocol::{LaunchCommand, LaunchRequest, LaunchResponse, ServerMessage};
+use chrono::Utc;
+use rubato_protocol::otel::{attr, event, span};
+use rubato_protocol::{
+    CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, ServerMessage,
+};
+use sqlx::SqlitePool;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
 const SLICE: &str = "launch";
+
+/// A launch past the attempt limit is an event, not only a refusal: log `rubato.cap.hit` before
+/// the write, record the cap hit, and answer 409 whether or not the write worked.
+async fn refuse_past_attempt_limit(
+    db: &SqlitePool,
+    issue: &IssueRef,
+    attempt: u32,
+    attempt_limit: u32,
+) -> (StatusCode, String) {
+    let hit = CapHit {
+        issue: issue.clone(),
+        session_id: None,
+        kind: CapKind::Attempts,
+        value: f64::from(attempt),
+        limit: f64::from(attempt_limit),
+        at: Utc::now(),
+    };
+    tracing::warn!(rubato.issue = %hit.issue, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", event::CAP_HIT);
+    if let Err(e) = store::store_cap_hit(db, &hit).await {
+        tracing::error!(slice = SLICE, rubato.issue = %hit.issue, error = %e, "storing cap hit");
+    }
+    (
+        StatusCode::CONFLICT,
+        format!("attempt limit {attempt_limit} reached for {issue}"),
+    )
+}
 
 /// Start a session on an issue through one of the caller's own companions (ADR 0004).
 pub async fn launch(
@@ -105,10 +135,9 @@ pub async fn launch(
         .or(plan.as_ref().and_then(|p| p.attempt_limit))
         .unwrap_or(app.config.default_attempt_limit);
     if attempt > attempt_limit {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("attempt limit {attempt_limit} reached for {}", req.issue),
-        ));
+        let refusal = refuse_past_attempt_limit(&app.db, &req.issue, attempt, attempt_limit).await;
+        app.notify("cap hit");
+        return Err(refusal);
     }
     let plan_path = map
         .map
@@ -169,4 +198,50 @@ pub async fn launch(
         command,
         companion_id: companion.companion_id,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::telemetry::capture;
+
+    #[tokio::test]
+    async fn a_failed_cap_hit_write_is_logged_and_still_answers_409() {
+        let (events, _guard) = capture::start();
+        // A database with no tables: the insert into `cap_hits` fails.
+        let db = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let issue = IssueRef::new("m0x6A/rubato", 30);
+
+        let (status, body) = refuse_past_attempt_limit(&db, &issue, 4, 3).await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body, "attempt limit 3 reached for m0x6A/rubato#30");
+        let events = events.lock().unwrap();
+        let hit = events
+            .iter()
+            .position(|e| e.message == event::CAP_HIT)
+            .expect("the rubato.cap.hit event");
+        assert_eq!(events[hit].level, tracing::Level::WARN);
+        assert_eq!(
+            events[hit].fields.get("rubato.issue").map(String::as_str),
+            Some("m0x6A/rubato#30")
+        );
+        assert_eq!(
+            events[hit].fields.get("kind").map(String::as_str),
+            Some("Attempts")
+        );
+        let failed = events
+            .iter()
+            .position(|e| e.message == "storing cap hit")
+            .expect("the storing cap hit line");
+        assert!(hit < failed, "the event is logged before the write");
+        let e = &events[failed];
+        assert_eq!(e.level, tracing::Level::ERROR);
+        assert_eq!(e.fields.get("slice").map(String::as_str), Some("launch"));
+        assert_eq!(
+            e.fields.get("rubato.issue").map(String::as_str),
+            Some("m0x6A/rubato#30")
+        );
+        assert!(e.fields.contains_key("error"));
+    }
 }

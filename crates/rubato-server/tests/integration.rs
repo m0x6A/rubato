@@ -783,7 +783,18 @@ async fn web_events_follow_every_action() {
     let _ = send(&mut ws, &started).await;
     await_reason(&mut web, "launch").await;
     checked += 1;
-    // cap hit
+    // cap hit from the handler: a launch past the attempt limit (launch/handler.rs)
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": issue, "slug": "skill", "attempt_limit": 1 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 409, "{}", r.text().await.unwrap());
+    await_reason(&mut web, "cap hit").await;
+    checked += 1;
+    // cap hit from the companion
     let mut cap = Harness::fixture("companion_cap_hit.json");
     cap.seq = 21;
     let _ = send(&mut ws, &cap).await;
@@ -845,8 +856,131 @@ async fn web_events_follow_every_action() {
     await_reason(&mut web, "pairing").await;
     checked += 1;
 
-    assert_eq!(checked, 13);
+    assert_eq!(checked, 14);
     println!("checked {checked} notify sites");
+}
+
+/// A paired, connected companion and an issue pinned to the map: what a launch needs.
+async fn ready_to_launch(h: &Harness, issue: &IssueRef) -> (Uuid, Ws) {
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let _ = send(
+        &mut ws,
+        &with_companion(Harness::fixture("companion_hello.json"), companion_id),
+    )
+    .await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: issue.clone(),
+            target: MapRef::node("skill-rubato"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    (companion_id, ws)
+}
+
+async fn start(h: &Harness, issue: &IssueRef, attempt_limit: u32) -> reqwest::Response {
+    h.http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(
+            &serde_json::json!({ "issue": issue, "slug": "skill", "attempt_limit": attempt_limit }),
+        )
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn progress_of(h: &Harness, issue: &IssueRef) -> rubato_protocol::Progress {
+    let ov = h.overview("m0x6A").await;
+    ov.issues
+        .into_iter()
+        .find(|i| &i.issue == issue)
+        .expect("the issue is in the overview")
+        .progress
+}
+
+#[tokio::test]
+async fn attempt_limit_blocks_the_issue_and_is_an_event() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_companion_id, _ws) = ready_to_launch(&h, &issue).await;
+
+    // The one attempt the limit allows.
+    let r = start(&h, &issue, 1).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    await_reason(&mut web, "launch").await;
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Planned);
+
+    // Past the limit: still a 409 with its message, and now an event.
+    let r = start(&h, &issue, 1).await;
+    assert_eq!(r.status(), 409);
+    assert_eq!(
+        r.text().await.unwrap(),
+        "attempt limit 1 reached for m0x6A/rubato#3"
+    );
+    await_reason(&mut web, "cap hit").await;
+    let p = progress_of(&h, &issue).await;
+    assert_eq!(p.state, ProgressState::Blocked);
+    assert_eq!(p.reason.as_deref(), Some("cap hit"));
+
+    // A higher limit lets the next launch through, and the older cap hit no longer blocks.
+    let r = start(&h, &issue, 5).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    await_reason(&mut web, "launch").await;
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Planned);
+}
+
+#[tokio::test]
+async fn attempt_limit_does_not_block_a_running_issue() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (companion_id, mut ws) = ready_to_launch(&h, &issue).await;
+
+    let r = start(&h, &issue, 1).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    // The companion reports a working session for the issue.
+    let sessions = CompanionEnvelope {
+        seq: 2,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Sessions {
+            sessions: vec![rubato_protocol::SessionState {
+                session_id: Some("s-3".into()),
+                companion_id,
+                user: "m0x6A".into(),
+                tmux: None,
+                cwd: "/w".into(),
+                worktree: Some("/w".into()),
+                branch: Some("issue/3-skill".into()),
+                repo: Some(issue.repo.clone()),
+                issue: Some(issue.clone()),
+                status: rubato_protocol::SessionStatus::Working,
+                source: rubato_protocol::StateSource::Hook,
+                last_seen: chrono::Utc::now(),
+                spend_usd: None,
+            }],
+        },
+    };
+    let _ = send(&mut ws, &sessions).await;
+    await_reason(&mut web, "sessions").await;
+    assert_eq!(
+        progress_of(&h, &issue).await.state,
+        ProgressState::Designing
+    );
+
+    // Someone presses Start again during the run: refused, an event, and not Blocked.
+    let r = start(&h, &issue, 1).await;
+    assert_eq!(r.status(), 409, "{}", r.text().await.unwrap());
+    await_reason(&mut web, "cap hit").await;
+    assert_eq!(
+        progress_of(&h, &issue).await.state,
+        ProgressState::Designing
+    );
 }
 
 #[tokio::test]

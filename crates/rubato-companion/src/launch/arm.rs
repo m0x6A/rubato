@@ -1,12 +1,15 @@
 //! The launch arm of the runtime. Order (design §9.1, plan 27): lock the registry → read whether
 //! a session is live for the issue → unlock → log `launch started` → decide and act in
-//! `spawn_blocking` → record a started session → log → send `Launch` → send `Sessions` → wake
-//! reconcile. The lock is never held while git, tmux-ide or tmux run.
+//! `spawn_blocking` → record a started session → log → send `Launch` → send `CapHit` when the
+//! refusal was the attempt limit (`rubato.cap.hit`; an event, not a log line) → send `Sessions`
+//! → wake reconcile. The lock is never held while git, tmux-ide or tmux run.
 
 use super::launcher::Launcher;
 use crate::sessions::Registry;
 use chrono::Utc;
-use rubato_protocol::{CompanionMessage, LaunchCommand, LaunchResult};
+use rubato_protocol::{
+    CapHit, CapKind, CompanionMessage, LaunchCommand, LaunchResult, RefusalReason,
+};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 
@@ -46,7 +49,26 @@ pub async fn on_command(
         );
     }
     tracing::info!(launch_id = %cmd.id, issue = %cmd.issue, outcome = ?std::mem::discriminant(&result), "{}", rubato_protocol::otel::span::LAUNCH);
+    let attempts_used_up = matches!(
+        &result,
+        LaunchResult::Refused {
+            reason: RefusalReason::AttemptLimitReached,
+            ..
+        }
+    );
     let _ = out.send(CompanionMessage::Launch(result));
+    if attempts_used_up {
+        let (value, limit) = (f64::from(cmd.attempt), f64::from(cmd.attempt_limit));
+        tracing::warn!(issue = %cmd.issue, kind = ?CapKind::Attempts, value, limit, "{}", rubato_protocol::otel::event::CAP_HIT);
+        let _ = out.send(CompanionMessage::CapHit(CapHit {
+            issue: cmd.issue.clone(),
+            session_id: None,
+            kind: CapKind::Attempts,
+            value,
+            limit,
+            at: Utc::now(),
+        }));
+    }
     let snap = registry.lock().await.snapshot();
     let _ = out.send(CompanionMessage::Sessions { sessions: snap });
     let _ = poll_tx.send(());
@@ -59,7 +81,7 @@ mod tests {
     use crate::kernel::telemetry::capture;
     use crate::kernel::tmux::Tmux;
     use crate::kernel::tmux_ide::TmuxIde;
-    use rubato_protocol::{IssueRef, RefusalReason};
+    use rubato_protocol::IssueRef;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
