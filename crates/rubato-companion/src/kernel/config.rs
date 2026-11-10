@@ -146,7 +146,8 @@ pub struct State {
     pub server_url: String,
     pub user: String,
     pub pairing_token: String,
-    /// Last companion sequence number sent; resumes from here.
+    /// Not used: the sequence is reserved in `seq.json`, which the running companion owns. Kept
+    /// so existing state files still parse.
     #[serde(default)]
     pub last_seq: u64,
     /// Last server sequence acknowledged.

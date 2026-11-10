@@ -60,24 +60,15 @@ async fn given_daemon(w: &mut RubatoWorld) {
 #[when("the companion pairs with the server")]
 async fn when_pair(w: &mut RubatoWorld) {
     let s = w.server().clone();
-    let paired = rubato_companion::pairing::pair(
+    // The same step `rubato-companion pair` runs.
+    rubato_companion::pairing::pair_and_save(
+        &w.state_dir,
         &s.url,
-        Uuid::new_v4(),
         "testhost",
         "0.1.0-test",
         |start| assert_eq!(start.user_code, "ABCD-1234"),
     )
     .await
-    .unwrap();
-    State {
-        companion_id: Uuid::new_v4(),
-        server_url: s.url.clone(),
-        user: paired.user,
-        pairing_token: paired.token,
-        last_seq: 0,
-        last_server_seq: 0,
-    }
-    .save(&w.state_dir)
     .unwrap();
 }
 
@@ -161,6 +152,76 @@ async fn then_returns_ok(w: &mut RubatoWorld, secs: u64) {
         .unwrap_or_else(|_| panic!("the daemon did not return within {secs} s"));
     r.expect("the runtime task panicked")
         .expect("the runtime returned an error");
+}
+
+#[when("the companion is shut down and started again")]
+async fn when_restarted(w: &mut RubatoWorld) {
+    w.shutdown
+        .take()
+        .expect("daemon started")
+        .send(true)
+        .unwrap();
+    let join = w.join.take().expect("daemon started");
+    tokio::time::timeout(Duration::from_secs(5), join)
+        .await
+        .expect("the daemon stopped")
+        .expect("the runtime task panicked")
+        .expect("the runtime returned an error");
+    w.start_daemon().await;
+}
+
+#[then("the second hello has a sequence number above every one the server saw before it")]
+async fn then_second_hello_is_above(w: &mut RubatoWorld) {
+    let server = w.server().clone();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        {
+            let got = server.received.lock().await;
+            let second = got
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| matches!(e.message, CompanionMessage::Hello { .. }))
+                .map(|(i, _)| i)
+                .nth(1);
+            if let Some(second) = second {
+                let before = got[..second].iter().map(|e| e.seq).max().unwrap();
+                assert!(
+                    got[second].seq > before,
+                    "the second hello has seq {} but the server had already seen seq {before}: \
+                     rubato-server would drop it as a replay",
+                    got[second].seq
+                );
+                return;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no second hello within 10 s"
+        );
+        let _ = tokio::time::timeout(Duration::from_millis(200), server.notify.notified()).await;
+    }
+}
+
+#[then("the reservation in the state dir covers every sequence number the server saw")]
+async fn then_reservation_covers(w: &mut RubatoWorld) {
+    let path = w.state_dir.join("seq.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let file: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let reserved_to = file["reserved_to"].as_u64().expect("reserved_to");
+    let highest = w
+        .server()
+        .received
+        .lock()
+        .await
+        .iter()
+        .map(|e| e.seq)
+        .max()
+        .expect("the server received something");
+    assert!(
+        reserved_to >= highest,
+        "reserved_to {reserved_to} is below a sequence number already sent ({highest})"
+    );
 }
 
 #[then(expr = "the companion logs no {string} event")]
