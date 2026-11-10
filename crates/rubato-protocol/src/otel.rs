@@ -11,6 +11,8 @@ pub mod attr {
     pub const SESSION_ID: &str = "rubato.session_id";
     pub const SESSION_SOURCE: &str = "rubato.session.source";
     pub const SESSION_STATE: &str = "rubato.session.state";
+    /// The derived progress state on `rubato.issues.by_state`.
+    pub const ISSUE_STATE: &str = "rubato.issue.state";
     pub const COMPANION_ID: &str = "rubato.companion_id";
     pub const USER: &str = "rubato.user";
     pub const HOOK_EVENT: &str = "rubato.hook_event";
@@ -81,6 +83,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SESSION_ID,
         attr::SESSION_SOURCE,
         attr::SESSION_STATE,
+        attr::ISSUE_STATE,
         attr::COMPANION_ID,
         attr::USER,
         attr::HOOK_EVENT,

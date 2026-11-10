@@ -34,6 +34,7 @@ rand = "0.9"
 url = "2"
 
 [dev-dependencies]
+opentelemetry_sdk = { version = "=0.33.0", features = ["testing"] }
 cucumber = { version = "0.23", features = ["macros"] }
 tempfile = "3"
 axum = { version = "0.8", features = ["ws"] }
