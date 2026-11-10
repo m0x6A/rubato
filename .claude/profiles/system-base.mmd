@@ -1,0 +1,27 @@
+flowchart LR
+    classDef affected fill:#E7EDFB,stroke:#2F5BD3,stroke-width:2px,color:#13244F
+    classDef new fill:#DFF2EA,stroke:#0F8A6A,stroke-width:2px,color:#0A3A2C
+    classDef quiet fill:#FFFFFF,stroke:#A7B0BC,stroke-width:1px,color:#3F4855
+    classDef ext fill:#F2F4F7,stroke:#A7B0BC,stroke-width:1px,stroke-dasharray:4 3,color:#3F4855
+    classDef ok fill:#FFFFFF,stroke:#1B2330,stroke-width:1.5px,color:#1B2330
+    classDef err fill:#FBE8EC,stroke:#C2334D,stroke-width:1.5px,color:#5A1424
+
+    Dev([developer]):::quiet --> Web[web]:::quiet
+    subgraph team [Team · one rubato-server]
+        Srv[rubato-server]:::quiet --> Db[(sqlite)]:::quiet
+        Web -- web-server · REST + ws --> Srv
+    end
+    subgraph machine [Developer machine]
+        Comp[rubato-companion]:::quiet
+        Tide[tmux-ide · tmux]:::ext
+        CC[claude-code]:::ext
+        Comp -- companion-tmux-ide --> Tide
+        Comp -- companion-claude-code · hooks --> CC
+    end
+    Comp -- companion-server · ws --> Srv
+    Srv -- server-github · REST --> GH[github]:::ext
+    Proto[rubato-protocol]:::quiet -. types .-> Srv
+    Proto -. types .-> Comp
+    Proto -. generated TS .-> Web
+    Skill[skill-rubato]:::quiet -- skill-plan-file --> GH
+    Check[plan-check]:::quiet -- plan-check-plan-file --> GH
