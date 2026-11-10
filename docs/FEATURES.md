@@ -6,4 +6,4 @@ Features that went through the feature workflow, newest first. Full track: a `de
 
 | Feature | Track | Status | Date | What it changes |
 |---|---|---|---|---|
-| [#20 Refactor codebase to use vertical slices](plans/20-vertical-slices/design.md) · [plan](plans/20.md) | full | approved | 2026-11-08 | server, companion, web and protocol reorganised into capability slices with a kernel and a composition root; skill and plan-check documented as already sliced |
+| [#20 Refactor codebase to use vertical slices](plans/20-vertical-slices/design.md) · [plan](plans/20.md) | full | implemented | 2026-11-08 | server, companion, web and protocol reorganised into capability slices with a kernel and a composition root; skill and plan-check documented as already sliced |
