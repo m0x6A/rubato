@@ -66,6 +66,9 @@ pub struct Registry {
     pub user: String,
     /// Every slice that adds an `impl Registry` block reads this vector (design D7).
     pub(crate) entries: Vec<Entry>,
+    /// The issue of the launch in flight, if any. Discovery adds no entry for it: the launch
+    /// arm records the session itself, so the server never sees it as a discovered one first.
+    pub(crate) launching: Option<IssueRef>,
 }
 
 impl Registry {
@@ -74,6 +77,7 @@ impl Registry {
             companion_id,
             user: user.into(),
             entries: Vec::new(),
+            launching: None,
         }
     }
 

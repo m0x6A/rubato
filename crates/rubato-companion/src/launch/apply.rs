@@ -27,6 +27,18 @@ impl Registry {
             })
     }
 
+    /// A launch is about to run without the lock: note its issue so discovery leaves the new pane
+    /// to `apply_launch`, and say whether a session is already live for it.
+    pub fn begin_launch(&mut self, issue: &IssueRef) -> Option<LiveSession> {
+        self.launching = Some(issue.clone());
+        self.live_for_issue(issue)
+    }
+
+    /// The launch returned, whatever its result: discovery sees the issue's panes again.
+    pub fn end_launch(&mut self) {
+        self.launching = None;
+    }
+
     /// A launch we performed: identity is known before the first hook. The registry is not
     /// locked while the launch runs, so reconcile may already have added the new pane: an entry
     /// on the pane with no session id, in the launch's worktree, is upgraded in place. A tmux
@@ -152,6 +164,80 @@ mod tests {
                 .all(|e| !e.ended && e.status != SessionStatus::Ended),
             "no Ended entry"
         );
+    }
+
+    /// A real repository on an issue branch, so `identify` reads the issue from it.
+    fn repo_on_issue_branch(dir: &Path, branch: &str) {
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/m0x6A/rubato.git",
+        ]);
+        git(&["checkout", "-q", "-b", branch]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ]);
+    }
+
+    #[test]
+    fn discovery_leaves_the_pane_of_a_launch_in_flight_alone() {
+        let now = Utc.with_ymd_and_hms(2026, 11, 10, 12, 0, 0).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let cmd = command();
+        repo_on_issue_branch(dir.path(), &cmd.branch);
+        let panes = [Pane {
+            session: "rubato-27".into(),
+            window: 0,
+            pane_id: "%7".into(),
+            cwd: dir.path().to_path_buf(),
+            current_command: "claude".into(),
+            pid: 1,
+        }];
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+
+        assert_eq!(r.begin_launch(&cmd.issue), None);
+        r.apply_panes(&panes, now);
+        assert!(
+            r.snapshot().is_empty(),
+            "no discovered session for the issue while its launch runs: {:?}",
+            r.snapshot()
+        );
+
+        r.end_launch();
+        r.apply_launch(&cmd, "%7", "rubato-27", dir.path(), now);
+        let snap = r.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].source, StateSource::Launch);
+        assert_eq!(snap[0].issue, Some(cmd.issue.clone()));
+
+        // A launch that failed leaves nothing behind: discovery sees the pane again.
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        r.begin_launch(&cmd.issue);
+        r.end_launch();
+        r.apply_panes(&panes, now);
+        assert_eq!(r.snapshot().len(), 1);
+        assert_eq!(r.snapshot()[0].issue, Some(cmd.issue));
     }
 
     #[test]
