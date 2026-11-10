@@ -43,6 +43,8 @@ pub mod metric {
     pub const SEAM_OPEN_PLANS: &str = "rubato.seam.open_plans";
     pub const MAP_LOADED: &str = "rubato.map.loaded";
     pub const MAP_LOAD_FAILURES: &str = "rubato.map.load_failures";
+    /// Unix seconds of the last successful map load; the "Map age" panel is `time()` minus this.
+    pub const MAP_LOADED_AT: &str = "rubato.map.loaded_at";
     pub const WS_CLIENTS: &str = "rubato.ws.clients";
     /// One per server poll tick; `ServerPollSilent` fires when it stops.
     pub const POLL_TICKS: &str = "rubato.poll.ticks";
@@ -106,6 +108,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SEAM_OPEN_PLANS,
         metric::MAP_LOADED,
         metric::MAP_LOAD_FAILURES,
+        metric::MAP_LOADED_AT,
         metric::WS_CLIENTS,
         metric::POLL_TICKS,
         span::LAUNCH,

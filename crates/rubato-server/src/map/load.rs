@@ -3,7 +3,7 @@
 use super::store;
 use crate::kernel::state::{App, LoadedMap};
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::SystemMap;
 use rubato_protocol::otel::attr;
@@ -44,7 +44,9 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
             }
         }
     };
-    let map: SystemMap = serde_yaml_ng::from_str(&yaml).context("system-map.yml does not parse")?;
+    let map: SystemMap = serde_yaml_ng::from_str(&yaml)
+        .context("system-map.yml does not parse")
+        .inspect_err(|_| app.metrics.map_load_failures.add(1, &[]))?;
     if let Err(errors) = map.validate() {
         app.metrics.map_load_failures.add(1, &[]);
         anyhow::bail!(
@@ -66,6 +68,7 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
     app.metrics
         .map_loaded
         .record(1, &[KeyValue::new(attr::MAP_VERSION, version.clone())]);
+    record_loaded_at(app, loaded.loaded_at);
     tracing::info!(version = %version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
     Ok(loaded)
 }
@@ -74,8 +77,11 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
 async fn load_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> {
     let yaml = tokio::fs::read_to_string(file)
         .await
-        .with_context(|| format!("reading {}", file.display()))?;
-    let map: SystemMap = serde_yaml_ng::from_str(&yaml).context("system-map.yml does not parse")?;
+        .with_context(|| format!("reading {}", file.display()))
+        .inspect_err(|_| app.metrics.map_load_failures.add(1, &[]))?;
+    let map: SystemMap = serde_yaml_ng::from_str(&yaml)
+        .context("system-map.yml does not parse")
+        .inspect_err(|_| app.metrics.map_load_failures.add(1, &[]))?;
     if let Err(errors) = map.validate() {
         app.metrics.map_load_failures.add(1, &[]);
         anyhow::bail!(
@@ -107,6 +113,7 @@ async fn load_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> 
     app.metrics
         .map_loaded
         .record(1, &[KeyValue::new(attr::MAP_VERSION, version.clone())]);
+    record_loaded_at(app, loaded.loaded_at);
     tracing::info!(version = %version, file = %file.display(), "map loaded from file");
     Ok(loaded)
 }
@@ -120,6 +127,114 @@ pub async fn warm(app: &App) -> Result<()> {
             version,
             loaded_at,
         });
+        // The stored time, so a restart during a GitHub outage shows the real age.
+        record_loaded_at(app, loaded_at);
     }
     Ok(())
+}
+
+/// `rubato.map.loaded_at`: unix seconds of the load. A failed reload records nothing, so the
+/// gauge keeps its value and "Map age" keeps growing.
+fn record_loaded_at(app: &App, at: DateTime<Utc>) {
+    app.metrics
+        .map_loaded_at
+        .record(u64::try_from(at.timestamp()).unwrap_or(0), &[]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::config::Config;
+    use crate::kernel::db::connect;
+    use crate::kernel::github::FakeGitHub;
+    use crate::kernel::state::AppState;
+    use crate::kernel::telemetry::metric_reader;
+    use rubato_protocol::otel::metric;
+    use std::sync::Arc;
+
+    const MAP: &str = include_str!("../../../../docs/design/rubato-map.yml");
+
+    /// An app whose instruments are read by the returned reader.
+    async fn app(cfg: Config, github: Arc<FakeGitHub>) -> (App, metric_reader::Reader) {
+        let pool = connect(&cfg.database_url).await.unwrap();
+        let (reader, metrics) = metric_reader::start();
+        let mut app = AppState::new(pool, cfg, github);
+        Arc::get_mut(&mut app).unwrap().metrics = metrics;
+        (app, reader)
+    }
+
+    #[track_caller]
+    fn only(reader: &metric_reader::Reader, name: &str) -> metric_reader::Point {
+        let points = reader.points(name);
+        assert_eq!(points.len(), 1, "{name}: {points:?}");
+        points.into_iter().next().unwrap()
+    }
+
+    #[tokio::test]
+    async fn loaded_at_follows_loads_and_survives_failures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let github = Arc::new(FakeGitHub::new());
+        github.with(|g| {
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    "docs/design/rubato-map.yml".into(),
+                    "main".into(),
+                ),
+                MAP.into(),
+            );
+            g.branches
+                .insert("m0x6A/rubato".into(), vec![("main".into(), "sha1".into())]);
+        });
+        let cfg = Config::for_tests(db_url.clone(), "m0x6A");
+
+        // (a) A load records its time, in unix seconds, with no unit and no attributes.
+        let (a, reader) = app(cfg.clone(), github.clone()).await;
+        let loaded = reload(&a).await.unwrap();
+        let at = u64::try_from(loaded.loaded_at.timestamp()).unwrap();
+        let point = only(&reader, metric::MAP_LOADED_AT);
+        assert_eq!(point.value, at);
+        assert_eq!(point.unit, "");
+        assert!(point.attrs.is_empty(), "{point:?}");
+        assert!(reader.points(metric::MAP_LOAD_FAILURES).is_empty());
+
+        // (b) The ref goes away: the cached map stays, the gauge keeps its value on the next
+        // collection, and the failure is counted.
+        github.with(|g| g.branches.clear());
+        let kept = reload(&a).await.unwrap();
+        assert_eq!(kept.loaded_at, loaded.loaded_at);
+        assert_eq!(only(&reader, metric::MAP_LOADED_AT).value, at);
+        assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
+
+        // (c) A fresh server on the same database reports the stored time after `warm`.
+        let (b, reader) = app(cfg, github).await;
+        assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
+        warm(&b).await.unwrap();
+        assert_eq!(only(&reader, metric::MAP_LOADED_AT).value, at);
+
+        // (d) A map file that cannot be read, then one that does not parse: each is counted and
+        // neither sets the gauge.
+        let file = tmp.path().join("system-map.yml");
+        let mut cfg = Config::for_tests(
+            format!("sqlite://{}/file.db?mode=rwc", tmp.path().display()),
+            "m0x6A",
+        );
+        cfg.map_file = Some(file.clone());
+        let (c, reader) = app(cfg, Arc::new(FakeGitHub::new())).await;
+        assert!(reload(&c).await.is_err());
+        assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
+        std::fs::write(&file, "nodes: [unclosed").unwrap();
+        assert!(reload(&c).await.is_err());
+        assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 2);
+        assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
+
+        // The file is fixed: the load records its time.
+        std::fs::write(&file, MAP).unwrap();
+        let loaded = reload(&c).await.unwrap();
+        assert_eq!(
+            only(&reader, metric::MAP_LOADED_AT).value,
+            u64::try_from(loaded.loaded_at.timestamp()).unwrap()
+        );
+    }
 }
