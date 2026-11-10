@@ -10,8 +10,8 @@ variable names.
 | --- | --- | --- |
 | SSH host (alias in `~/.ssh/config`) | `apps` | 2026-11-10 |
 | Stacks folder | `/opt/stacks` (`DOCKGE_STACKS_DIR`) | 2026-11-10 |
-| Dockge UI | `http://apps:5001` | 2026-11-10 |
-| Host name apps are reached on | `apps` | 2026-11-10 |
+| Dockge UI | `http://192.168.50.49:5001` | 2026-11-10 |
+| Host name apps are reached on | `192.168.50.49` (`apps` resolves only to an IPv6 link-local address from the dev machine) | 2026-11-10 |
 | Helper CLI | `apps` (`/usr/local/bin/apps`); its `deploy` pulls, so not used for this stack | 2026-11-10 |
 | Stacks in git | no | 2026-11-10 |
 | Logged in to ghcr.io on the host | no | 2026-11-10 |
@@ -23,7 +23,7 @@ variable names.
 
 | Fact | Value |
 | --- | --- |
-| Image source | local, built here and sent with `docker pussh` (unregistry) |
+| Image source | local, built here and sent with `docker save | ssh apps docker load` (unregistry is not installed here) |
 | Image | `local/rubato` |
 | Platform | `linux/amd64` |
 
@@ -44,3 +44,4 @@ Dockge's **Update** button pulls and must not be used for this stack; redeploy w
 
 | Date | Tag | Commit | Previous tag | Result |
 | --- | --- | --- | --- | --- |
+| 2026-11-10 | `sha-df0e692` | `df0e692` | — (first deploy) | healthy, 200 on `/api/health` from the LAN, map loaded, logs clean |
