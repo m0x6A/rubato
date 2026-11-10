@@ -57,6 +57,9 @@ impl Registry {
                 continue;
             }
             let id = identify(&p.cwd);
+            if id.issue.is_some() && id.issue == self.launching {
+                continue;
+            }
             self.entries.push(Entry {
                 session_id: None,
                 pane_id: Some(p.pane_id.clone()),
@@ -126,6 +129,9 @@ impl Registry {
             }
             let cwd = a.dir.as_deref().map(PathBuf::from).unwrap_or_default();
             let id = identify(&cwd);
+            if id.issue.is_some() && id.issue == self.launching {
+                continue;
+            }
             self.entries.push(Entry {
                 session_id: None,
                 pane_id: Some(a.pane_id.clone()),

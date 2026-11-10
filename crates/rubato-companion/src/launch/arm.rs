@@ -17,7 +17,7 @@ pub async fn on_command(
     out: &mpsc::UnboundedSender<CompanionMessage>,
     poll_tx: &mpsc::UnboundedSender<()>,
 ) {
-    let live = registry.lock().await.live_for_issue(&cmd.issue);
+    let live = registry.lock().await.begin_launch(&cmd.issue);
     tracing::info!(launch_id = %cmd.id, issue = %cmd.issue, "launch started");
     let blocking = tokio::task::spawn_blocking({
         let launcher = launcher.clone();
@@ -36,14 +36,12 @@ pub async fn on_command(
             None,
         ),
     };
-    if let Some(s) = started {
-        registry.lock().await.apply_launch(
-            cmd,
-            &s.pane_id,
-            &s.tmux_session,
-            &s.worktree,
-            Utc::now(),
-        );
+    {
+        let mut reg = registry.lock().await;
+        reg.end_launch();
+        if let Some(s) = started {
+            reg.apply_launch(cmd, &s.pane_id, &s.tmux_session, &s.worktree, Utc::now());
+        }
     }
     tracing::info!(launch_id = %cmd.id, issue = %cmd.issue, outcome = ?std::mem::discriminant(&result), "{}", rubato_protocol::otel::span::LAUNCH);
     let _ = out.send(CompanionMessage::Launch(result));
