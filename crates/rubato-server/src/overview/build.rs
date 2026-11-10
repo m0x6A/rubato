@@ -6,8 +6,9 @@ use crate::kernel::state::LoadedMap;
 use crate::plans::PlanRow;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{
-    DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, Plan, Progress,
-    ProgressInputs, ProgressState, PullRequestState, SessionState, derive_progress,
+    CapKind, DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, Plan,
+    Progress, ProgressInputs, ProgressState, PullRequestState, SessionState, SessionStatus,
+    derive_progress,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -18,7 +19,8 @@ pub struct OverviewInputs {
     pub prs: HashMap<IssueRef, PullRequestState>,
     pub decisions: Vec<DecisionRecord>,
     pub launched: HashSet<IssueRef>,
-    pub cap_hits: HashSet<IssueRef>,
+    /// The live cap hit per issue, by kind.
+    pub cap_hits: HashMap<IssueRef, CapKind>,
     pub meta: HashMap<IssueRef, IssueMeta>,
     pub launch_map_versions: Vec<(IssueRef, String)>,
 }
@@ -35,6 +37,17 @@ fn seams_touched(plan: &Plan) -> BTreeSet<&str> {
         .flat_map(|p| p.seams.iter().map(String::as_str))
         .chain(plan.o_rows.iter().map(|o| o.seam.as_str()))
         .collect()
+}
+
+/// Whether the live cap hit blocks the issue. A spend hit always does (its session is being
+/// killed). An attempts hit is a refused *Start*: while a session for the issue is live, the
+/// state stays what that session says.
+fn cap_hit_blocks(kind: Option<CapKind>, sessions: &[SessionState]) -> bool {
+    match kind {
+        Some(CapKind::Spend) => true,
+        Some(CapKind::Attempts) => sessions.iter().all(|s| s.status == SessionStatus::Ended),
+        None => false,
+    }
 }
 
 pub fn build(
@@ -81,7 +94,7 @@ pub fn build(
             launched: inputs.launched.contains(issue),
             sessions: &sessions,
             has_plan: plan.is_some(),
-            cap_hit: inputs.cap_hits.contains(issue),
+            cap_hit: cap_hit_blocks(inputs.cap_hits.get(issue).copied(), &sessions),
             pr,
             now,
             session_stale_secs: limits.session_stale_secs,
@@ -223,7 +236,7 @@ pub fn counts(built: &Built) -> (BTreeMap<ProgressState, usize>, BTreeMap<String
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use rubato_protocol::{AffectedPart, ORow, PartStatus, SessionStatus, StateSource, SystemMap};
+    use rubato_protocol::{AffectedPart, ORow, PartStatus, StateSource, SystemMap};
     use uuid::Uuid;
 
     fn now() -> DateTime<Utc> {
@@ -301,7 +314,7 @@ mod tests {
             prs: HashMap::new(),
             decisions: vec![],
             launched: HashSet::new(),
-            cap_hits: HashSet::new(),
+            cap_hits: HashMap::new(),
             meta: HashMap::new(),
             launch_map_versions: vec![],
         }
@@ -342,6 +355,40 @@ mod tests {
         let (by_state, by_seam) = counts(&built);
         assert_eq!(by_state[&ProgressState::Building], 1);
         assert_eq!(by_seam["companion-server"], 1);
+    }
+
+    #[test]
+    fn an_attempts_cap_hit_blocks_only_without_a_live_session_and_spend_always() {
+        let a = IssueRef::new("o/r", 1);
+        let state = |kind: CapKind, status: Option<SessionStatus>| {
+            let mut inputs = empty();
+            inputs.launched = HashSet::from([a.clone()]);
+            inputs.cap_hits = HashMap::from([(a.clone(), kind)]);
+            inputs.sessions = status
+                .map(|s| session(&a, s, StateSource::Hook))
+                .into_iter()
+                .collect();
+            let built = build(&inputs, None, &Limits::default(), now());
+            built.issues[0].progress.state
+        };
+        let working = Some(SessionStatus::Working);
+        let ended = Some(SessionStatus::Ended);
+        let cases = [
+            (CapKind::Attempts, working, ProgressState::Designing),
+            (CapKind::Attempts, ended, ProgressState::Blocked),
+            (CapKind::Attempts, None, ProgressState::Blocked),
+            (CapKind::Spend, working, ProgressState::Blocked),
+            (CapKind::Spend, ended, ProgressState::Blocked),
+            (CapKind::Spend, None, ProgressState::Blocked),
+        ];
+        for (kind, status, want) in cases {
+            assert_eq!(
+                state(kind, status),
+                want,
+                "{kind:?} with session {status:?}"
+            );
+        }
+        println!("checked {} cap hit cases", cases.len());
     }
 
     #[test]

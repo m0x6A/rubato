@@ -9,5 +9,18 @@ Feature: Refusing a launch for another user
     And the companion daemon is running and connected
     When the server sends a launch for user "alice" on issue 7 of "acme/pantry" with slug "restock"
     Then the server receives a launch result "refused" with reason "not_paired_user"
+    And right after that launch result the server receives a sessions snapshot
+    And no worktree exists for branch "issue/7-restock" of "acme/pantry"
+    And no tmux session exists for "acme/pantry" branch "issue/7-restock"
+
+  Scenario: A launch past the attempt limit is refused and is a cap hit
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And a temporary repository "acme/pantry" with a bare origin
+    And the companion daemon is running and connected
+    When the server sends a launch for user "m0x6A" on issue 7 of "acme/pantry" with slug "restock" as attempt 4 of 3
+    Then the server receives a launch result "refused" with reason "attempt_limit_reached"
+    And right after that launch result the server receives a cap hit of kind "attempts" for issue 7 of "acme/pantry", then a sessions snapshot
+    And the companion logs "rubato.cap.hit"
     And no worktree exists for branch "issue/7-restock" of "acme/pantry"
     And no tmux session exists for "acme/pantry" branch "issue/7-restock"

@@ -3,9 +3,9 @@
 use crate::kernel::db::ts;
 use anyhow::Result;
 use chrono::Utc;
-use rubato_protocol::{CapHit, IssueRef, LaunchCommand, LaunchResult};
+use rubato_protocol::{CapHit, CapKind, IssueRef, LaunchCommand, LaunchResult};
 use sqlx::{Row, SqlitePool};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub async fn store_launch(db: &SqlitePool, companion_id: Uuid, cmd: &LaunchCommand) -> Result<()> {
@@ -84,18 +84,20 @@ pub async fn store_cap_hit(db: &SqlitePool, hit: &CapHit) -> Result<()> {
     Ok(())
 }
 
-/// Issues with a cap hit newer than their latest launch (or any cap hit when never launched).
-pub async fn issues_with_live_cap_hit(db: &SqlitePool) -> Result<HashSet<IssueRef>> {
-    let rows = sqlx::query("SELECT c.repo, c.number, MAX(c.at) AS hit_at, (SELECT MAX(created_at) FROM launches l WHERE l.repo = c.repo AND l.number = c.number) AS launch_at FROM cap_hits c GROUP BY c.repo, c.number").fetch_all(db).await?;
-    Ok(rows
-        .iter()
-        .filter(|r| {
-            let hit: String = r.get("hit_at");
-            match r.get::<Option<String>, _>("launch_at") {
-                Some(l) => hit >= l,
-                None => true,
-            }
-        })
-        .map(|r| IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64))
-        .collect())
+/// Issues with a cap hit newer than their latest launch (or any cap hit when never launched),
+/// each with the kind of that hit. When hits of both kinds are live the issue reads as `Spend`,
+/// the kind that blocks whatever the sessions say; so does a payload that does not parse.
+pub async fn issues_with_live_cap_hit(db: &SqlitePool) -> Result<HashMap<IssueRef, CapKind>> {
+    let rows = sqlx::query("SELECT c.repo, c.number, c.payload FROM cap_hits c WHERE c.at >= COALESCE((SELECT MAX(created_at) FROM launches l WHERE l.repo = c.repo AND l.number = c.number), '')").fetch_all(db).await?;
+    let mut live = HashMap::new();
+    for r in &rows {
+        let issue = IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64);
+        let kind = serde_json::from_str::<CapHit>(&r.get::<String, _>("payload"))
+            .map_or(CapKind::Spend, |hit| hit.kind);
+        let entry = live.entry(issue).or_insert(kind);
+        if kind == CapKind::Spend {
+            *entry = CapKind::Spend;
+        }
+    }
+    Ok(live)
 }
