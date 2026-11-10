@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use rubato_protocol::pairing::{
     PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse,
 };
-use rubato_protocol::web::{PairApproveRequest, PairingInfo};
+use rubato_protocol::{PairApproveRequest, PairingInfo};
 use uuid::Uuid;
 
 const SLICE: &str = "pairing";
