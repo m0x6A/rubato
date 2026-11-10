@@ -1,5 +1,5 @@
-import { STATE_LABEL, issueKey, relative } from "../graph.ts";
-import type { IssueRef, IssueSummary, Me, Overview, PinRequest } from "../protocol.ts";
+import type { IssueRef, IssueSummary, Me, Overview, PinRequest } from "../../protocol.ts";
+import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
 
 interface Props {
   overview: Overview;

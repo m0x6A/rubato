@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { MapView } from "../src/components/MapView.tsx";
-import { buildGraph } from "../src/graph.ts";
-import { overview, realMap } from "./fixtures.ts";
+import { overview, realMap } from "../../../test/fixtures.ts";
+import { buildGraph } from "./graph.ts";
+import { MapView } from "./MapView.tsx";
 
 describe("MapView", () => {
   it("renders a card for every node of rubato-map.yml", async () => {

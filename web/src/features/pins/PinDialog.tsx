@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
-import { parseIssueKey } from "../graph.ts";
-import type { PinRequest, SystemMap } from "../protocol.ts";
+import type { PinRequest, SystemMap } from "../../protocol.ts";
+import { parseIssueKey } from "../../shared/format.ts";
 
 interface Props {
   map: SystemMap;

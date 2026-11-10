@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api, subscribe } from "./api.ts";
-import { CompanionsPanel } from "./components/CompanionsPanel.tsx";
-import { Findings } from "./components/Findings.tsx";
-import { IssuePanel } from "./components/IssuePanel.tsx";
-import { MapView } from "./components/MapView.tsx";
-import { PinDialog } from "./components/PinDialog.tsx";
-import { buildGraph, issueKey, relative } from "./graph.ts";
+import { LoginPage, authApi } from "./features/auth/index.ts";
+import { CompanionsPanel } from "./features/companions/index.ts";
+import { Findings } from "./features/findings/index.ts";
+import { IssuePanel } from "./features/issues/index.ts";
+import { launchApi, launchNotice } from "./features/launch/index.ts";
+import { liveApi, subscribe } from "./features/live/index.ts";
+import { MapView, buildGraph } from "./features/map/index.ts";
+import { PinDialog, pinsApi } from "./features/pins/index.ts";
 import type { IssueRef, Me, Overview, PinRequest } from "./protocol.ts";
+import { ApiError } from "./shared/api.ts";
+import { issueKey, relative } from "./shared/format.ts";
 
 type Tab = "issues" | "companions";
 
@@ -25,7 +28,7 @@ export function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const ov = await api.overview();
+      const ov = await liveApi.overview();
       setOverview(ov);
       setError(null);
       setRefreshedAt(new Date().toISOString());
@@ -41,7 +44,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    api
+    authApi
       .me()
       .then((m) => {
         setMe(m);
@@ -58,7 +61,7 @@ export function App() {
 
   const onPin = async (req: PinRequest) => {
     try {
-      await api.addPin(req);
+      await pinsApi.addPin(req);
       setPinOpen(false);
       setSelectedIssue(req.issue);
       await refresh();
@@ -69,7 +72,7 @@ export function App() {
 
   const onUnpin = async (req: PinRequest) => {
     try {
-      await api.removePin(req);
+      await pinsApi.removePin(req);
       await refresh();
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -78,8 +81,8 @@ export function App() {
 
   const onLaunch = async (issue: IssueRef) => {
     try {
-      const r = await api.launch({ issue });
-      setNotice(`Launch ${r.command.id.slice(0, 8)} sent to your companion for ${issueKey(issue)} on ${r.command.branch}.`);
+      const r = await launchApi.launch({ issue });
+      setNotice(launchNotice(r, issue));
       await refresh();
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -87,15 +90,7 @@ export function App() {
   };
 
   if (needsLogin) {
-    return (
-      <main className="login">
-        <h1>Rubato</h1>
-        <p>Each developer orchestrates their own agents. Rubato keeps the whole picture.</p>
-        <a className="button" href="/auth/github/login">
-          Log in with GitHub
-        </a>
-      </main>
-    );
+    return <LoginPage />;
   }
 
   const graph = overview ? buildGraph(overview) : null;

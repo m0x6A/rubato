@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from "react";
-import { api } from "../api.ts";
-import { relative } from "../graph.ts";
-import type { Me, PairingInfo } from "../protocol.ts";
+import type { Me, PairingInfo } from "../../protocol.ts";
+import { relative } from "../../shared/format.ts";
+import { companionsApi } from "./api.ts";
 
 interface Props {
   companions: PairingInfo[];
@@ -16,7 +16,7 @@ export function CompanionsPanel({ companions, me, onChanged }: Props) {
   const approve = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      const p = await api.approvePairing({ user_code: code.trim().toUpperCase() });
+      const p = await companionsApi.approvePairing({ user_code: code.trim().toUpperCase() });
       setMsg(`Paired ${p.hostname} as ${p.user}.`);
       setCode("");
       onChanged();
@@ -27,7 +27,7 @@ export function CompanionsPanel({ companions, me, onChanged }: Props) {
 
   const revoke = async (id: string) => {
     try {
-      await api.revokePairing(id);
+      await companionsApi.revokePairing(id);
       onChanged();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err));

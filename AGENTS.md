@@ -123,7 +123,22 @@ spend        transcript cost, spend cap, CapHit                  after each hook
 stale        heartbeat, stale sessions                           heartbeat, sweep (essential)
 ```
 <!-- /slices -->
-<!-- slices: web --> _arrives with PR 3_ <!-- /slices -->
+<!-- slices: web -->
+`web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, selection, handlers);
+`shared/` (`api.ts` request and `ApiError`, `format.ts`); `protocol.ts` (generated); features under
+`features/`, each with an `index.ts`, checked by `features/features.test.ts`:
+
+```text
+live        the overview, kept current over /ws/web              GET /api/overview, /ws/web
+auth        who is logged in, the login page                     GET /api/me, /auth/github/login
+map         the system map: graph, ELK layout, MapView           (none)
+issues      issue list, issue detail, the start-session gate     (none)
+companions  pair a companion with a code, list, revoke your own  POST /api/pair/approve, DELETE /api/pairings/:id
+pins        pin an issue to a node or seam, unpin                POST, DELETE /api/pins
+launch      start a session through your own companion           POST /api/launch
+findings    what the map and the plans disagree about            (none)
+```
+<!-- /slices -->
 <!-- slices: rubato-protocol --> _arrives with PR 4_ <!-- /slices -->
 
 ## The progress model
