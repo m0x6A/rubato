@@ -1,7 +1,7 @@
 //! tmux-ide as a CLI (ADR 0003): `team --json` for reconciliation, `worktree create`,
 //! `adopt`, `events --follow --json` as a change trigger, and the version pin.
 
-use crate::tmux::Tmux;
+use crate::kernel::tmux::Tmux;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn parses_recorded_fleet() {
-        let text = include_str!("../features/fixtures/team.json");
+        let text = include_str!("../../features/fixtures/team.json");
         let f = Fleet::parse(text).unwrap();
         let agents: Vec<&Agent> = f.agents().collect();
         assert!(agents.len() >= 2);

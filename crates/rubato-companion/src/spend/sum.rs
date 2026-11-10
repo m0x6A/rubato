@@ -2,7 +2,7 @@
 //! Prices come from `workspace.yml`; nothing is guessed. The dashboard cross-checks against
 //! `claude_code.cost.usage`.
 
-use crate::config::ModelPrice;
+use crate::kernel::config::ModelPrice;
 use anyhow::Result;
 use serde::Deserialize;
 use std::collections::BTreeMap;

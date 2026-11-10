@@ -126,20 +126,6 @@ impl Tmux {
     pub fn kill_server(&self) {
         let _ = self.cmd().args(["kill-server"]).output();
     }
-
-    /// A pane option such as `@agent_session_id`, if set.
-    pub fn pane_option(&self, pane_id: &str, name: &str) -> Option<String> {
-        let out = self
-            .cmd()
-            .args(["show-options", "-p", "-v", "-t", pane_id, name])
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let v = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-        if v.is_empty() { None } else { Some(v) }
-    }
 }
 
 /// tmux session names may not contain `:` or `.`; `/` would also confuse targets.

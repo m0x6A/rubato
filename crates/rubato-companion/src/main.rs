@@ -1,9 +1,10 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use rubato_companion::config::{HookEndpoint, State, Workspace, state_dir};
-use rubato_companion::daemon::{DaemonConfig, start};
 use rubato_companion::hooks::{HOOKS_TEMPLATE, render_hooks};
-use rubato_companion::{VERSION, pairing, telemetry};
+use rubato_companion::kernel::config::{HookEndpoint, State, Workspace, state_dir};
+use rubato_companion::kernel::telemetry;
+use rubato_companion::runtime::{DaemonConfig, start};
+use rubato_companion::{VERSION, pairing};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -95,10 +96,14 @@ async fn main() -> Result<()> {
                 shutdown_rx,
             )
             .await?;
+            // An essential task ending is an error and a non-zero exit (design D12); Ctrl-C
+            // stops every task and exits 0.
+            let mut join = join;
             tokio::select! {
-                r = join => r??,
+                r = &mut join => r??,
                 _ = tokio::signal::ctrl_c() => {
                     let _ = shutdown_tx.send(true);
+                    join.await??;
                 }
             }
             Ok(())

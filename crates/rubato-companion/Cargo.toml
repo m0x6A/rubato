@@ -40,4 +40,5 @@ axum = { version = "0.8", features = ["ws"] }
 
 [[test]]
 name = "cucumber"
+path = "tests/cucumber/main.rs"
 harness = false

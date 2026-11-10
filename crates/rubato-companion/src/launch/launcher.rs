@@ -2,12 +2,13 @@
 //! one worktree and one tmux session per issue, Claude Code started with `--session-id`,
 //! `--settings` (hooks) and the OTel resource attributes.
 
-use crate::config::{HookEndpoint, Workspace, write_private};
-use crate::gitx;
+use super::script::launcher_script;
 use crate::hooks::{HOOKS_TEMPLATE, render_hooks};
+use crate::kernel::config::{HookEndpoint, Workspace, write_private};
+use crate::kernel::gitx;
+use crate::kernel::tmux::{Tmux, session_name};
+use crate::kernel::tmux_ide::{TmuxIde, version_at_least};
 use crate::sessions::Registry;
-use crate::tmux::{Tmux, session_name};
-use crate::tmux_ide::{TmuxIde, version_at_least};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rubato_protocol::{LaunchCommand, LaunchResult, RefusalReason};
@@ -158,7 +159,7 @@ impl Launcher<'_> {
         let script_path = launch_dir.join("launch.sh");
         std::fs::write(
             &script_path,
-            self.launcher_script(cmd, &worktree, &hooks_path, &prompt_path),
+            launcher_script(self.workspace, cmd, &worktree, &hooks_path, &prompt_path),
         )?;
         let name = session_name(&cmd.issue.repo, &cmd.branch);
         if self.tmux.has_session(&name) {
@@ -176,48 +177,5 @@ impl Launcher<'_> {
             tmux_session: name,
             worktree,
         })
-    }
-
-    fn launcher_script(
-        &self,
-        cmd: &LaunchCommand,
-        worktree: &Path,
-        hooks: &Path,
-        prompt: &Path,
-    ) -> String {
-        let mut s = String::from("#!/bin/sh\n# rubato launch; generated, do not edit\n");
-        s.push_str(&format!("export RUBATO_LAUNCH_ID='{}'\n", cmd.id));
-        if let Some(otel) = &self.workspace.otel {
-            s.push_str("export CLAUDE_CODE_ENABLE_TELEMETRY=1\nexport OTEL_METRICS_EXPORTER=otlp\nexport OTEL_LOGS_EXPORTER=otlp\n");
-            s.push_str(&format!(
-                "export OTEL_EXPORTER_OTLP_ENDPOINT='{}'\n",
-                otel.endpoint
-            ));
-            s.push_str(&format!(
-                "export OTEL_EXPORTER_OTLP_PROTOCOL='{}'\n",
-                otel.protocol.as_deref().unwrap_or("http/protobuf")
-            ));
-        }
-        let attrs: Vec<String> = cmd
-            .otel_resource
-            .iter()
-            .map(|(k, v)| format!("{k}={}", v.replace([',', ' '], "_")))
-            .collect();
-        if !attrs.is_empty() {
-            s.push_str(&format!(
-                "export OTEL_RESOURCE_ATTRIBUTES='{}'\n",
-                attrs.join(",")
-            ));
-        }
-        s.push_str(&format!("cd '{}' || exit 1\n", worktree.display()));
-        s.push_str(&format!(
-            "exec {} --session-id '{}' --settings '{}' --permission-mode '{}' \"$(cat '{}')\"\n",
-            self.workspace.companion.claude_command,
-            cmd.session_id,
-            hooks.display(),
-            self.workspace.companion.permission_mode,
-            prompt.display()
-        ));
-        s
     }
 }
