@@ -3,7 +3,8 @@
  * sessions; seams badged with open plans and collisions. Pure, so it is tested without a DOM.
  */
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
-import type { Finding, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Seam, SessionState, SessionStatus } from "./protocol.ts";
+import type { Finding, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Seam, SessionState, SessionStatus } from "../../protocol.ts";
+import { issueKey } from "../../shared/format.ts";
 
 export type Paint = PartStatus | null;
 
@@ -31,15 +32,6 @@ export interface GraphEdge {
 export interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
-}
-
-export function issueKey(i: IssueRef): string {
-  return `${i.repo}#${i.number}`;
-}
-
-export function parseIssueKey(s: string): IssueRef | null {
-  const m = /^([^\s/#]+\/[^\s/#]+)#(\d+)$/.exec(s.trim());
-  return m ? { repo: m[1] as string, number: Number(m[2]) } : null;
 }
 
 const PAINT_RANK: Record<PartStatus, number> = { quiet: 1, affected: 2, new: 3 };
@@ -168,43 +160,4 @@ export async function layout(graph: Graph): Promise<Map<string, { x: number; y: 
     pos.set(c.id, { x: c.x ?? 0, y: c.y ?? 0 });
   }
   return pos;
-}
-
-export const STATE_LABEL: Record<ProgressState, string> = {
-  planned: "Planned",
-  started: "Started",
-  designing: "Designing",
-  designed: "Designed",
-  building: "Building",
-  blocked: "Blocked",
-  in_review: "In review",
-  done: "Done",
-  unknown: "Unknown",
-};
-
-export function findingText(f: Finding): string {
-  switch (f.kind) {
-    case "unknown_ids":
-      return `${issueKey(f.issue)} names ids the map does not have: ${f.ids.join(", ")}`;
-    case "seam_collision":
-      return `two open plans touch ${f.seam}: ${f.issues.map(issueKey).join(", ")}`;
-    case "plan_parse_error":
-      return `${issueKey(f.issue)}: ${f.path} does not parse: ${f.error}`;
-    case "map_version_mismatch":
-      return `${issueKey(f.issue)} was launched with map ${f.launched_with}; the server holds ${f.current}`;
-  }
-}
-
-export function relative(iso: string, now = Date.now()): string {
-  const secs = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-  if (secs < 60) {
-    return `${secs}s ago`;
-  }
-  if (secs < 3600) {
-    return `${Math.round(secs / 60)}m ago`;
-  }
-  if (secs < 86400) {
-    return `${Math.round(secs / 3600)}h ago`;
-  }
-  return `${Math.round(secs / 86400)}d ago`;
 }

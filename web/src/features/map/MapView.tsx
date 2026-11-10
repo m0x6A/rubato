@@ -1,6 +1,7 @@
 import { Background, Controls, type Edge, Handle, type Node, type NodeProps, Position, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
-import { type Graph, type GraphNode, STATE_LABEL, issueCounts, layout, sessionCounts } from "../graph.ts";
+import { STATE_LABEL } from "../../shared/format.ts";
+import { type Graph, type GraphNode, issueCounts, layout, sessionCounts } from "./graph.ts";
 
 type MapNodeData = { node: GraphNode; selected: boolean };
 type MapFlowNode = Node<MapNodeData, "map">;

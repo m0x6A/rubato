@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildGraph, findingText, issueCounts, layout, parseIssueKey, sessionCounts } from "../src/graph.ts";
-import { issue, overview, realMap } from "./fixtures.ts";
+import { issue, overview, realMap } from "../../../test/fixtures.ts";
+import { parseIssueKey } from "../../shared/format.ts";
+import { findingText } from "../findings/index.ts";
+import { buildGraph, issueCounts, layout, sessionCounts } from "./graph.ts";
 
 describe("buildGraph from docs/design/rubato-map.yml", () => {
   it("has every node and seam of the real map", () => {
