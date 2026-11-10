@@ -24,6 +24,8 @@ pub mod attr {
     pub const DROP_REASON: &str = "rubato.reason";
     pub const SUBSCRIBERS: &str = "rubato.subscribers";
     pub const CAP_KIND: &str = "rubato.cap.kind";
+    /// The background task a `rubato.task.exited` event names.
+    pub const TASK: &str = "rubato.task";
 }
 
 /// Metric instrument names.
@@ -42,6 +44,8 @@ pub mod metric {
     pub const MAP_LOADED: &str = "rubato.map.loaded";
     pub const MAP_LOAD_FAILURES: &str = "rubato.map.load_failures";
     pub const WS_CLIENTS: &str = "rubato.ws.clients";
+    /// One per server poll tick; `ServerPollSilent` fires when it stops.
+    pub const POLL_TICKS: &str = "rubato.poll.ticks";
 }
 
 /// Span names.
@@ -60,6 +64,8 @@ pub mod event {
     pub const SESSION_STALE: &str = "rubato.session.stale";
     pub const CAP_HIT: &str = "rubato.cap.hit";
     pub const PLAN_CHECK: &str = "rubato.plan.check";
+    /// An essential background task returned while shutdown was not requested.
+    pub const TASK_EXITED: &str = "rubato.task.exited";
 }
 
 /// Every name, for the test that checks the namespace and for documentation.
@@ -86,6 +92,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::DROP_REASON,
         attr::SUBSCRIBERS,
         attr::CAP_KIND,
+        attr::TASK,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::SESSIONS_DISCOVERED,
@@ -100,6 +107,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::MAP_LOADED,
         metric::MAP_LOAD_FAILURES,
         metric::WS_CLIENTS,
+        metric::POLL_TICKS,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
@@ -110,6 +118,7 @@ pub fn all_names() -> Vec<&'static str> {
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,
+        event::TASK_EXITED,
     ]
 }
 

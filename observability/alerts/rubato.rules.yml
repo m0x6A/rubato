@@ -60,3 +60,16 @@ groups:
         annotations:
           summary: "GitHub rate limit under 10% ({{ $value | humanizePercentage }})"
           panel: GitHub calls · Rate limit
+
+      # The poll loop ticks at least every 300 s (RUBATO_GITHUB_POLL_SECS is clamped), so ten
+      # minutes without a tick means the loop is dead or hung, or the server is gone (#20, O1).
+      - alert: ServerPollSilent
+        expr: increase(rubato_poll_ticks_total[10m]) == 0 or absent_over_time(rubato_poll_ticks_total[10m])
+        for: 0m
+        labels:
+          severity: page
+          seam: server-github
+          owner: rubato-server
+        annotations:
+          summary: "rubato-server has not completed a poll tick for 10 minutes"
+          panel: Poll ticks

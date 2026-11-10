@@ -2,7 +2,7 @@
 //! (`RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git,...`). Files and branches are real git;
 //! issues, comments and pull requests do not exist here.
 
-use crate::github::{Comment, GitHubApi, IssueInfo, PullInfo};
+use super::{Comment, GitHubApi, IssueInfo, PullInfo};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use rubato_protocol::ChecksStatus;

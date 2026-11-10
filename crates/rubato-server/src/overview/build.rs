@@ -1,8 +1,9 @@
 //! Build the overview: progress per issue (derived, never stored), findings, unpinned sessions.
 //! Pure over the rows the database holds, so it is testable without a server.
 
-use crate::db::{IssueMeta, PlanRow};
-use crate::state::LoadedMap;
+use crate::github_poll::IssueMeta;
+use crate::kernel::state::LoadedMap;
+use crate::plans::PlanRow;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{
     DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, Plan, Progress,

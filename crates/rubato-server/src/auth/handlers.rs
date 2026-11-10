@@ -1,75 +1,20 @@
-//! GitHub OAuth login for the web view and the signed session cookie.
+//! GitHub OAuth login, logout and `me` for the web view.
 
-use crate::db;
-use crate::state::App;
-use anyhow::Result;
-use axum::extract::{FromRequestParts, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts};
+use super::current_user::{COOKIE, cookie_value};
+use super::store;
+use crate::kernel::state::App;
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use hmac::{Hmac, Mac};
 use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope,
     TokenResponse, TokenUrl,
 };
-use rubato_protocol::web::routes;
+use rubato_protocol::web::{Me, routes};
 use serde::Deserialize;
-use sha2::Sha256;
 
-pub const COOKIE: &str = "rubato_session";
 const STATE_COOKIE: &str = "rubato_oauth_state";
-
-/// HMAC-SHA256 signer for cookie values `id.sig`.
-#[derive(Clone)]
-pub struct Signer {
-    key: Vec<u8>,
-}
-
-impl Signer {
-    pub fn new(secret: &[u8]) -> Self {
-        Self {
-            key: secret.to_vec(),
-        }
-    }
-
-    fn mac(&self, id: &str) -> String {
-        let mut m = Hmac::<Sha256>::new_from_slice(&self.key).expect("hmac key");
-        m.update(id.as_bytes());
-        m.finalize()
-            .into_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
-    }
-
-    pub fn sign(&self, id: &str) -> String {
-        format!("{id}.{}", self.mac(id))
-    }
-
-    pub fn verify(&self, value: &str) -> Option<String> {
-        let (id, sig) = value.rsplit_once('.')?;
-        let expected = self.mac(id);
-        // Constant-time compare.
-        if expected.len() != sig.len() {
-            return None;
-        }
-        let diff = expected
-            .bytes()
-            .zip(sig.bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b));
-        (diff == 0).then(|| id.to_owned())
-    }
-}
-
-pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|s| s.split(';'))
-        .filter_map(|kv| kv.trim().split_once('='))
-        .find(|(k, _)| *k == name)
-        .map(|(_, v)| v.to_owned())
-}
 
 fn set_cookie(name: &str, value: &str, max_age: i64, secure: bool) -> HeaderValue {
     let mut s = format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}");
@@ -77,33 +22,6 @@ fn set_cookie(name: &str, value: &str, max_age: i64, secure: bool) -> HeaderValu
         s.push_str("; Secure");
     }
     HeaderValue::from_str(&s).expect("cookie header")
-}
-
-/// The logged-in GitHub login. In dev mode (`RUBATO_DEV_USER`) the header `x-rubato-dev-user`
-/// may name another login, so tests can act as two people.
-#[derive(Debug, Clone)]
-pub struct CurrentUser(pub String);
-
-impl FromRequestParts<App> for CurrentUser {
-    type Rejection = StatusCode;
-
-    async fn from_request_parts(parts: &mut Parts, app: &App) -> Result<Self, Self::Rejection> {
-        if let Some(dev) = &app.config.dev_user {
-            let login = parts
-                .headers
-                .get("x-rubato-dev-user")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned)
-                .unwrap_or_else(|| dev.clone());
-            return Ok(CurrentUser(login));
-        }
-        let value = cookie_value(&parts.headers, COOKIE).ok_or(StatusCode::UNAUTHORIZED)?;
-        let id = app.signer.verify(&value).ok_or(StatusCode::UNAUTHORIZED)?;
-        match db::web_session_login(&app.db, &id).await {
-            Ok(Some(login)) => Ok(CurrentUser(login)),
-            _ => Err(StatusCode::UNAUTHORIZED),
-        }
-    }
 }
 
 type OAuthClient = oauth2::basic::BasicClient<
@@ -226,7 +144,7 @@ pub async fn callback(
             return (StatusCode::BAD_GATEWAY, format!("user lookup failed: {e}")).into_response();
         }
     };
-    if let Err(e) = db::upsert_user(
+    if let Err(e) = store::upsert_user(
         &app.db,
         &user.login,
         Some(user.id),
@@ -236,7 +154,7 @@ pub async fn callback(
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    let id = match db::create_web_session(&app.db, &user.login).await {
+    let id = match store::create_web_session(&app.db, &user.login).await {
         Ok(id) => id,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
@@ -255,7 +173,7 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
     if let Some(v) = cookie_value(&headers, COOKIE)
         && let Some(id) = app.signer.verify(&v)
     {
-        let _ = db::delete_web_session(&app.db, &id).await;
+        let _ = store::delete_web_session(&app.db, &id).await;
     }
     let mut res = StatusCode::NO_CONTENT.into_response();
     res.headers_mut().append(
@@ -265,29 +183,9 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
     res
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn signer_round_trips_and_rejects_tampering() {
-        let s = Signer::new(b"secret");
-        let v = s.sign("abc");
-        assert_eq!(s.verify(&v).as_deref(), Some("abc"));
-        let mut t = v.clone();
-        t.replace_range(0..1, "x");
-        assert_eq!(s.verify(&t), None);
-        assert_eq!(Signer::new(b"other").verify(&v), None);
-    }
-
-    #[test]
-    fn reads_a_cookie_among_many() {
-        let mut h = HeaderMap::new();
-        h.insert(
-            header::COOKIE,
-            HeaderValue::from_static("a=1; rubato_session=x.y; b=2"),
-        );
-        assert_eq!(cookie_value(&h, COOKIE).as_deref(), Some("x.y"));
-        assert_eq!(cookie_value(&h, "zzz"), None);
-    }
+pub async fn me(super::CurrentUser(login): super::CurrentUser) -> Json<Me> {
+    Json(Me {
+        login,
+        avatar_url: None,
+    })
 }

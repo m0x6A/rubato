@@ -93,8 +93,9 @@ async function main() {
   const pantry = makeRepo("acme/pantry");
   log("repos ready: acme/auth (auth provider), acme/pantry (consumer); map at " + `${T}/map/system-map.yml`);
 
-  // 2. An OTLP receiver: counts posts per path and remembers which rubato.* names it saw.
-  const otlp = { posts: new Map<string, number>(), names: new Set<string>() };
+  // 2. An OTLP receiver: counts posts per path and remembers which rubato.* names it saw, and
+  //    which metric names each binary exported (keyed by the service.name string in the body).
+  const otlp = { posts: new Map<string, number>(), names: new Set<string>(), metrics: new Map<string, Set<string>>() };
   const receiver = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c) => chunks.push(c));
@@ -103,6 +104,14 @@ async function main() {
       otlp.posts.set(req.url ?? "?", (otlp.posts.get(req.url ?? "?") ?? 0) + 1);
       for (const m of body.matchAll(/rubato\.[a-z_.]+/g)) {
         otlp.names.add(m[0]);
+      }
+      const service = ["rubato-server", "rubato-companion"].find((n) => body.includes(n));
+      if (req.url === "/v1/metrics" && service) {
+        const seen = otlp.metrics.get(service) ?? new Set<string>();
+        for (const m of body.matchAll(/rubato\.[a-z_.]+/g)) {
+          seen.add(m[0]);
+        }
+        otlp.metrics.set(service, seen);
       }
       res.writeHead(200, { "content-type": "application/x-protobuf" }).end();
     });
@@ -289,8 +298,32 @@ async function main() {
   if (checkOut.code !== 0 || !summary.includes("checked 3 plan(s)")) {
     problems.push(`plan check over the pushed plans failed: ${checkOut.out}`);
   }
-  // OTLP: both binaries exported, and the names are ours.
-  await waitFor("OTLP metrics and traces from both binaries", 30_000, async () => otlp.names.has("rubato.companion.heartbeat") && otlp.names.has("rubato.issues.by_state") && (otlp.posts.get("/v1/traces") ?? 0) > 0).catch((e) => problems.push(String(e)));
+  // OTLP: both binaries exported, and the names are ours. Every metric recorded on the happy
+  // path, per binary (failure-only counters are left out on purpose: events.dropped,
+  // map.load_failures, plan.parse_failures). A name missing here is a dropped recording site.
+  const expectedMetrics: Record<string, string[]> = {
+    "rubato-server": [
+      "rubato.sessions.by_state",
+      "rubato.companion.heartbeat",
+      "rubato.ws.clients",
+      "rubato.map.loaded",
+      "rubato.github.rate_limit.remaining",
+      "rubato.github.rate_limit.limit",
+      "rubato.issues.by_state",
+      "rubato.seam.open_plans",
+      "rubato.plan.unknown_id_count",
+      "rubato.poll.ticks",
+    ],
+    "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered", "rubato.sessions.by_state"],
+  };
+  const missingMetrics = () =>
+    Object.entries(expectedMetrics).flatMap(([service, names]) => names.filter((n) => !otlp.metrics.get(service)?.has(n)).map((n) => `${service}: ${n}`));
+  await waitFor("OTLP metrics and traces from both binaries", 30_000, async () => missingMetrics().length === 0 && (otlp.posts.get("/v1/traces") ?? 0) > 0).catch((e) =>
+    problems.push(`${String(e)}; metric names not seen: ${missingMetrics().join(", ") || "none"}`),
+  );
+  for (const [service, names] of Object.entries(expectedMetrics)) {
+    log(`otlp ${service}: saw ${names.filter((n) => otlp.metrics.get(service)?.has(n)).length}/${names.length} metric names`);
+  }
   log(`otlp receiver: ${[...otlp.posts.entries()].map(([p, n]) => `${p}×${n}`).join(", ")}; rubato names: ${otlp.names.size}`);
 
   console.log("\n=== Rubato v0 end to end ===");

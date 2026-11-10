@@ -11,10 +11,11 @@ use rubato_protocol::{
     ChecksStatus, CompanionEnvelope, CompanionMessage, Finding, IssueRef, MapRef, ProgressState,
     ServerEnvelope, ServerMessage,
 };
-use rubato_server::config::Config;
-use rubato_server::github::{Comment, FakeGitHub, GitHubApi, IssueInfo, PullInfo};
-use rubato_server::state::{App, AppState};
-use rubato_server::{app, db, poller};
+use rubato_server::kernel::config::Config;
+use rubato_server::kernel::db;
+use rubato_server::kernel::github::{Comment, FakeGitHub, GitHubApi, IssueInfo, PullInfo};
+use rubato_server::kernel::state::{App, AppState};
+use rubato_server::{app, map, tasks};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Message;
@@ -55,7 +56,7 @@ async fn harness() -> Harness {
     });
     let cfg = Config::for_tests(db_url, "m0x6A");
     let app = AppState::new(pool, cfg, github.clone());
-    poller::reload_map(&app).await.unwrap();
+    map::reload(&app).await.unwrap();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
@@ -343,7 +344,7 @@ async fn protocol_fixtures_replay_derives_progress() {
             }],
         );
     });
-    poller::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
     let ov = h.overview("m0x6A").await;
     let one = ov.issues.iter().find(|i| i.issue == issue).unwrap();
     assert_eq!(one.progress.state, ProgressState::Building);
@@ -372,7 +373,7 @@ async fn protocol_fixtures_replay_derives_progress() {
         );
         g.checks.insert("sha-1".into(), ChecksStatus::Green);
     });
-    poller::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
     assert_eq!(
         h.overview("m0x6A")
             .await
@@ -390,7 +391,7 @@ async fn protocol_fixtures_replay_derives_progress() {
             .unwrap()
             .merged_at = Some(chrono::Utc::now());
     });
-    poller::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
     assert_eq!(
         h.overview("m0x6A")
             .await
@@ -480,7 +481,7 @@ async fn findings_show_unknown_ids_and_seam_collisions() {
             .await
             .unwrap();
     }
-    poller::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
     let ov = h.overview("m0x6A").await;
     assert!(ov.findings.iter().any(|f| matches!(f, Finding::SeamCollision { seam, issues } if seam == "server-github" && issues.len() == 2)), "{:?}", ov.findings);
     assert!(ov.findings.iter().any(|f| matches!(f, Finding::UnknownIds { issue, ids } if issue.number == 22 && ids == &vec!["rubato-mystery".to_string()])), "{:?}", ov.findings);
@@ -821,8 +822,8 @@ async fn web_events_follow_every_action() {
     assert_eq!(r.status(), 204);
     await_reason(&mut web, "pin").await;
     checked += 1;
-    // poll (poller.rs)
-    poller::poll_once(&h.app).await.unwrap();
+    // poll (tasks.rs)
+    tasks::poll_once(&h.app).await.unwrap();
     await_reason(&mut web, "poll").await;
     checked += 1;
     // companion disconnected
@@ -903,7 +904,7 @@ async fn first_tick_reloads_then_polls() {
     h.github.with(|g| g.calls.clear());
     *h.app.map.write().await = None;
     let (tx, rx) = tokio::sync::watch::channel(false);
-    let task = tokio::spawn(poller::run(h.app.clone(), rx));
+    let task = tokio::spawn(tasks::run(h.app.clone(), rx));
     let calls = until_tick_done(&h.github).await;
     assert_eq!(
         names(&calls)[..2],
@@ -920,14 +921,14 @@ async fn first_tick_reloads_then_polls() {
         h.app.config.as_ref().clone(),
         h.github.clone(),
     );
-    poller::warm_map(&warm).await.unwrap();
+    map::warm(&warm).await.unwrap();
     assert!(
         warm.map.read().await.is_some(),
         "warm_map loads the stored map"
     );
     h.github.with(|g| g.calls.clear());
     let (tx, rx) = tokio::sync::watch::channel(false);
-    let task = tokio::spawn(poller::run(warm, rx));
+    let task = tokio::spawn(tasks::run(warm, rx));
     let calls = until_tick_done(&h.github).await;
     assert_eq!(
         names(&calls)[..2],
@@ -1013,14 +1014,14 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         assert_eq!(r.status(), 201);
     }
     h.github.with(|g| g.calls.clear());
-    poller::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
     let calls: Vec<String> = h
         .github
         .calls()
         .into_iter()
         .map(|(m, a)| format!("{m} {a}"))
         .collect();
-    // Recorded on main before the move (poller.rs:142-299).
+    // Recorded on main before the move (poller.rs:142-299), commit 88db1f8.
     let expected = [
         "issue m0x6A/rubato#31",
         "branches_with_prefix m0x6A/rubato issue/31-",
@@ -1052,4 +1053,18 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         ov.findings
     );
     println!("checked {} GitHub calls over 3 issues", calls.len());
+}
+
+#[tokio::test]
+async fn shutdown_ends_the_supervised_poll_task_cleanly() {
+    let h = harness().await;
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let background = tasks::spawn(h.app.clone(), rx.clone());
+    let supervised = tokio::spawn(tasks::supervise(background, rx));
+    until_tick_done(&h.github).await;
+    tx.send(true).unwrap();
+    let r = tokio::time::timeout(std::time::Duration::from_secs(1), supervised)
+        .await
+        .expect("supervise returns within 1 s of shutdown");
+    assert!(r.unwrap().is_ok());
 }
