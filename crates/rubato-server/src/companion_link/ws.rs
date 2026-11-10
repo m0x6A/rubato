@@ -3,6 +3,7 @@
 
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
+use crate::kernel::telemetry::Metrics;
 use crate::{launch, pairing};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -14,6 +15,7 @@ use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
 use rubato_protocol::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
+    SessionState, SessionStatus,
 };
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -40,6 +42,14 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
         }
     };
     ws.on_upgrade(move |socket| handle(app, pairing, socket))
+}
+
+/// A bookkeeping write on the companion socket that failed. The envelope is still answered,
+/// so without this line a lost sequence or last-seen write would be silent (issue #28).
+fn observe(write: &'static str, companion_id: Uuid, seq: u64, result: anyhow::Result<()>) {
+    if let Err(e) = result {
+        tracing::error!(slice = "companion_link", write, rubato.companion_id = %companion_id, seq, error = %e, "companion bookkeeping write failed");
+    }
 }
 
 async fn send_env(
@@ -120,6 +130,26 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
     app.notify("companion disconnected");
 }
 
+/// Why an already recorded envelope counts as a dropped event, if it does. A companion replays
+/// its outbox after a reconnect, and that is quiet. A hello is never in an outbox, so a hello at
+/// a recorded sequence number means the companion is reusing numbers and everything it sends
+/// below the record is being discarded (plan 29 S5).
+fn replay_drop_reason(message: &CompanionMessage) -> Option<&'static str> {
+    matches!(message, CompanionMessage::Hello { .. }).then_some("replay")
+}
+
+fn on_replay(metrics: &Metrics, companion_id: Uuid, env: &CompanionEnvelope) {
+    match replay_drop_reason(&env.message) {
+        Some(reason) => {
+            tracing::warn!(rubato.companion_id = %companion_id, seq = env.seq, "hello replayed: sequence collision");
+            metrics
+                .events_dropped
+                .add(1, &[KeyValue::new(attr::DROP_REASON, reason)]);
+        }
+        None => tracing::debug!(seq = env.seq, "replayed envelope already recorded"),
+    }
+}
+
 /// Record the envelope, update rows, and answer. Returns a reply when one is due.
 async fn on_envelope(
     app: &App,
@@ -144,15 +174,25 @@ async fn on_envelope(
             let payload = serde_json::to_value(&env.message).unwrap_or_default();
             match store::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
                 Ok(false) => {
-                    tracing::debug!(seq = env.seq, "replayed envelope already recorded");
+                    on_replay(&app.metrics, companion_id, &env);
                     return Some(ServerMessage::Ack { seq: env.seq });
                 }
                 Ok(true) => {}
                 Err(e) => tracing::error!(error = %e, "recording event"),
             }
-            let _ = pairing::set_last_companion_seq(&app.db, companion_id, env.seq).await;
+            observe(
+                "set_last_companion_seq",
+                companion_id,
+                env.seq,
+                pairing::set_last_companion_seq(&app.db, companion_id, env.seq).await,
+            );
         }
-        let _ = pairing::touch(&app.db, companion_id, now).await;
+        observe(
+            "touch",
+            companion_id,
+            env.seq,
+            pairing::touch(&app.db, companion_id, now).await,
+        );
         match env.message {
             CompanionMessage::Hello {
                 companion_id: claimed,
@@ -202,21 +242,7 @@ async fn on_envelope(
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
-                let mut counts = std::collections::BTreeMap::new();
-                for s in &sessions {
-                    *counts
-                        .entry(format!("{:?}", s.status).to_lowercase())
-                        .or_insert(0u64) += 1;
-                }
-                for (state, n) in counts {
-                    app.metrics.sessions_by_state.record(
-                        n,
-                        &[
-                            KeyValue::new(attr::SESSION_STATE, state),
-                            KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
-                        ],
-                    );
-                }
+                record_sessions_by_state(&app.metrics, companion_id, &sessions);
                 app.notify("sessions");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
@@ -241,7 +267,12 @@ async fn on_envelope(
             }
             CompanionMessage::Stale(s) => {
                 tracing::warn!(rubato.session_id = ?s.session_id, silent_for_secs = s.silent_for_secs, "{}", rubato_protocol::otel::event::SESSION_STALE);
-                let _ = store::store_stale(&app.db, &s).await;
+                observe(
+                    "store_stale",
+                    companion_id,
+                    env.seq,
+                    store::store_stale(&app.db, &s).await,
+                );
                 app.notify("stale");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
@@ -250,4 +281,148 @@ async fn on_envelope(
     }
     .instrument(span)
     .await
+}
+
+/// `rubato.sessions.by_state` for one companion's snapshot: every status, zero included. A
+/// gauge keeps its last value, so without the zero a session that stops working would leave
+/// `working` at 1 and `SessionWorkingNoHooks` would page on every finished turn.
+fn record_sessions_by_state(metrics: &Metrics, companion_id: Uuid, sessions: &[SessionState]) {
+    const STATUSES: [SessionStatus; 5] = [
+        SessionStatus::Working,
+        SessionStatus::Idle,
+        SessionStatus::Blocked,
+        SessionStatus::Ended,
+        SessionStatus::Unknown,
+    ];
+    for status in STATUSES {
+        let n = sessions.iter().filter(|s| s.status == status).count();
+        metrics.sessions_by_state.record(
+            n as u64,
+            &[
+                KeyValue::new(attr::SESSION_STATE, format!("{status:?}").to_lowercase()),
+                KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
+            ],
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::telemetry::{capture, metric_reader};
+    use rubato_protocol::StateSource;
+    use rubato_protocol::otel::metric;
+
+    fn session(companion_id: Uuid, status: SessionStatus) -> SessionState {
+        SessionState {
+            session_id: Some("s1".into()),
+            companion_id,
+            user: "m0x6A".into(),
+            tmux: None,
+            cwd: "/x".into(),
+            worktree: None,
+            branch: None,
+            repo: None,
+            issue: None,
+            status,
+            source: StateSource::Hook,
+            last_seen: Utc::now(),
+            spend_usd: None,
+        }
+    }
+
+    #[test]
+    fn a_snapshot_without_a_working_session_records_working_zero() {
+        let id = Uuid::new_v4();
+        let (reader, metrics) = metric_reader::start();
+        let working = |points: &[metric_reader::Point]| {
+            points
+                .iter()
+                .find(|p| p.attrs[attr::SESSION_STATE] == "working")
+                .map(|p| p.value)
+        };
+
+        record_sessions_by_state(&metrics, id, &[session(id, SessionStatus::Working)]);
+        assert_eq!(working(&reader.points(metric::SESSIONS_BY_STATE)), Some(1));
+
+        // The turn ends. A gauge keeps its last value, so the 0 has to be recorded.
+        record_sessions_by_state(&metrics, id, &[session(id, SessionStatus::Idle)]);
+        let points = reader.points(metric::SESSIONS_BY_STATE);
+        assert_eq!(working(&points), Some(0));
+        assert_eq!(points.len(), 5, "one point per status: {points:?}");
+        for p in &points {
+            assert_eq!(p.attrs[attr::COMPANION_ID], id.to_string());
+        }
+
+        // An empty snapshot is all zeros.
+        record_sessions_by_state(&metrics, id, &[]);
+        let points = reader.points(metric::SESSIONS_BY_STATE);
+        assert_eq!(points.len(), 5);
+        assert!(points.iter().all(|p| p.value == 0), "{points:?}");
+    }
+
+    fn fixture(name: &str) -> CompanionEnvelope {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../rubato-protocol/fixtures")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_replayed_hello_is_a_warning_and_a_counted_drop_and_a_heartbeat_is_quiet() {
+        let hello = fixture("companion_hello.json");
+        let beat = fixture("companion_heartbeat.json");
+        assert_eq!(replay_drop_reason(&hello.message), Some("replay"));
+        assert_eq!(replay_drop_reason(&beat.message), None);
+
+        let (events, _g) = capture::start();
+        let metrics = Metrics::new();
+        let companion_id = Uuid::new_v4();
+        on_replay(&metrics, companion_id, &beat);
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|e| e.level > tracing::Level::INFO),
+            "an outbox replay stays below info"
+        );
+        on_replay(&metrics, companion_id, &hello);
+        let events = events.lock().unwrap();
+        let warned: Vec<_> = events
+            .iter()
+            .filter(|e| e.level == tracing::Level::WARN)
+            .collect();
+        assert_eq!(warned.len(), 1, "{events:?}");
+        assert_eq!(warned[0].message, "hello replayed: sequence collision");
+        assert_eq!(
+            warned[0].fields.get("rubato.companion_id"),
+            Some(&companion_id.to_string())
+        );
+        assert_eq!(warned[0].fields.get("seq").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn a_failed_bookkeeping_write_is_logged_with_companion_and_seq() {
+        let (events, _guard) = capture::start();
+        let id = Uuid::new_v4();
+        observe("touch", id, 7, Ok(()));
+        assert!(events.lock().unwrap().is_empty(), "success is quiet");
+        observe("touch", id, 7, Err(anyhow::anyhow!("database is locked")));
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1, "{events:?}");
+        let e = &events[0];
+        assert_eq!(e.level, tracing::Level::ERROR);
+        assert_eq!(e.message, "companion bookkeeping write failed");
+        assert_eq!(e.fields.get("write").map(String::as_str), Some("touch"));
+        assert_eq!(e.fields.get("seq").map(String::as_str), Some("7"));
+        assert_eq!(
+            e.fields.get("rubato.companion_id").cloned(),
+            Some(id.to_string())
+        );
+        assert_eq!(
+            e.fields.get("error").map(String::as_str),
+            Some("database is locked")
+        );
+    }
 }

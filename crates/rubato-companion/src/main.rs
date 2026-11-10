@@ -6,7 +6,6 @@ use rubato_companion::kernel::telemetry;
 use rubato_companion::runtime::{DaemonConfig, start};
 use rubato_companion::{VERSION, pairing};
 use std::path::PathBuf;
-use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(name = "rubato-companion", version = VERSION, about = "Per-developer Rubato companion: outbound only, your tmux only.")]
@@ -51,29 +50,20 @@ async fn main() -> Result<()> {
     match cli.cmd {
         Cmd::Pair { server } => {
             let _g = telemetry::init("rubato-companion", None)?;
-            let companion_id = State::load(&state_dir)?
-                .map(|s| s.companion_id)
-                .unwrap_or_else(Uuid::new_v4);
             let hostname = std::fs::read_to_string("/etc/hostname")
                 .map(|s| s.trim().to_owned())
                 .unwrap_or_else(|_| "unknown".into());
-            let paired = pairing::pair(&server, companion_id, &hostname, VERSION, |start| {
+            let state = pairing::pair_and_save(&state_dir, &server, &hostname, VERSION, |start| {
                 eprintln!(
                     "Open {} while logged in with GitHub and enter the code: {}",
                     start.verification_url, start.user_code
                 );
             })
             .await?;
-            State {
-                companion_id,
-                server_url: server,
-                user: paired.user.clone(),
-                pairing_token: paired.token,
-                last_seq: 0,
-                last_server_seq: 0,
-            }
-            .save(&state_dir)?;
-            eprintln!("paired as {} (companion {})", paired.user, companion_id);
+            eprintln!(
+                "paired as {} (companion {})",
+                state.user, state.companion_id
+            );
             Ok(())
         }
         Cmd::Run => {

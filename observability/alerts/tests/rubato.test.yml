@@ -53,6 +53,54 @@ tests:
               summary: "A session on companion c1 reports working but no hook has arrived"
               panel: Hooks/min vs working sessions
 
+  # A turn ends and the hooks stop with it: both binaries record working = 0 (every status is
+  # recorded on each snapshot), so the alert clears instead of paging on every finished turn.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_sessions_by_state{rubato_companion_id="c1", rubato_session_state="working"}'
+        values: "1x5 0x10"
+      - series: 'rubato_sessions_by_state{rubato_companion_id="c1", rubato_session_state="idle"}'
+        values: "0x5 1x10"
+      - series: 'rubato_hook_forwarded_total{rubato_companion_id="c1", rubato_hook_event="PreToolUse", rubato_session_id="s1"}'
+        values: "5x16"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SessionWorkingNoHooks
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: companion-claude-code
+              owner: rubato-companion
+              rubato_companion_id: c1
+            exp_annotations:
+              summary: "A session on companion c1 reports working but no hook has arrived"
+              panel: Hooks/min vs working sessions
+      - eval_time: 10m
+        alertname: SessionWorkingNoHooks
+        exp_alerts: []
+
+  # A restarted companion: the sessions it launched earlier post hooks to the old port, so the
+  # only hook series is the one seeded at 0 on startup. Without that series the `and` would
+  # have no right-hand side and the alert would stay silent.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_sessions_by_state{rubato_companion_id="c1", rubato_session_state="working"}'
+        values: "1x10"
+      - series: 'rubato_hook_forwarded_total{rubato_companion_id="c1"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SessionWorkingNoHooks
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: companion-claude-code
+              owner: rubato-companion
+              rubato_companion_id: c1
+            exp_annotations:
+              summary: "A session on companion c1 reports working but no hook has arrived"
+              panel: Hooks/min vs working sessions
+
   - interval: 1m
     input_series:
       - series: 'rubato_plan_unknown_id_count'

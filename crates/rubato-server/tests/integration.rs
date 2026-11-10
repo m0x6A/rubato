@@ -1019,6 +1019,52 @@ async fn welcome_carries_last_seen_seq_after_reconnect() {
     assert_eq!(last_seen_companion_seq, 7);
 }
 
+/// Plan 29 S5, N1: a hello at a sequence number the server has already recorded is a collision.
+/// It is acknowledged, not welcomed and not processed; a hello above the record is welcomed.
+#[tokio::test]
+async fn a_replayed_hello_is_counted_and_a_higher_one_is_welcomed() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert_eq!(hello.seq, 1);
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    let beat = with_companion(Harness::fixture("companion_heartbeat.json"), companion_id);
+    assert!(matches!(
+        send(&mut ws, &beat).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    ws.close(None).await.unwrap();
+    drop(ws);
+
+    // A companion that restarted its count: the same hello again.
+    let mut ws = h.connect(&token).await;
+    let replayed = send(&mut ws, &hello).await;
+    assert!(
+        matches!(replayed, ServerMessage::Ack { seq: 1 }),
+        "a replayed hello is acknowledged, not welcomed: {replayed:?}"
+    );
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM companion_events")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(events, 2, "the replay is not recorded twice");
+
+    let mut higher = hello;
+    higher.seq = 3;
+    let ServerMessage::Welcome {
+        last_seen_companion_seq,
+        ..
+    } = send(&mut ws, &higher).await
+    else {
+        panic!("a hello above the record is welcomed")
+    };
+    assert_eq!(last_seen_companion_seq, 2);
+}
+
 fn names(calls: &[(&'static str, String)]) -> Vec<&'static str> {
     calls.iter().map(|(m, _)| *m).collect()
 }

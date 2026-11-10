@@ -94,8 +94,9 @@ async function main() {
   log("repos ready: acme/auth (auth provider), acme/pantry (consumer); map at " + `${T}/map/system-map.yml`);
 
   // 2. An OTLP receiver: counts posts per path and remembers which rubato.* names it saw, and
-  //    which metric names each binary exported (keyed by the service.name string in the body).
-  const otlp = { posts: new Map<string, number>(), names: new Set<string>(), metrics: new Map<string, Set<string>>() };
+  //    which names each binary exported in its metrics bodies (metric names and attribute keys)
+  //    and in its traces bodies (span names), keyed by the service.name string in the body.
+  const otlp = { posts: new Map<string, number>(), names: new Set<string>(), metrics: new Map<string, Set<string>>(), traces: new Map<string, Set<string>>() };
   const receiver = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c) => chunks.push(c));
@@ -106,12 +107,13 @@ async function main() {
         otlp.names.add(m[0]);
       }
       const service = ["rubato-server", "rubato-companion"].find((n) => body.includes(n));
-      if (req.url === "/v1/metrics" && service) {
-        const seen = otlp.metrics.get(service) ?? new Set<string>();
+      const perBinary = req.url === "/v1/metrics" ? otlp.metrics : req.url === "/v1/traces" ? otlp.traces : undefined;
+      if (perBinary && service) {
+        const seen = perBinary.get(service) ?? new Set<string>();
         for (const m of body.matchAll(/rubato\.[a-z_.]+/g)) {
           seen.add(m[0]);
         }
-        otlp.metrics.set(service, seen);
+        perBinary.set(service, seen);
       }
       res.writeHead(200, { "content-type": "application/x-protobuf" }).end();
     });
@@ -307,6 +309,7 @@ async function main() {
       "rubato.companion.heartbeat",
       "rubato.ws.clients",
       "rubato.map.loaded",
+      "rubato.map.loaded_at",
       "rubato.github.rate_limit.remaining",
       "rubato.github.rate_limit.limit",
       "rubato.issues.by_state",
@@ -316,13 +319,30 @@ async function main() {
     ],
     "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered", "rubato.sessions.by_state"],
   };
-  const missingMetrics = () =>
-    Object.entries(expectedMetrics).flatMap(([service, names]) => names.filter((n) => !otlp.metrics.get(service)?.has(n)).map((n) => `${service}: ${n}`));
-  await waitFor("OTLP metrics and traces from both binaries", 30_000, async () => missingMetrics().length === 0 && (otlp.posts.get("/v1/traces") ?? 0) > 0).catch((e) =>
-    problems.push(`${String(e)}; metric names not seen: ${missingMetrics().join(", ") || "none"}`),
+  // The attribute keys the alerts and panels group by, in each binary's metrics bodies, and the
+  // span names in the companion's traces bodies. (The companion id is also on the heartbeat, so
+  // its place on the other metrics is proved by the companion's in-memory metric tests.)
+  const expectedAttributeKeys: Record<string, string[]> = {
+    "rubato-server": ["rubato.issue.state"],
+    "rubato-companion": ["rubato.companion_id", "rubato.session.source"],
+  };
+  const expectedSpans: Record<string, string[]> = { "rubato-companion": ["rubato.hook.forward", "rubato.team_poll"] };
+  const expectations: { what: string; expected: Record<string, string[]>; seen: Map<string, Set<string>> }[] = [
+    { what: "metric names", expected: expectedMetrics, seen: otlp.metrics },
+    { what: "attribute keys", expected: expectedAttributeKeys, seen: otlp.metrics },
+    { what: "span names", expected: expectedSpans, seen: otlp.traces },
+  ];
+  const missing = () =>
+    expectations.flatMap(({ what, expected, seen }) =>
+      Object.entries(expected).flatMap(([service, names]) => names.filter((n) => !seen.get(service)?.has(n)).map((n) => `${service}: ${n} (${what})`)),
+    );
+  await waitFor("OTLP metrics and traces from both binaries", 30_000, async () => missing().length === 0 && (otlp.posts.get("/v1/traces") ?? 0) > 0).catch((e) =>
+    problems.push(`${String(e)}; not seen: ${missing().join(", ") || "none"}`),
   );
-  for (const [service, names] of Object.entries(expectedMetrics)) {
-    log(`otlp ${service}: saw ${names.filter((n) => otlp.metrics.get(service)?.has(n)).length}/${names.length} metric names`);
+  for (const { what, expected, seen } of expectations) {
+    for (const [service, names] of Object.entries(expected)) {
+      log(`otlp ${service}: saw ${names.filter((n) => seen.get(service)?.has(n)).length}/${names.length} ${what}`);
+    }
   }
   log(`otlp receiver: ${[...otlp.posts.entries()].map(([p, n]) => `${p}×${n}`).join(", ")}; rubato names: ${otlp.names.size}`);
 

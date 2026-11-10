@@ -208,6 +208,31 @@ mod tests {
     }
 
     #[test]
+    fn counts_by_source_include_zero() {
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        let all = [
+            StateSource::Hook,
+            StateSource::TmuxIde,
+            StateSource::Launch,
+            StateSource::Scraped,
+        ];
+        let counts = r.counts_by_source();
+        assert_eq!(counts.len(), 4, "{counts:?}");
+        for source in all {
+            assert_eq!(counts.get(&source), Some(&0), "{source:?}");
+        }
+        let f = Fleet::parse(include_str!("../../features/fixtures/team.json")).unwrap();
+        r.apply_fleet(&f, now());
+        let counts = r.counts_by_source();
+        assert_eq!(counts.len(), 4, "{counts:?}");
+        assert_eq!(counts[&StateSource::TmuxIde], 1);
+        assert!(counts[&StateSource::Scraped] > 0);
+        assert_eq!(counts[&StateSource::Hook], 0);
+        assert_eq!(counts[&StateSource::Launch], 0);
+        assert_eq!(counts.values().sum::<usize>(), r.entries().len());
+    }
+
+    #[test]
     fn fleet_never_downgrades_a_hook_source() {
         let mut r = Registry::new(Uuid::nil(), "m0x6A");
         r.apply_hook(&hook("s1", "PreToolUse", "/x", now()));

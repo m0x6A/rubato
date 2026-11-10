@@ -11,6 +11,8 @@ pub mod attr {
     pub const SESSION_ID: &str = "rubato.session_id";
     pub const SESSION_SOURCE: &str = "rubato.session.source";
     pub const SESSION_STATE: &str = "rubato.session.state";
+    /// The derived progress state on `rubato.issues.by_state`.
+    pub const ISSUE_STATE: &str = "rubato.issue.state";
     pub const COMPANION_ID: &str = "rubato.companion_id";
     pub const USER: &str = "rubato.user";
     pub const HOOK_EVENT: &str = "rubato.hook_event";
@@ -43,6 +45,8 @@ pub mod metric {
     pub const SEAM_OPEN_PLANS: &str = "rubato.seam.open_plans";
     pub const MAP_LOADED: &str = "rubato.map.loaded";
     pub const MAP_LOAD_FAILURES: &str = "rubato.map.load_failures";
+    /// Unix seconds of the last successful map load; the "Map age" panel is `time()` minus this.
+    pub const MAP_LOADED_AT: &str = "rubato.map.loaded_at";
     pub const WS_CLIENTS: &str = "rubato.ws.clients";
     /// One per server poll tick; `ServerPollSilent` fires when it stops.
     pub const POLL_TICKS: &str = "rubato.poll.ticks";
@@ -79,6 +83,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SESSION_ID,
         attr::SESSION_SOURCE,
         attr::SESSION_STATE,
+        attr::ISSUE_STATE,
         attr::COMPANION_ID,
         attr::USER,
         attr::HOOK_EVENT,
@@ -106,6 +111,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SEAM_OPEN_PLANS,
         metric::MAP_LOADED,
         metric::MAP_LOAD_FAILURES,
+        metric::MAP_LOADED_AT,
         metric::WS_CLIENTS,
         metric::POLL_TICKS,
         span::LAUNCH,
