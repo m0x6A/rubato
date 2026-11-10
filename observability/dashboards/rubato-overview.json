@@ -129,7 +129,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum by (rubato_companion_id) (rubato_sessions_by_state{rubato_session_state=\"working\"})",
+          "expr": "max by (rubato_companion_id) (rubato_sessions_by_state{rubato_session_state=\"working\"})",
           "legendFormat": "working {{rubato_companion_id}}"
         }
       ],
@@ -251,7 +251,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (state) (rubato_issues_by_state)",
+          "expr": "sum by (rubato_issue_state) (rubato_issues_by_state)",
           "legendFormat": "__auto"
         }
       ],

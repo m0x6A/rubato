@@ -2,7 +2,8 @@
 /**
  * Structural check of the observability files: every alert in the "never silent" list exists,
  * every rule has a unit test that expects it to fire, every alert names a panel that exists on
- * the dashboard, and the "Map age" panel queries `rubato_map_loaded_at`. Reports what it checked.
+ * the dashboard, the "Map age" panel queries `rubato_map_loaded_at`, no expression groups by the
+ * bare label `state`, and the working-sessions line takes `max by`. Reports what it checked.
  * `promtool test rules` is the semantic check; `check.test.ts` makes this one fail on purpose.
  *
  *   check.ts [--rules <file>] [--tests <file>] [--dashboard <file>]
@@ -52,6 +53,21 @@ export function check(rulesText: string, testsText: string, dashboardText: strin
   // The exact name: a unit on the gauge would export it as rubato_map_loaded_at_seconds.
   if (!exprs("Map age").some((e) => /\brubato_map_loaded_at\b/.test(e))) {
     problems.push(`the dashboard has no "Map age" panel that queries rubato_map_loaded_at`);
+  }
+  // Our labels are rubato_*: `rubato.issues.by_state` carries rubato_issue_state, not `state`.
+  for (const p of panels) {
+    for (const t of p.targets ?? []) {
+      const grouped = [...(t.expr ?? "").matchAll(/\b(?:by|without)\s*\(([^)]*)\)/g)].flatMap((m) => (m[1] ?? "").split(",").map((l) => l.trim()));
+      if (grouped.includes("state")) {
+        problems.push(`panel ${JSON.stringify(p.title)} groups by the bare label state: ${t.expr}`);
+      }
+    }
+  }
+  // Server and companion both export rubato.sessions.by_state with the companion id, so a sum
+  // would count each working session twice.
+  const working = exprs("Hooks/min vs working sessions").filter((e) => e.includes("rubato_sessions_by_state"));
+  if (working.length === 0 || !working.every((e) => /^max by \(rubato_companion_id\) \(rubato_sessions_by_state\b/.test(e))) {
+    problems.push(`panel "Hooks/min vs working sessions" must take max by (rubato_companion_id) of rubato_sessions_by_state`);
   }
   return { problems, rules: alerts.length, tests: tests.tests.flatMap((t) => t.alert_rule_test).length, panels: panelTitles.size };
 }

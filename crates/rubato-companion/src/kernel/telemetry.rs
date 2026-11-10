@@ -89,7 +89,11 @@ pub struct Metrics {
 
 impl Metrics {
     pub fn new() -> Self {
-        let m: Meter = global::meter("rubato-companion");
+        Self::from_meter(&global::meter("rubato-companion"))
+    }
+
+    /// The instruments on a given meter; tests pass one backed by an in-memory reader.
+    pub fn from_meter(m: &Meter) -> Self {
         Self {
             heartbeat: m
                 .u64_gauge(otel::metric::COMPANION_HEARTBEAT)
@@ -108,6 +112,91 @@ impl Default for Metrics {
         Self::new()
     }
 }
+
+/// Test-only: instruments backed by an in-memory exporter, read back as data points.
+#[cfg(test)]
+pub mod metric_reader {
+    use super::Metrics;
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
+    use std::collections::BTreeMap;
+
+    /// One exported data point. Every instrument here is `u64`.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Point {
+        pub name: String,
+        pub unit: String,
+        pub attrs: BTreeMap<String, String>,
+        pub value: u64,
+    }
+
+    pub struct Reader {
+        provider: SdkMeterProvider,
+        exporter: InMemoryMetricExporter,
+    }
+
+    /// A reader and the instruments it reads. Nothing is exported until `collect`.
+    pub fn start() -> (Reader, Metrics) {
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter.clone())
+            .build();
+        let metrics = Metrics::from_meter(&provider.meter("rubato-test"));
+        (Reader { provider, exporter }, metrics)
+    }
+
+    fn attrs<'a>(
+        kvs: impl Iterator<Item = &'a opentelemetry::KeyValue>,
+    ) -> BTreeMap<String, String> {
+        kvs.map(|kv| (kv.key.to_string(), kv.value.to_string()))
+            .collect()
+    }
+
+    impl Reader {
+        /// Flush and return what one export carries: with cumulative temporality that is every
+        /// series recorded so far, so a gauge shows its last value on each collection.
+        pub fn collect(&self) -> Vec<Point> {
+            self.exporter.reset();
+            self.provider.force_flush().expect("flush");
+            let mut out = Vec::new();
+            for rm in self.exporter.get_finished_metrics().expect("metrics") {
+                for metric in rm.scope_metrics().flat_map(|s| s.metrics()) {
+                    let AggregatedMetrics::U64(data) = metric.data() else {
+                        continue;
+                    };
+                    let values: Vec<(BTreeMap<String, String>, u64)> = match data {
+                        MetricData::Gauge(g) => g
+                            .data_points()
+                            .map(|p| (attrs(p.attributes()), p.value()))
+                            .collect(),
+                        MetricData::Sum(s) => s
+                            .data_points()
+                            .map(|p| (attrs(p.attributes()), p.value()))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    out.extend(values.into_iter().map(|(attrs, value)| Point {
+                        name: metric.name().to_owned(),
+                        unit: metric.unit().to_owned(),
+                        attrs,
+                        value,
+                    }));
+                }
+            }
+            out
+        }
+
+        /// The data points of one metric.
+        pub fn points(&self, name: &str) -> Vec<Point> {
+            self.collect()
+                .into_iter()
+                .filter(|p| p.name == name)
+                .collect()
+        }
+    }
+}
+
 /// Test-only: collect the events emitted on this thread, with their fields as strings.
 #[cfg(test)]
 pub mod capture {

@@ -15,6 +15,7 @@ use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
 use rubato_protocol::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
+    SessionState, SessionStatus,
 };
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -241,21 +242,7 @@ async fn on_envelope(
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
-                let mut counts = std::collections::BTreeMap::new();
-                for s in &sessions {
-                    *counts
-                        .entry(format!("{:?}", s.status).to_lowercase())
-                        .or_insert(0u64) += 1;
-                }
-                for (state, n) in counts {
-                    app.metrics.sessions_by_state.record(
-                        n,
-                        &[
-                            KeyValue::new(attr::SESSION_STATE, state),
-                            KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
-                        ],
-                    );
-                }
+                record_sessions_by_state(&app.metrics, companion_id, &sessions);
                 app.notify("sessions");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
@@ -296,10 +283,83 @@ async fn on_envelope(
     .await
 }
 
+/// `rubato.sessions.by_state` for one companion's snapshot: every status, zero included. A
+/// gauge keeps its last value, so without the zero a session that stops working would leave
+/// `working` at 1 and `SessionWorkingNoHooks` would page on every finished turn.
+fn record_sessions_by_state(metrics: &Metrics, companion_id: Uuid, sessions: &[SessionState]) {
+    const STATUSES: [SessionStatus; 5] = [
+        SessionStatus::Working,
+        SessionStatus::Idle,
+        SessionStatus::Blocked,
+        SessionStatus::Ended,
+        SessionStatus::Unknown,
+    ];
+    for status in STATUSES {
+        let n = sessions.iter().filter(|s| s.status == status).count();
+        metrics.sessions_by_state.record(
+            n as u64,
+            &[
+                KeyValue::new(attr::SESSION_STATE, format!("{status:?}").to_lowercase()),
+                KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
+            ],
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::telemetry::capture;
+    use crate::kernel::telemetry::{capture, metric_reader};
+    use rubato_protocol::StateSource;
+    use rubato_protocol::otel::metric;
+
+    fn session(companion_id: Uuid, status: SessionStatus) -> SessionState {
+        SessionState {
+            session_id: Some("s1".into()),
+            companion_id,
+            user: "m0x6A".into(),
+            tmux: None,
+            cwd: "/x".into(),
+            worktree: None,
+            branch: None,
+            repo: None,
+            issue: None,
+            status,
+            source: StateSource::Hook,
+            last_seen: Utc::now(),
+            spend_usd: None,
+        }
+    }
+
+    #[test]
+    fn a_snapshot_without_a_working_session_records_working_zero() {
+        let id = Uuid::new_v4();
+        let (reader, metrics) = metric_reader::start();
+        let working = |points: &[metric_reader::Point]| {
+            points
+                .iter()
+                .find(|p| p.attrs[attr::SESSION_STATE] == "working")
+                .map(|p| p.value)
+        };
+
+        record_sessions_by_state(&metrics, id, &[session(id, SessionStatus::Working)]);
+        assert_eq!(working(&reader.points(metric::SESSIONS_BY_STATE)), Some(1));
+
+        // The turn ends. A gauge keeps its last value, so the 0 has to be recorded.
+        record_sessions_by_state(&metrics, id, &[session(id, SessionStatus::Idle)]);
+        let points = reader.points(metric::SESSIONS_BY_STATE);
+        assert_eq!(working(&points), Some(0));
+        assert_eq!(points.len(), 5, "one point per status: {points:?}");
+        for p in &points {
+            assert_eq!(p.attrs[attr::COMPANION_ID], id.to_string());
+        }
+
+        // An empty snapshot is all zeros.
+        record_sessions_by_state(&metrics, id, &[]);
+        let points = reader.points(metric::SESSIONS_BY_STATE);
+        assert_eq!(points.len(), 5);
+        assert!(points.iter().all(|p| p.value == 0), "{points:?}");
+    }
 
     fn fixture(name: &str) -> CompanionEnvelope {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

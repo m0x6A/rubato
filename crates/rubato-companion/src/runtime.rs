@@ -100,6 +100,7 @@ async fn run(
     shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     let metrics = Arc::new(Metrics::new());
+    hooks::seed_forwarded(&metrics, cfg.state.companion_id);
     let hook_endpoint = server.endpoint.clone();
     let tmux = Tmux::new(
         cfg.workspace.companion.tmux_command.clone(),
@@ -231,7 +232,7 @@ impl Dispatch<'_> {
             tokio::select! {
                 _ = shutdown.changed() => break,
                 Some(ev) = hook_rx.recv() => {
-                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics).await;
+                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id).await;
                     spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
                 }
                 Some(msg) = in_rx.recv() => match msg {
