@@ -307,6 +307,7 @@ async function main() {
       "rubato.companion.heartbeat",
       "rubato.ws.clients",
       "rubato.map.loaded",
+      "rubato.map.loaded_at",
       "rubato.github.rate_limit.remaining",
       "rubato.github.rate_limit.limit",
       "rubato.issues.by_state",

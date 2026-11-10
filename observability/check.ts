@@ -2,7 +2,8 @@
 /**
  * Structural check of the observability files: every alert in the "never silent" list exists,
  * every rule has a unit test that expects it to fire, every alert names a panel that exists on
- * the dashboard. Reports what it checked. `promtool test rules` is the semantic check.
+ * the dashboard, and the "Map age" panel queries `rubato_map_loaded_at`. Reports what it checked.
+ * `promtool test rules` is the semantic check; `check.test.ts` makes this one fail on purpose.
  *
  *   check.ts [--rules <file>] [--tests <file>] [--dashboard <file>]
  */
@@ -14,6 +15,8 @@ import { parse as parseYaml } from "yaml";
 const here = dirname(fileURLToPath(import.meta.url));
 const REQUIRED = ["CompanionSilent", "SessionWorkingNoHooks", "PlanUnknownNodes", "SeamCollision", "GitHubRateLimitLow", "ServerPollSilent"];
 
+type Panel = { title: string; type?: string; targets?: { expr?: string }[] };
+
 function opt(argv: string[], name: string, fallback: string): string {
   const i = argv.indexOf(name);
   return i >= 0 && argv[i + 1] ? (argv[i + 1] as string) : fallback;
@@ -23,8 +26,10 @@ export function check(rulesText: string, testsText: string, dashboardText: strin
   const problems: string[] = [];
   const rules = parseYaml(rulesText) as { groups: { rules: { alert: string; annotations?: { panel?: string } }[] }[] };
   const tests = parseYaml(testsText) as { tests: { alert_rule_test: { alertname: string; exp_alerts: unknown[] }[] }[] };
-  const dashboard = JSON.parse(dashboardText) as { panels: { title: string; panels?: { title: string }[] }[] };
-  const panelTitles = new Set(dashboard.panels.flatMap((p) => [p.title, ...(p.panels ?? []).map((q) => q.title)]));
+  const dashboard = JSON.parse(dashboardText) as { panels: (Panel & { panels?: Panel[] })[] };
+  const panels: Panel[] = dashboard.panels.flatMap((p) => [p, ...(p.panels ?? [])]);
+  const panelTitles = new Set(panels.map((p) => p.title));
+  const exprs = (title: string) => panels.filter((p) => p.title === title && p.type !== "row").flatMap((p) => (p.targets ?? []).map((t) => t.expr ?? ""));
   const alerts = rules.groups.flatMap((g) => g.rules);
   const names = new Set(alerts.map((a) => a.alert));
   for (const r of REQUIRED) {
@@ -43,6 +48,10 @@ export function check(rulesText: string, testsText: string, dashboardText: strin
     } else if (!panelTitles.has(panel)) {
       problems.push(`alert ${a.alert} names panel ${JSON.stringify(panel)} which is not on the dashboard`);
     }
+  }
+  // The exact name: a unit on the gauge would export it as rubato_map_loaded_at_seconds.
+  if (!exprs("Map age").some((e) => /\brubato_map_loaded_at\b/.test(e))) {
+    problems.push(`the dashboard has no "Map age" panel that queries rubato_map_loaded_at`);
   }
   return { problems, rules: alerts.length, tests: tests.tests.flatMap((t) => t.alert_rule_test).length, panels: panelTitles.size };
 }

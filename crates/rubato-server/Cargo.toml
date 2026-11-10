@@ -40,5 +40,6 @@ futures-util = { version = "0.3", features = ["sink"] }
 url = "2"
 
 [dev-dependencies]
+opentelemetry_sdk = { version = "=0.33.0", features = ["testing"] }
 tempfile = "3"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
