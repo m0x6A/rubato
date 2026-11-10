@@ -3,6 +3,7 @@
 
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
+use crate::kernel::telemetry::Metrics;
 use crate::{launch, pairing};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -120,6 +121,26 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
     app.notify("companion disconnected");
 }
 
+/// Why an already recorded envelope counts as a dropped event, if it does. A companion replays
+/// its outbox after a reconnect, and that is quiet. A hello is never in an outbox, so a hello at
+/// a recorded sequence number means the companion is reusing numbers and everything it sends
+/// below the record is being discarded (plan 29 S5).
+fn replay_drop_reason(message: &CompanionMessage) -> Option<&'static str> {
+    matches!(message, CompanionMessage::Hello { .. }).then_some("replay")
+}
+
+fn on_replay(metrics: &Metrics, companion_id: Uuid, env: &CompanionEnvelope) {
+    match replay_drop_reason(&env.message) {
+        Some(reason) => {
+            tracing::warn!(rubato.companion_id = %companion_id, seq = env.seq, "hello replayed: sequence collision");
+            metrics
+                .events_dropped
+                .add(1, &[KeyValue::new(attr::DROP_REASON, reason)]);
+        }
+        None => tracing::debug!(seq = env.seq, "replayed envelope already recorded"),
+    }
+}
+
 /// Record the envelope, update rows, and answer. Returns a reply when one is due.
 async fn on_envelope(
     app: &App,
@@ -144,7 +165,7 @@ async fn on_envelope(
             let payload = serde_json::to_value(&env.message).unwrap_or_default();
             match store::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
                 Ok(false) => {
-                    tracing::debug!(seq = env.seq, "replayed envelope already recorded");
+                    on_replay(&app.metrics, companion_id, &env);
                     return Some(ServerMessage::Ack { seq: env.seq });
                 }
                 Ok(true) => {}
@@ -250,4 +271,51 @@ async fn on_envelope(
     }
     .instrument(span)
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::telemetry::capture;
+
+    fn fixture(name: &str) -> CompanionEnvelope {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../rubato-protocol/fixtures")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_replayed_hello_is_a_warning_and_a_counted_drop_and_a_heartbeat_is_quiet() {
+        let hello = fixture("companion_hello.json");
+        let beat = fixture("companion_heartbeat.json");
+        assert_eq!(replay_drop_reason(&hello.message), Some("replay"));
+        assert_eq!(replay_drop_reason(&beat.message), None);
+
+        let (events, _g) = capture::start();
+        let metrics = Metrics::new();
+        let companion_id = Uuid::new_v4();
+        on_replay(&metrics, companion_id, &beat);
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|e| e.level > tracing::Level::INFO),
+            "an outbox replay stays below info"
+        );
+        on_replay(&metrics, companion_id, &hello);
+        let events = events.lock().unwrap();
+        let warned: Vec<_> = events
+            .iter()
+            .filter(|e| e.level == tracing::Level::WARN)
+            .collect();
+        assert_eq!(warned.len(), 1, "{events:?}");
+        assert_eq!(warned[0].message, "hello replayed: sequence collision");
+        assert_eq!(
+            warned[0].fields.get("rubato.companion_id"),
+            Some(&companion_id.to_string())
+        );
+        assert_eq!(warned[0].fields.get("seq").map(String::as_str), Some("1"));
+    }
 }
