@@ -27,3 +27,11 @@ Feature: Pairing a companion with a GitHub login
     When the companion is told to shut down
     Then the daemon returns Ok within 1 second
     And the companion logs no "rubato.task.exited" event
+
+  Scenario: A restarted companion is not mistaken for a replay
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And the companion daemon is running and connected
+    When the companion is shut down and started again
+    Then the second hello has a sequence number above every one the server saw before it
+    And the reservation in the state dir covers every sequence number the server saw

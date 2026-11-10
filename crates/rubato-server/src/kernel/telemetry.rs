@@ -86,6 +86,9 @@ pub struct Metrics {
     pub plan_unknown_id_count: Gauge<u64>,
     pub seam_open_plans: Gauge<u64>,
     pub map_loaded: Gauge<u64>,
+    /// Unix seconds of the last successful load. No unit: one would rename the Prometheus
+    /// series to `rubato_map_loaded_at_seconds` and empty the "Map age" panel.
+    pub map_loaded_at: Gauge<u64>,
     pub map_load_failures: Counter<u64>,
     pub ws_clients: Gauge<u64>,
     pub companion_heartbeat: Gauge<u64>,
@@ -94,7 +97,11 @@ pub struct Metrics {
 
 impl Metrics {
     pub fn new() -> Self {
-        let m: Meter = global::meter("rubato-server");
+        Self::from_meter(&global::meter("rubato-server"))
+    }
+
+    /// The instruments on a given meter; tests pass one backed by an in-memory reader.
+    pub fn from_meter(m: &Meter) -> Self {
         Self {
             sessions_by_state: m.u64_gauge(otel::metric::SESSIONS_BY_STATE).build(),
             issues_by_state: m.u64_gauge(otel::metric::ISSUES_BY_STATE).build(),
@@ -107,6 +114,7 @@ impl Metrics {
             plan_unknown_id_count: m.u64_gauge(otel::metric::PLAN_UNKNOWN_ID_COUNT).build(),
             seam_open_plans: m.u64_gauge(otel::metric::SEAM_OPEN_PLANS).build(),
             map_loaded: m.u64_gauge(otel::metric::MAP_LOADED).build(),
+            map_loaded_at: m.u64_gauge(otel::metric::MAP_LOADED_AT).build(),
             map_load_failures: m.u64_counter(otel::metric::MAP_LOAD_FAILURES).build(),
             ws_clients: m.u64_gauge(otel::metric::WS_CLIENTS).build(),
             companion_heartbeat: m.u64_gauge(otel::metric::COMPANION_HEARTBEAT).build(),
@@ -118,6 +126,90 @@ impl Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Test-only: instruments backed by an in-memory exporter, read back as data points.
+#[cfg(test)]
+pub mod metric_reader {
+    use super::Metrics;
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
+    use std::collections::BTreeMap;
+
+    /// One exported data point. Every instrument here is `u64`.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Point {
+        pub name: String,
+        pub unit: String,
+        pub attrs: BTreeMap<String, String>,
+        pub value: u64,
+    }
+
+    pub struct Reader {
+        provider: SdkMeterProvider,
+        exporter: InMemoryMetricExporter,
+    }
+
+    /// A reader and the instruments it reads. Nothing is exported until `collect`.
+    pub fn start() -> (Reader, Metrics) {
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter.clone())
+            .build();
+        let metrics = Metrics::from_meter(&provider.meter("rubato-test"));
+        (Reader { provider, exporter }, metrics)
+    }
+
+    fn attrs<'a>(
+        kvs: impl Iterator<Item = &'a opentelemetry::KeyValue>,
+    ) -> BTreeMap<String, String> {
+        kvs.map(|kv| (kv.key.to_string(), kv.value.to_string()))
+            .collect()
+    }
+
+    impl Reader {
+        /// Flush and return what one export carries: with cumulative temporality that is every
+        /// series recorded so far, so a gauge shows its last value on each collection.
+        pub fn collect(&self) -> Vec<Point> {
+            self.exporter.reset();
+            self.provider.force_flush().expect("flush");
+            let mut out = Vec::new();
+            for rm in self.exporter.get_finished_metrics().expect("metrics") {
+                for metric in rm.scope_metrics().flat_map(|s| s.metrics()) {
+                    let AggregatedMetrics::U64(data) = metric.data() else {
+                        continue;
+                    };
+                    let values: Vec<(BTreeMap<String, String>, u64)> = match data {
+                        MetricData::Gauge(g) => g
+                            .data_points()
+                            .map(|p| (attrs(p.attributes()), p.value()))
+                            .collect(),
+                        MetricData::Sum(s) => s
+                            .data_points()
+                            .map(|p| (attrs(p.attributes()), p.value()))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    out.extend(values.into_iter().map(|(attrs, value)| Point {
+                        name: metric.name().to_owned(),
+                        unit: metric.unit().to_owned(),
+                        attrs,
+                        value,
+                    }));
+                }
+            }
+            out
+        }
+
+        /// The data points of one metric.
+        pub fn points(&self, name: &str) -> Vec<Point> {
+            self.collect()
+                .into_iter()
+                .filter(|p| p.name == name)
+                .collect()
+        }
     }
 }
 

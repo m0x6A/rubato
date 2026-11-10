@@ -15,7 +15,10 @@ pub async fn refresh_gauges(app: &App, map: &LoadedMap) -> Result<()> {
     for (state, n) in by_state {
         app.metrics.issues_by_state.record(
             n as u64,
-            &[KeyValue::new("state", format!("{state:?}").to_lowercase())],
+            &[KeyValue::new(
+                attr::ISSUE_STATE,
+                format!("{state:?}").to_lowercase(),
+            )],
         );
     }
     for (seam, n) in by_seam {

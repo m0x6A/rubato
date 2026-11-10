@@ -96,6 +96,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: cargo build --workspace
       - run: pnpm observability:check
+      - run: pnpm observability:test
       - name: Alert rules fire on purpose (promtool)
         run: |
           VERSION=$(curl -fsSL https://api.github.com/repos/prometheus/prometheus/releases/latest | jq -r .tag_name | sed "s/^v//")
