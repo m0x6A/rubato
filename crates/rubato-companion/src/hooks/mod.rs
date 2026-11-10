@@ -6,6 +6,6 @@ mod arm;
 mod server;
 mod template;
 
-pub use arm::{HookOutcome, count_dropped, on_event};
+pub use arm::{HookOutcome, count_dropped, on_event, seed_forwarded};
 pub use server::{HookServer, new_token};
 pub use template::{HOOKS_TEMPLATE, render_hooks};

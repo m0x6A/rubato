@@ -3,4 +3,4 @@
 
 mod pair;
 
-pub use pair::{Paired, pair};
+pub use pair::{Paired, pair, pair_and_save};

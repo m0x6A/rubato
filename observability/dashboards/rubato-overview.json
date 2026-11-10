@@ -129,7 +129,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum by (rubato_companion_id) (rubato_sessions_by_state{rubato_session_state=\"working\"})",
+          "expr": "max by (rubato_companion_id) (rubato_sessions_by_state{rubato_session_state=\"working\"})",
           "legendFormat": "working {{rubato_companion_id}}"
         }
       ],
@@ -251,7 +251,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (state) (rubato_issues_by_state)",
+          "expr": "sum by (rubato_issue_state) (rubato_issues_by_state)",
           "legendFormat": "__auto"
         }
       ],
@@ -343,7 +343,7 @@
       "type": "stat",
       "gridPos": {
         "h": 6,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 16
       },
@@ -379,13 +379,69 @@
       }
     },
     {
+      "id": 25,
+      "title": "Map age",
+      "description": "Seconds since the loaded map was loaded. Healthy: a saw-tooth up to the reload cycle (about 6-7 min at the default poll interval). It grows without bound when reloads stop or keep failing; the cause is on the Map panel (load failures).",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max(rubato_map_loaded_at)",
+          "legendFormat": "__auto"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 900
+              },
+              {
+                "color": "red",
+                "value": 1800
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
       "id": 22,
       "title": "Open plans per seam",
       "type": "bargauge",
       "gridPos": {
         "h": 6,
-        "w": 8,
-        "x": 8,
+        "w": 6,
+        "x": 12,
         "y": 16
       },
       "datasource": {
@@ -415,8 +471,8 @@
       "type": "stat",
       "gridPos": {
         "h": 6,
-        "w": 8,
-        "x": 16,
+        "w": 6,
+        "x": 18,
         "y": 16
       },
       "datasource": {

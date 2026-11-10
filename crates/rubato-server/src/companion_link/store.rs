@@ -1,4 +1,12 @@
 //! Tables `companion_events`, `session_snapshots` and `stale_events`.
+//!
+//! - `companion_events` is read by its own insert: `(companion_id, seq)` is the replay dedupe
+//!   key (ADR 0012), so `record_event` answering false is how a replayed envelope is recognised.
+//!   Nothing else selects from it.
+//! - `session_snapshots` is read by `all_sessions`.
+//! - `stale_events` has no reader. It is kept as the audit record of a never-silent event
+//!   (`rubato.session.stale`); the live signal is the log event and the alert, not this table
+//!   (plan 29 S6, D2).
 
 use crate::kernel::db::ts;
 use anyhow::Result;

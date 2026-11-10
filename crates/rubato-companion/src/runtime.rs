@@ -15,7 +15,7 @@ use crate::kernel::telemetry::Metrics;
 use crate::kernel::tmux::Tmux;
 use crate::kernel::tmux_ide::TmuxIde;
 use crate::launch::Launcher;
-use crate::server_link::{Client, Identity};
+use crate::server_link::{Client, Identity, Reservation};
 use crate::sessions::Registry;
 use crate::{hooks, launch, server_link, sessions, spend, stale};
 use anyhow::{Result, anyhow};
@@ -47,6 +47,14 @@ pub async fn start(
     shutdown: watch::Receiver<bool>,
 ) -> Result<(Handles, tokio::task::JoinHandle<Result<()>>)> {
     let cfg = Arc::new(cfg);
+    // Before any task starts: a state dir that cannot be written stops the companion here, with
+    // the path in the error (plan 29 S1, O1).
+    let seq = Reservation::open(&cfg.state_dir, Utc::now().timestamp().max(0) as u64)?;
+    tracing::info!(
+        start_seq = seq.start_seq(),
+        reserved_to = seq.reserved_to(),
+        "sequence reserved"
+    );
     let (hook_tx, hook_rx) = mpsc::unbounded_channel::<HookEvent>();
     let (dropped_tx, dropped_rx) = mpsc::unbounded_channel::<&'static str>();
     let server = HookServer::bind(hook_tx, dropped_tx).await?;
@@ -69,6 +77,7 @@ pub async fn start(
     };
     let join = tokio::spawn(run(
         cfg,
+        seq,
         server,
         hook_rx,
         dropped_rx,
@@ -82,6 +91,7 @@ pub async fn start(
 #[allow(clippy::too_many_arguments)]
 async fn run(
     cfg: Arc<DaemonConfig>,
+    seq: Reservation,
     server: HookServer,
     hook_rx: mpsc::UnboundedReceiver<HookEvent>,
     dropped_rx: mpsc::UnboundedReceiver<&'static str>,
@@ -90,6 +100,7 @@ async fn run(
     shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     let metrics = Arc::new(Metrics::new());
+    hooks::seed_forwarded(&metrics, cfg.state.companion_id);
     let hook_endpoint = server.endpoint.clone();
     let tmux = Tmux::new(
         cfg.workspace.companion.tmux_command.clone(),
@@ -112,7 +123,7 @@ async fn run(
             version: crate::kernel::VERSION.to_owned(),
             token: cfg.state.pairing_token.clone(),
         },
-        cfg.state.last_seq,
+        seq,
         cfg.state.last_server_seq,
     );
 
@@ -221,7 +232,7 @@ impl Dispatch<'_> {
             tokio::select! {
                 _ = shutdown.changed() => break,
                 Some(ev) = hook_rx.recv() => {
-                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics).await;
+                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id).await;
                     spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
                 }
                 Some(msg) = in_rx.recv() => match msg {
