@@ -43,6 +43,14 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
     ws.on_upgrade(move |socket| handle(app, pairing, socket))
 }
 
+/// A bookkeeping write on the companion socket that failed. The envelope is still answered,
+/// so without this line a lost sequence or last-seen write would be silent (issue #28).
+fn observe(write: &'static str, companion_id: Uuid, seq: u64, result: anyhow::Result<()>) {
+    if let Err(e) = result {
+        tracing::error!(slice = "companion_link", write, rubato.companion_id = %companion_id, seq, error = %e, "companion bookkeeping write failed");
+    }
+}
+
 async fn send_env(
     app: &App,
     companion_id: Uuid,
@@ -171,9 +179,19 @@ async fn on_envelope(
                 Ok(true) => {}
                 Err(e) => tracing::error!(error = %e, "recording event"),
             }
-            let _ = pairing::set_last_companion_seq(&app.db, companion_id, env.seq).await;
+            observe(
+                "set_last_companion_seq",
+                companion_id,
+                env.seq,
+                pairing::set_last_companion_seq(&app.db, companion_id, env.seq).await,
+            );
         }
-        let _ = pairing::touch(&app.db, companion_id, now).await;
+        observe(
+            "touch",
+            companion_id,
+            env.seq,
+            pairing::touch(&app.db, companion_id, now).await,
+        );
         match env.message {
             CompanionMessage::Hello {
                 companion_id: claimed,
@@ -262,7 +280,12 @@ async fn on_envelope(
             }
             CompanionMessage::Stale(s) => {
                 tracing::warn!(rubato.session_id = ?s.session_id, silent_for_secs = s.silent_for_secs, "{}", rubato_protocol::otel::event::SESSION_STALE);
-                let _ = store::store_stale(&app.db, &s).await;
+                observe(
+                    "store_stale",
+                    companion_id,
+                    env.seq,
+                    store::store_stale(&app.db, &s).await,
+                );
                 app.notify("stale");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
@@ -317,5 +340,29 @@ mod tests {
             Some(&companion_id.to_string())
         );
         assert_eq!(warned[0].fields.get("seq").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn a_failed_bookkeeping_write_is_logged_with_companion_and_seq() {
+        let (events, _guard) = capture::start();
+        let id = Uuid::new_v4();
+        observe("touch", id, 7, Ok(()));
+        assert!(events.lock().unwrap().is_empty(), "success is quiet");
+        observe("touch", id, 7, Err(anyhow::anyhow!("database is locked")));
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1, "{events:?}");
+        let e = &events[0];
+        assert_eq!(e.level, tracing::Level::ERROR);
+        assert_eq!(e.message, "companion bookkeeping write failed");
+        assert_eq!(e.fields.get("write").map(String::as_str), Some("touch"));
+        assert_eq!(e.fields.get("seq").map(String::as_str), Some("7"));
+        assert_eq!(
+            e.fields.get("rubato.companion_id").cloned(),
+            Some(id.to_string())
+        );
+        assert_eq!(
+            e.fields.get("error").map(String::as_str),
+            Some("database is locked")
+        );
     }
 }
