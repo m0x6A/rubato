@@ -1,8 +1,9 @@
 //! The companion websocket (ADR 0012): bearer token, envelopes with sequence numbers, acks,
 //! launch commands out. A span per inbound event with the session and issue as attributes.
 
-use crate::db;
-use crate::state::{App, CompanionConn};
+use super::store;
+use crate::kernel::state::{App, CompanionConn};
+use crate::{launch, pairing};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -10,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use opentelemetry::KeyValue;
-use rubato_protocol::otel::attr;
+use rubato_protocol::otel::{attr, span};
 use rubato_protocol::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
 };
@@ -25,7 +26,7 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim)
         .unwrap_or("");
-    let pairing = match db::pairing_by_token(&app.db, token).await {
+    let pairing = match pairing::authenticate(&app.db, token).await {
         Ok(Some(p)) if p.revoked_at.is_none() => p,
         Ok(_) => {
             app.metrics
@@ -47,7 +48,7 @@ async fn send_env(
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     message: ServerMessage,
 ) -> bool {
-    let seq = db::next_server_seq(&app.db, companion_id)
+    let seq = pairing::next_server_seq(&app.db, companion_id)
         .await
         .unwrap_or(0);
     let env = ServerEnvelope {
@@ -61,18 +62,15 @@ async fn send_env(
     }
 }
 
-async fn handle(app: App, pairing: db::PairingRow, socket: WebSocket) {
+async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
     let companion_id = pairing.companion_id;
     let user = pairing.user.clone();
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
-    app.companions.lock().unwrap().insert(
-        companion_id,
-        CompanionConn {
-            user: user.clone(),
-            tx,
-        },
-    );
+    app.companions
+        .lock()
+        .unwrap()
+        .insert(companion_id, CompanionConn { tx });
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
@@ -125,7 +123,7 @@ async fn handle(app: App, pairing: db::PairingRow, socket: WebSocket) {
 /// Record the envelope, update rows, and answer. Returns a reply when one is due.
 async fn on_envelope(
     app: &App,
-    pairing: &db::PairingRow,
+    pairing: &pairing::PairingRow,
     env: CompanionEnvelope,
 ) -> Option<ServerMessage> {
     let companion_id = pairing.companion_id;
@@ -139,12 +137,12 @@ async fn on_envelope(
         CompanionMessage::Stale(_) => "stale",
         CompanionMessage::Ack { .. } => "ack",
     };
-    let span = tracing::info_span!("rubato.inbound_event", rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
+    let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
     async move {
         let now = Utc::now();
         if !matches!(env.message, CompanionMessage::Ack { .. }) {
             let payload = serde_json::to_value(&env.message).unwrap_or_default();
-            match db::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
+            match store::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
                 Ok(false) => {
                     tracing::debug!(seq = env.seq, "replayed envelope already recorded");
                     return Some(ServerMessage::Ack { seq: env.seq });
@@ -152,9 +150,9 @@ async fn on_envelope(
                 Ok(true) => {}
                 Err(e) => tracing::error!(error = %e, "recording event"),
             }
-            let _ = db::set_last_companion_seq(&app.db, companion_id, env.seq).await;
+            let _ = pairing::set_last_companion_seq(&app.db, companion_id, env.seq).await;
         }
-        let _ = db::touch_pairing(&app.db, companion_id, now).await;
+        let _ = pairing::touch(&app.db, companion_id, now).await;
         match env.message {
             CompanionMessage::Hello {
                 companion_id: claimed,
@@ -180,7 +178,7 @@ async fn on_envelope(
                     });
                 }
                 Some(ServerMessage::Welcome {
-                    server_version: crate::VERSION.to_owned(),
+                    server_version: crate::kernel::VERSION.to_owned(),
                     protocol_version: PROTOCOL_VERSION,
                     last_seen_companion_seq: pairing.last_companion_seq,
                     limits: app.config.limits,
@@ -201,7 +199,7 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { sessions } => {
-                if let Err(e) = db::store_snapshot(&app.db, companion_id, &sessions, now).await {
+                if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
                 let mut counts = std::collections::BTreeMap::new();
@@ -223,7 +221,7 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Launch(result) => {
-                match db::store_launch_result(&app.db, &result).await {
+                match launch::record_result(&app.db, &result).await {
                     Ok(Some(issue)) => {
                         tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result")
                     }
@@ -235,7 +233,7 @@ async fn on_envelope(
             }
             CompanionMessage::CapHit(hit) => {
                 tracing::warn!(rubato.issue = %hit.issue, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
-                if let Err(e) = db::store_cap_hit(&app.db, &hit).await {
+                if let Err(e) = launch::record_cap_hit(&app.db, &hit).await {
                     tracing::error!(error = %e, "storing cap hit");
                 }
                 app.notify("cap hit");
@@ -243,7 +241,7 @@ async fn on_envelope(
             }
             CompanionMessage::Stale(s) => {
                 tracing::warn!(rubato.session_id = ?s.session_id, silent_for_secs = s.silent_for_secs, "{}", rubato_protocol::otel::event::SESSION_STALE);
-                let _ = db::store_stale(&app.db, &s).await;
+                let _ = store::store_stale(&app.db, &s).await;
                 app.notify("stale");
                 Some(ServerMessage::Ack { seq: env.seq })
             }

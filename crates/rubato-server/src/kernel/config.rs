@@ -5,6 +5,9 @@ use rubato_protocol::Limits;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+/// The longest poll interval: the `ServerPollSilent` window is 10 minutes (design D14).
+pub const MAX_POLL_SECS: u64 = 300;
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind: SocketAddr,
@@ -33,6 +36,9 @@ pub struct Config {
     pub default_spend_cap_usd: f64,
     pub default_attempt_limit: u32,
     pub pairing_ttl_secs: i64,
+    /// Problems found while reading the environment. `main` logs each as `warn!` once the
+    /// subscriber exists, since `from_env` runs before it does (design D14).
+    pub warnings: Vec<String>,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -41,6 +47,7 @@ fn env(name: &str) -> Option<String> {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
+        let mut warnings = Vec::new();
         let bind = env("RUBATO_BIND")
             .unwrap_or_else(|| "127.0.0.1:8080".into())
             .parse()
@@ -54,8 +61,14 @@ impl Config {
             limits.companion_silent_secs = v;
         }
         if let Some(v) = env("RUBATO_GITHUB_POLL_SECS").and_then(|v| v.parse().ok()) {
-            limits.github_poll_interval_secs = v;
+            limits.github_poll_interval_secs = clamp_poll_secs(v, &mut warnings);
         }
+        let session_secret = env("RUBATO_SESSION_SECRET").unwrap_or_else(|| {
+            warnings.push(
+                "RUBATO_SESSION_SECRET unset; web sessions will not survive a restart".into(),
+            );
+            uuid::Uuid::new_v4().to_string()
+        });
         Ok(Self {
             bind,
             public_url,
@@ -69,12 +82,7 @@ impl Config {
             map_path: env("RUBATO_MAP_PATH").unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
             map_ref: env("RUBATO_MAP_REF").unwrap_or_else(|| "main".into()),
             map_file: env("RUBATO_MAP_FILE").map(PathBuf::from),
-            session_secret: env("RUBATO_SESSION_SECRET").unwrap_or_else(|| {
-                tracing::warn!(
-                    "RUBATO_SESSION_SECRET unset; web sessions will not survive a restart"
-                );
-                uuid::Uuid::new_v4().to_string()
-            }),
+            session_secret,
             dev_user: env("RUBATO_DEV_USER"),
             web_dist: env("RUBATO_WEB_DIST")
                 .map(PathBuf::from)
@@ -88,6 +96,7 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3),
             pairing_ttl_secs: 900,
+            warnings,
         })
     }
 
@@ -113,6 +122,36 @@ impl Config {
             default_spend_cap_usd: 25.0,
             default_attempt_limit: 3,
             pairing_ttl_secs: 900,
+            warnings: Vec::new(),
         }
+    }
+}
+
+/// Clamp the poll interval to `MAX_POLL_SECS`, noting it once in `warnings`.
+fn clamp_poll_secs(v: u64, warnings: &mut Vec<String>) -> u64 {
+    if v > MAX_POLL_SECS {
+        warnings.push(format!(
+            "RUBATO_GITHUB_POLL_SECS={v} is above {MAX_POLL_SECS}; polling every {MAX_POLL_SECS} s"
+        ));
+        MAX_POLL_SECS
+    } else {
+        v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poll_interval_above_300_is_clamped_with_a_warning() {
+        let mut w = Vec::new();
+        assert_eq!(clamp_poll_secs(3600, &mut w), 300);
+        assert_eq!(w.len(), 1);
+        assert!(w[0].contains("3600"), "{w:?}");
+        let mut w = Vec::new();
+        assert_eq!(clamp_poll_secs(300, &mut w), 300);
+        assert_eq!(clamp_poll_secs(30, &mut w), 30);
+        assert!(w.is_empty(), "{w:?}");
     }
 }

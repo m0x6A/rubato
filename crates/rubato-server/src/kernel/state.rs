@@ -1,9 +1,10 @@
-//! Shared application state.
+//! Shared application state: the loaded map, the connected-companion registry and the web
+//! notify sender. In the kernel because four or more slices need it (design §9).
 
-use crate::auth::Signer;
-use crate::config::Config;
-use crate::github::GitHubApi;
-use crate::telemetry::Metrics;
+use crate::kernel::config::Config;
+use crate::kernel::github::GitHubApi;
+use crate::kernel::signer::Signer;
+use crate::kernel::telemetry::Metrics;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{ServerMessage, SystemMap, WebEvent};
 use sqlx::SqlitePool;
@@ -13,7 +14,6 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use uuid::Uuid;
 
 pub struct CompanionConn {
-    pub user: String,
     pub tx: mpsc::UnboundedSender<ServerMessage>,
 }
 

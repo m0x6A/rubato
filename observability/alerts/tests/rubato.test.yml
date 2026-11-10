@@ -107,3 +107,40 @@ tests:
             exp_annotations:
               summary: "GitHub rate limit under 10% (8%)"
               panel: GitHub calls · Rate limit
+
+  # Ticks for ten minutes, then stop: fires once the 10 m window holds no increase.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_poll_ticks_total'
+        values: "0+1x10 10x15"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: ServerPollSilent
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: ServerPollSilent
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "rubato-server has not completed a poll tick for 10 minutes"
+              panel: Poll ticks
+
+  # The counter never exported at all (server down, or the loop never spawned).
+  - interval: 1m
+    input_series:
+      - series: 'rubato_companion_heartbeat{rubato_companion_id="c1", rubato_user="m0x6A"}'
+        values: "0+60x10"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ServerPollSilent
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "rubato-server has not completed a poll tick for 10 minutes"
+              panel: Poll ticks

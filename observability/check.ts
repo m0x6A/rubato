@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const REQUIRED = ["CompanionSilent", "SessionWorkingNoHooks", "PlanUnknownNodes", "SeamCollision", "GitHubRateLimitLow"];
+const REQUIRED = ["CompanionSilent", "SessionWorkingNoHooks", "PlanUnknownNodes", "SeamCollision", "GitHubRateLimitLow", "ServerPollSilent"];
 
 function opt(argv: string[], name: string, fallback: string): string {
   const i = argv.indexOf(name);

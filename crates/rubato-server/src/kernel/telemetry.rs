@@ -89,6 +89,7 @@ pub struct Metrics {
     pub map_load_failures: Counter<u64>,
     pub ws_clients: Gauge<u64>,
     pub companion_heartbeat: Gauge<u64>,
+    pub poll_ticks: Counter<u64>,
 }
 
 impl Metrics {
@@ -109,6 +110,7 @@ impl Metrics {
             map_load_failures: m.u64_counter(otel::metric::MAP_LOAD_FAILURES).build(),
             ws_clients: m.u64_gauge(otel::metric::WS_CLIENTS).build(),
             companion_heartbeat: m.u64_gauge(otel::metric::COMPANION_HEARTBEAT).build(),
+            poll_ticks: m.u64_counter(otel::metric::POLL_TICKS).build(),
         }
     }
 }
@@ -116,5 +118,65 @@ impl Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Test-only: collect the events emitted on this thread, with their fields as strings.
+#[cfg(test)]
+pub mod capture {
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+
+    #[derive(Debug, Clone)]
+    pub struct Captured {
+        pub level: tracing::Level,
+        pub message: String,
+        pub fields: BTreeMap<String, String>,
+    }
+
+    pub type Events = Arc<Mutex<Vec<Captured>>>;
+
+    struct Layer(Events);
+
+    struct Visitor<'a>(&'a mut Captured);
+
+    impl Visit for Visitor<'_> {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.put(field, format!("{value:?}"));
+        }
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.put(field, value.to_owned());
+        }
+    }
+
+    impl Visitor<'_> {
+        fn put(&mut self, field: &Field, v: String) {
+            if field.name() == "message" {
+                self.0.message = v;
+            } else {
+                self.0.fields.insert(field.name().to_owned(), v);
+            }
+        }
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let mut c = Captured {
+                level: *event.metadata().level(),
+                message: String::new(),
+                fields: BTreeMap::new(),
+            };
+            event.record(&mut Visitor(&mut c));
+            self.0.lock().unwrap().push(c);
+        }
+    }
+
+    /// Capture until the guard drops. Use from a plain test or a current-thread runtime.
+    pub fn start() -> (Events, tracing::subscriber::DefaultGuard) {
+        let events: Events = Arc::default();
+        let sub = tracing_subscriber::registry().with(Layer(events.clone()));
+        (events, tracing::subscriber::set_default(sub))
     }
 }

@@ -90,7 +90,24 @@ capability.
 
 Each deployable's block appears here with the PR that slices it:
 
-<!-- slices: rubato-server --> _arrives with PR 1_ <!-- /slices -->
+<!-- slices: rubato-server -->
+`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, 404 for
+unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, task supervision); `kernel/`
+(config, telemetry, db connection, `AppState`, signer, `http::internal`, GitHub port); slices:
+
+```text
+auth            GitHub OAuth, session cookie, CurrentUser       users, web_sessions
+pairing         device-code pairing, the caller's pairings      pairing_codes, pairings
+companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
+pins            pin an issue to a node or seam                  pins
+launch          start a session through your own companion      launches, cap_hits
+map             load, validate, cache and serve the map         map_cache
+plans           parse and keep plan files from issue branches   plans
+github_poll     issue metadata, branch, PR, checks, decisions   pull_requests, decisions, issue_meta
+overview        derived progress, findings, gauges              (none)
+web_link        websocket fan-out to browsers                   (none)
+```
+<!-- /slices -->
 <!-- slices: rubato-companion --> _arrives with PR 2_ <!-- /slices -->
 <!-- slices: web --> _arrives with PR 3_ <!-- /slices -->
 <!-- slices: rubato-protocol --> _arrives with PR 4_ <!-- /slices -->

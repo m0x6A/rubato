@@ -1,12 +1,13 @@
 //! Fan-out to browsers: `WebEvent::Changed` whenever a signal lands; clients refetch the overview.
 
 use crate::auth::CurrentUser;
-use crate::state::App;
+use crate::kernel::state::App;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use opentelemetry::KeyValue;
+use rubato_protocol::otel::span;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::Instrument;
 
@@ -27,7 +28,7 @@ async fn handle(app: App, socket: WebSocket) {
         tokio::select! {
             ev = rx.recv() => match ev {
                 Ok(ev) => {
-                    let span = tracing::debug_span!("rubato.ws.fanout", rubato.subscribers = app.web_tx.receiver_count());
+                    let span = tracing::debug_span!(span::WS_FANOUT, rubato.subscribers = app.web_tx.receiver_count());
                     let text = serde_json::to_string(&ev).unwrap_or_default();
                     if sink.send(Message::Text(text.into())).instrument(span).await.is_err() {
                         break;
