@@ -3,7 +3,7 @@ feature: 20-vertical-slices
 issue: 20
 title: Refactor codebase to use vertical slices
 track: full
-status: proposed
+status: approved
 date: 2026-11-08
 author: Mattias Jonsson
 produced_by: { model: claude-fable-5-1, model_name: Claude Fable 5.1, tool: Claude Code (plan mode), effort: high }

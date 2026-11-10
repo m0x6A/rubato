@@ -1,8 +1,8 @@
 # 0015. Organise each deployable into vertical slices by capability; the wire schema, not Rust paths, is the seam
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-08
-- **Decided by:** agent (Claude Code, issue #20 design session) — proposed; a human accepts
+- **Decided by:** Mattias Jonsson, accepted 2026-11-10 (drafted by agent, Claude Code issue #20 design session)
 - **Seam:** companion-server, web-server
 - **Issue:** m0x6A/rubato#20
 
