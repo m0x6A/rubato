@@ -1,5 +1,6 @@
 //! The system map: contexts, contracts, externals and the seams between them (ADR 0007).
 
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -163,6 +164,20 @@ impl SystemMap {
             })
             .plan_path_for(issue, slug)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MapResponse {
+    pub map: SystemMap,
+    /// Git sha the map was loaded from.
+    pub version: String,
+    pub loaded_at: DateTime<Utc>,
+}
+
+/// Route paths for the map.
+pub mod routes {
+    pub const MAP: &str = "/api/map";
+    pub const MAP_RELOAD: &str = "/api/map/reload";
 }
 
 #[cfg(test)]

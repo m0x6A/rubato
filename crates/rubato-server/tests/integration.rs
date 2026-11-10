@@ -3,13 +3,17 @@
 //! table stores progress.
 
 use futures_util::{SinkExt, StreamExt};
+use rubato_protocol::launch::routes as launch_routes;
+use rubato_protocol::map::routes as map_routes;
 use rubato_protocol::pairing::{
     PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse, routes as pr,
 };
-use rubato_protocol::web::{Overview, PairApproveRequest, PairingInfo, PinRequest, routes as wr};
+use rubato_protocol::pins::routes as pin_routes;
+use rubato_protocol::progress::routes as overview_routes;
+use rubato_protocol::web_link::routes as web_routes;
 use rubato_protocol::{
-    ChecksStatus, CompanionEnvelope, CompanionMessage, Finding, IssueRef, MapRef, ProgressState,
-    ServerEnvelope, ServerMessage,
+    ChecksStatus, CompanionEnvelope, CompanionMessage, Finding, IssueRef, MapRef, Overview,
+    PairApproveRequest, PairingInfo, PinRequest, ProgressState, ServerEnvelope, ServerMessage,
 };
 use rubato_server::kernel::config::Config;
 use rubato_server::kernel::db;
@@ -104,7 +108,7 @@ impl Harness {
         assert_eq!(pending, PairPollResponse::Pending);
         let approve = self
             .http
-            .post(format!("{}{}", self.url, wr::PAIR_APPROVE))
+            .post(format!("{}{}", self.url, pr::PAIR_APPROVE))
             .header("x-rubato-dev-user", as_user)
             .json(&PairApproveRequest {
                 user_code: start.user_code.to_lowercase(),
@@ -170,7 +174,7 @@ impl Harness {
 
     async fn overview(&self, as_user: &str) -> Overview {
         self.http
-            .get(format!("{}{}", self.url, wr::OVERVIEW))
+            .get(format!("{}{}", self.url, overview_routes::OVERVIEW))
             .header("x-rubato-dev-user", as_user)
             .send()
             .await
@@ -257,7 +261,7 @@ async fn protocol_fixtures_replay_derives_progress() {
     let issue = IssueRef::new("m0x6A/rubato", 1);
     let r = h
         .http
-        .post(format!("{}{}", h.url, wr::PINS))
+        .post(format!("{}{}", h.url, pin_routes::PINS))
         .json(&PinRequest {
             issue: issue.clone(),
             target: MapRef::node("rubato-protocol"),
@@ -268,7 +272,7 @@ async fn protocol_fixtures_replay_derives_progress() {
     assert_eq!(r.status(), 201);
     let bad = h
         .http
-        .post(format!("{}{}", h.url, wr::PINS))
+        .post(format!("{}{}", h.url, pin_routes::PINS))
         .json(&PinRequest {
             issue: issue.clone(),
             target: MapRef::node("rubato-orchestrator"),
@@ -407,7 +411,7 @@ async fn protocol_fixtures_replay_derives_progress() {
     // A cap hit on another, unmerged issue blocks it.
     let two = IssueRef::new("m0x6A/rubato", 2);
     h.http
-        .post(format!("{}{}", h.url, wr::PINS))
+        .post(format!("{}{}", h.url, pin_routes::PINS))
         .json(&PinRequest {
             issue: two.clone(),
             target: MapRef::seam("plan-check-plan-file"),
@@ -472,7 +476,7 @@ async fn findings_show_unknown_ids_and_seam_collisions() {
     });
     for n in [21, 22] {
         h.http
-            .post(format!("{}{}", h.url, wr::PINS))
+            .post(format!("{}{}", h.url, pin_routes::PINS))
             .json(&PinRequest {
                 issue: IssueRef::new("m0x6A/rubato", n),
                 target: MapRef::node("rubato-server"),
@@ -540,7 +544,7 @@ async fn bad_and_revoked_tokens_are_refused() {
     drop(ws);
     let r = h
         .http
-        .delete(format!("{}{}/{}", h.url, wr::PAIRINGS, companion_id))
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
         .header("x-rubato-dev-user", "alice")
         .send()
         .await
@@ -548,7 +552,7 @@ async fn bad_and_revoked_tokens_are_refused() {
     assert_eq!(r.status(), 404, "alice cannot revoke m0x6A's companion");
     let r = h
         .http
-        .delete(format!("{}{}/{}", h.url, wr::PAIRINGS, companion_id))
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
         .send()
         .await
         .unwrap();
@@ -572,7 +576,7 @@ async fn launch_goes_only_to_the_callers_own_connected_companion() {
     .await;
     let issue = IssueRef::new("m0x6A/rubato", 3);
     h.http
-        .post(format!("{}{}", h.url, wr::PINS))
+        .post(format!("{}{}", h.url, pin_routes::PINS))
         .json(&PinRequest {
             issue: issue.clone(),
             target: MapRef::node("skill-rubato"),
@@ -585,7 +589,7 @@ async fn launch_goes_only_to_the_callers_own_connected_companion() {
     // Alice has no companion: nothing to launch into.
     let r = h
         .http
-        .post(format!("{}{}", h.url, wr::LAUNCH))
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
         .header("x-rubato-dev-user", "alice")
         .json(&body)
         .send()
@@ -595,7 +599,7 @@ async fn launch_goes_only_to_the_callers_own_connected_companion() {
     // Alice naming m0x6A's companion is forbidden.
     let r = h
         .http
-        .post(format!("{}{}", h.url, wr::LAUNCH))
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
         .header("x-rubato-dev-user", "alice")
         .json(&serde_json::json!({ "issue": issue, "companion_id": companion_id }))
         .send()
@@ -605,7 +609,7 @@ async fn launch_goes_only_to_the_callers_own_connected_companion() {
     // The owner launches; the command arrives on the websocket with the right branch and attributes.
     let r = h
         .http
-        .post(format!("{}{}", h.url, wr::LAUNCH))
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
         .json(&body)
         .send()
         .await
@@ -654,7 +658,7 @@ async fn unauthenticated_requests_without_dev_user_are_401() {
         .unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app::router(app)).await.unwrap() });
-    let r = reqwest::get(format!("http://{addr}{}", wr::OVERVIEW))
+    let r = reqwest::get(format!("http://{addr}{}", overview_routes::OVERVIEW))
         .await
         .unwrap();
     assert_eq!(r.status(), 401);
@@ -674,7 +678,7 @@ impl Harness {
         let req = format!(
             "ws://{}{}",
             self.url.trim_start_matches("http://"),
-            wr::WEB_WS
+            web_routes::WEB_WS
         )
         .into_client_request()
         .unwrap();
@@ -738,7 +742,7 @@ async fn web_events_follow_every_action() {
     };
     let r = h
         .http
-        .post(format!("{}{}", h.url, wr::PINS))
+        .post(format!("{}{}", h.url, pin_routes::PINS))
         .json(&pin)
         .send()
         .await
@@ -749,7 +753,7 @@ async fn web_events_follow_every_action() {
     // launch from the handler (api.rs launch)
     let r = h
         .http
-        .post(format!("{}{}", h.url, wr::LAUNCH))
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
         .json(&serde_json::json!({ "issue": issue, "slug": "skill" }))
         .send()
         .await
@@ -804,7 +808,7 @@ async fn web_events_follow_every_action() {
     // map reload (api.rs map_reload)
     let r = h
         .http
-        .post(format!("{}{}", h.url, wr::MAP_RELOAD))
+        .post(format!("{}{}", h.url, map_routes::MAP_RELOAD))
         .send()
         .await
         .unwrap();
@@ -814,7 +818,7 @@ async fn web_events_follow_every_action() {
     // unpin (api.rs remove_pin)
     let r = h
         .http
-        .delete(format!("{}{}", h.url, wr::PINS))
+        .delete(format!("{}{}", h.url, pin_routes::PINS))
         .json(&pin)
         .send()
         .await
@@ -833,7 +837,7 @@ async fn web_events_follow_every_action() {
     // pairing revoke (pairing.rs)
     let r = h
         .http
-        .delete(format!("{}{}/{}", h.url, wr::PAIRINGS, companion_id))
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
         .send()
         .await
         .unwrap();
@@ -1003,7 +1007,7 @@ async fn poll_makes_the_same_github_calls_per_issue() {
     for n in [31, 32, 33] {
         let r = h
             .http
-            .post(format!("{}{}", h.url, wr::PINS))
+            .post(format!("{}{}", h.url, pin_routes::PINS))
             .json(&PinRequest {
                 issue: IssueRef::new("m0x6A/rubato", n),
                 target: MapRef::node("rubato-server"),

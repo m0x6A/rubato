@@ -11,7 +11,8 @@ use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope,
     TokenResponse, TokenUrl,
 };
-use rubato_protocol::web::{Me, routes};
+use rubato_protocol::Me;
+use rubato_protocol::auth::routes;
 use serde::Deserialize;
 
 const STATE_COOKIE: &str = "rubato_oauth_state";

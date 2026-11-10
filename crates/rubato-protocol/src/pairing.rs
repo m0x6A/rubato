@@ -1,6 +1,7 @@
 //! Device-code pairing of a companion with a GitHub login (ADR 0011), and the HTTP routes on
 //! the `companion-server` seam.
 
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -13,6 +14,8 @@ pub mod routes {
     pub const PAIR_POLL: &str = "/api/pair/poll";
     /// Websocket upgrade with `Authorization: Bearer <pairing token>`.
     pub const COMPANION_WS: &str = "/ws/companion";
+    pub const PAIRINGS: &str = "/api/pairings";
+    pub const PAIR_APPROVE: &str = "/api/pair/approve";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -49,4 +52,23 @@ pub enum PairPollResponse {
     },
     Denied,
     Expired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PairingInfo {
+    pub companion_id: Uuid,
+    pub user: String,
+    pub hostname: String,
+    pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<DateTime<Utc>>,
+    /// A websocket is open right now.
+    pub connected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PairApproveRequest {
+    pub user_code: String,
 }

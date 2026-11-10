@@ -6,7 +6,7 @@ use crate::kernel::state::App;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use rubato_protocol::web::MapResponse;
+use rubato_protocol::MapResponse;
 
 pub async fn map(
     State(app): State<App>,

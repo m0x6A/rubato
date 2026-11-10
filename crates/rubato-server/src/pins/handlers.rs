@@ -8,8 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::Utc;
-use rubato_protocol::IssuePin;
-use rubato_protocol::web::PinRequest;
+use rubato_protocol::{IssuePin, PinRequest};
 
 const SLICE: &str = "pins";
 

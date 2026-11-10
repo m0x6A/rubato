@@ -1,20 +1,10 @@
-//! What the companion knows about sessions, and the pin that ties an issue to the map.
+//! What the companion knows about sessions.
 
-use crate::ids::{IssueRef, MapRef};
+use crate::ids::IssueRef;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
-/// An issue pinned to a node or seam. The one piece of state GitHub does not hold (ADR 0008).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct IssuePin {
-    pub issue: IssueRef,
-    pub target: MapRef,
-    /// GitHub login of who pinned it.
-    pub pinned_by: String,
-    pub pinned_at: DateTime<Utc>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

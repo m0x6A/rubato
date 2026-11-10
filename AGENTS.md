@@ -139,7 +139,27 @@ launch      start a session through your own companion           POST /api/launc
 findings    what the map and the plans disagree about            (none)
 ```
 <!-- /slices -->
-<!-- slices: rubato-protocol --> _arrives with PR 4_ <!-- /slices -->
+<!-- slices: rubato-protocol -->
+`crates/rubato-protocol/src/`: flat modules, no `kernel/` folder and no slice test (design D5).
+Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; capability
+modules, each with the types and `routes` its seam uses (every type re-exported at the root):
+
+```text
+auth       Me; ME, LOGIN, CALLBACK, LOGOUT
+pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
+session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
+hook       HookEvent
+pins       IssuePin, PinRequest; PINS
+launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
+map        SystemMap, MapResponse; MAP, MAP_RELOAD
+plan       Plan and its affected parts, O-rows, assumptions
+github     PullRequestState, DecisionRecord
+progress   derive_progress, Overview, IssueSummary, Finding; OVERVIEW
+web_link   WebEvent; WEB_WS
+```
+
+The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).
+<!-- /slices -->
 
 ## The progress model
 

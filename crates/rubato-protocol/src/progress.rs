@@ -2,8 +2,12 @@
 //!
 //! The derivation is pure so the server, its tests and the fixtures agree on it.
 
+use crate::github::DecisionRecord;
 use crate::github::{ChecksStatus, PullRequestState};
 use crate::ids::{IssueRef, MapRef};
+use crate::map::MapResponse;
+use crate::pairing::PairingInfo;
+use crate::plan::Plan;
 use crate::session::{SessionState, SessionStatus};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
@@ -137,6 +141,69 @@ pub fn derive_progress(inputs: &ProgressInputs<'_>) -> (ProgressState, Option<St
         ProgressState::Unknown,
         Some("issue is not pinned to the map".into()),
     )
+}
+
+/// Everything the map view needs about one issue.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct IssueSummary {
+    pub issue: IssueRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub pins: Vec<MapRef>,
+    pub progress: Progress,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<SessionState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Plan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<PullRequestState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<DecisionRecord>,
+    /// Sum over this issue's sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_usd: Option<f64>,
+}
+
+/// Map versus territory, and plans that disagree with the map. Shown, never suppressed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Finding {
+    /// A plan names ids the map does not declare.
+    UnknownIds { issue: IssueRef, ids: Vec<String> },
+    /// Two or more open plans touch the same seam.
+    SeamCollision { seam: String, issues: Vec<IssueRef> },
+    /// A plan file exists but does not parse.
+    PlanParseError {
+        issue: IssueRef,
+        path: String,
+        error: String,
+    },
+    /// A session was launched against a different map version than the server holds.
+    MapVersionMismatch {
+        issue: IssueRef,
+        launched_with: String,
+        current: String,
+    },
+}
+
+/// The whole picture in one payload: what the web view renders.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Overview {
+    pub map: MapResponse,
+    pub issues: Vec<IssueSummary>,
+    pub findings: Vec<Finding>,
+    pub companions: Vec<PairingInfo>,
+    /// Sessions not attached to any issue (branch outside the convention).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unpinned_sessions: Vec<SessionState>,
+    pub generated_at: DateTime<Utc>,
+}
+
+/// Route path for the overview.
+pub mod routes {
+    pub const OVERVIEW: &str = "/api/overview";
 }
 
 #[cfg(test)]

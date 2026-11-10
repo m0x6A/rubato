@@ -10,8 +10,13 @@ use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post};
+use rubato_protocol::auth::routes as auth_routes;
+use rubato_protocol::launch::routes as launch_routes;
+use rubato_protocol::map::routes as map_routes;
 use rubato_protocol::pairing::routes as pr;
-use rubato_protocol::web::routes as wr;
+use rubato_protocol::pins::routes as pin_routes;
+use rubato_protocol::progress::routes as overview_routes;
+use rubato_protocol::web_link::routes as web_routes;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
@@ -23,25 +28,28 @@ pub fn router(app: App) -> Router {
     let index = dist.join("index.html");
     let api = Router::new()
         .route("/api/health", get(health))
-        .route(wr::ME, get(auth::me))
-        .route(wr::OVERVIEW, get(overview::overview))
-        .route(wr::MAP, get(map::map))
-        .route(wr::MAP_RELOAD, post(map::map_reload))
-        .route(wr::PINS, post(pins::add_pin).delete(pins::remove_pin))
-        .route(wr::LAUNCH, post(launch::launch))
-        .route(wr::PAIRINGS, get(pairing::list))
+        .route(auth_routes::ME, get(auth::me))
+        .route(overview_routes::OVERVIEW, get(overview::overview))
+        .route(map_routes::MAP, get(map::map))
+        .route(map_routes::MAP_RELOAD, post(map::map_reload))
         .route(
-            &format!("{}/{{companion_id}}", wr::PAIRINGS),
+            pin_routes::PINS,
+            post(pins::add_pin).delete(pins::remove_pin),
+        )
+        .route(launch_routes::LAUNCH, post(launch::launch))
+        .route(pr::PAIRINGS, get(pairing::list))
+        .route(
+            &format!("{}/{{companion_id}}", pr::PAIRINGS),
             delete(pairing::revoke),
         )
-        .route(wr::PAIR_APPROVE, post(pairing::approve))
+        .route(pr::PAIR_APPROVE, post(pairing::approve))
         .route(pr::PAIR_START, post(pairing::start))
         .route(pr::PAIR_POLL, post(pairing::poll))
         .route(pr::COMPANION_WS, get(companion_link::upgrade))
-        .route(wr::WEB_WS, get(web_link::upgrade))
-        .route(wr::LOGIN, get(auth::login))
-        .route(wr::CALLBACK, get(auth::callback))
-        .route(wr::LOGOUT, post(auth::logout))
+        .route(web_routes::WEB_WS, get(web_link::upgrade))
+        .route(auth_routes::LOGIN, get(auth::login))
+        .route(auth_routes::CALLBACK, get(auth::callback))
+        .route(auth_routes::LOGOUT, post(auth::logout))
         .route("/api/{*rest}", any(unknown_api_path))
         .route("/ws/{*rest}", any(unknown_api_path))
         .route("/auth/{*rest}", any(unknown_api_path));
@@ -92,26 +100,26 @@ mod tests {
     /// Every route the server registers, with its method. Kept by hand: the probe fails when a
     /// line above goes missing, because the path then reaches the 404 fallback.
     fn known_routes() -> Vec<(Method, String)> {
-        let revoke = format!("{}/{}", wr::PAIRINGS, uuid::Uuid::new_v4());
+        let revoke = format!("{}/{}", pr::PAIRINGS, uuid::Uuid::new_v4());
         vec![
             (Method::GET, "/api/health".into()),
-            (Method::GET, wr::ME.into()),
-            (Method::GET, wr::OVERVIEW.into()),
-            (Method::GET, wr::MAP.into()),
-            (Method::POST, wr::MAP_RELOAD.into()),
-            (Method::POST, wr::PINS.into()),
-            (Method::DELETE, wr::PINS.into()),
-            (Method::POST, wr::LAUNCH.into()),
-            (Method::GET, wr::PAIRINGS.into()),
+            (Method::GET, auth_routes::ME.into()),
+            (Method::GET, overview_routes::OVERVIEW.into()),
+            (Method::GET, map_routes::MAP.into()),
+            (Method::POST, map_routes::MAP_RELOAD.into()),
+            (Method::POST, pin_routes::PINS.into()),
+            (Method::DELETE, pin_routes::PINS.into()),
+            (Method::POST, launch_routes::LAUNCH.into()),
+            (Method::GET, pr::PAIRINGS.into()),
             (Method::DELETE, revoke),
-            (Method::POST, wr::PAIR_APPROVE.into()),
+            (Method::POST, pr::PAIR_APPROVE.into()),
             (Method::POST, pr::PAIR_START.into()),
             (Method::POST, pr::PAIR_POLL.into()),
             (Method::GET, pr::COMPANION_WS.into()),
-            (Method::GET, wr::WEB_WS.into()),
-            (Method::GET, wr::LOGIN.into()),
-            (Method::GET, wr::CALLBACK.into()),
-            (Method::POST, wr::LOGOUT.into()),
+            (Method::GET, web_routes::WEB_WS.into()),
+            (Method::GET, auth_routes::LOGIN.into()),
+            (Method::GET, auth_routes::CALLBACK.into()),
+            (Method::POST, auth_routes::LOGOUT.into()),
         ]
     }
 

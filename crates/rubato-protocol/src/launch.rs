@@ -94,3 +94,32 @@ pub struct CapHit {
     pub limit: f64,
     pub at: DateTime<Utc>,
 }
+
+/// Start a session on an issue. Only the caller's own companions are eligible (ADR 0004).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LaunchRequest {
+    pub issue: IssueRef,
+    /// One of the caller's companions; the only connected one when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub companion_id: Option<Uuid>,
+    /// Branch slug; derived from the issue title when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_cap_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_limit: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LaunchResponse {
+    pub command: LaunchCommand,
+    pub companion_id: Uuid,
+}
+
+/// Route path for launches.
+pub mod routes {
+    pub const LAUNCH: &str = "/api/launch";
+}
