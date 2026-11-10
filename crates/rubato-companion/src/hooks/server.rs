@@ -2,7 +2,7 @@
 //! token. Claude Code's hook command is `curl ... --data-binary @-`, so the body is the hook's
 //! stdin JSON as is.
 
-use crate::config::HookEndpoint;
+use crate::kernel::config::HookEndpoint;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -108,17 +108,6 @@ async fn receive(State(st): State<AppState>, headers: HeaderMap, body: Bytes) ->
     }
 }
 
-/// Render the hook template for this endpoint. The template ships with the skill; a copy is embedded.
-pub const HOOKS_TEMPLATE: &str = include_str!("../../../skills/rubato/hooks.json");
-
-pub fn render_hooks(template: &str, ep: &HookEndpoint) -> anyhow::Result<String> {
-    let out = template
-        .replace("{port}", &ep.port.to_string())
-        .replace("{token}", &ep.token);
-    serde_json::from_str::<serde_json::Value>(&out)?;
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,21 +121,5 @@ mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
         assert_ne!(t, new_token());
-    }
-
-    #[test]
-    fn renders_embedded_template() {
-        let out = render_hooks(
-            HOOKS_TEMPLATE,
-            &HookEndpoint {
-                port: 4321,
-                token: "abcdefghijklmnopqrstuvwxyz012345".into(),
-            },
-        )
-        .unwrap();
-        assert!(out.contains("http://127.0.0.1:4321/hook"));
-        assert!(!out.contains("{token}"));
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert!(v["hooks"]["Notification"].is_array());
     }
 }

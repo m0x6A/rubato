@@ -114,13 +114,6 @@ impl Workspace {
     pub fn repo(&self, name: &str) -> Option<&WorkspaceRepo> {
         self.repos.iter().find(|r| r.name == name)
     }
-
-    /// Which connected repo a path belongs to, if any.
-    pub fn repo_for_path(&self, path: &Path) -> Option<&WorkspaceRepo> {
-        self.repos
-            .iter()
-            .find(|r| path == r.local || path.starts_with(&r.local))
-    }
 }
 
 pub fn config_dir() -> PathBuf {
@@ -227,7 +220,7 @@ mod tests {
 
     #[test]
     fn parses_the_example_workspace() {
-        let text = include_str!("../../../skills/rubato/workspace.example.yml");
+        let text = include_str!("../../../../skills/rubato/workspace.example.yml");
         let ws = Workspace::parse(text).unwrap();
         assert_eq!(ws.map.repo, "m0x6A/rubato");
         assert_eq!(ws.companion.claude_command, "claude");
