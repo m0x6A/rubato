@@ -269,7 +269,8 @@ pub struct FakeInner {
     pub pulls: HashMap<(String, String), PullInfo>,
     pub checks: HashMap<String, ChecksStatus>,
     pub rate: (u64, u64),
-    pub calls: u64,
+    /// Every call in order, as (method, args); the guard for the poll order (design D4).
+    pub calls: Vec<(&'static str, String)>,
 }
 
 /// In-memory GitHub. Mutate through `with` in tests.
@@ -289,8 +290,8 @@ impl FakeGitHub {
         f(&mut self.inner.lock().unwrap());
     }
 
-    pub fn calls(&self) -> u64 {
-        self.inner.lock().unwrap().calls
+    pub fn calls(&self) -> Vec<(&'static str, String)> {
+        self.inner.lock().unwrap().calls.clone()
     }
 }
 
@@ -298,7 +299,7 @@ impl FakeGitHub {
 impl GitHubApi for FakeGitHub {
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>> {
         let mut g = self.inner.lock().unwrap();
-        g.calls += 1;
+        g.calls.push(("file", format!("{repo} {path} {git_ref}")));
         Ok(g.files
             .get(&(repo.to_owned(), path.to_owned(), git_ref.to_owned()))
             .cloned())
@@ -306,7 +307,7 @@ impl GitHubApi for FakeGitHub {
 
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>> {
         let mut g = self.inner.lock().unwrap();
-        g.calls += 1;
+        g.calls.push(("branch_sha", format!("{repo} {branch}")));
         Ok(g.branches
             .get(repo)
             .and_then(|b| b.iter().find(|(n, _)| n == branch))
@@ -315,7 +316,8 @@ impl GitHubApi for FakeGitHub {
 
     async fn branches_with_prefix(&self, repo: &str, prefix: &str) -> Result<Vec<String>> {
         let mut g = self.inner.lock().unwrap();
-        g.calls += 1;
+        g.calls
+            .push(("branches_with_prefix", format!("{repo} {prefix}")));
         Ok(g.branches
             .get(repo)
             .map(|b| {
@@ -329,13 +331,13 @@ impl GitHubApi for FakeGitHub {
 
     async fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueInfo>> {
         let mut g = self.inner.lock().unwrap();
-        g.calls += 1;
+        g.calls.push(("issue", format!("{repo}#{number}")));
         Ok(g.issues.get(&(repo.to_owned(), number)).cloned())
     }
 
     async fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<Comment>> {
         let mut g = self.inner.lock().unwrap();
-        g.calls += 1;
+        g.calls.push(("issue_comments", format!("{repo}#{number}")));
         Ok(g.comments
             .get(&(repo.to_owned(), number))
             .cloned()
@@ -344,19 +346,20 @@ impl GitHubApi for FakeGitHub {
 
     async fn pull_for_branch(&self, repo: &str, branch: &str) -> Result<Option<PullInfo>> {
         let mut g = self.inner.lock().unwrap();
-        g.calls += 1;
+        g.calls
+            .push(("pull_for_branch", format!("{repo} {branch}")));
         Ok(g.pulls.get(&(repo.to_owned(), branch.to_owned())).cloned())
     }
 
-    async fn checks(&self, _repo: &str, sha: &str) -> Result<ChecksStatus> {
+    async fn checks(&self, repo: &str, sha: &str) -> Result<ChecksStatus> {
         let mut g = self.inner.lock().unwrap();
-        g.calls += 1;
+        g.calls.push(("checks", format!("{repo} {sha}")));
         Ok(g.checks.get(sha).copied().unwrap_or(ChecksStatus::None))
     }
 
     async fn rate_limit(&self) -> Result<(u64, u64)> {
         let mut g = self.inner.lock().unwrap();
-        g.calls += 1;
+        g.calls.push(("rate_limit", String::new()));
         Ok(g.rate)
     }
 }

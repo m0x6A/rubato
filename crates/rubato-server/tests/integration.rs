@@ -662,3 +662,394 @@ async fn unauthenticated_requests_without_dev_user_are_401() {
         .unwrap();
     assert_eq!(r.status(), 200);
 }
+
+// ----- guards for the vertical-slice move (issue #20) ----------------------------------------
+
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+impl Harness {
+    async fn web_ws(&self) -> Ws {
+        let req = format!(
+            "ws://{}{}",
+            self.url.trim_start_matches("http://"),
+            wr::WEB_WS
+        )
+        .into_client_request()
+        .unwrap();
+        tokio_tungstenite::connect_async(req)
+            .await
+            .expect("web websocket")
+            .0
+    }
+}
+
+/// Wait for the next `WebEvent::Changed` with this reason; other reasons are skipped.
+async fn await_reason(web: &mut Ws, reason: &str) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let next = tokio::time::timeout_at(deadline, web.next())
+            .await
+            .unwrap_or_else(|_| panic!("no web event {reason:?} within 5 s"));
+        let Some(Ok(Message::Text(t))) = next else {
+            panic!("web socket closed waiting for {reason:?}")
+        };
+        let ev: rubato_protocol::WebEvent = serde_json::from_str(&t).unwrap();
+        let rubato_protocol::WebEvent::Changed { reason: got, .. } = ev;
+        if got == reason {
+            return;
+        }
+    }
+}
+
+#[tokio::test]
+async fn web_events_follow_every_action() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let mut checked = 0;
+
+    // pairing approve (pairing.rs)
+    let (companion_id, token) = h.pair("m0x6A").await;
+    await_reason(&mut web, "pairing").await;
+    checked += 1;
+    // companion connected (ws_companion.rs)
+    let mut ws = h.connect(&token).await;
+    await_reason(&mut web, "companion connected").await;
+    checked += 1;
+    let _ = send(
+        &mut ws,
+        &with_companion(Harness::fixture("companion_hello.json"), companion_id),
+    )
+    .await;
+    // sessions
+    let _ = send(
+        &mut ws,
+        &with_companion(Harness::fixture("companion_sessions.json"), companion_id),
+    )
+    .await;
+    await_reason(&mut web, "sessions").await;
+    checked += 1;
+    // pin (api.rs add_pin)
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let pin = PinRequest {
+        issue: issue.clone(),
+        target: MapRef::node("skill-rubato"),
+    };
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, wr::PINS))
+        .json(&pin)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    await_reason(&mut web, "pin").await;
+    checked += 1;
+    // launch from the handler (api.rs launch)
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, wr::LAUNCH))
+        .json(&serde_json::json!({ "issue": issue, "slug": "skill" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    await_reason(&mut web, "launch").await;
+    checked += 1;
+    let Some(Ok(Message::Text(t))) = ws.next().await else {
+        panic!("no launch command")
+    };
+    let ServerMessage::Launch(cmd) = serde_json::from_str::<ServerEnvelope>(&t).unwrap().message
+    else {
+        panic!("expected a launch command")
+    };
+    // launch result from the companion (ws_companion.rs)
+    let started = CompanionEnvelope {
+        seq: 20,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Started {
+            command_id: cmd.id,
+            session_id: cmd.session_id,
+            worktree: "/w".into(),
+            tmux_session: "t".into(),
+            at: chrono::Utc::now(),
+        }),
+    };
+    let _ = send(&mut ws, &started).await;
+    await_reason(&mut web, "launch").await;
+    checked += 1;
+    // cap hit
+    let mut cap = Harness::fixture("companion_cap_hit.json");
+    cap.seq = 21;
+    let _ = send(&mut ws, &cap).await;
+    await_reason(&mut web, "cap hit").await;
+    checked += 1;
+    // stale
+    let stale = CompanionEnvelope {
+        seq: 22,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Stale(rubato_protocol::StaleSession {
+            companion_id,
+            session_id: Some("s".into()),
+            issue: None,
+            last_seen: chrono::Utc::now(),
+            silent_for_secs: 900,
+            at: chrono::Utc::now(),
+        }),
+    };
+    let _ = send(&mut ws, &stale).await;
+    await_reason(&mut web, "stale").await;
+    checked += 1;
+    // map reload (api.rs map_reload)
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, wr::MAP_RELOAD))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    await_reason(&mut web, "map").await;
+    checked += 1;
+    // unpin (api.rs remove_pin)
+    let r = h
+        .http
+        .delete(format!("{}{}", h.url, wr::PINS))
+        .json(&pin)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    await_reason(&mut web, "pin").await;
+    checked += 1;
+    // poll (poller.rs)
+    poller::poll_once(&h.app).await.unwrap();
+    await_reason(&mut web, "poll").await;
+    checked += 1;
+    // companion disconnected
+    ws.close(None).await.unwrap();
+    await_reason(&mut web, "companion disconnected").await;
+    checked += 1;
+    // pairing revoke (pairing.rs)
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, wr::PAIRINGS, companion_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    await_reason(&mut web, "pairing").await;
+    checked += 1;
+
+    assert_eq!(checked, 13);
+    println!("checked {checked} notify sites");
+}
+
+#[tokio::test]
+async fn welcome_carries_last_seen_seq_after_reconnect() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    let ServerMessage::Welcome {
+        last_seen_companion_seq,
+        ..
+    } = send(&mut ws, &hello).await
+    else {
+        panic!("no welcome")
+    };
+    assert_eq!(last_seen_companion_seq, 0, "a new pairing has seen nothing");
+    let mut beat = with_companion(Harness::fixture("companion_heartbeat.json"), companion_id);
+    beat.seq = 7;
+    assert!(matches!(
+        send(&mut ws, &beat).await,
+        ServerMessage::Ack { seq: 7 }
+    ));
+    ws.close(None).await.unwrap();
+    drop(ws);
+
+    let mut ws = h.connect(&token).await;
+    let mut hello = hello;
+    hello.seq = 8;
+    let ServerMessage::Welcome {
+        last_seen_companion_seq,
+        ..
+    } = send(&mut ws, &hello).await
+    else {
+        panic!("no welcome after reconnect")
+    };
+    assert_eq!(last_seen_companion_seq, 7);
+}
+
+fn names(calls: &[(&'static str, String)]) -> Vec<&'static str> {
+    calls.iter().map(|(m, _)| *m).collect()
+}
+
+/// Wait until the fake has seen `rate_limit`, which is the last GitHub call of a poll tick.
+async fn until_tick_done(github: &FakeGitHub) -> Vec<(&'static str, String)> {
+    for _ in 0..200 {
+        let calls = github.calls();
+        if calls.iter().any(|(m, _)| *m == "rate_limit") {
+            return calls;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("no poll tick within 5 s: {:?}", github.calls());
+}
+
+#[tokio::test]
+async fn first_tick_reloads_then_polls() {
+    // Empty database: the first tick fetches the map, then polls.
+    let h = harness().await;
+    h.github.with(|g| g.calls.clear());
+    *h.app.map.write().await = None;
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(poller::run(h.app.clone(), rx));
+    let calls = until_tick_done(&h.github).await;
+    assert_eq!(
+        names(&calls)[..2],
+        ["branch_sha", "file"],
+        "map first: {calls:?}"
+    );
+    assert_eq!(names(&calls).last(), Some(&"rate_limit"));
+    tx.send(true).unwrap();
+    task.await.unwrap();
+
+    // Warm database (a map stored seconds ago): a restart still reloads on its first tick.
+    let warm = AppState::new(
+        h.app.db.clone(),
+        h.app.config.as_ref().clone(),
+        h.github.clone(),
+    );
+    poller::warm_map(&warm).await.unwrap();
+    assert!(
+        warm.map.read().await.is_some(),
+        "warm_map loads the stored map"
+    );
+    h.github.with(|g| g.calls.clear());
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(poller::run(warm, rx));
+    let calls = until_tick_done(&h.github).await;
+    assert_eq!(
+        names(&calls)[..2],
+        ["branch_sha", "file"],
+        "reload on the first tick after a restart: {calls:?}"
+    );
+    tx.send(true).unwrap();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn poll_makes_the_same_github_calls_per_issue() {
+    let h = harness().await;
+    let good = "---\nissue: m0x6A/rubato#31\n---\n## Affected parts\n| Node | Status | What changes | Seams |\n| --- | --- | --- | --- |\n| rubato-server | affected | x | server-github |\n## O-rows\n| Seam | Breaks like | Signal | Panel | Owner |\n| --- | --- | --- | --- | --- |\n| server-github | y | z | p | rubato-server |\n";
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.push(("issue/31-ok".into(), "s31".into()));
+        b.push(("issue/32-bad".into(), "s32".into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/31.md".into(),
+                "issue/31-ok".into(),
+            ),
+            good.into(),
+        );
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/32.md".into(),
+                "issue/32-bad".into(),
+            ),
+            "---\nissue: not an issue\n---\n".into(),
+        );
+        g.pulls.insert(
+            ("m0x6A/rubato".into(), "issue/31-ok".into()),
+            PullInfo {
+                number: 41,
+                open: true,
+                draft: false,
+                head_sha: "s31".into(),
+                merged_at: None,
+                updated_at: chrono::Utc::now(),
+                url: "pr41".into(),
+            },
+        );
+        g.pulls.insert(
+            ("m0x6A/rubato".into(), "issue/32-bad".into()),
+            PullInfo {
+                number: 42,
+                open: false,
+                draft: false,
+                head_sha: "s32".into(),
+                merged_at: Some(chrono::Utc::now()),
+                updated_at: chrono::Utc::now(),
+                url: "pr42".into(),
+            },
+        );
+        g.checks.insert("s31".into(), ChecksStatus::Green);
+        g.comments.insert(
+            ("m0x6A/rubato".into(), 33),
+            vec![Comment {
+                id: 9,
+                author: "m0x6A".into(),
+                body: "Decision: No branch yet\n\n## Context\nx\n\n## Chosen\ny\n\n## Why\nz"
+                    .into(),
+                created_at: chrono::Utc::now(),
+                url: "c9".into(),
+            }],
+        );
+    });
+    for n in [31, 32, 33] {
+        let r = h
+            .http
+            .post(format!("{}{}", h.url, wr::PINS))
+            .json(&PinRequest {
+                issue: IssueRef::new("m0x6A/rubato", n),
+                target: MapRef::node("rubato-server"),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 201);
+    }
+    h.github.with(|g| g.calls.clear());
+    poller::poll_once(&h.app).await.unwrap();
+    let calls: Vec<String> = h
+        .github
+        .calls()
+        .into_iter()
+        .map(|(m, a)| format!("{m} {a}"))
+        .collect();
+    // Recorded on main before the move (poller.rs:142-299).
+    let expected = [
+        "issue m0x6A/rubato#31",
+        "branches_with_prefix m0x6A/rubato issue/31-",
+        "file m0x6A/rubato docs/plans/31.md issue/31-ok",
+        "pull_for_branch m0x6A/rubato issue/31-ok",
+        "checks m0x6A/rubato s31",
+        "issue_comments m0x6A/rubato#31",
+        "issue m0x6A/rubato#32",
+        "branches_with_prefix m0x6A/rubato issue/32-",
+        "file m0x6A/rubato docs/plans/32.md issue/32-bad",
+        "pull_for_branch m0x6A/rubato issue/32-bad",
+        "issue_comments m0x6A/rubato#32",
+        "issue m0x6A/rubato#33",
+        "branches_with_prefix m0x6A/rubato issue/33-",
+        "issue_comments m0x6A/rubato#33",
+        "rate_limit ",
+    ];
+    assert_eq!(calls, expected, "GitHub calls per issue changed");
+    let ov = h.overview("m0x6A").await;
+    let get = |n| ov.issues.iter().find(|i| i.issue.number == n).unwrap();
+    assert_eq!(get(31).progress.state, ProgressState::InReview);
+    assert_eq!(get(32).progress.state, ProgressState::Done);
+    assert_eq!(get(33).decisions.len(), 1);
+    assert!(
+        ov.findings
+            .iter()
+            .any(|f| matches!(f, Finding::PlanParseError { issue, .. } if issue.number == 32)),
+        "parse failure recorded, not skipped: {:?}",
+        ov.findings
+    );
+    println!("checked {} GitHub calls over 3 issues", calls.len());
+}
