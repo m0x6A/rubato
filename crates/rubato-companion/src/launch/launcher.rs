@@ -2,25 +2,27 @@
 //! one worktree and one tmux session per issue, Claude Code started with `--session-id`,
 //! `--settings` (hooks) and the OTel resource attributes.
 
+use super::apply::LiveSession;
 use super::script::launcher_script;
 use crate::hooks::{HOOKS_TEMPLATE, render_hooks};
 use crate::kernel::config::{HookEndpoint, Workspace, write_private};
 use crate::kernel::gitx;
 use crate::kernel::tmux::{Tmux, session_name};
 use crate::kernel::tmux_ide::{TmuxIde, version_at_least};
-use crate::sessions::Registry;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rubato_protocol::{LaunchCommand, LaunchResult, RefusalReason};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-pub struct Launcher<'a> {
-    pub workspace: &'a Workspace,
-    pub paired_user: &'a str,
-    pub state_dir: &'a Path,
-    pub hook_endpoint: &'a HookEndpoint,
-    pub tmux: &'a Tmux,
-    pub tmux_ide: &'a TmuxIde,
+/// Owns what a launch needs, cloned once when the runtime starts, so the blocking work can move
+/// into `spawn_blocking`.
+pub struct Launcher {
+    pub workspace: Workspace,
+    pub paired_user: String,
+    pub state_dir: PathBuf,
+    pub hook_endpoint: HookEndpoint,
+    pub tmux: Tmux,
+    pub tmux_ide: TmuxIde,
 }
 
 pub struct Started {
@@ -38,12 +40,13 @@ fn refused(cmd: &LaunchCommand, reason: RefusalReason, detail: impl Into<String>
     }
 }
 
-impl Launcher<'_> {
-    /// Decide and act. Blocking: call from `spawn_blocking`.
+impl Launcher {
+    /// Decide and act. Blocking: call from `spawn_blocking`. `live` is the session already
+    /// running for the issue, read from the registry before the call.
     pub fn handle(
         &self,
         cmd: &LaunchCommand,
-        registry: &Registry,
+        live: Option<LiveSession>,
     ) -> (LaunchResult, Option<Started>) {
         if cmd.user != self.paired_user {
             return (
@@ -58,7 +61,7 @@ impl Launcher<'_> {
                 None,
             );
         }
-        if let Some(e) = registry.live_for_issue(&cmd.issue) {
+        if let Some(e) = live {
             return (
                 refused(
                     cmd,
@@ -152,14 +155,14 @@ impl Launcher<'_> {
         let hooks_path = launch_dir.join("hooks.json");
         write_private(
             &hooks_path,
-            render_hooks(HOOKS_TEMPLATE, self.hook_endpoint)?.as_bytes(),
+            render_hooks(HOOKS_TEMPLATE, &self.hook_endpoint)?.as_bytes(),
         )?;
         let prompt_path = launch_dir.join("prompt.txt");
         std::fs::write(&prompt_path, &cmd.prompt)?;
         let script_path = launch_dir.join("launch.sh");
         std::fs::write(
             &script_path,
-            launcher_script(self.workspace, cmd, &worktree, &hooks_path, &prompt_path),
+            launcher_script(&self.workspace, cmd, &worktree, &hooks_path, &prompt_path),
         )?;
         let name = session_name(&cmd.issue.repo, &cmd.branch);
         if self.tmux.has_session(&name) {

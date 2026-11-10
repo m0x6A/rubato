@@ -171,14 +171,14 @@ async fn run(
         hooks::count_dropped(dropped_rx, metrics.clone()),
     );
 
-    let launcher = Launcher {
-        workspace: &cfg.workspace,
-        paired_user: &cfg.state.user,
-        state_dir: &cfg.state_dir,
-        hook_endpoint: &hook_endpoint,
-        tmux: &tmux,
-        tmux_ide: &tmux_ide,
-    };
+    let launcher = Arc::new(Launcher {
+        workspace: cfg.workspace.clone(),
+        paired_user: cfg.state.user.clone(),
+        state_dir: cfg.state_dir.clone(),
+        hook_endpoint: hook_endpoint.clone(),
+        tmux: tmux.clone(),
+        tmux_ide: tmux_ide.clone(),
+    });
     let dispatch = Dispatch {
         cfg: &cfg,
         registry: &registry,
@@ -207,7 +207,7 @@ struct Dispatch<'a> {
     metrics: &'a Metrics,
     tmux: &'a Tmux,
     limits: &'a std::sync::Mutex<rubato_protocol::Limits>,
-    launcher: &'a Launcher<'a>,
+    launcher: &'a Arc<Launcher>,
 }
 
 impl Dispatch<'_> {
