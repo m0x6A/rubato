@@ -76,6 +76,11 @@ A session lasts as long as its team check is at most seven days old; after that,
 first start as an App, the browser sends you through login once more. The private key can
 also be given inline as `RUBATO_GITHUB_APP_PRIVATE_KEY` (newlines as `\n`).
 
+Editing the map: "Edit map" opens the team's shared draft. "Propose map change…" opens one pull
+request on the map repository from a branch `map/draft-<time>`; that needs the App's Contents
+and Pull requests permissions set to read and write. On a personal token, or with
+`RUBATO_MAP_FILE`, the server cannot propose and "Copy YAML" gives the proposed file instead.
+
 For a GitHub other than github.com (a GitHub Enterprise Server), set `RUBATO_GITHUB_API_URL`
 to its REST API root and `RUBATO_GITHUB_WEB_URL` to its web root. The browser tests use the
 same two settings to run the whole App login against a stand-in (`web/e2e/github-standin.ts`).

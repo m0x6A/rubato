@@ -141,6 +141,7 @@ companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
 queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
 launch      start a session through your own companion           POST /api/launch
+drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
 findings    what the map and the plans disagree about            (none)
 ```
 <!-- /slices -->

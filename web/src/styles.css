@@ -151,6 +151,28 @@ button.link:hover { text-decoration: underline; }
 .lens button:last-child { border-radius: 0 6px 6px 0; }
 .legend { margin-top: 6px; max-width: 360px; padding: 4px 8px; font-size: 12px; color: var(--chip-ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 .legend-line { stroke: var(--muted); stroke-width: 2; }
+/* the shared map draft: dashed, badged, and its panel */
+.map-node.draft { border-style: dashed; border-color: var(--new); }
+.map-node.draft-removed { opacity: 0.55; text-decoration: line-through; }
+.seam-chip.draft { border-style: dashed; border-color: var(--new); }
+.seam-chip.draft-removed { text-decoration: line-through; }
+.react-flow__edge.draft .react-flow__edge-path { stroke: var(--new); stroke-dasharray: 3 4; }
+.badge.draft-badge { color: var(--chip-ink); border-color: var(--new); border-style: dashed; }
+.seam-handle { width: 12px; height: 12px; background: var(--new); border: 2px solid var(--panel); }
+.seam-handle.hidden { opacity: 0; pointer-events: none; }
+.map-actions { display: flex; gap: 6px; }
+.draft-panel { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px dashed var(--new); border-radius: 8px; }
+.draft-panel header { display: flex; align-items: baseline; gap: 8px; }
+.draft-panel header h2 { font-size: 15px; margin-right: auto; }
+.draft-panel ol.plain { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.draft-panel .stale { border-color: var(--warn); }
+.draft-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.draft-form { padding-top: 8px; border-top: 1px solid var(--line); }
+.draft-form label, .draft-panel label.stack { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--chip-ink); }
+.draft-panel textarea { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.diff { max-height: 260px; overflow: auto; font-size: 12px; line-height: 1.45; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); white-space: pre; }
+.diff .add { background: color-mix(in srgb, var(--ok) 18%, transparent); display: block; }
+.diff .del { background: color-mix(in srgb, var(--bad) 18%, transparent); display: block; }
 /* lanes: one per companion, with its sessions and its queue */
 .lanes { display: flex; flex-direction: column; gap: 10px; }
 .lane { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }

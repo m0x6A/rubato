@@ -12,7 +12,7 @@ use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::{App, LoadedMap};
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
@@ -320,10 +320,16 @@ pub async fn propose(
     log_state("opening", "proposed", &row, Some(pr.0));
     count(&app, "opened");
     app.notify("draft");
-    let proposal = store::proposal(&app.db).await.map_err(fault)?.ok_or((
-        internal(SLICE, anyhow::anyhow!("the proposal row is gone")),
-        String::new(),
-    ))?;
+    // `ok_or_else`: building the error logs it, so it must only be built when it is one.
+    let proposal = store::proposal(&app.db)
+        .await
+        .map_err(fault)?
+        .ok_or_else(|| {
+            (
+                internal(SLICE, anyhow::anyhow!("the proposal row is gone")),
+                String::new(),
+            )
+        })?;
     Ok(Json(ProposeResponse {
         proposal: proposal.to_wire(),
     }))
@@ -388,13 +394,164 @@ pub async fn withdraw(
     Ok(StatusCode::OK)
 }
 
+#[derive(serde::Deserialize)]
+pub struct YamlQuery {
+    /// `?base=true`: the map as it is loaded, written the same way, to compare the proposal with.
+    #[serde(default)]
+    base: bool,
+}
+
 /// The file a proposal would commit, as text: also the way out when the server cannot propose.
 pub async fn proposed_yaml(
     State(app): State<App>,
     _user: CurrentUser,
+    Query(q): Query<YamlQuery>,
 ) -> Result<Response, Refusal> {
     let map = loaded(&app).await?;
     let (_, preview) = store::ops(&app.db, &map.map).await.map_err(fault)?;
-    let text = yaml::render(&preview).map_err(fault)?;
+    let text = yaml::render(if q.base { &map.map } else { &preview }).map_err(fault)?;
     Ok(([(header::CONTENT_TYPE, "text/yaml; charset=utf-8")], text).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::config::Config;
+    use crate::kernel::db::connect;
+    use crate::kernel::github::FakeGitHub;
+    use crate::kernel::state::AppState;
+    use crate::kernel::telemetry::{capture, metric_reader};
+    use rubato_protocol::map_draft::{DraftOpRequest, MapOp};
+    use rubato_protocol::otel::metric;
+    use rubato_protocol::{MapNode, NodeKind, SystemMap};
+    use std::sync::Arc;
+
+    const MAP: &str = include_str!("../../../../docs/design/rubato-map.yml");
+    const PATH: &str = "docs/design/rubato-map.yml";
+
+    async fn drafted() -> (
+        App,
+        Arc<FakeGitHub>,
+        metric_reader::Reader,
+        tempfile::TempDir,
+    ) {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = connect(&url).await.unwrap();
+        let github = Arc::new(FakeGitHub::new());
+        github.with(|g| {
+            g.writes = true;
+            g.files.insert(
+                ("m0x6A/rubato".into(), PATH.into(), "main".into()),
+                MAP.into(),
+            );
+            g.branches
+                .insert("m0x6A/rubato".into(), vec![("main".into(), "head1".into())]);
+        });
+        let (reader, metrics) = metric_reader::start();
+        let mut app = AppState::new(pool, Config::for_tests(url, "m0x6A"), github.clone());
+        Arc::get_mut(&mut app).unwrap().metrics = metrics;
+        let map: SystemMap = serde_yaml_ng::from_str(MAP).unwrap();
+        *app.map.write().await = Some(LoadedMap {
+            map: map.clone(),
+            version: "head1".into(),
+            loaded_at: Utc::now(),
+            yaml: MAP.into(),
+        });
+        let op = DraftOpRequest {
+            op_id: uuid::Uuid::new_v4(),
+            op: MapOp::AddNode {
+                node: MapNode {
+                    id: "billing".into(),
+                    kind: NodeKind::Context,
+                    repo: None,
+                    path: None,
+                    description: None,
+                },
+            },
+        };
+        store::append(&app.db, &map, &op, "alice", Utc::now(), 200)
+            .await
+            .unwrap();
+        (app, github, reader, tmp)
+    }
+
+    fn outcome(reader: &metric_reader::Reader, name: &str) -> Option<u64> {
+        reader
+            .points(metric::MAP_PROPOSALS)
+            .into_iter()
+            .find(|p| p.attrs.get(attr::OUTCOME).map(String::as_str) == Some(name))
+            .map(|p| p.value)
+    }
+
+    /// What on-call reads (design O7, O8): a proposal that works logs its two state changes and
+    /// no error; one that fails logs the step with the repo, branch, base and who asked.
+    #[tokio::test]
+    async fn a_proposal_logs_its_states_and_a_failed_step_with_what_on_call_needs() {
+        let (app, github, reader, _tmp) = drafted().await;
+        let (events, _guard) = capture::start();
+        let ok = propose(State(app.clone()), CurrentUser("m0x6A".into())).await;
+        assert!(ok.is_ok(), "{:?}", ok.err());
+        {
+            let events = events.lock().unwrap();
+            let errors: Vec<_> = events
+                .iter()
+                .filter(|e| e.level == tracing::Level::ERROR)
+                .collect();
+            assert!(
+                errors.is_empty(),
+                "a proposal that worked logs no error: {errors:?}"
+            );
+            let states: Vec<(String, String)> = events
+                .iter()
+                .filter(|e| e.message == "map proposal state")
+                .map(|e| (e.fields["from"].clone(), e.fields["to"].clone()))
+                .collect();
+            assert_eq!(
+                states,
+                [
+                    ("drafting".to_owned(), "opening".to_owned()),
+                    ("opening".to_owned(), "proposed".to_owned())
+                ]
+            );
+            let proposed = events
+                .iter()
+                .rfind(|e| e.message == "map proposal state")
+                .unwrap();
+            assert_eq!(proposed.fields["base_sha"], "head1");
+            assert!(proposed.fields["pr"].contains("101"), "{proposed:?}");
+        }
+        assert_eq!(outcome(&reader, "opened"), Some(1));
+        assert_eq!(outcome(&reader, "failed"), None);
+
+        // Another server, where GitHub refuses the branch.
+        let (app, github2, reader, _tmp2) = drafted().await;
+        drop(github);
+        github2.with(|g| {
+            g.fail_write = Some((
+                "create_ref",
+                "Resource not accessible by integration".into(),
+            ))
+        });
+        let (events, _guard) = capture::start();
+        let (status, text) = propose(State(app.clone()), CurrentUser("m0x6A".into()))
+            .await
+            .expect_err("the step fails");
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(text.contains("step ref"), "{text}");
+        let events = events.lock().unwrap();
+        let failed = events
+            .iter()
+            .find(|e| e.message == "map proposal failed")
+            .expect("an error line");
+        assert_eq!(failed.level, tracing::Level::ERROR);
+        assert_eq!(failed.fields["step"], "ref");
+        assert_eq!(failed.fields["rubato.repo"], "m0x6A/rubato");
+        assert_eq!(failed.fields["base_sha"], "head1");
+        assert_eq!(failed.fields["rubato.user"], "m0x6A");
+        assert!(failed.fields["branch"].starts_with("map/draft-"));
+        assert!(failed.fields["error"].contains("Resource not accessible"));
+        assert_eq!(outcome(&reader, "failed"), Some(1));
+        assert_eq!(outcome(&reader, "opened"), None);
+    }
 }

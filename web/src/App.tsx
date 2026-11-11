@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoginPage, authApi } from "./features/auth/index.ts";
 import { CompanionsPanel } from "./features/companions/index.ts";
+import { DraftPanel, draftMarks, draftsApi, seamOpFor, withDraft } from "./features/drafts/index.ts";
 import { Findings } from "./features/findings/index.ts";
 import { IssuePanel } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
@@ -25,6 +26,10 @@ export function App() {
   const [selectedIssue, setSelectedIssue] = useState<IssueRef | null>(null);
   const [selection, setSelection] = useState<MapRef | null>(null);
   const [tab, setTab] = useState<Tab>("issues");
+  // Edit mode: the draft panel shows, parts connect, a double-click on the canvas asks for a part.
+  const [editing, setEditing] = useState(false);
+  const [addPartFocus, setAddPartFocus] = useState(0);
+  const newPartAt = useRef<{ x: number; y: number } | null>(null);
   // A notice may carry one way back ("Undo"), offered to the person who caused it.
   const [noticeState, setNoticeState] = useState<{ text: string; undo?: (() => void) | undefined } | null>(null);
   const notice = noticeState?.text ?? null;
@@ -225,7 +230,48 @@ export function App() {
     }
   };
 
-  const graph = useMemo(() => (overview ? buildGraph(overview) : null), [overview]);
+  /** A seam drawn on the map in edit mode becomes an operation of the draft; nothing is drawn until the server has it. */
+  const onConnectParts = useCallback(
+    async (from: string, to: string) => {
+      const op = seamOpFor(from, to);
+      if (!op) {
+        return;
+      }
+      try {
+        await draftsApi.addOp(op);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          return;
+        }
+        setNotice(`The seam from ${from} to ${to} was not added to the draft: ${failureText(e)}`);
+      }
+      await refresh();
+    },
+    [refresh, setNotice],
+  );
+
+  /** A part added after a double-click on the canvas is placed where the canvas was clicked. */
+  const onPartAdded = useCallback(
+    async (id: string) => {
+      const at = newPartAt.current;
+      newPartAt.current = null;
+      if (!at) {
+        return;
+      }
+      try {
+        await mapApi.putLayout({ positions: { [id]: at } });
+        await refresh();
+      } catch {
+        // The part is in the draft; where it sits is the automatic layout's call.
+      }
+    },
+    [refresh],
+  );
+
+  // The draft is an overlay for everyone: what it adds and removes is drawn, marked as draft.
+  const shown = useMemo(() => (overview ? withDraft(overview) : null), [overview]);
+  const marks = useMemo(() => (overview ? draftMarks(overview.map.map, overview.draft) : undefined), [overview]);
+  const graph = useMemo(() => (shown ? buildGraph(shown) : null), [shown]);
 
   // After every hook: the login page replaces the whole shell.
   if (needsLogin) {
@@ -265,7 +311,16 @@ export function App() {
       <div className="body">
         <section className="map">
           {graph && overview ? (
-            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={() => void onAutoArrange()} plan={selected?.plan ? { issue: selected.issue, plan: selected.plan } : null} />
+            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={() => void onAutoArrange()} plan={selected?.plan ? { issue: selected.issue, plan: selected.plan } : null}
+              draftMarks={marks}
+              editing={editing}
+              onToggleEdit={() => setEditing((e) => !e)}
+              onConnectParts={(from, to) => void onConnectParts(from, to)}
+              onAddPartAt={(at) => {
+                newPartAt.current = at;
+                setAddPartFocus((n) => n + 1);
+              }}
+            />
           ) : (
             <div className="empty">{error ?? "Loading the map…"}</div>
           )}
@@ -289,10 +344,11 @@ export function App() {
             </button>
           </nav>
           {overview && <Findings findings={overview.findings} />}
+          {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} />}
           {/* The map explains what is selected; an open issue takes the panel instead. */}
           {overview && tab === "issues" && selection && !selected && (
             <Inspector
-              overview={overview}
+              overview={shown ?? overview}
               selection={selection}
               onSelect={onSelectOnMap}
               onSelectIssue={(issue) => {

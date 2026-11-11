@@ -48,7 +48,8 @@ export function failureText(e: unknown): string {
   return e instanceof ApiError ? e.message : "Could not reach the server";
 }
 
-export async function request<T>(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+/** The response body as text; an error status throws `ApiError` with the server's own words. */
+export async function requestText(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): Promise<string> {
   const init: RequestInit = { method, credentials: "same-origin", headers: { ...headers } };
   if (body !== undefined) {
     init.headers = { "Content-Type": "application/json", ...headers };
@@ -61,7 +62,11 @@ export async function request<T>(method: string, url: string, body?: unknown, he
     }
     throw new ApiError(res.status, (await res.text()) || res.statusText);
   }
+  return res.status === 204 ? "" : await res.text();
+}
+
+export async function request<T>(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   // Some successes carry no body: 204, and the 201 of `POST /api/pins`.
-  const text = res.status === 204 ? "" : await res.text();
+  const text = await requestText(method, url, body, headers);
   return (text ? JSON.parse(text) : undefined) as T;
 }

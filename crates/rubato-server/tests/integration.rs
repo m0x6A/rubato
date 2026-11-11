@@ -2451,6 +2451,18 @@ async fn propose_opens_one_pr_and_freezes_the_draft() {
         .unwrap();
     assert_eq!(yaml.status(), 200);
     assert_eq!(yaml.text().await.unwrap(), committed);
+    // With `?base=true`: the loaded map written the same way, to compare the proposal with.
+    let base = h
+        .http
+        .get(format!("{}{}?base=true", h.url, draft_routes::DRAFT_YAML))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!base.contains("billing") && committed.contains("billing"));
+    assert!(base.contains("rubato-server"));
 }
 
 #[tokio::test]

@@ -33,6 +33,12 @@ export interface GraphEdge {
   findings: Finding[];
 }
 
+/** What the shared map draft does to a part or a seam, and who did it (ADR 0018). */
+export interface DraftMarkLike {
+  state: "added" | "changed" | "removed";
+  author: string;
+}
+
 export interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
