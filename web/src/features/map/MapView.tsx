@@ -1,7 +1,9 @@
 import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Panel, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mergeNodes } from "./nodes.ts";
-import type { MapLayout, MapRef } from "../../protocol.ts";
+import type { IssueRef, MapLayout, MapRef, Plan } from "../../protocol.ts";
+import { issueKey } from "../../shared/format.ts";
+import { planLens } from "./lens.ts";
 import { type XY, placePart, positionsToSave } from "./layout.ts";
 import { lit } from "./explain.ts";
 import { type Arrow, LENSES, type Lens, arrowsFor, flowCounts } from "./flows.ts";
@@ -80,12 +82,14 @@ interface Props {
   onMove?: ((moved: MapLayout) => Promise<void>) | undefined;
   /** Remove every stored position for the team. */
   onAutoArrange?: (() => void) | undefined;
+  /** The selected issue's plan: the map shows it and nothing else (the plan lens, design S11). */
+  plan?: { issue: IssueRef; plan: Plan } | null | undefined;
 }
 
 /** A burst of arrow-key moves, or the end of a drag, becomes one write after this pause. */
 const SAVE_AFTER_MS = 250;
 
-function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange }: Props) {
+function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan }: Props) {
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }> | null>(null);
   const { fitView } = useReactFlow();
   const shape = graph.nodes.map((n) => n.id).join(",") + "|" + graph.edges.map((e) => `${e.from}>${e.to}`).join(",");
@@ -111,10 +115,14 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shape]);
 
-  const [lens, setLens] = useState<Lens>("structure");
+  const [chosenLens, setLens] = useState<Exclude<Lens, "plan">>("structure");
+  const planView = useMemo(() => (plan ? planLens(plan.plan, graph.edges) : null), [plan, graph]);
+  // While a plan is shown, the switch waits: the arrows are the plan's.
+  const lens: Lens = planView ? "plan" : chosenLens;
   const counts = useMemo(() => flowCounts(graph.edges), [graph]);
   // What stays lit while something is selected: it, its neighbours and the seams between them.
-  const litNow = useMemo(() => lit(graph.edges, selected), [graph, selected]);
+  // In the plan lens it is what the plan names.
+  const litNow = useMemo(() => (planView ? { nodes: planView.litParts, seams: planView.litSeams } : lit(graph.edges, selected)), [graph, selected, planView]);
   const selectedNode = selected?.kind === "node" ? selected.id : null;
   const selectedSeam = selected?.kind === "seam" ? selected.id : null;
 
@@ -129,11 +137,12 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         id: n.id,
         type: "map",
         position: held.current.get(n.id) ?? settled.get(n.id) ?? { x: 0, y: 0 },
-        data: { node: n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id) },
+        // In the plan lens a part is painted by this plan only, not by every open plan.
+        data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id) },
       })),
     // `heldRevision` stands for `held`, a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, settled, selectedNode, onPin, heldRevision, litNow],
+    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView],
   );
   // React Flow draws an edge only between parts it has measured, and it reports a measurement
   // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
@@ -202,7 +211,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   const edges: SeamFlowEdge[] = useMemo(
     () =>
       graph.edges.flatMap((e) =>
-        arrowsFor(e, lens).map((arrow, i) => {
+        arrowsFor(planView ? { ...e, flows: planView.flows.get(e.id) } : e, lens).map((arrow, i) => {
           const marker = { type: MarkerType.ArrowClosed, width: 18, height: 18 };
           return {
             id: arrow.id,
@@ -214,6 +223,8 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               selectedSeam === e.id ? "chosen" : "",
               arrow.kind === "structure" ? "" : `flow ${arrow.kind}`,
               arrow.faint ? "faint" : "",
+              arrow.moving ? "moving" : "",
+              arrow.reversed ? "reversed" : "",
               litNow !== null && !litNow.seams.has(e.id) ? "dim" : "",
             ]
               .filter(Boolean)
@@ -223,7 +234,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           };
         }),
       ),
-    [graph, lens, selectedSeam, onSelect, onPin, litNow],
+    [graph, lens, selectedSeam, onSelect, onPin, litNow, planView],
   );
 
   if (!positions) {
@@ -250,13 +261,20 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       <Panel position="top-left">
         <div className="lens" role="radiogroup" aria-label="What the arrows show">
           {LENSES.map((l) => (
-            <button key={l.id} type="button" role="radio" aria-checked={lens === l.id} className={lens === l.id ? "active" : ""} onClick={() => setLens(l.id)}>
+            <button key={l.id} type="button" role="radio" aria-checked={lens === l.id} className={lens === l.id ? "active" : ""} onClick={() => setLens(l.id)} disabled={planView !== null} title={planView ? "Close the issue to choose what the arrows show" : undefined}>
               {l.label}
               {l.id !== "structure" && ` (${counts[l.id]})`}
             </button>
           ))}
         </div>
         <p className="legend" data-testid="legend">
+          {lens === "plan" && plan && planView && (
+            <>
+              <strong>The plan of {issueKey(plan.issue)}.</strong> Its parts are painted, the rest steps back
+              {planView.flows.size > 0 ? ", and what it will send moves along dashed arrows." : ". It declares no flows."}
+              {planView.unplaced > 0 && ` ${planView.unplaced} of its flows cannot be drawn: the seam does not join the two parts.`}
+            </>
+          )}
           {lens === "structure" && "Each arrow points from the part that depends to the part it depends on."}
           {lens === "data" && (
             <>

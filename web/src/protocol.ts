@@ -74,6 +74,12 @@ launched_with: string
 } | {
 kind: "repo_not_covered"
 repo: string
+} | {
+from: string
+issue: IssueRef
+kind: "flow_off_seam"
+seam: string
+to: string
 })
 /**
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
@@ -91,6 +97,10 @@ kind: "seam"
 })
 export type PartStatus = ("affected" | "new" | "quiet")
 export type AssumptionScope = ("node" | "seam")
+/**
+ * Data moves; control tells the other side to do something.
+ */
+export type FlowKind = ("data" | "control")
 export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
 export type ChecksStatus = (("green" | "red" | "pending") | "none")
 /**
@@ -116,10 +126,6 @@ error: string
 outcome: "failed"
 })
 export type NodeKind = ("context" | "contract" | "external")
-/**
- * Data moves; control tells the other side to do something.
- */
-export type FlowKind = ("data" | "control")
 export type PairPollResponse = ({
 status: "pending"
 } | {
@@ -392,6 +398,10 @@ affected_parts: AffectedPart[]
 assumed?: Assumption[]
 attempt_limit?: (number | null)
 /**
+ * What the plan will send across seams, from its `## Flows` table (ADR 0021). Optional.
+ */
+flows?: PlanFlow[]
+/**
  * Git ref the plan was read from (branch name or commit sha).
  */
 git_ref?: (string | null)
@@ -431,6 +441,17 @@ chosen: string
 decision: string
 id: string
 scope: AssumptionScope
+}
+/**
+ * One row of the plan's Flows table: something the change sends from one part to another over
+ * a seam. The seam must join the two parts.
+ */
+export interface PlanFlow {
+carries: string
+from: string
+kind: FlowKind
+seam: string
+to: string
 }
 /**
  * The 3 am question for one seam: which signal leads back to it, where, and who is woken.

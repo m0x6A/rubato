@@ -9,9 +9,10 @@
  */
 import type { Flow, FlowKind } from "../../protocol.ts";
 
-export type Lens = "structure" | FlowKind;
+/** `plan` is not offered by the switch: it is on while an issue with a plan is selected. */
+export type Lens = "structure" | FlowKind | "plan";
 
-export const LENSES: { id: Lens; label: string }[] = [
+export const LENSES: { id: Exclude<Lens, "plan">; label: string }[] = [
   { id: "structure", label: "Structure" },
   { id: "data", label: "Data flow" },
   { id: "control", label: "Control flow" },
@@ -25,7 +26,7 @@ export interface Arrow {
   id: string;
   seam: string;
   /** What the arrow shows. `structure` is the seam itself. */
-  kind: Lens;
+  kind: "structure" | FlowKind;
   /** The arrowhead sits at the seam's `from` end: the flow runs against the seam's direction. */
   reversed: boolean;
   /** What it carries, for a flow. */
@@ -35,6 +36,8 @@ export interface Arrow {
   dashed: boolean;
   /** No flow of the lens's kind is declared on this seam: drawn faint. */
   faint: boolean;
+  /** A flow a plan proposes: drawn moving, so it reads as not there yet. */
+  moving: boolean;
 }
 
 interface SeamLike {
@@ -45,23 +48,25 @@ interface SeamLike {
 }
 
 export function arrowsFor(seam: SeamLike, lens: Lens): Arrow[] {
-  const plain: Arrow = { id: seam.id, seam: seam.id, kind: "structure", reversed: false, label: undefined, offset: 0, dashed: false, faint: false };
+  const plain: Arrow = { id: seam.id, seam: seam.id, kind: "structure", reversed: false, label: undefined, offset: 0, dashed: false, faint: false, moving: false };
   if (lens === "structure") {
     return [plain];
   }
-  const flows = (seam.flows ?? []).filter((f) => f.kind === lens);
+  // The plan lens shows everything the plan sends, both kinds at once.
+  const flows = (seam.flows ?? []).filter((f) => lens === "plan" || f.kind === lens);
   if (flows.length === 0) {
     return [{ ...plain, faint: true }];
   }
   return flows.map((f, i) => ({
     id: `${seam.id}#${lens}-${i}`,
     seam: seam.id,
-    kind: lens,
+    kind: f.kind,
     reversed: f.from === seam.to,
     label: f.carries,
     offset: (i - (flows.length - 1) / 2) * ARROW_GAP,
-    dashed: lens === "control",
+    dashed: lens === "plan" || f.kind === "control",
     faint: false,
+    moving: lens === "plan",
   }));
 }
 

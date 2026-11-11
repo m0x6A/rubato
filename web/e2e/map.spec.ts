@@ -231,3 +231,51 @@ test("the data flow lens shows rubato-map.yml's flows with arrowheads", async ({
   await expect(inspector).toHaveCount(0);
   await expect(page.getByTestId("node-web")).not.toHaveClass(/dim/);
 });
+
+test("selecting an issue with a plan paints its parts and flows", async ({ page }) => {
+  // The seeded repository has branch issue/901-lens with a plan that has a Flows table. Pinning
+  // #901 makes it a tracked issue; the next poll tick (5 s in this harness) reads the plan.
+  const pin = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 901 }, target: { kind: "node", id: "rubato-server" } } });
+  expect(pin.status()).toBe(201);
+  await page.goto("/");
+  const row = page.getByTestId("issue-row-901");
+  await expect(row).toContainText("Designed", { timeout: 20_000 });
+
+  // The team view first: no plan lens, the switch works.
+  await expect(page.getByRole("radio", { name: "Structure" })).toBeEnabled();
+  await expect(page.locator(".react-flow__edge.moving")).toHaveCount(0);
+
+  await row.click();
+  await expect(page.getByTestId("issue-detail")).toContainText("m0x6A/rubato#901");
+  // The plan's parts are painted, every other part steps back.
+  await expect(page.getByTestId("node-rubato-server")).toHaveClass(/paint-affected/);
+  await expect(page.getByTestId("node-web")).toHaveClass(/paint-affected/);
+  await expect(page.getByTestId("node-rubato-server")).not.toHaveClass(/dim/);
+  for (const outside of ["rubato-companion", "github", "plan-file", "tmux-ide"]) {
+    await expect(page.getByTestId(`node-${outside}`)).toHaveClass(/dim/);
+  }
+  // Its two flows move along web-server, one in each direction; no other seam carries one.
+  await expect(page.locator(".react-flow__edge.moving")).toHaveCount(2);
+  await expect(page.getByTestId("flow-web-server#plan-0")).toHaveAttribute("title", "data flow over web-server: the new overview field");
+  await expect(page.getByTestId("flow-web-server#plan-1")).toHaveAttribute("title", "control flow over web-server: the request that asks for it");
+  await expect(page.locator(".react-flow__edge.moving .react-flow__edge-path[marker-start]")).toHaveCount(1);
+  await expect(page.locator(".react-flow__edge.moving .react-flow__edge-path[marker-end]")).toHaveCount(1);
+  await expect(page.getByTestId("legend")).toContainText("The plan of m0x6A/rubato#901.");
+  await expect(page.getByRole("radio", { name: "Structure" })).toBeDisabled();
+  // The panel says what the plan says.
+  const plan = page.getByTestId("plan-inspector");
+  await expect(plan).toContainText("rubato-server affected serves one more field in the overview");
+  await expect(plan).toContainText("data the new overview field: rubato-server → web over web-server");
+  await expect(plan).toContainText("web-server (the field is missing in the overview)");
+  if (process.env["RUBATO_E2E_SHOTS"]) {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/plan-lens.png` });
+  }
+
+  // Clearing the selection returns to the team view.
+  await page.getByRole("button", { name: "← all issues" }).click();
+  await expect(page.locator(".react-flow__edge.moving")).toHaveCount(0);
+  await expect(page.getByTestId("node-github")).not.toHaveClass(/dim/);
+  await expect(page.getByRole("radio", { name: "Structure" })).toBeEnabled();
+  await expect(plan).toHaveCount(0);
+});

@@ -35,7 +35,7 @@ describe("arrows from a seam and a lens (S9)", () => {
   });
 
   it("structure lens gives one arrow per seam", () => {
-    expect(arrowsFor(seam, "structure")).toEqual([{ id: "web-server", seam: "web-server", kind: "structure", reversed: false, label: undefined, offset: 0, dashed: false, faint: false }]);
+    expect(arrowsFor(seam, "structure")).toEqual([{ id: "web-server", seam: "web-server", kind: "structure", reversed: false, label: undefined, offset: 0, dashed: false, faint: false, moving: false }]);
     expect(arrowsFor({ id: "a-b", from: "a", to: "b" }, "structure")).toHaveLength(1);
   });
 
