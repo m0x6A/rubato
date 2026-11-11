@@ -279,3 +279,62 @@ test("selecting an issue with a plan paints its parts and flows", async ({ page 
   await expect(page.getByRole("radio", { name: "Structure" })).toBeEnabled();
   await expect(plan).toHaveCount(0);
 });
+
+test("queue an issue on a paired companion and start it", async ({ page }) => {
+  // Issue #9 was pinned by an earlier test; pin it here too so the test stands alone.
+  await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } } });
+  const alice = await connectCompanion("alice");
+  const mine = await connectCompanion("m0x6A");
+  const commands: { id: string; branch: string }[] = [];
+  mine.on("message", (d) => {
+    const env = JSON.parse(String(d));
+    if (env.message?.type === "launch") {
+      commands.push({ id: env.message.id as string, branch: env.message.branch as string });
+    }
+  });
+  await page.goto("/");
+  const row = page.getByTestId("issue-row-9");
+  await expect(row).toBeVisible();
+
+  // Drag the issue over the Companions tab, which opens, and drop it on my own lane.
+  const tab = page.getByRole("button", { name: /^Companions/ });
+  await row.hover();
+  await page.mouse.down();
+  await tab.hover();
+  await tab.hover();
+  const myLane = page.locator('[data-testid^="lane-"][aria-label^="Your companion m0x6A-box"]').last();
+  await expect(myLane).toBeVisible();
+  await myLane.hover();
+  await myLane.hover();
+  await page.mouse.up();
+  await expect(page.getByRole("status")).toContainText("m0x6A/rubato#9 queued on m0x6A-box");
+  const entry = myLane.getByTestId("queued-9");
+  await expect(entry).toContainText("queued by m0x6A");
+
+  // Alice's lane is there for everyone to see, with no controls for me, and takes no drop.
+  const aliceLane = page.locator('[data-testid^="lane-"][aria-label^="alice\'s companion"]').last();
+  await expect(aliceLane).toContainText("Nothing queued.");
+  const refused = await page.request.post("/api/queue", { data: { issue: { repo: "m0x6A/rubato", number: 9 }, companion_id: (await aliceLane.getAttribute("data-testid"))!.replace("lane-", "") } });
+  expect(refused.status()).toBe(403);
+
+  // Start: the launch reaches my companion's socket; the entry stays until the companion answers.
+  await entry.getByRole("button", { name: "Start m0x6A/rubato#9" }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  expect(commands[0]!.branch).toMatch(/^issue\/9-/);
+  await expect(page.getByRole("status")).toContainText("It leaves the queue when the companion reports it started.");
+  await expect(entry).toBeVisible();
+
+  // The companion refuses: the entry stays and says why.
+  const answer = (seq: number, message: Record<string, unknown>) => mine.send(JSON.stringify({ seq, sent_at: new Date().toISOString(), message: { type: "launch", command_id: commands.at(-1)!.id, at: new Date().toISOString(), ...message } }));
+  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux-ide 2.9 is needed" });
+  await expect(entry).toContainText("did not start: missing_dependency: tmux-ide 2.9 is needed");
+
+  // Started the second time: the entry leaves the lane.
+  await entry.getByRole("button", { name: "Start m0x6A/rubato#9" }).click();
+  await expect.poll(() => commands.length).toBe(2);
+  answer(3, { outcome: "started", session_id: crypto.randomUUID(), worktree: "/w", tmux_session: "s" });
+  await expect(myLane.getByTestId("queued-9")).toHaveCount(0);
+  await expect(myLane).toContainText("Nothing queued.");
+  alice.close();
+  mine.close();
+});

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { PinMenu } from "../pins/index.ts";
-import type { Backlog as BacklogData, BacklogRepo, IssueRef, MapRef, OpenIssue, SystemMap } from "../../protocol.ts";
+import { QueueMenu } from "../queue/index.ts";
+import type { Backlog as BacklogData, BacklogRepo, IssueRef, MapRef, OpenIssue, PairingInfo, QueuedIssue, SystemMap } from "../../protocol.ts";
 import { setIssueDrag } from "../../shared/dnd.ts";
 import { issueKey, relative } from "../../shared/format.ts";
 
@@ -8,6 +9,10 @@ interface Props {
   backlog: BacklogData | undefined;
   map: SystemMap;
   onPin: (issue: IssueRef, target: MapRef) => void;
+  /** The caller's own companions, for "Queue on…". */
+  lanes?: PairingInfo[] | undefined;
+  queue?: QueuedIssue[] | undefined;
+  onQueue?: ((issue: IssueRef, companionId: string) => void) | undefined;
 }
 
 /** "5 min ago" under an hour, as the design words it; the shared short form beyond that. */
@@ -48,7 +53,7 @@ function matches(i: OpenIssue, needle: string): boolean {
  * "Not pinned": the open issues of the map's repos that Rubato does not track yet (design S2).
  * A failed or missing listing is said per repo; an empty list is claimed only for listed repos.
  */
-export function Backlog({ backlog, map, onPin }: Props) {
+export function Backlog({ backlog, map, onPin, lanes = [], queue = [], onQueue }: Props) {
   const [filter, setFilter] = useState("");
   const all = backlog?.issues ?? [];
   const repos = backlog?.repos ?? [];
@@ -84,7 +89,10 @@ export function Backlog({ backlog, map, onPin }: Props) {
                     </span>
                   )}
                 </span>
-                <PinMenu map={map} issue={i.issue} onPin={onPin} />
+                <span className="row-end">
+                  <PinMenu map={map} issue={i.issue} onPin={onPin} />
+                  {onQueue && <QueueMenu issue={i.issue} lanes={lanes} queue={queue} onQueue={onQueue} />}
+                </span>
               </li>
             ))}
           </ul>

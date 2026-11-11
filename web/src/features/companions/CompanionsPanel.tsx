@@ -1,15 +1,15 @@
 import { type FormEvent, useState } from "react";
-import type { Me, PairingInfo } from "../../protocol.ts";
-import { relative } from "../../shared/format.ts";
+import type { Me, Overview } from "../../protocol.ts";
 import { companionsApi } from "./api.ts";
+import { type LaneActions, Lanes } from "./Lanes.tsx";
 
-interface Props {
-  companions: PairingInfo[];
+interface Props extends Omit<LaneActions, "onRevoke"> {
+  overview: Overview;
   me: Me | null;
   onChanged: () => void;
 }
 
-export function CompanionsPanel({ companions, me, onChanged }: Props) {
+export function CompanionsPanel({ overview, me, onChanged, ...queueActions }: Props) {
   const [code, setCode] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -45,20 +45,7 @@ export function CompanionsPanel({ companions, me, onChanged }: Props) {
       </form>
       {msg && <p className="muted">{msg}</p>}
       <h3 style={{ marginTop: 12 }}>Companions</h3>
-      <ul className="plain">
-        {companions.map((c) => (
-          <li key={c.companion_id} className="issue-row" data-testid={`companion-${c.user}`}>
-            <span>
-              <strong>{c.user}</strong> <span className="muted">{c.hostname}</span>
-              <div className="muted">
-                {c.revoked_at ? "revoked" : c.connected ? "connected" : c.last_seen ? `last seen ${relative(c.last_seen)}` : "never connected"}
-              </div>
-            </span>
-            {me && c.user === me.login && !c.revoked_at && <button onClick={() => revoke(c.companion_id)}>revoke</button>}
-          </li>
-        ))}
-        {companions.length === 0 && <li className="muted">No companions paired yet.</li>}
-      </ul>
+      <Lanes overview={overview} me={me} onRevoke={(id) => void revoke(id)} {...queueActions} />
     </section>
   );
 }

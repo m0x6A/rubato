@@ -151,6 +151,20 @@ button.link:hover { text-decoration: underline; }
 .lens button:last-child { border-radius: 0 6px 6px 0; }
 .legend { margin-top: 6px; max-width: 360px; padding: 4px 8px; font-size: 12px; color: var(--chip-ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 .legend-line { stroke: var(--muted); stroke-width: 2; }
+/* lanes: one per companion, with its sessions and its queue */
+.lanes { display: flex; flex-direction: column; gap: 10px; }
+.lane { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.lane.own { border-color: var(--accent); }
+.lane.drop-over { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.lane.drop-refused { border-color: var(--bad); border-style: dashed; }
+.lane header { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.lane h4 { font-size: 12px; color: var(--chip-ink); text-transform: uppercase; letter-spacing: 0.04em; }
+.lane-row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; align-items: flex-start; }
+.lane ol.plain, .lane ul.plain { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.queue-entry[draggable="true"] { cursor: grab; }
+.queue-entry .row-end { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.queue-entry button { padding: 2px 8px; min-height: 24px; }
+.lane .drop-hint { font-size: 12px; color: var(--accent-ink); font-weight: 600; }
 /* the inspector: the map explains what is selected */
 .inspector { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; }
 .inspector header { display: flex; align-items: baseline; gap: 8px; }

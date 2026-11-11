@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { PinMenu } from "../pins/index.ts";
+import { QueueMenu } from "../queue/index.ts";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
 import { setIssueDrag } from "../../shared/dnd.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
@@ -17,6 +18,16 @@ interface Props {
   /** Adds a pin; an issue may have several. The keyboard twin of dropping a row on the map. */
   onPin: (issue: IssueRef, target: MapRef) => void;
   onUnpin: (req: PinRequest) => void;
+  /** Queue an issue on one of the caller's own companions. Without it no "Queue on…" is offered. */
+  onQueue?: ((issue: IssueRef, companionId: string) => void) | undefined;
+}
+
+/** Companions the current user may queue issues on: their own, paired, not revoked (ADR 0020). */
+export function ownLanes(overview: Overview, me: Me | null) {
+  if (!me) {
+    return [];
+  }
+  return overview.companions.filter((c) => c.user === me.login && !c.revoked_at);
 }
 
 /** Companions the current user may start sessions in: their own, paired, connected (ADR 0004). */
@@ -29,8 +40,9 @@ export function ownConnectedCompanions(overview: Overview, me: Me | null) {
 
 const ORDER = ["blocked", "unknown", "building", "designing", "designed", "started", "in_review", "planned", "done"] as const;
 
-export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin }: Props) {
+export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue }: Props) {
   const own = ownConnectedCompanions(overview, me);
+  const lanes = onQueue ? ownLanes(overview, me) : [];
   // The list gives way to the detail, and a row that was just pinned leaves "Not pinned" with the
   // button that had focus: put focus on the detail's heading when an issue opens.
   const heading = useRef<HTMLHeadingElement>(null);
@@ -190,6 +202,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
               <span className="row-end">
                 <span className={`badge ${i.progress.state}`}>{STATE_LABEL[i.progress.state]}</span>
                 <PinMenu map={overview.map.map} issue={i.issue} pinned={i.pins} onPin={onPin} />
+                {onQueue && <QueueMenu issue={i.issue} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />}
               </span>
             </div>
           </li>
@@ -202,7 +215,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           </li>
         )}
       </ul>
-      <Backlog backlog={overview.backlog} map={overview.map.map} onPin={onPin} />
+      <Backlog backlog={overview.backlog} map={overview.map.map} onPin={onPin} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />
       {(overview.unpinned_sessions ?? []).length > 0 && (
         <p className="muted">
           {(overview.unpinned_sessions ?? []).length} session{(overview.unpinned_sessions ?? []).length === 1 ? "" : "s"} on branches outside the convention (unpinned).
