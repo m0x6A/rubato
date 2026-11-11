@@ -50,6 +50,10 @@ per repo) with the frontmatter and the sections the check reads. Fill it:
 - **O-rows**: one per seam in Affected parts. If this breaks at 3 am, which span, metric or
   log line leads back to it, on which dashboard panel, and which side of the seam is woken.
   Name `rubato.*` attributes. "We'll see it in the logs" is not an answer.
+- **Flows**: one row per thing this change sends across a seam, in its direction: `From`,
+  `To`, `Seam`, `Kind` (`data` or `control`), `Carries`. The seam must join the two
+  parts. `map.ts` lists the flows each seam already carries. Rubato draws your rows on the
+  shared map when someone selects the issue; the Mermaid block is for readers of the file only.
 - **Review map**: where a reviewer looks first, at most three places.
 
 Then check it before committing:

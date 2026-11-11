@@ -1,0 +1,22 @@
+{
+  "issue": { "repo": "m0x6A/rubato", "number": 43 },
+  "title": "Fixture plan with a Flows table",
+  "path": "schema/fixtures/plans/flows.md",
+  "affected_parts": [
+    { "node": "rubato-server", "status": "affected", "change": "serves one more field", "seams": ["web-server"] },
+    { "node": "web", "status": "affected", "change": "draws it", "seams": ["web-server"] }
+  ],
+  "o_rows": [
+    {
+      "seam": "web-server",
+      "breaks_like": "the field is missing",
+      "signal": "counter `rubato.web.rejected`",
+      "panel": "Web writes rejected",
+      "owner": "rubato-server"
+    }
+  ],
+  "flows": [
+    { "from": "rubato-server", "to": "web", "seam": "web-server", "kind": "data", "carries": "the new field, in `Overview`" },
+    { "from": "web", "to": "rubato-server", "seam": "web-server", "kind": "control", "carries": "asks for it" }
+  ]
+}

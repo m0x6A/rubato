@@ -3,6 +3,8 @@ import { issueKey } from "../../shared/format.ts";
 
 export function findingText(f: Finding): string {
   switch (f.kind) {
+    case "flow_off_seam":
+      return `${issueKey(f.issue)} plans a flow from ${f.from} to ${f.to} over ${f.seam}, which does not join them`;
     case "unknown_ids":
       return `${issueKey(f.issue)} names ids the map does not have: ${f.ids.join(", ")}`;
     case "seam_collision":

@@ -5,6 +5,7 @@
 //! types below and validated against `schema/plan.schema.json`.
 
 use crate::ids::IssueRef;
+use crate::map::FlowKind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,20 @@ pub struct Plan {
     pub o_rows: Vec<ORow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assumed: Vec<Assumption>,
+    /// What the plan will send across seams, from its `## Flows` table (ADR 0021). Optional.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flows: Vec<PlanFlow>,
+}
+
+/// One row of the plan's Flows table: something the change sends from one part to another over
+/// a seam. The seam must join the two parts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanFlow {
+    pub from: String,
+    pub to: String,
+    pub seam: String,
+    pub kind: FlowKind,
+    pub carries: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -111,10 +126,24 @@ impl Plan {
                     .iter()
                     .flat_map(|o| [o.seam.as_str(), o.owner.as_str()]),
             )
+            .chain(
+                self.flows
+                    .iter()
+                    .flat_map(|f| [f.from.as_str(), f.to.as_str(), f.seam.as_str()]),
+            )
             .collect();
         ids.sort_unstable();
         ids.dedup();
         ids
+    }
+
+    /// Flows whose seam the map has but which does not join the flow's two parts. A flow that
+    /// names an unknown id is reported by `unknown_ids`, not here.
+    pub fn flows_off_seam<'a>(&'a self, map: &crate::map::SystemMap) -> Vec<&'a PlanFlow> {
+        self.flows
+            .iter()
+            .filter(|f| map.seam(&f.seam).is_some_and(|s| !s.joins(&f.from, &f.to)))
+            .collect()
     }
 
     /// Ids the plan references that the map does not declare.
@@ -153,6 +182,7 @@ mod tests {
                 owner: "rubato-server".into(),
             }],
             assumed: vec![],
+            flows: vec![],
         }
     }
 

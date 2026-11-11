@@ -75,6 +75,15 @@ describe("parsePlan", () => {
     expect(plan).toEqual(expected);
   });
 
+  it("flows fixture matches Rust", () => {
+    // `plans::parse::tests::flows_fixture_matches_typescript` reads the same two files.
+    const path = "schema/fixtures/plans/flows.md";
+    const plan = parsePlan(readFileSync(resolve(root, path), "utf8"), path);
+    expect(plan).toEqual(JSON.parse(readFileSync(resolve(fixtures, "flows.json"), "utf8")));
+    expect(plan.flows).toHaveLength(2);
+    expect(() => parsePlan(readFileSync(resolve(root, path), "utf8").replace("| data |", "| magic |"), path)).toThrow(/kind must be data or control, got "magic"/);
+  });
+
   it("parses the v0 plan's numbered headings and backticked ids", () => {
     const path = "docs/plans/v0.md";
     const plan = parsePlan(readFileSync(resolve(root, path), "utf8"), path);
@@ -98,6 +107,34 @@ describe("check", () => {
     expect(line["event"]).toBe("rubato.plan.check");
     expect(line["rubato.issue"]).toBe("m0x6A/rubato#42");
     expect(line["rubato.plan.unknown_ids"]).toEqual([]);
+  });
+
+  it("a flow off its seam fails", () => {
+    const r = checkPlanFile(resolve(fixtures, "flow-off-seam.md"), map, schemaDir);
+    expect(r.ok).toBe(false);
+    expect(r.flowsOffSeam).toEqual(["web → github over web-server"]);
+    expect(r.unknownIds).toEqual([]);
+    expect(r.flowsChecked).toBe(2);
+    expect(logLine(r)["flows_off_seam"]).toEqual(["web → github over web-server"]);
+  });
+
+  it("an unknown flow id fails", () => {
+    const r = checkPlanFile(resolve(fixtures, "unknown-flow-id.md"), map, schemaDir);
+    expect(r.ok).toBe(false);
+    expect(r.unknownIds).toEqual(["rubato-orchestrator", "web-nowhere"]);
+    // An unknown seam is an unknown id, not also a flow off its seam.
+    expect(r.flowsOffSeam).toEqual([]);
+  });
+
+  it("a plan without Flows passes", () => {
+    const old = checkPlanFile(resolve(fixtures, "valid.md"), map, schemaDir);
+    expect(old.ok).toBe(true);
+    expect(old.plan?.flows).toBeUndefined();
+    expect(logLine(old)["flows_checked"]).toBe(0);
+    const withFlows = checkPlanFile(resolve(fixtures, "flows.md"), map, schemaDir);
+    expect(withFlows.ok).toBe(true);
+    expect(logLine(withFlows)["flows_checked"]).toBe(2);
+    expect(logLine(withFlows)["flows_off_seam"]).toEqual([]);
   });
 
   it("fails on purpose: unknown node", () => {

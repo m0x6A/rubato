@@ -72,15 +72,17 @@ export function main(argv: string[]): number {
   const files = [...new Set(args.plans.flatMap((g) => globSync(g)))].sort();
   let failed = 0;
   let ids = 0;
+  let flows = 0;
   for (const f of files) {
     const r = checkPlanFile(f, map, args.schemaDir);
     ids += r.idsChecked;
+    flows += r.flowsChecked;
     if (!r.ok) {
       failed++;
     }
     console.log(JSON.stringify(logLine(r)));
   }
-  console.log(`plan-check: checked ${files.length} plan(s), ${ids} id(s) against ${map.nodes.length} nodes and ${(map.seams ?? []).length} seams in ${args.map}; ${failed} failed`);
+  console.log(`plan-check: checked ${files.length} plan(s), ${ids} id(s) and ${flows} flow(s) against ${map.nodes.length} nodes and ${(map.seams ?? []).length} seams in ${args.map}; ${failed} failed`);
   return failed === 0 ? 0 : 1;
 }
 

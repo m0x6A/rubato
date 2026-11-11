@@ -134,6 +134,14 @@ pub fn build(
                     ids: unknown,
                 });
             }
+            for f in p.flows_off_seam(&m.map) {
+                findings.push(Finding::FlowOffSeam {
+                    issue: issue.clone(),
+                    seam: f.seam.clone(),
+                    from: f.from.clone(),
+                    to: f.to.clone(),
+                });
+            }
         }
         if let Some(m) = map {
             for (i, v) in &inputs.launch_map_versions {
@@ -349,6 +357,7 @@ mod tests {
                     owner: "rubato-server".into(),
                 }],
                 assumed: vec![],
+                flows: vec![],
             }),
             parse_error: None,
         }
@@ -505,6 +514,47 @@ mod tests {
         // With no map there is nothing to place.
         let none = build(&inputs, None, &Limits::default(), now());
         assert!(none.layout.positions.is_empty());
+    }
+
+    #[test]
+    fn flow_off_seam_is_a_finding() {
+        use rubato_protocol::{FlowKind, PlanFlow};
+        let a = IssueRef::new("o/r", 1);
+        let flow = |from: &str, to: &str, seam: &str| PlanFlow {
+            from: from.into(),
+            to: to.into(),
+            seam: seam.into(),
+            kind: FlowKind::Data,
+            carries: "x".into(),
+        };
+        let mut row = plan(&a, "web-server", "rubato-server");
+        row.plan.as_mut().unwrap().flows = vec![
+            // Along the seam, either way: fine.
+            flow("web", "rubato-server", "web-server"),
+            flow("rubato-server", "web", "web-server"),
+            // The seam does not join these two parts.
+            flow("web", "github", "web-server"),
+            // An unknown seam is an unknown id, reported once as that.
+            flow("web", "rubato-server", "no-such-seam"),
+        ];
+        let mut inputs = empty();
+        inputs.plans = vec![row];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let off: Vec<&Finding> = built
+            .findings
+            .iter()
+            .filter(|f| matches!(f, Finding::FlowOffSeam { .. }))
+            .collect();
+        assert_eq!(
+            off,
+            [&Finding::FlowOffSeam {
+                issue: a.clone(),
+                seam: "web-server".into(),
+                from: "web".into(),
+                to: "github".into(),
+            }]
+        );
+        assert!(built.findings.iter().any(|f| matches!(f, Finding::UnknownIds { ids, .. } if ids == &vec!["no-such-seam".to_string()])));
     }
 
     #[test]
