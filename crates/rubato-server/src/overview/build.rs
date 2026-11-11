@@ -5,6 +5,7 @@ use crate::github_poll::IssueMeta;
 use crate::kernel::state::LoadedMap;
 use crate::plans::PlanRow;
 use chrono::{DateTime, Utc};
+use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
     Backlog, BacklogRepo, CapKind, DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary,
     Limits, MapRef, OpenIssue, Plan, Progress, ProgressInputs, ProgressState, PullRequestState,
@@ -27,6 +28,8 @@ pub struct OverviewInputs {
     pub backlog: (Vec<OpenIssue>, Vec<BacklogRepo>),
     /// Repos the App installation does not cover.
     pub uncovered_repos: Vec<String>,
+    /// Every stored position, rows for parts the map no longer has included.
+    pub layout: MapLayout,
 }
 
 pub struct Built {
@@ -34,6 +37,8 @@ pub struct Built {
     pub findings: Vec<Finding>,
     pub unpinned_sessions: Vec<SessionState>,
     pub backlog: Backlog,
+    /// Stored positions of the parts the map has now.
+    pub layout: MapLayout,
 }
 
 fn seams_touched(plan: &Plan) -> BTreeSet<&str> {
@@ -247,11 +252,29 @@ pub fn build(
             None => listings.clone(),
         },
     };
+    // Positions only for parts the map has now: a row for a removed part is not served (and
+    // is deleted by the next layout write). With no map loaded there is nothing to place.
+    let layout = MapLayout {
+        positions: match map {
+            Some(m) => {
+                let parts = m.map.node_ids();
+                inputs
+                    .layout
+                    .positions
+                    .iter()
+                    .filter(|(id, _)| parts.contains(id.as_str()))
+                    .map(|(id, p)| (id.clone(), *p))
+                    .collect()
+            }
+            None => Default::default(),
+        },
+    };
     Built {
         issues: out,
         findings,
         unpinned_sessions,
         backlog,
+        layout,
     }
 }
 
@@ -362,6 +385,7 @@ mod tests {
             launch_map_versions: vec![],
             backlog: (vec![], vec![]),
             uncovered_repos: vec![],
+            layout: MapLayout::default(),
         }
     }
 
@@ -444,6 +468,43 @@ mod tests {
             labels: vec![],
             updated_at: now(),
         }
+    }
+
+    #[test]
+    fn layout_is_served_for_known_parts_and_changes_no_progress() {
+        use rubato_protocol::layout::Position;
+        let repo = "m0x6A/rubato";
+        let mut inputs = empty();
+        inputs.pins = vec![IssuePin {
+            issue: IssueRef::new(repo, 1),
+            target: MapRef::node("rubato-server"),
+            pinned_by: "m0x6A".into(),
+            pinned_at: now(),
+        }];
+        let before = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert!(before.layout.positions.is_empty());
+
+        let at = |x: f64| Position { x, y: 1.0 };
+        inputs.layout.positions = [
+            ("rubato-server".to_owned(), at(5.0)),
+            ("gone".to_owned(), at(9.0)),
+        ]
+        .into();
+        let after = build(&inputs, Some(&map()), &Limits::default(), now());
+        let placed: Vec<&str> = after.layout.positions.keys().map(String::as_str).collect();
+        assert_eq!(
+            placed,
+            ["rubato-server"],
+            "a part the map lacks is left out"
+        );
+        assert_eq!(
+            after.issues, before.issues,
+            "a position is not a progress signal"
+        );
+        assert_eq!(after.findings, before.findings);
+        // With no map there is nothing to place.
+        let none = build(&inputs, None, &Limits::default(), now());
+        assert!(none.layout.positions.is_empty());
     }
 
     #[test]

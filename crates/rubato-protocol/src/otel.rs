@@ -61,6 +61,8 @@ pub mod metric {
     pub const WEB_REJECTED: &str = "rubato.web.rejected";
     /// Repos the map or a tracked issue names that the GitHub App installation does not cover.
     pub const GITHUB_REPOS_UNCOVERED: &str = "rubato.github.repos_uncovered";
+    /// Accepted writes to the shared map layout: a part moved, or the layout cleared.
+    pub const LAYOUT_WRITES: &str = "rubato.layout.writes";
 }
 
 /// Span names.
@@ -130,6 +132,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::BACKLOG_ISSUES,
         metric::WEB_REJECTED,
         metric::GITHUB_REPOS_UNCOVERED,
+        metric::LAYOUT_WRITES,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

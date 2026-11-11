@@ -31,6 +31,13 @@
         "$ref": "#/$defs/IssueSummary"
       }
     },
+    "layout": {
+      "description": "Where the team has put each part (ADR 0016). Parts without a position are laid out\nautomatically. Never an input to progress.",
+      "$ref": "#/$defs/MapLayout",
+      "default": {
+        "positions": {}
+      }
+    },
     "map": {
       "$ref": "#/$defs/MapResponse"
     },
@@ -466,6 +473,19 @@
         "progress"
       ]
     },
+    "MapLayout": {
+      "description": "Positions by part id. In the overview it is the whole stored layout; as the body of\n`PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`\nit is what was removed, so a `PUT` of it undoes the removal.",
+      "type": "object",
+      "properties": {
+        "positions": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Position"
+          },
+          "default": {}
+        }
+      }
+    },
     "MapNode": {
       "type": "object",
       "properties": {
@@ -755,6 +775,24 @@
         "issue",
         "path",
         "affected_parts"
+      ]
+    },
+    "Position": {
+      "description": "The top-left corner of a part on the map canvas, in the canvas's own units.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "y"
       ]
     },
     "Progress": {

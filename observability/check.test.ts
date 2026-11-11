@@ -37,6 +37,11 @@ test("a dashboard without the Backlog age panel is rejected", () => {
   assert.deepEqual(r.problems, ['the dashboard has no "Backlog age" panel that queries rubato_backlog_listed_at']);
 });
 
+test("a dashboard without the Layout writes panel is rejected", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Layout writes")));
+  assert.deepEqual(r.problems, ['the dashboard has no "Layout writes" panel that queries rubato_layout_writes_total']);
+});
+
 test("a Backlog age panel on a metric with a unit suffix is rejected", () => {
   const withUnit = changed((panels) =>
     panels.map((p) => (p.title === "Backlog age" ? { ...p, targets: [{ expr: "time() - max by (rubato_repo) (rubato_backlog_listed_at_seconds)" }] } : p)),

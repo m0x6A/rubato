@@ -4,6 +4,7 @@
 
 use futures_util::{SinkExt, StreamExt};
 use rubato_protocol::launch::routes as launch_routes;
+use rubato_protocol::layout::{MapLayout, Position, routes as layout_routes};
 use rubato_protocol::map::routes as map_routes;
 use rubato_protocol::pairing::{
     PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse, routes as pr,
@@ -1526,5 +1527,126 @@ async fn without_the_app_login_stays_open() {
     assert!(
         !app.github.can_write(),
         "and such a server cannot propose map changes"
+    );
+}
+
+fn layout_of(pairs: &[(&str, f64, f64)]) -> MapLayout {
+    MapLayout {
+        positions: pairs
+            .iter()
+            .map(|(id, x, y)| ((*id).to_owned(), Position { x: *x, y: *y }))
+            .collect(),
+    }
+}
+
+#[tokio::test]
+async fn layout_put_is_in_overview_and_notifies() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let put = |layout: MapLayout| {
+        h.http
+            .put(format!("{}{}", h.url, layout_routes::LAYOUT))
+            .json(&layout)
+            .send()
+    };
+    assert!(h.overview("m0x6A").await.layout.positions.is_empty());
+
+    // One moved part: stored, every browser told, and in the next overview.
+    let r = put(layout_of(&[("rubato-server", 10.5, -20.0)]))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    await_reason(&mut web, "layout").await;
+    assert_eq!(
+        h.overview("m0x6A").await.layout,
+        layout_of(&[("rubato-server", 10.5, -20.0)])
+    );
+
+    // A write carries only what moved: the other part's position stays.
+    let r = put(layout_of(&[("web", 300.0, 40.0)])).await.unwrap();
+    assert_eq!(r.status(), 204);
+    // The last write wins per part.
+    let r = put(layout_of(&[("rubato-server", 1.0, 2.0)]))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert_eq!(
+        h.overview("m0x6A").await.layout,
+        layout_of(&[("rubato-server", 1.0, 2.0), ("web", 300.0, 40.0)])
+    );
+
+    // Refused whole: an id the map does not have, a seam's id, a position off the canvas.
+    let refused = [
+        layout_of(&[("web", 0.0, 0.0), ("no-such-part", 1.0, 1.0)]),
+        layout_of(&[("web-server", 1.0, 1.0)]),
+        layout_of(&[("web", 1.0e9, 0.0)]),
+    ];
+    for bad in &refused {
+        let r = put(bad.clone()).await.unwrap();
+        let status = r.status();
+        let body = r.text().await.unwrap();
+        assert_eq!(status, 422, "{bad:?}: {body}");
+        assert!(!body.is_empty(), "the answer says why");
+    }
+    assert_eq!(
+        h.overview("m0x6A").await.layout,
+        layout_of(&[("rubato-server", 1.0, 2.0), ("web", 300.0, 40.0)]),
+        "a refused write stores nothing, not even its good half"
+    );
+
+    // A row for a part the map no longer has is not served, and the next write removes it.
+    sqlx::query("INSERT INTO map_layout (node_id, x, y, updated_by, updated_at) VALUES ('gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    assert!(
+        !h.overview("m0x6A")
+            .await
+            .layout
+            .positions
+            .contains_key("gone")
+    );
+    put(layout_of(&[("web", 5.0, 5.0)])).await.unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM map_layout WHERE node_id = 'gone'")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+    println!(
+        "checked 4 accepted and {} refused layout writes",
+        refused.len()
+    );
+}
+
+#[tokio::test]
+async fn layout_delete_returns_removed_positions() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let url = format!("{}{}", h.url, layout_routes::LAYOUT);
+    let stored = layout_of(&[("rubato-server", 10.0, 20.0), ("web", 30.0, 40.0)]);
+    let r = h.http.put(&url).json(&stored).send().await.unwrap();
+    assert_eq!(r.status(), 204);
+    await_reason(&mut web, "layout").await;
+
+    // Auto-arrange: everything is removed for the team, and the answer is what was removed.
+    let r = h.http.delete(&url).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let removed: MapLayout = r.json().await.unwrap();
+    assert_eq!(removed, stored);
+    await_reason(&mut web, "layout").await;
+    assert!(h.overview("m0x6A").await.layout.positions.is_empty());
+
+    // Undo is a PUT of the answer.
+    let r = h.http.put(&url).json(&removed).send().await.unwrap();
+    assert_eq!(r.status(), 204);
+    assert_eq!(h.overview("m0x6A").await.layout, stored);
+
+    // Clearing an empty layout is not an error.
+    h.http.delete(&url).send().await.unwrap();
+    let r = h.http.delete(&url).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        r.json::<MapLayout>().await.unwrap().positions.is_empty(),
+        "nothing left to remove"
     );
 }

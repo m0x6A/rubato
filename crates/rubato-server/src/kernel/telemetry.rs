@@ -98,6 +98,7 @@ pub struct Metrics {
     pub backlog_issues: Gauge<u64>,
     pub web_rejected: Counter<u64>,
     pub github_repos_uncovered: Gauge<u64>,
+    pub layout_writes: Counter<u64>,
 }
 
 impl Metrics {
@@ -128,6 +129,7 @@ impl Metrics {
             backlog_issues: m.u64_gauge(otel::metric::BACKLOG_ISSUES).build(),
             web_rejected: m.u64_counter(otel::metric::WEB_REJECTED).build(),
             github_repos_uncovered: m.u64_gauge(otel::metric::GITHUB_REPOS_UNCOVERED).build(),
+            layout_writes: m.u64_counter(otel::metric::LAYOUT_WRITES).build(),
         }
     }
 }

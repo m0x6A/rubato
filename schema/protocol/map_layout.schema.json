@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MapLayout",
+  "description": "Positions by part id. In the overview it is the whole stored layout; as the body of\n`PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`\nit is what was removed, so a `PUT` of it undoes the removal.",
+  "type": "object",
+  "properties": {
+    "positions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Position"
+      },
+      "default": {}
+    }
+  },
+  "$defs": {
+    "Position": {
+      "description": "The top-left corner of a part on the map canvas, in the canvas's own units.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    }
+  }
+}

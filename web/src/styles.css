@@ -51,6 +51,11 @@ body { background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -appl
 .banner.error { color: var(--bad-ink); }
 .banner.notice { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .banner.notice button { padding: 2px 10px; min-height: 24px; flex-shrink: 0; }
+.banner.notice span[role="status"] { margin-right: auto; }
+.map-action { padding: 4px 10px; min-height: 28px; }
+.map-action:disabled { opacity: 0.6; cursor: default; }
+.react-flow__node.draggable { cursor: grab; }
+.react-flow__node.dragging { cursor: grabbing; }
 .body { display: grid; grid-template-columns: 1fr 400px; flex: 1; min-height: 0; }
 @media (max-width: 900px) { .body { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } }
 .map { position: relative; min-height: 0; }

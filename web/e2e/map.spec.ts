@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, test } from "@playwright/test";
+import { type Page, expect, test } from "@playwright/test";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
 
@@ -107,4 +107,71 @@ test("start session appears only for the current user's own connected companion"
   await expect(page.getByRole("status")).toContainText("sent to your companion");
   alice.close();
   mine.close();
+});
+
+/** Where a part is drawn on the canvas, from React Flow's own transform (not the screen, which depends on pan and zoom). */
+async function canvasPosition(page: Page, id: string): Promise<{ x: number; y: number }> {
+  const transform = await page.locator(`.react-flow__node[data-id="${id}"]`).evaluate((n) => (n as HTMLElement).style.transform);
+  const m = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(transform);
+  if (!m) {
+    throw new Error(`no position for ${id}: ${transform}`);
+  }
+  return { x: Math.round(Number(m[1])), y: Math.round(Number(m[2])) };
+}
+
+test("a dragged part is in the same place in a second browser and after reload", async ({ page, browser }) => {
+  const other = await (await browser.newContext({ baseURL: base })).newPage();
+  await page.goto("/");
+  await other.goto("/");
+  const part = page.getByTestId("node-web");
+  await expect(part).toBeVisible();
+  await expect(other.getByTestId("node-web")).toBeVisible();
+  const before = await canvasPosition(page, "web");
+  expect(await canvasPosition(other, "web")).toEqual(before);
+  const neighbour = await canvasPosition(page, "rubato-server");
+
+  // Drag with the mouse, in steps, as a person does.
+  const box = (await part.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 45, { steps: 6 });
+  await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 90, { steps: 6 });
+  await page.mouse.up();
+
+  const after = await canvasPosition(page, "web");
+  expect(after).not.toEqual(before);
+  // The second browser follows over the websocket, without a reload; only the dragged part moved.
+  await expect.poll(() => canvasPosition(other, "web")).toEqual(after);
+  expect(await canvasPosition(other, "rubato-server")).toEqual(neighbour);
+  // The seams still hang on the moved part.
+  await expect(other.getByTestId("seam-web-server")).toBeVisible();
+
+  // Still there after a reload, in both.
+  await page.reload();
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  await expect.poll(() => canvasPosition(page, "web")).toEqual(after);
+
+  // The keyboard path, as React Flow announces it to a screen reader: focus the part, Enter
+  // to select it, then the arrow keys move it. Saved the same way.
+  await page.locator('.react-flow__node[data-id="web"]').focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => canvasPosition(page, "web").then((p) => p.x)).toBeGreaterThan(after.x);
+  const nudged = await canvasPosition(page, "web");
+  await expect.poll(() => canvasPosition(other, "web")).toEqual(nudged);
+
+  // Auto-arrange removes every saved position for everyone; Undo brings them back.
+  await page.getByRole("button", { name: "Auto-arrange" }).click();
+  await expect(page.getByRole("status")).toContainText("Auto-arranged for everyone: 1 saved position removed");
+  await expect.poll(() => canvasPosition(other, "web")).toEqual(before);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByRole("status")).toContainText("The saved positions are back");
+  await expect.poll(() => canvasPosition(other, "web")).toEqual(nudged);
+  await expect.poll(() => canvasPosition(page, "web")).toEqual(nudged);
+
+  // Leave the shared layout as it was found, for the tests that follow.
+  await page.getByRole("button", { name: "Auto-arrange" }).click();
+  await expect.poll(() => canvasPosition(page, "web")).toEqual(before);
+  await other.context().close();
 });
