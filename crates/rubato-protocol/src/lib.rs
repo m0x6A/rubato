@@ -12,6 +12,7 @@ pub mod launch;
 pub mod layout;
 pub mod limits;
 pub mod map;
+pub mod map_draft;
 pub mod message;
 pub mod otel;
 pub mod pairing;
@@ -33,6 +34,7 @@ pub use launch::{
 pub use layout::{MapLayout, Position};
 pub use limits::Limits;
 pub use map::{Flow, FlowKind, MapNode, MapResponse, NodeKind, RepoRef, Seam, SystemMap};
+pub use map_draft::{DraftOp, DraftOpRequest, MapDraft, MapOp, Proposal, ProposalState};
 pub use message::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
 };

@@ -8,21 +8,22 @@ import { type XY, placePart, positionsToSave } from "./layout.ts";
 import { lit } from "./explain.ts";
 import { type Arrow, LENSES, type Lens, arrowsFor, flowCounts } from "./flows.ts";
 import type { OnPin } from "./drop.ts";
-import { type Graph, type GraphEdge, type GraphNode, layout } from "./graph.ts";
+import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, layout } from "./graph.ts";
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 
-type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean };
+type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
 type MapFlowNode = Node<MapNodeData, "map">;
-type SeamEdgeData = { seam: GraphEdge; arrow: Arrow; /** This arrow carries the seam's chip: one chip per seam in every lens. */ chip: boolean; selected: boolean; onSelect: (id: string) => void; onPin: OnPin | undefined };
+type SeamEdgeData = { seam: GraphEdge; arrow: Arrow; /** This arrow carries the seam's chip: one chip per seam in every lens. */ chip: boolean; selected: boolean; onSelect: (id: string) => void; onPin: OnPin | undefined; draft: DraftMarkLike | undefined };
 type SeamFlowEdge = Edge<SeamEdgeData, "seam">;
 
 function MapNodeCard({ data }: NodeProps<MapFlowNode>) {
   return (
     <>
-      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <PartCard node={data.node} selected={data.selected} onPin={data.onPin} dim={data.dim} />
-      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+      {/* In edit mode the handles show: drag from the right handle of one part to the left of another to draw a seam. */}
+      <Handle type="target" position={Position.Left} className={data.editing ? "seam-handle" : "seam-handle hidden"} isConnectable={data.editing} />
+      <PartCard node={data.node} selected={data.selected} onPin={data.onPin} dim={data.dim} draft={data.draft} />
+      <Handle type="source" position={Position.Right} className={data.editing ? "seam-handle" : "seam-handle hidden"} isConnectable={data.editing} />
     </>
   );
 }
@@ -57,7 +58,7 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
           )}
           {data.chip && (
             <div className="seam-label" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - (flow ? CHIP_ABOVE_FLOW : 0)}px)` }}>
-              <SeamChip seam={data.seam} selected={data.selected} onSelect={data.onSelect} onPin={data.onPin} />
+              <SeamChip seam={data.seam} selected={data.selected} onSelect={data.onSelect} onPin={data.onPin} draft={data.draft} />
             </div>
           )}
         </EdgeLabelRenderer>
@@ -84,14 +85,23 @@ interface Props {
   onAutoArrange?: (() => void) | undefined;
   /** The selected issue's plan: the map shows it and nothing else (the plan lens, design S11). */
   plan?: { issue: IssueRef; plan: Plan } | null | undefined;
+  /** What the shared draft adds, changes or removes, by id (ADR 0018). */
+  draftMarks?: ReadonlyMap<string, DraftMarkLike> | undefined;
+  /** Edit mode: handles show, parts connect, a double-click on the canvas asks for a new part. */
+  editing?: boolean | undefined;
+  onToggleEdit?: (() => void) | undefined;
+  /** A seam was drawn from one part to another. Nothing is added locally: the seam appears when the server has it. */
+  onConnectParts?: ((from: string, to: string) => void) | undefined;
+  /** The canvas was double-clicked in edit mode, at this canvas position. */
+  onAddPartAt?: ((at: XY) => void) | undefined;
 }
 
 /** A burst of arrow-key moves, or the end of a drag, becomes one write after this pause. */
 const SAVE_AFTER_MS = 250;
 
-function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan }: Props) {
+function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt }: Props) {
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }> | null>(null);
-  const { fitView } = useReactFlow();
+  const { fitView, screenToFlowPosition } = useReactFlow();
   const shape = graph.nodes.map((n) => n.id).join(",") + "|" + graph.edges.map((e) => `${e.from}>${e.to}`).join(",");
 
   useEffect(() => {
@@ -138,11 +148,11 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         type: "map",
         position: held.current.get(n.id) ?? settled.get(n.id) ?? { x: 0, y: 0 },
         // In the plan lens a part is painted by this plan only, not by every open plan.
-        data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id) },
+        data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id), draft: draftMarks?.get(n.id), editing },
       })),
     // `heldRevision` stands for `held`, a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView],
+    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing],
   );
   // React Flow draws an edge only between parts it has measured, and it reports a measurement
   // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
@@ -225,16 +235,17 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               arrow.faint ? "faint" : "",
               arrow.moving ? "moving" : "",
               arrow.reversed ? "reversed" : "",
+              draftMarks?.has(e.id) ? `draft draft-${draftMarks.get(e.id)?.state}` : "",
               litNow !== null && !litNow.seams.has(e.id) ? "dim" : "",
             ]
               .filter(Boolean)
               .join(" "),
             ...(arrow.reversed ? { markerStart: marker } : { markerEnd: marker }),
-            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin },
+            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id) },
           };
         }),
       ),
-    [graph, lens, selectedSeam, onSelect, onPin, litNow, planView],
+    [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks],
   );
 
   if (!positions) {
@@ -248,7 +259,16 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       edgeTypes={edgeTypes}
       onNodesChange={onNodesChange}
       nodesDraggable={Boolean(onMove)}
-      nodesConnectable={false}
+      nodesConnectable={editing}
+      onConnect={(c) => onConnectParts?.(c.source, c.target)}
+      zoomOnDoubleClick={!editing}
+      onDoubleClick={(e) => {
+        // Only the empty canvas: a double-click on a part or a label is not a new part.
+        if (editing && onAddPartAt && e.target instanceof Element && e.target.classList.contains("react-flow__pane")) {
+          const at = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+          onAddPartAt({ x: Math.round(at.x), y: Math.round(at.y) });
+        }
+      }}
       elementsSelectable
       onNodeClick={(_e, n) => onSelect({ kind: "node", id: n.id })}
       onEdgeClick={(_e, edge) => onSelect({ kind: "seam", id: edge.data?.seam.id ?? edge.id })}
@@ -294,11 +314,16 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           )}
         </p>
       </Panel>
-      {onAutoArrange && (
-        <Panel position="top-right">
-          <button type="button" className="map-action" onClick={onAutoArrange} disabled={Object.keys(stored?.positions ?? {}).length === 0} title="Remove every saved position, for the whole team, and lay the map out automatically">
+      {(onAutoArrange || onToggleEdit) && (
+        <Panel position="top-right" className="map-actions">
+          {onToggleEdit && (
+            <button type="button" className={editing ? "map-action active" : "map-action"} aria-pressed={editing} onClick={onToggleEdit} title="Change the map as one shared draft: add, change and remove parts and seams, then propose the draft as a pull request">
+              Edit map
+            </button>
+          )}
+          {onAutoArrange && <button type="button" className="map-action" onClick={onAutoArrange} disabled={Object.keys(stored?.positions ?? {}).length === 0} title="Remove every saved position, for the whole team, and lay the map out automatically">
             Auto-arrange
-          </button>
+          </button>}
         </Panel>
       )}
     </ReactFlow>

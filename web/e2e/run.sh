@@ -86,10 +86,15 @@ for _ in $(seq 1 50); do
 done
 
 RUBATO_E2E_URL=http://127.0.0.1:18090 RUBATO_E2E_APP_URL=http://127.0.0.1:18091 RUBATO_E2E_GITHUB_URL=http://127.0.0.1:18092 \
+  RUBATO_E2E_REPO="$TMP/rubato.git" \
   pnpm exec playwright test "$@" || {
     status=$?
+    [ -n "${RUBATO_E2E_KEEP_LOG:-}" ] && cp "$TMP/server.log" "$RUBATO_E2E_KEEP_LOG"
     echo "--- server log ---"; tail -n 60 "$TMP/server.log"
     echo "--- App server log ---"; tail -n 60 "$TMP/app-server.log"
     echo "--- GitHub stand-in log ---"; tail -n 20 "$TMP/github.log"
     exit "$status"
   }
+# For reading the server's log after a passing run: RUBATO_E2E_KEEP_LOG=<file>.
+[ -n "${RUBATO_E2E_KEEP_LOG:-}" ] && cp "$TMP/server.log" "$RUBATO_E2E_KEEP_LOG"
+exit 0

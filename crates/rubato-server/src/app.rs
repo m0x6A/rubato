@@ -5,7 +5,9 @@
 //! `index.html` for the single-page app's deep links.
 
 use crate::kernel::state::App;
-use crate::{auth, companion_link, launch, layout, map, overview, pairing, pins, queue, web_link};
+use crate::{
+    auth, companion_link, launch, layout, map, map_draft, overview, pairing, pins, queue, web_link,
+};
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -14,6 +16,7 @@ use rubato_protocol::auth::routes as auth_routes;
 use rubato_protocol::launch::routes as launch_routes;
 use rubato_protocol::layout::routes as layout_routes;
 use rubato_protocol::map::routes as map_routes;
+use rubato_protocol::map_draft::routes as draft_routes;
 use rubato_protocol::pairing::routes as pr;
 use rubato_protocol::pins::routes as pin_routes;
 use rubato_protocol::progress::routes as overview_routes;
@@ -34,6 +37,16 @@ pub fn router(app: App) -> Router {
         .route(overview_routes::OVERVIEW, get(overview::overview))
         .route(map_routes::MAP, get(map::map))
         .route(map_routes::MAP_RELOAD, post(map::map_reload))
+        .route(draft_routes::DRAFT_OPS, post(map_draft::add_op))
+        .route(
+            &format!("{}/{{seq}}", draft_routes::DRAFT_OPS),
+            delete(map_draft::remove_op),
+        )
+        .route(draft_routes::DRAFT_DISCARD, post(map_draft::discard))
+        .route(draft_routes::DRAFT_RESTORE, post(map_draft::restore))
+        .route(draft_routes::DRAFT_YAML, get(map_draft::proposed_yaml))
+        .route(draft_routes::DRAFT_PROPOSE, post(map_draft::propose))
+        .route(draft_routes::DRAFT_WITHDRAW, post(map_draft::withdraw))
         .route(
             pin_routes::PINS,
             post(pins::add_pin).delete(pins::remove_pin),
@@ -117,6 +130,13 @@ mod tests {
             (Method::GET, overview_routes::OVERVIEW.into()),
             (Method::GET, map_routes::MAP.into()),
             (Method::POST, map_routes::MAP_RELOAD.into()),
+            (Method::POST, draft_routes::DRAFT_OPS.into()),
+            (Method::DELETE, format!("{}/1", draft_routes::DRAFT_OPS)),
+            (Method::POST, draft_routes::DRAFT_DISCARD.into()),
+            (Method::POST, draft_routes::DRAFT_RESTORE.into()),
+            (Method::GET, draft_routes::DRAFT_YAML.into()),
+            (Method::POST, draft_routes::DRAFT_PROPOSE.into()),
+            (Method::POST, draft_routes::DRAFT_WITHDRAW.into()),
             (Method::POST, pin_routes::PINS.into()),
             (Method::DELETE, pin_routes::PINS.into()),
             (Method::POST, launch_routes::LAUNCH.into()),
@@ -162,6 +182,7 @@ mod tests {
             map,
             version: "v".into(),
             loaded_at: chrono::Utc::now(),
+            yaml: String::new(),
         });
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -279,6 +300,46 @@ mod tests {
             );
         }
 
+        // The map draft: an operation the rules refuse is counted with its reason.
+        let bad_op = serde_json::json!({ "op": "add_node", "op_id": uuid::Uuid::new_v4(), "node": { "id": "web", "kind": "context" } });
+        let r = http
+            .post(format!("{base}{}", draft_routes::DRAFT_OPS))
+            .json(&bad_op)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 422);
+        assert!(r.text().await.unwrap().contains("already exists"));
+        let refused = reader
+            .points(metric::WEB_REJECTED)
+            .into_iter()
+            .find(|p| p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("invalid_op"))
+            .expect("counted");
+        assert_eq!(refused.attrs[attr::ROUTE], draft_routes::DRAFT_OPS);
+        // Proposing through a connection that cannot write is refused and counted too.
+        let ok_op = serde_json::json!({ "op": "add_node", "op_id": uuid::Uuid::new_v4(), "node": { "id": "billing", "kind": "context" } });
+        assert_eq!(
+            http.post(format!("{base}{}", draft_routes::DRAFT_OPS))
+                .json(&ok_op)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            201
+        );
+        assert_eq!(
+            http.post(format!("{base}{}", draft_routes::DRAFT_PROPOSE))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            409
+        );
+        assert!(reader.points(metric::WEB_REJECTED).iter().any(|p| {
+            p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("cannot_write")
+                && p.attrs[attr::ROUTE] == draft_routes::DRAFT_PROPOSE
+        }));
+
         // The queue: a lane that is not the caller's (or does not exist) refuses all three
         // writes, each counted.
         use rubato_protocol::queue::{QueueOrder, QueueRequest};
@@ -354,7 +415,7 @@ mod tests {
         assert_eq!(stale.len(), 1, "{stale:?}");
         assert_eq!(stale[0].attrs[attr::DROP_REASON], "team_record_stale");
         assert_eq!(stale[0].attrs[attr::ROUTE], overview_routes::OVERVIEW);
-        println!("checked 6 refusal reasons");
+        println!("checked 8 refusal reasons");
     }
 
     #[tokio::test]

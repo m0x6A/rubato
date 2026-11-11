@@ -5,6 +5,7 @@ use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
+use crate::map_draft;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -35,7 +36,14 @@ pub async fn put_layout(
         .await
         .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
-    let known = map.map.node_ids();
+    // Parts of the merged map, and parts that exist only in the shared draft (ADR 0016).
+    let draft = map_draft::snapshot(&app.db, &map.map)
+        .await
+        .map_err(|e| (internal(SLICE, e), String::new()))?;
+    let mut known = map.map.node_ids();
+    if let Some(preview) = &draft.preview {
+        known.extend(preview.nodes.iter().map(|n| n.id.as_str()));
+    }
     // All or none: one bad entry refuses the write, so a browser never half-saves a drag.
     for (id, p) in &moved.positions {
         if !known.contains(id.as_str()) {

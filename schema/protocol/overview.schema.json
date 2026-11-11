@@ -15,6 +15,11 @@
         "$ref": "#/$defs/PairingInfo"
       }
     },
+    "draft": {
+      "description": "The shared draft of the map and its proposal (ADR 0018). Never an input to progress.",
+      "$ref": "#/$defs/MapDraft",
+      "default": {}
+    },
     "findings": {
       "type": "array",
       "items": {
@@ -263,6 +268,140 @@
         "title",
         "created_at",
         "url"
+      ]
+    },
+    "DraftOp": {
+      "description": "An operation in the draft, with who made it and when.",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "op_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "seq": {
+          "description": "Its place in the draft; also its name in `DELETE /api/map/draft/ops/{seq}`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stale": {
+          "description": "Why the operation no longer applies to the map as it is now (with the operations before\nit). It is skipped in the preview, and the draft cannot be proposed until it is removed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "$ref": "#/$defs/MapNode"
+            },
+            "op": {
+              "type": "string",
+              "const": "add_node"
+            }
+          },
+          "required": [
+            "op",
+            "node"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "$ref": "#/$defs/MapNode"
+            },
+            "op": {
+              "type": "string",
+              "const": "update_node"
+            }
+          },
+          "required": [
+            "op",
+            "node"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "remove_node"
+            }
+          },
+          "required": [
+            "op",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "add_seam"
+            },
+            "seam": {
+              "$ref": "#/$defs/Seam"
+            }
+          },
+          "required": [
+            "op",
+            "seam"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "update_seam"
+            },
+            "seam": {
+              "$ref": "#/$defs/Seam"
+            }
+          },
+          "required": [
+            "op",
+            "seam"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "remove_seam"
+            }
+          },
+          "required": [
+            "op",
+            "id"
+          ]
+        }
+      ],
+      "required": [
+        "seq",
+        "op_id",
+        "author",
+        "created_at"
       ]
     },
     "Finding": {
@@ -541,6 +680,43 @@
         "pins",
         "progress"
       ]
+    },
+    "MapDraft": {
+      "description": "The draft as every browser sees it.",
+      "type": "object",
+      "properties": {
+        "can_restore": {
+          "description": "A discarded draft can still be brought back (until the next operation is written).",
+          "type": "boolean"
+        },
+        "ops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DraftOp"
+          }
+        },
+        "preview": {
+          "description": "The map with every operation that applies. Absent when the draft is empty.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SystemMap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Proposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     },
     "MapLayout": {
       "description": "Positions by part id. In the overview it is the whole stored layout; as the body of\n`PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`\nit is what was removed, so a `PUT` of it undoes the removal.",
@@ -985,6 +1161,64 @@
           "description": "The signal is not flowing. Trust check first.",
           "type": "string",
           "const": "unknown"
+        }
+      ]
+    },
+    "Proposal": {
+      "description": "The one proposal there can be. While it exists the draft takes no operations.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "pr_number": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pr_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proposed_by": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ProposalState"
+        },
+        "state_since": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "state",
+        "state_since",
+        "branch",
+        "proposed_by"
+      ]
+    },
+    "ProposalState": {
+      "oneOf": [
+        {
+          "description": "The server is writing the branch and opening the pull request, or a step failed.",
+          "type": "string",
+          "const": "opening"
+        },
+        {
+          "description": "The pull request is open.",
+          "type": "string",
+          "const": "proposed"
+        },
+        {
+          "description": "The pull request was merged; the draft empties once the map has been loaded again.",
+          "type": "string",
+          "const": "merged"
         }
       ]
     },

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
@@ -337,4 +338,100 @@ test("queue an issue on a paired companion and start it", async ({ page }) => {
   await expect(myLane).toContainText("Nothing queued.");
   alice.close();
   mine.close();
+});
+
+test("draft a part and a seam, propose", async ({ page }) => {
+  const repo = process.env["RUBATO_E2E_REPO"];
+  test.skip(!repo, "needs the seeded repository of e2e/run.sh");
+  const git = (...args: string[]) => execFileSync("git", ["-C", repo!, ...args], { encoding: "utf8" }).trim();
+  const draftBranches = () => git("for-each-ref", "--format=%(refname:short)", "refs/heads/map/").split("\n").filter(Boolean);
+  await page.goto("/");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  expect(draftBranches()).toEqual([]);
+
+  // Edit mode: the draft panel opens. Add a part with the form.
+  await page.getByRole("button", { name: "Edit map" }).click();
+  const panel = page.getByTestId("draft-panel");
+  await expect(panel).toContainText("empty");
+  const addPart = panel.getByRole("form", { name: "Add part" });
+  await addPart.getByLabel(/^Id/).fill("billing");
+  await addPart.getByLabel("What it is").fill("Invoices and payments.");
+  await addPart.getByRole("button", { name: "Add part" }).click();
+  // The part is on the map for everyone, dashed and badged with who drafted it.
+  const billing = page.getByTestId("node-billing");
+  await expect(billing).toBeVisible();
+  await expect(billing).toHaveClass(/draft-added/);
+  await expect(billing).toContainText("draft · m0x6A");
+  await expect(panel).toContainText("add part billing");
+
+  // Draw a seam: drag from the right handle of web to the left handle of billing.
+  const from = page.locator('.react-flow__node[data-id="web"] .react-flow__handle.source');
+  const to = page.locator('.react-flow__node[data-id="billing"] .react-flow__handle.target');
+  await from.hover();
+  await page.mouse.down();
+  const target = (await to.boundingBox())!;
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 12 });
+  await page.mouse.up();
+  const seam = page.getByTestId("seam-web-billing");
+  await expect(seam).toContainText("draft · m0x6A");
+  await expect(panel).toContainText("add seam web-billing (web to billing)");
+
+  if (process.env["RUBATO_E2E_SHOTS"]) {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/draft.png` });
+  }
+  // A draft id is not a map id: it cannot be pinned, and an invalid change says why.
+  const pin = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 903 }, target: { kind: "node", id: "billing" } } });
+  expect(pin.status()).toBe(422);
+  await addPart.getByLabel(/^Id/).fill("web");
+  await addPart.getByRole("button", { name: "Add part" }).click();
+  await expect(panel.getByRole("alert")).toContainText("Part web was not added: id web already exists");
+
+  // Give the seam a flow through its form, then look at what the proposal changes.
+  await seam.click();
+  const seamForm = panel.getByRole("form", { name: "Change seam web-billing" });
+  await seamForm.getByLabel(/^Flows/).fill("data: billing -> web: cost per issue");
+  await seamForm.getByRole("button", { name: "Save seam" }).click();
+  await expect(panel).toContainText("change seam web-billing");
+  await panel.getByRole("button", { name: "Propose map change…" }).click();
+  const diff = page.getByTestId("draft-diff");
+  await expect(diff).toContainText("+ - id: billing");
+  await expect(diff).toContainText("carries: cost per issue");
+  expect(draftBranches()).toEqual([]);
+
+  // Confirm: one branch in the real repository, started at main, holding the new map file.
+  await page.getByRole("button", { name: "Open the pull request" }).click();
+  await expect(page.getByRole("status")).toContainText("Map change proposed as pull request #1");
+  await expect(panel.getByTestId("proposal")).toContainText("Proposed");
+  const branches = draftBranches();
+  expect(branches).toHaveLength(1);
+  expect(branches[0]).toMatch(/^map\/draft-\d{8}-\d{6}$/);
+  const file = parseYaml(git("show", `${branches[0]}:docs/design/rubato-map.yml`)) as { nodes: { id: string; description?: string }[]; seams: { id: string; from: string; to: string; flows?: { carries: string }[] }[] };
+  expect(file.nodes.find((n) => n.id === "billing")?.description).toBe("Invoices and payments.");
+  expect(file.seams.find((s) => s.id === "web-billing")).toMatchObject({ from: "web", to: "billing", flows: [{ carries: "cost per issue" }] });
+  expect(file.nodes).toHaveLength(map.nodes.length + 1);
+  expect(git("rev-list", "--count", `main..${branches[0]}`)).toBe("1");
+  expect(git("show", "main:docs/design/rubato-map.yml")).not.toContain("billing");
+
+  // Proposed is read-only for everyone: no forms, and a write is refused.
+  await expect(panel.getByRole("form")).toHaveCount(0);
+  const refused = await page.request.post("/api/map/draft/ops", { data: { op: "add_node", op_id: crypto.randomUUID(), node: { id: "ledger", kind: "context" } } });
+  expect(refused.status()).toBe(409);
+
+  // Withdraw: the branch goes, and the draft is editable again with every change kept.
+  await panel.getByRole("button", { name: "Withdraw proposal" }).click();
+  await expect(page.getByRole("status")).toContainText("Proposal withdrawn");
+  expect(draftBranches()).toEqual([]);
+  await expect(panel).toContainText("3 changes");
+  await expect(panel.getByRole("form", { name: "Add part" })).toBeVisible();
+
+  // Discard empties it for everyone; Undo brings it back; discard again to leave the map as found.
+  await panel.getByRole("button", { name: "Discard draft" }).click();
+  await expect(page.getByTestId("node-billing")).toHaveCount(0);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByTestId("node-billing")).toBeVisible();
+  await expect(panel).toContainText("3 changes");
+  await panel.getByRole("button", { name: "Discard draft" }).click();
+  await expect(page.getByTestId("node-billing")).toHaveCount(0);
+  await expect(panel).toContainText("empty");
 });

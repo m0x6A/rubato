@@ -51,6 +51,34 @@ outcome: "failed"
 })
 export type RefusalReason = ("attempt_limit_reached" | "not_paired_user" | "already_running" | "missing_dependency")
 /**
+ * Body of `POST /api/map/draft/ops`. `op_id` is made by the browser, so a retry of the same
+ * request does not add the operation twice.
+ */
+export type DraftOpRequest = ({
+node: MapNode
+op: "add_node"
+} | {
+node: MapNode
+op: "update_node"
+} | {
+id: string
+op: "remove_node"
+} | {
+op: "add_seam"
+seam: Seam
+} | {
+op: "update_seam"
+seam: Seam
+} | {
+id: string
+op: "remove_seam"
+})
+export type NodeKind = ("context" | "contract" | "external")
+/**
+ * Data moves; control tells the other side to do something.
+ */
+export type FlowKind = ("data" | "control")
+/**
  * Map versus territory, and plans that disagree with the map. Shown, never suppressed.
  */
 export type Finding = ({
@@ -97,10 +125,6 @@ kind: "seam"
 })
 export type PartStatus = ("affected" | "new" | "quiet")
 export type AssumptionScope = ("node" | "seam")
-/**
- * Data moves; control tells the other side to do something.
- */
-export type FlowKind = ("data" | "control")
 export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
 export type ChecksStatus = (("green" | "red" | "pending") | "none")
 /**
@@ -125,7 +149,43 @@ command_id: string
 error: string
 outcome: "failed"
 })
-export type NodeKind = ("context" | "contract" | "external")
+/**
+ * An operation in the draft, with who made it and when.
+ */
+export type DraftOp = ({
+author: string
+created_at: string
+op_id: string
+/**
+ * Its place in the draft; also its name in `DELETE /api/map/draft/ops/{seq}`.
+ */
+seq: number
+/**
+ * Why the operation no longer applies to the map as it is now (with the operations before
+ * it). It is skipped in the preview, and the draft cannot be proposed until it is removed.
+ */
+stale?: (string | null)
+} & DraftOp1)
+export type DraftOp1 = ({
+node: MapNode
+op: "add_node"
+} | {
+node: MapNode
+op: "update_node"
+} | {
+id: string
+op: "remove_node"
+} | {
+op: "add_seam"
+seam: Seam
+} | {
+op: "update_seam"
+seam: Seam
+} | {
+id: string
+op: "remove_seam"
+})
+export type ProposalState = ("opening" | "proposed" | "merged")
 export type PairPollResponse = ({
 status: "pending"
 } | {
@@ -170,6 +230,7 @@ export interface RubatoProtocol {
 CapHit?: CapHit
 CompanionEnvelope?: CompanionEnvelope
 DecisionRecord?: DecisionRecord
+DraftOpRequest?: DraftOpRequest
 Finding?: Finding
 Heartbeat?: Heartbeat1
 HookEvent?: HookEvent1
@@ -195,6 +256,7 @@ PairingInfo?: PairingInfo
 PinRequest?: PinRequest
 Plan?: Plan
 Progress?: Progress
+ProposeResponse?: ProposeResponse
 PullRequestState?: PullRequestState
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
@@ -321,6 +383,58 @@ options?: (string | null)
 title: string
 url: string
 why?: (string | null)
+}
+export interface MapNode {
+description?: (string | null)
+id: string
+kind: NodeKind
+/**
+ * Path inside that repository.
+ */
+path?: (string | null)
+/**
+ * `owner/name` of the repository holding the code, if any.
+ */
+repo?: (string | null)
+}
+/**
+ * A seam between two nodes. The owner side is woken when it breaks.
+ */
+export interface Seam {
+carries?: (string | null)
+/**
+ * What this seam is for, in a sentence a newcomer can read.
+ */
+description?: (string | null)
+/**
+ * What crosses this seam, one entry per thing and direction (ADR 0017). Optional: a seam
+ * without flows is drawn as a plain dependency from `from` to `to`.
+ */
+flows?: Flow[]
+from: string
+/**
+ * The check that guards this seam.
+ */
+guard?: (string | null)
+id: string
+/**
+ * Node id of the owner side; must be `from` or `to`.
+ */
+owner: string
+to: string
+}
+/**
+ * One thing crossing a seam in one direction. `from` and `to` are the seam's two nodes, in
+ * either order.
+ */
+export interface Flow {
+/**
+ * What it carries: a type, a message, a command.
+ */
+carries: string
+from: string
+kind: FlowKind
+to: string
 }
 /**
  * The companion's liveness signal.
@@ -649,19 +763,6 @@ seams?: Seam[]
  */
 version: number
 }
-export interface MapNode {
-description?: (string | null)
-id: string
-kind: NodeKind
-/**
- * Path inside that repository.
- */
-path?: (string | null)
-/**
- * `owner/name` of the repository holding the code, if any.
- */
-repo?: (string | null)
-}
 /**
  * A repository behind one or more nodes.
  */
@@ -675,45 +776,6 @@ name: string
  */
 plan_path?: (string | null)
 }
-/**
- * A seam between two nodes. The owner side is woken when it breaks.
- */
-export interface Seam {
-carries?: (string | null)
-/**
- * What this seam is for, in a sentence a newcomer can read.
- */
-description?: (string | null)
-/**
- * What crosses this seam, one entry per thing and direction (ADR 0017). Optional: a seam
- * without flows is drawn as a plain dependency from `from` to `to`.
- */
-flows?: Flow[]
-from: string
-/**
- * The check that guards this seam.
- */
-guard?: (string | null)
-id: string
-/**
- * Node id of the owner side; must be `from` or `to`.
- */
-owner: string
-to: string
-}
-/**
- * One thing crossing a seam in one direction. `from` and `to` are the seam's two nodes, in
- * either order.
- */
-export interface Flow {
-/**
- * What it carries: a type, a message, a command.
- */
-carries: string
-from: string
-kind: FlowKind
-to: string
-}
 export interface Me {
 avatar_url?: (string | null)
 login: string
@@ -724,6 +786,7 @@ login: string
 export interface Overview {
 backlog?: Backlog
 companions: PairingInfo[]
+draft?: MapDraft
 findings: Finding[]
 generated_at: string
 issues: IssueSummary[]
@@ -794,6 +857,32 @@ revoked_at?: (string | null)
 user: string
 }
 /**
+ * The shared draft of the map and its proposal (ADR 0018). Never an input to progress.
+ */
+export interface MapDraft {
+/**
+ * A discarded draft can still be brought back (until the next operation is written).
+ */
+can_restore?: boolean
+ops?: DraftOp[]
+/**
+ * The map with every operation that applies. Absent when the draft is empty.
+ */
+preview?: (SystemMap | null)
+proposal?: (Proposal | null)
+}
+/**
+ * The one proposal there can be. While it exists the draft takes no operations.
+ */
+export interface Proposal {
+branch: string
+pr_number?: (number | null)
+pr_url?: (string | null)
+proposed_by: string
+state: ProposalState
+state_since: string
+}
+/**
  * Positions by part id. In the overview it is the whole stored layout; as the body of
  * `PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`
  * it is what was removed, so a `PUT` of it undoes the removal.
@@ -851,6 +940,12 @@ verification_url: string
 export interface PinRequest {
 issue: IssueRef
 target: MapRef
+}
+/**
+ * Answer of `POST /api/map/draft/propose`.
+ */
+export interface ProposeResponse {
+proposal: Proposal
 }
 /**
  * Body of `PUT`: the full order of one lane. Refused when its set of issues differs from what

@@ -949,6 +949,120 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 57,
+      "title": "Map proposals",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 52
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Map proposals by how they ended: opened, failed (a GitHub step refused or timed out), withdrawn, merged, closed. A failure has an error log line 'map proposal failed' with the step (head, file, ref, contents, pull, close), repo, branch, base sha and rubato.user: check the GitHub App's Contents and Pull requests permissions and that it is installed on the map repo. Propose again resumes; Withdraw gives up. The draft's size is rubato_map_draft_ops.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_map_proposals_total[1h]))",
+          "legendFormat": "{{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "max(rubato_map_draft_ops)",
+          "legendFormat": "operations in the draft"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 58,
+      "title": "Map proposal age",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 52
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "How long the map proposal has been in its current state. While it is opening or merged the draft is frozen and nobody can edit the map, so past 15 minutes those two turn yellow. Stuck opening: read the 'map proposal failed' log line, then Withdraw. Stuck merged: the map has not been loaded since the merge, check 'Map age' and 'Poll ticks'. Proposed may be old: a review takes time. Each transition logs 'map proposal state' with from, to, the pull request and the base sha. Empty when there is no proposal.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max by (rubato_outcome) (rubato_map_proposal_state_since{rubato_outcome=~\"opening|merged\"} > 0)",
+          "legendFormat": "{{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "time() - max by (rubato_outcome) (rubato_map_proposal_state_since{rubato_outcome=\"proposed\"} > 0)",
+          "legendFormat": "{{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "no proposal",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 900
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "proposed"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
     }
   ]
 }

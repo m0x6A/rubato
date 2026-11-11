@@ -7,7 +7,7 @@
 //! `github_poll` and `plans` name no other slice.
 
 use crate::kernel::state::{App, LoadedMap};
-use crate::{companion_link, github_poll, launch, map, overview, pins, plans, queue};
+use crate::{companion_link, github_poll, launch, map, map_draft, overview, pins, plans, queue};
 use anyhow::{Result, anyhow};
 use rubato_protocol::IssueRef;
 use rubato_protocol::otel::event;
@@ -57,6 +57,16 @@ pub async fn poll_once(app: &App) -> Result<()> {
             tracing::warn!(issue = %issue, error = %e, "poll failed for issue");
         }
     }
+    // After the per-issue reads and before the rate-limit read: the map proposal, if any.
+    if map_draft::check_proposal(app).await {
+        // Merged: load the map again now, so the draft can empty without waiting for the next
+        // scheduled reload. A failed load keeps the old map and the draft stays.
+        if let Err(e) = map::reload(app).await {
+            tracing::error!(error = %e, "map reload after a merged proposal failed");
+        }
+        map_draft::clear_merged(app).await;
+    }
+    map_draft::record_gauges(app).await;
     queue::record_depth(app).await;
     github_poll::record_rate_limit(app).await;
     overview::refresh_gauges(app, &map).await?;

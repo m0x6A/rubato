@@ -30,6 +30,9 @@ pub mod attr {
     pub const TASK: &str = "rubato.task";
     /// The route a refused web request named (`rubato.web.rejected`).
     pub const ROUTE: &str = "rubato.route";
+    /// How something ended, or which state it is in: `opened`, `failed`, `withdrawn`, `merged`,
+    /// `closed` for a map proposal; `opening`, `proposed`, `merged` for its state.
+    pub const OUTCOME: &str = "rubato.outcome";
 }
 
 /// Metric instrument names.
@@ -65,6 +68,14 @@ pub mod metric {
     pub const LAYOUT_WRITES: &str = "rubato.layout.writes";
     /// Issues queued per companion, recorded every poll tick for every pairing, zeros included.
     pub const QUEUE_DEPTH: &str = "rubato.queue.depth";
+    /// Live operations in the shared map draft, recorded every poll tick.
+    pub const MAP_DRAFT_OPS: &str = "rubato.map.draft.ops";
+    /// Map proposals by how they ended (`rubato.outcome`).
+    pub const MAP_PROPOSALS: &str = "rubato.map.proposals";
+    /// Unix seconds since when the map proposal has been in each state (`rubato.outcome`),
+    /// recorded every poll tick: the time for the current state, 0 for every other. No unit,
+    /// like `rubato.map.loaded_at`. "Map proposal age" is `time()` minus this, where it is not 0.
+    pub const MAP_PROPOSAL_STATE_SINCE: &str = "rubato.map.proposal.state_since";
 }
 
 /// Span names.
@@ -114,6 +125,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::CAP_KIND,
         attr::TASK,
         attr::ROUTE,
+        attr::OUTCOME,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::SESSIONS_DISCOVERED,
@@ -136,6 +148,9 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GITHUB_REPOS_UNCOVERED,
         metric::LAYOUT_WRITES,
         metric::QUEUE_DEPTH,
+        metric::MAP_DRAFT_OPS,
+        metric::MAP_PROPOSALS,
+        metric::MAP_PROPOSAL_STATE_SINCE,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

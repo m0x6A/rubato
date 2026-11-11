@@ -6,6 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use rubato_protocol::launch::routes as launch_routes;
 use rubato_protocol::layout::{MapLayout, Position, routes as layout_routes};
 use rubato_protocol::map::routes as map_routes;
+use rubato_protocol::map_draft::routes as draft_routes;
 use rubato_protocol::pairing::{
     PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse, routes as pr,
 };
@@ -41,6 +42,10 @@ fn repo_root() -> PathBuf {
 }
 
 async fn harness() -> Harness {
+    harness_with(|_| {}).await
+}
+
+async fn harness_with(configure: impl FnOnce(&mut Config)) -> Harness {
     let tmp = tempfile::tempdir().unwrap();
     let db_url = format!("sqlite://{}/test.db?mode=rwc", tmp.path().display());
     let pool = db::connect(&db_url).await.unwrap();
@@ -60,7 +65,8 @@ async fn harness() -> Harness {
             vec![("main".into(), "mapsha1".into())],
         );
     });
-    let cfg = Config::for_tests(db_url, "m0x6A");
+    let mut cfg = Config::for_tests(db_url, "m0x6A");
+    configure(&mut cfg);
     let app = AppState::new(pool, cfg, github.clone());
     map::reload(&app).await.unwrap();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -1896,4 +1902,982 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
     };
     send(&mut ws, &started).await;
     assert!(h.queued(lane).await.is_empty());
+}
+
+fn draft_node(id: &str) -> serde_json::Value {
+    serde_json::json!({ "id": id, "kind": "context" })
+}
+
+fn draft_seam(id: &str, from: &str, to: &str, owner: &str) -> serde_json::Value {
+    serde_json::json!({ "id": id, "from": from, "to": to, "owner": owner })
+}
+
+impl Harness {
+    /// Add one operation to the draft as `user`: the status and the body.
+    async fn draft_op(&self, user: &str, op: &str, body: serde_json::Value) -> (u16, String) {
+        let mut req = body;
+        req["op"] = op.into();
+        req["op_id"] = Uuid::new_v4().to_string().into();
+        let r = self
+            .http
+            .post(format!("{}{}", self.url, draft_routes::DRAFT_OPS))
+            .header("x-rubato-dev-user", user)
+            .json(&req)
+            .send()
+            .await
+            .unwrap();
+        (r.status().as_u16(), r.text().await.unwrap())
+    }
+
+    async fn draft_post(&self, route: &str) -> (u16, String) {
+        let r = self
+            .http
+            .post(format!("{}{route}", self.url))
+            .send()
+            .await
+            .unwrap();
+        (r.status().as_u16(), r.text().await.unwrap())
+    }
+
+    async fn draft(&self) -> rubato_protocol::MapDraft {
+        self.overview("m0x6A").await.draft
+    }
+}
+
+#[tokio::test]
+async fn draft_ops_build_a_preview() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    assert!(h.draft().await.ops.is_empty());
+    assert!(h.draft().await.preview.is_none());
+
+    // Add a part, describe it, join it to the server with a seam, give the seam a flow and a
+    // description, then remove an existing seam. Two people, one draft.
+    let mut described = draft_node("billing");
+    described["description"] = "Invoices and payments.".into();
+    let mut seam = draft_seam("server-billing", "rubato-server", "billing", "billing");
+    seam["description"] = "The server asks billing what an issue cost.".into();
+    seam["flows"] = serde_json::json!([{ "kind": "data", "from": "billing", "to": "rubato-server", "carries": "cost per issue" }]);
+    let steps = [
+        (
+            "m0x6A",
+            "add_node",
+            serde_json::json!({ "node": draft_node("billing") }),
+        ),
+        (
+            "alice",
+            "update_node",
+            serde_json::json!({ "node": described }),
+        ),
+        (
+            "m0x6A",
+            "add_seam",
+            serde_json::json!({ "seam": draft_seam("server-billing", "rubato-server", "billing", "billing") }),
+        ),
+        ("alice", "update_seam", serde_json::json!({ "seam": seam })),
+        (
+            "m0x6A",
+            "remove_seam",
+            serde_json::json!({ "id": "skill-plan-file" }),
+        ),
+    ];
+    for (user, op, body) in &steps {
+        let (status, text) = h.draft_op(user, op, body.clone()).await;
+        assert_eq!(status, 201, "{op}: {text}");
+    }
+    await_reason(&mut web, "draft").await;
+
+    let draft = h.draft().await;
+    assert_eq!(draft.ops.len(), 5);
+    assert_eq!(
+        draft
+            .ops
+            .iter()
+            .map(|o| o.author.as_str())
+            .collect::<Vec<_>>(),
+        ["m0x6A", "alice", "m0x6A", "alice", "m0x6A"]
+    );
+    assert!(draft.ops.iter().all(|o| o.stale.is_none()));
+    assert!(draft.proposal.is_none());
+    let preview = draft
+        .preview
+        .expect("a preview while the draft has operations");
+    assert_eq!(
+        preview.node("billing").unwrap().description.as_deref(),
+        Some("Invoices and payments.")
+    );
+    let s = preview.seam("server-billing").unwrap();
+    assert_eq!(s.flows.len(), 1);
+    assert_eq!(
+        s.description.as_deref(),
+        Some("The server asks billing what an issue cost.")
+    );
+    assert!(preview.seam("skill-plan-file").is_none());
+    assert_eq!(preview.validate(), Ok(()));
+    // The merged map is untouched: the draft is an overlay.
+    let ov = h.overview("m0x6A").await;
+    assert!(ov.map.map.node("billing").is_none());
+    assert!(ov.map.map.seam("skill-plan-file").is_some());
+
+    // An invalid operation says why and stores nothing; so does one that conflicts with an
+    // earlier operation of the draft.
+    let refused = [
+        (
+            "add_node",
+            serde_json::json!({ "node": draft_node("billing") }),
+            "already exists",
+        ),
+        (
+            "add_seam",
+            serde_json::json!({ "seam": draft_seam("web-nowhere", "web", "nowhere", "web") }),
+            "unknown node",
+        ),
+        (
+            "remove_node",
+            serde_json::json!({ "id": "billing" }),
+            "still an end of server-billing",
+        ),
+    ];
+    for (op, body, word) in &refused {
+        let (status, text) = h.draft_op("m0x6A", op, body.clone()).await;
+        assert_eq!(status, 422, "{op}: {text}");
+        assert!(text.contains(word), "{op}: {text}");
+    }
+    assert_eq!(h.draft().await.ops.len(), 5);
+
+    // A draft part can be placed on the shared layout; an id in neither map nor draft cannot.
+    let put = |id: &str| {
+        h.http
+            .put(format!("{}{}", h.url, layout_routes::LAYOUT))
+            .json(&layout_of(&[(id, 40.0, 50.0)]))
+            .send()
+    };
+    assert_eq!(put("billing").await.unwrap().status(), 204);
+    assert_eq!(put("no-such-part").await.unwrap().status(), 422);
+    assert!(
+        h.overview("m0x6A")
+            .await
+            .layout
+            .positions
+            .contains_key("billing")
+    );
+
+    // The same request sent twice (a retry) adds the operation once.
+    let again = serde_json::json!({ "op": "add_node", "op_id": Uuid::new_v4(), "node": draft_node("ledger") });
+    for _ in 0..2 {
+        let r = h
+            .http
+            .post(format!("{}{}", h.url, draft_routes::DRAFT_OPS))
+            .json(&again)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 201);
+    }
+    assert_eq!(h.draft().await.ops.len(), 6);
+    println!(
+        "checked 6 accepted and {} refused draft operations",
+        refused.len()
+    );
+}
+
+#[tokio::test]
+async fn draft_remove_with_pins_is_409() {
+    let h = harness().await;
+    for (n, target) in [
+        (7, MapRef::node("plan-check")),
+        (8, MapRef::seam("web-server")),
+    ] {
+        let r = h
+            .http
+            .post(format!("{}{}", h.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: IssueRef::new("m0x6A/rubato", n),
+                target,
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 201);
+    }
+    let (status, text) = h
+        .draft_op(
+            "m0x6A",
+            "remove_seam",
+            serde_json::json!({ "id": "web-server" }),
+        )
+        .await;
+    assert_eq!(status, 409, "{text}");
+    assert!(
+        text.contains("m0x6A/rubato#8"),
+        "the answer names the issue: {text}"
+    );
+    let (status, text) = h
+        .draft_op(
+            "m0x6A",
+            "remove_node",
+            serde_json::json!({ "id": "plan-check" }),
+        )
+        .await;
+    assert_eq!(status, 409, "{text}");
+    assert!(text.contains("m0x6A/rubato#7"), "{text}");
+    assert!(h.draft().await.ops.is_empty());
+    // A seam nobody pinned can go.
+    let (status, text) = h
+        .draft_op(
+            "m0x6A",
+            "remove_seam",
+            serde_json::json!({ "id": "skill-plan-file" }),
+        )
+        .await;
+    assert_eq!(status, 201, "{text}");
+}
+
+#[tokio::test]
+async fn draft_ids_cannot_be_pinned() {
+    let h = harness().await;
+    let (status, _) = h
+        .draft_op(
+            "m0x6A",
+            "add_node",
+            serde_json::json!({ "node": draft_node("billing") }),
+        )
+        .await;
+    assert_eq!(status, 201);
+    let (status, _) = h
+        .draft_op(
+            "m0x6A",
+            "add_seam",
+            serde_json::json!({ "seam": draft_seam("web-billing", "web", "billing", "billing") }),
+        )
+        .await;
+    assert_eq!(status, 201);
+    for target in [MapRef::node("billing"), MapRef::seam("web-billing")] {
+        let r = h
+            .http
+            .post(format!("{}{}", h.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: IssueRef::new("m0x6A/rubato", 48),
+                target: target.clone(),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 422, "{target:?} is a draft id, not a map id");
+    }
+    assert!(h.overview("m0x6A").await.issues.is_empty());
+}
+
+#[tokio::test]
+async fn removing_an_operation_marks_dependants_stale() {
+    let h = harness().await;
+    h.draft_op(
+        "m0x6A",
+        "add_node",
+        serde_json::json!({ "node": draft_node("billing") }),
+    )
+    .await;
+    h.draft_op(
+        "alice",
+        "add_seam",
+        serde_json::json!({ "seam": draft_seam("web-billing", "web", "billing", "billing") }),
+    )
+    .await;
+    h.draft_op(
+        "alice",
+        "add_node",
+        serde_json::json!({ "node": draft_node("ledger") }),
+    )
+    .await;
+    let draft = h.draft().await;
+    let first = draft.ops[0].seq;
+
+    // Alice removes m0x6A's operation: anyone may. The seam that needed the part no longer
+    // applies and says why; the unrelated part still does.
+    let r = h
+        .http
+        .delete(format!("{}{}/{first}", h.url, draft_routes::DRAFT_OPS))
+        .header("x-rubato-dev-user", "alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let draft = h.draft().await;
+    assert_eq!(draft.ops.len(), 2);
+    let stale = draft.ops[0].stale.as_deref().expect("the seam is stale");
+    assert!(stale.contains("billing"), "{stale}");
+    assert!(draft.ops[1].stale.is_none());
+    let preview = draft.preview.unwrap();
+    assert!(
+        preview.seam("web-billing").is_none(),
+        "a stale operation is not in the preview"
+    );
+    assert!(preview.node("ledger").is_some());
+    // Removing it again is 404.
+    let r = h
+        .http
+        .delete(format!("{}{}/{first}", h.url, draft_routes::DRAFT_OPS))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+}
+
+#[tokio::test]
+async fn discard_then_undo_restores_every_operation_and_author() {
+    let h = harness().await;
+    h.draft_op(
+        "m0x6A",
+        "add_node",
+        serde_json::json!({ "node": draft_node("billing") }),
+    )
+    .await;
+    h.draft_op(
+        "alice",
+        "add_seam",
+        serde_json::json!({ "seam": draft_seam("web-billing", "web", "billing", "billing") }),
+    )
+    .await;
+    let before = h.draft().await;
+    assert!(!before.can_restore);
+
+    let (status, _) = h.draft_post(draft_routes::DRAFT_DISCARD).await;
+    assert_eq!(status, 200);
+    let emptied = h.draft().await;
+    assert!(emptied.ops.is_empty() && emptied.preview.is_none());
+    assert!(emptied.can_restore, "Undo is offered to everyone");
+
+    let (status, _) = h.draft_post(draft_routes::DRAFT_RESTORE).await;
+    assert_eq!(status, 200);
+    let after = h.draft().await;
+    assert_eq!(
+        after.ops, before.ops,
+        "every operation, author, time and place"
+    );
+    assert!(!after.can_restore);
+
+    // Discard, then a new operation: the discarded draft can no longer come back.
+    h.draft_post(draft_routes::DRAFT_DISCARD).await;
+    h.draft_op(
+        "m0x6A",
+        "add_node",
+        serde_json::json!({ "node": draft_node("ledger") }),
+    )
+    .await;
+    let (status, text) = h.draft_post(draft_routes::DRAFT_RESTORE).await;
+    assert_eq!(status, 409, "{text}");
+    assert_eq!(h.draft().await.ops.len(), 1);
+    // With nothing discarded at all, restore is 409 too.
+    let (status, _) = h.draft_post(draft_routes::DRAFT_RESTORE).await;
+    assert_eq!(status, 409);
+}
+
+#[tokio::test]
+async fn discard_is_409_while_proposing() {
+    let h = harness().await;
+    h.draft_op(
+        "m0x6A",
+        "add_node",
+        serde_json::json!({ "node": draft_node("billing") }),
+    )
+    .await;
+    // A proposal exists (written as the propose route writes it).
+    sqlx::query("INSERT INTO map_proposal (id, branch, base_sha, file_hash, last_seq, state, state_since, proposed_by) VALUES (1, 'map/draft-1', 'a', 'b', 1, 'opening', '2026-11-11T00:00:00Z', 'm0x6A')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let (status, text) = h.draft_post(draft_routes::DRAFT_DISCARD).await;
+    assert_eq!(status, 409, "{text}");
+    assert!(text.contains("Withdraw"), "{text}");
+    // Nor does it take operations or removals.
+    let (status, _) = h
+        .draft_op(
+            "m0x6A",
+            "add_node",
+            serde_json::json!({ "node": draft_node("ledger") }),
+        )
+        .await;
+    assert_eq!(status, 409);
+    let seq = h.draft().await.ops[0].seq;
+    let r = h
+        .http
+        .delete(format!("{}{}/{seq}", h.url, draft_routes::DRAFT_OPS))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 409);
+    let draft = h.draft().await;
+    assert_eq!(draft.ops.len(), 1);
+    assert_eq!(
+        draft.proposal.map(|p| p.state),
+        Some(rubato_protocol::ProposalState::Opening)
+    );
+}
+
+const MAP_PATH: &str = "docs/design/rubato-map.yml";
+
+impl Harness {
+    /// A draft of two operations by two people, with GitHub writes turned on.
+    async fn drafted(&self) {
+        self.github.with(|g| g.writes = true);
+        let (status, text) = self
+            .draft_op(
+                "m0x6A",
+                "add_node",
+                serde_json::json!({ "node": draft_node("billing") }),
+            )
+            .await;
+        assert_eq!(status, 201, "{text}");
+        let (status, text) = self
+            .draft_op(
+                "alice",
+                "add_seam",
+                serde_json::json!({ "seam": draft_seam("server-billing", "rubato-server", "billing", "billing") }),
+            )
+            .await;
+        assert_eq!(status, 201, "{text}");
+    }
+
+    fn write_calls(&self) -> Vec<&'static str> {
+        const WRITES: [&str; 5] = [
+            "create_ref",
+            "put_file",
+            "create_pull",
+            "close_pull",
+            "delete_ref",
+        ];
+        self.github
+            .calls()
+            .into_iter()
+            .map(|(name, _)| name)
+            .filter(|n| WRITES.contains(n))
+            .collect()
+    }
+
+    fn call_args(&self, name: &str) -> Vec<String> {
+        self.github
+            .calls()
+            .into_iter()
+            .filter(|(n, _)| *n == name)
+            .map(|(_, args)| args)
+            .collect()
+    }
+
+    async fn proposal_state(&self) -> Option<rubato_protocol::ProposalState> {
+        self.draft().await.proposal.map(|p| p.state)
+    }
+}
+
+#[tokio::test]
+async fn propose_opens_one_pr_and_freezes_the_draft() {
+    use rubato_protocol::ProposalState;
+    let h = harness().await;
+    h.drafted().await;
+    let mut web = h.web_ws().await;
+
+    let (status, text) = h.draft_post(draft_routes::DRAFT_PROPOSE).await;
+    assert_eq!(status, 200, "{text}");
+    await_reason(&mut web, "draft").await;
+    let draft = h.draft().await;
+    let p = draft.proposal.clone().expect("a proposal");
+    assert_eq!(p.state, ProposalState::Proposed);
+    assert_eq!(p.proposed_by, "m0x6A");
+    assert!(p.branch.starts_with("map/draft-"), "{}", p.branch);
+    assert_eq!(p.pr_number, Some(101));
+    assert_eq!(
+        p.pr_url.as_deref(),
+        Some("https://github.com/m0x6A/rubato/pull/101")
+    );
+    assert_eq!(draft.ops.len(), 2, "the operations stay, frozen");
+
+    // The branch starts at the map branch's head; one commit rewrites the map file; one pull
+    // request into the map branch, whose body lists each operation with its author.
+    assert_eq!(h.write_calls(), ["create_ref", "put_file", "create_pull"]);
+    assert_eq!(
+        h.call_args("create_ref"),
+        [format!("m0x6A/rubato {} mapsha1", p.branch)]
+    );
+    let committed = h
+        .github
+        .file("m0x6A/rubato", MAP_PATH, &p.branch)
+        .await
+        .unwrap()
+        .expect("the file on the proposal's branch");
+    let proposed: rubato_protocol::SystemMap = serde_yaml_ng::from_str(&committed).unwrap();
+    assert!(proposed.node("billing").is_some());
+    assert_eq!(proposed.seam("server-billing").unwrap().owner, "billing");
+    assert_eq!(proposed.validate(), Ok(()));
+    assert_eq!(proposed.nodes.len(), 12, "everything else is kept");
+    let pull = &h.call_args("create_pull")[0];
+    assert!(
+        pull.starts_with(&format!("m0x6A/rubato {} main Map: 2 changes", p.branch)),
+        "{pull}"
+    );
+    assert!(
+        pull.contains("| 1 | add part billing | `m0x6A` |"),
+        "{pull}"
+    );
+    assert!(
+        pull.contains("| 2 | add seam server-billing (rubato-server to billing) | `alice` |"),
+        "{pull}"
+    );
+    assert!(
+        !pull.contains('@'),
+        "no login is written as a mention: {pull}"
+    );
+
+    // Frozen for everyone: operations, removals and discard answer 409.
+    let (status, text) = h
+        .draft_op(
+            "alice",
+            "add_node",
+            serde_json::json!({ "node": draft_node("ledger") }),
+        )
+        .await;
+    assert_eq!(status, 409, "{text}");
+    assert_eq!(h.draft_post(draft_routes::DRAFT_DISCARD).await.0, 409);
+
+    // Asked again, the answer is the same proposal; nothing more is written.
+    let (status, text) = h.draft_post(draft_routes::DRAFT_PROPOSE).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(h.write_calls(), ["create_ref", "put_file", "create_pull"]);
+
+    // The proposed file is also offered as text.
+    let yaml = h
+        .http
+        .get(format!("{}{}", h.url, draft_routes::DRAFT_YAML))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(yaml.status(), 200);
+    assert_eq!(yaml.text().await.unwrap(), committed);
+    // With `?base=true`: the loaded map written the same way, to compare the proposal with.
+    let base = h
+        .http
+        .get(format!("{}{}?base=true", h.url, draft_routes::DRAFT_YAML))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!base.contains("billing") && committed.contains("billing"));
+    assert!(base.contains("rubato-server"));
+}
+
+#[tokio::test]
+async fn propose_twice_resumes_and_opens_one_pr() {
+    use rubato_protocol::ProposalState;
+    let h = harness().await;
+    h.drafted().await;
+    h.github.with(|g| {
+        g.fail_write = Some(("put_file", "Resource not accessible by integration".into()))
+    });
+
+    // The write of the file fails: 502 naming the step, and the draft is frozen in opening.
+    let (status, text) = h.draft_post(draft_routes::DRAFT_PROPOSE).await;
+    assert_eq!(status, 502, "{text}");
+    assert!(text.contains("step contents"), "{text}");
+    assert!(
+        text.contains("Resource not accessible by integration"),
+        "{text}"
+    );
+    assert!(text.contains("Propose again resumes"), "{text}");
+    assert_eq!(h.proposal_state().await, Some(ProposalState::Opening));
+    let (status, _) = h
+        .draft_op(
+            "m0x6A",
+            "add_node",
+            serde_json::json!({ "node": draft_node("ledger") }),
+        )
+        .await;
+    assert_eq!(status, 409, "opening is frozen too");
+    let branch = h.draft().await.proposal.unwrap().branch;
+
+    // Propose again resumes on the same branch and opens the one pull request.
+    h.github.with(|g| g.fail_write = None);
+    let (status, text) = h.draft_post(draft_routes::DRAFT_PROPOSE).await;
+    assert_eq!(status, 200, "{text}");
+    let p = h.draft().await.proposal.unwrap();
+    assert_eq!(p.state, ProposalState::Proposed);
+    assert_eq!(p.branch, branch, "the same branch, not a second one");
+    assert_eq!(
+        h.write_calls(),
+        [
+            "create_ref",
+            "put_file",
+            "create_ref",
+            "put_file",
+            "create_pull"
+        ],
+        "the branch that exists is reused, and there is one pull request"
+    );
+    assert!(
+        h.call_args("create_ref")
+            .iter()
+            .all(|a| a.ends_with("mapsha1"))
+    );
+}
+
+async fn assert_draft_unchanged(h: &Harness, before: &rubato_protocol::MapDraft, what: &str) {
+    let now = h.draft().await;
+    assert_eq!(now.ops, before.ops, "{what}: the operations are kept");
+    assert!(now.proposal.is_none(), "{what}: still editable");
+}
+
+#[tokio::test]
+async fn propose_refusals_keep_the_draft() {
+    use rubato_protocol::ProposalState;
+    let h = harness().await;
+    h.drafted().await;
+    let before = h.draft().await;
+    let original = h
+        .github
+        .file("m0x6A/rubato", MAP_PATH, "main")
+        .await
+        .unwrap()
+        .unwrap();
+    let propose = || h.draft_post(draft_routes::DRAFT_PROPOSE);
+
+    // A connection that cannot write (a personal token, or none).
+    h.github.with(|g| g.writes = false);
+    let (status, text) = propose().await;
+    assert_eq!(status, 409, "{text}");
+    assert!(
+        text.contains("cannot write to GitHub") && text.contains("Copy YAML"),
+        "{text}"
+    );
+    assert_draft_unchanged(&h, &before, "cannot write").await;
+    h.github.with(|g| g.writes = true);
+
+    // The map file on the map branch is not the one that is loaded.
+    h.github.with(|g| {
+        g.files.insert(
+            ("m0x6A/rubato".into(), MAP_PATH.into(), "main".into()),
+            format!("{original}\n# changed by hand\n"),
+        );
+    });
+    let (status, text) = propose().await;
+    assert_eq!(status, 409, "{text}");
+    assert!(text.contains("Reload the map first"), "{text}");
+    assert_draft_unchanged(&h, &before, "map changed").await;
+    h.github.with(|g| {
+        g.files.insert(
+            ("m0x6A/rubato".into(), MAP_PATH.into(), "main".into()),
+            original.clone(),
+        );
+    });
+
+    // An operation that no longer applies: named, so it can be removed first.
+    let first = before.ops[0].seq;
+    let removed = h
+        .http
+        .delete(format!("{}{}/{first}", h.url, draft_routes::DRAFT_OPS))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), 204);
+    let (status, text) = propose().await;
+    assert_eq!(status, 409, "{text}");
+    assert!(
+        text.contains("add seam server-billing") && text.contains("no longer applies"),
+        "{text}"
+    );
+    assert!(h.draft().await.proposal.is_none());
+    let stale = h.draft().await.ops[0].seq;
+    h.http
+        .delete(format!("{}{}/{stale}", h.url, draft_routes::DRAFT_OPS))
+        .send()
+        .await
+        .unwrap();
+
+    // An empty draft.
+    let (status, text) = propose().await;
+    assert_eq!(status, 409, "{text}");
+    assert!(text.contains("nothing to propose"), "{text}");
+    assert_eq!(
+        h.write_calls(),
+        Vec::<&str>::new(),
+        "nothing was written by any refusal"
+    );
+
+    // A map file with a key the model does not know: a rewrite would drop it.
+    h.github.with(|g| {
+        g.files.insert(
+            ("m0x6A/rubato".into(), MAP_PATH.into(), "main".into()),
+            format!("{original}\nteam: payments\n"),
+        );
+    });
+    map::reload(&h.app).await.unwrap();
+    h.draft_op(
+        "m0x6A",
+        "add_node",
+        serde_json::json!({ "node": draft_node("billing") }),
+    )
+    .await;
+    let (status, text) = propose().await;
+    assert_eq!(status, 409, "{text}");
+    assert!(
+        text.contains("keys Rubato does not know") && text.contains("team"),
+        "{text}"
+    );
+    assert!(h.draft().await.proposal.is_none());
+    h.github.with(|g| {
+        g.files.insert(
+            ("m0x6A/rubato".into(), MAP_PATH.into(), "main".into()),
+            original.clone(),
+        );
+    });
+    map::reload(&h.app).await.unwrap();
+
+    // An unrelated commit on the map branch does not refuse: the proposal starts at the new head.
+    h.github.with(|g| {
+        g.branches.insert(
+            "m0x6A/rubato".into(),
+            vec![("main".into(), "mapsha2".into())],
+        );
+        g.fail_write = Some(("create_ref", "boom".into()));
+    });
+    // ...and a failing GitHub step answers 502 naming the step, frozen in opening.
+    let (status, text) = propose().await;
+    assert_eq!(status, 502, "{text}");
+    assert!(text.contains("step ref"), "{text}");
+    assert_eq!(h.proposal_state().await, Some(ProposalState::Opening));
+    assert!(h.call_args("create_ref")[0].ends_with("mapsha2"));
+
+    // While frozen in opening the map file changes: Propose again refuses and it stays frozen;
+    // Withdraw is the way out, and the draft is editable again with its operation kept.
+    h.github.with(|g| {
+        g.fail_write = None;
+        g.files.insert(
+            ("m0x6A/rubato".into(), MAP_PATH.into(), "main".into()),
+            format!("{original}\n# changed again\n"),
+        );
+    });
+    let (status, text) = propose().await;
+    assert_eq!(status, 409, "{text}");
+    assert_eq!(h.proposal_state().await, Some(ProposalState::Opening));
+    let (status, text) = h.draft_post(draft_routes::DRAFT_WITHDRAW).await;
+    assert_eq!(status, 200, "{text}");
+    let after = h.draft().await;
+    assert!(after.proposal.is_none());
+    assert_eq!(after.ops.len(), 1);
+
+    // A server that reads the map from a local file has no repository to propose to.
+    let file = repo_root().join(MAP_PATH);
+    let local = harness_with(|cfg| cfg.map_file = Some(file)).await;
+    local.drafted().await;
+    let (status, text) = local.draft_post(draft_routes::DRAFT_PROPOSE).await;
+    assert_eq!(status, 409, "{text}");
+    assert!(
+        text.contains("local file") && text.contains("Copy YAML"),
+        "{text}"
+    );
+    assert!(local.draft().await.proposal.is_none());
+    println!("checked 8 refused proposals");
+}
+
+#[tokio::test]
+async fn merged_proposal_clears_only_after_a_load_that_follows_the_merge() {
+    use rubato_protocol::ProposalState;
+    let h = harness().await;
+    h.drafted().await;
+    assert_eq!(h.draft_post(draft_routes::DRAFT_PROPOSE).await.0, 200);
+    let p = h.draft().await.proposal.unwrap();
+
+    // While proposed: an unrelated commit lands and the map is loaded again. The draft stays.
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.iter_mut().find(|(n, _)| n == "main").unwrap().1 = "mapsha2".into();
+    });
+    map::reload(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(h.proposal_state().await, Some(ProposalState::Proposed));
+    assert_eq!(h.draft().await.ops.len(), 2);
+
+    // The pull request is merged, but the map cannot be loaded (the branch read fails): the
+    // draft shows merged and keeps its operations, because no load has followed the merge.
+    let merged_file = h
+        .github
+        .file("m0x6A/rubato", MAP_PATH, &p.branch)
+        .await
+        .unwrap()
+        .unwrap();
+    h.github.with(|g| {
+        g.pulls
+            .get_mut(&("m0x6A/rubato".to_owned(), p.branch.clone()))
+            .unwrap()
+            .merged_at = Some(chrono::Utc::now());
+        g.pulls
+            .get_mut(&("m0x6A/rubato".to_owned(), p.branch.clone()))
+            .unwrap()
+            .open = false;
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .retain(|(n, _)| n != "main");
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let draft = h.draft().await;
+    assert_eq!(
+        draft.proposal.as_ref().map(|p| p.state),
+        Some(ProposalState::Merged)
+    );
+    assert_eq!(
+        draft.ops.len(),
+        2,
+        "not cleared before a load that follows the merge"
+    );
+    assert_eq!(
+        h.draft_post(draft_routes::DRAFT_WITHDRAW).await.0,
+        409,
+        "a merged proposal cannot be withdrawn"
+    );
+
+    // The map branch is readable again with the merged file: the next tick loads it and the
+    // draft empties. The new part is now a part of the map.
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push(("main".into(), "merged1".into()));
+        g.files.insert(
+            ("m0x6A/rubato".into(), MAP_PATH.into(), "main".into()),
+            merged_file,
+        );
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert!(ov.draft.ops.is_empty() && ov.draft.proposal.is_none() && ov.draft.preview.is_none());
+    assert!(ov.map.map.node("billing").is_some());
+    assert_eq!(ov.map.version, "merged1");
+    assert!(
+        h.write_calls().contains(&"delete_ref"),
+        "the merged branch is deleted"
+    );
+    // And the draft takes operations again.
+    let (status, _) = h
+        .draft_op(
+            "m0x6A",
+            "add_node",
+            serde_json::json!({ "node": draft_node("ledger") }),
+        )
+        .await;
+    assert_eq!(status, 201);
+}
+
+#[tokio::test]
+async fn closed_proposal_reopens_the_draft() {
+    let h = harness().await;
+    h.drafted().await;
+    assert_eq!(h.draft_post(draft_routes::DRAFT_PROPOSE).await.0, 200);
+    let p = h.draft().await.proposal.unwrap();
+    // Someone closes the pull request on GitHub without merging.
+    h.github.with(|g| {
+        g.pulls
+            .get_mut(&("m0x6A/rubato".to_owned(), p.branch.clone()))
+            .unwrap()
+            .open = false;
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let draft = h.draft().await;
+    assert!(draft.proposal.is_none());
+    assert_eq!(draft.ops.len(), 2, "every operation is kept");
+    let (status, _) = h
+        .draft_op(
+            "alice",
+            "add_node",
+            serde_json::json!({ "node": draft_node("ledger") }),
+        )
+        .await;
+    assert_eq!(status, 201, "editable again");
+    assert!(h.write_calls().contains(&"delete_ref"));
+}
+
+#[tokio::test]
+async fn a_pr_created_during_a_timed_out_call_is_found_from_opening() {
+    use rubato_protocol::ProposalState;
+    let h = harness().await;
+    h.drafted().await;
+    // GitHub creates the pull request, but the answer never arrives.
+    h.github.with(|g| g.pull_times_out = true);
+    let (status, text) = h.draft_post(draft_routes::DRAFT_PROPOSE).await;
+    assert_eq!(status, 502, "{text}");
+    assert!(
+        text.contains("step pull") && text.contains("timed out"),
+        "{text}"
+    );
+    let draft = h.draft().await;
+    assert_eq!(
+        draft.proposal.as_ref().map(|p| p.state),
+        Some(ProposalState::Opening)
+    );
+    assert_eq!(draft.proposal.unwrap().pr_number, None);
+
+    // The next poll tick finds it by its branch: proposed, with its number.
+    tasks::poll_once(&h.app).await.unwrap();
+    let p = h.draft().await.proposal.unwrap();
+    assert_eq!(p.state, ProposalState::Proposed);
+    assert_eq!(p.pr_number, Some(101));
+    assert_eq!(
+        h.call_args("create_pull").len(),
+        1,
+        "one pull request, not two"
+    );
+    // The proposal's lookup comes after the per-issue reads and before the rate-limit read,
+    // which stays the last call of a tick.
+    let tick = names(&h.github.calls());
+    let lookup = tick.iter().rposition(|n| *n == "pull_for_branch").unwrap();
+    assert_eq!(tick.last(), Some(&"rate_limit"));
+    assert!(lookup < tick.len() - 1);
+
+    // The same on Propose again without waiting for the tick.
+    let other = harness().await;
+    other.drafted().await;
+    other.github.with(|g| g.pull_times_out = true);
+    assert_eq!(other.draft_post(draft_routes::DRAFT_PROPOSE).await.0, 502);
+    assert_eq!(other.draft_post(draft_routes::DRAFT_PROPOSE).await.0, 200);
+    assert_eq!(other.call_args("create_pull").len(), 1);
+    assert_eq!(other.proposal_state().await, Some(ProposalState::Proposed));
+}
+
+#[tokio::test]
+async fn withdraw_closes_the_pr_and_reopens_the_draft() {
+    let h = harness().await;
+    h.drafted().await;
+    // Nothing to withdraw yet.
+    assert_eq!(h.draft_post(draft_routes::DRAFT_WITHDRAW).await.0, 409);
+    assert_eq!(h.draft_post(draft_routes::DRAFT_PROPOSE).await.0, 200);
+    let p = h.draft().await.proposal.unwrap();
+
+    // GitHub will not close it: 502, and the proposal stays.
+    h.github
+        .with(|g| g.fail_write = Some(("close_pull", "boom".into())));
+    let (status, text) = h.draft_post(draft_routes::DRAFT_WITHDRAW).await;
+    assert_eq!(status, 502, "{text}");
+    assert!(text.contains("step close"), "{text}");
+    assert!(h.draft().await.proposal.is_some());
+
+    h.github.with(|g| g.fail_write = None);
+    let (status, text) = h.draft_post(draft_routes::DRAFT_WITHDRAW).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(
+        h.call_args("close_pull").last().map(String::as_str),
+        Some("m0x6A/rubato 101")
+    );
+    assert_eq!(
+        h.call_args("delete_ref"),
+        [format!("m0x6A/rubato {}", p.branch)]
+    );
+    let draft = h.draft().await;
+    assert!(draft.proposal.is_none());
+    assert_eq!(draft.ops.len(), 2, "every operation is kept");
+    let (status, _) = h
+        .draft_op(
+            "alice",
+            "add_node",
+            serde_json::json!({ "node": draft_node("ledger") }),
+        )
+        .await;
+    assert_eq!(status, 201, "editable again");
 }

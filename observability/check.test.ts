@@ -37,6 +37,16 @@ test("a dashboard without the Backlog age panel is rejected", () => {
   assert.deepEqual(r.problems, ['the dashboard has no "Backlog age" panel that queries rubato_backlog_listed_at']);
 });
 
+test("a dashboard without the Map proposal age panel is rejected", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Map proposal age")));
+  assert.deepEqual(r.problems, ['the dashboard has no "Map proposal age" panel that queries rubato_map_proposal_state_since']);
+});
+
+test("a Map proposal age panel on a metric with a unit suffix is rejected", () => {
+  const withUnit = changed((panels) => panels.map((p) => (p.title === "Map proposal age" ? { ...p, targets: [{ expr: "time() - max by (rubato_outcome) (rubato_map_proposal_state_since_seconds > 0)" }] } : p)));
+  assert.deepEqual(check(rules, tests, withUnit).problems, ['the dashboard has no "Map proposal age" panel that queries rubato_map_proposal_state_since']);
+});
+
 test("a dashboard without the Queue depth panel is rejected", () => {
   const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Queue depth")));
   assert.deepEqual(r.problems, ['the dashboard has no "Queue depth" panel that queries rubato_queue_depth']);

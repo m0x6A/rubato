@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DraftOpRequest",
+  "description": "Body of `POST /api/map/draft/ops`. `op_id` is made by the browser, so a retry of the same\nrequest does not add the operation twice.",
+  "type": "object",
+  "properties": {
+    "op_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "node": {
+          "$ref": "#/$defs/MapNode"
+        },
+        "op": {
+          "type": "string",
+          "const": "add_node"
+        }
+      },
+      "required": [
+        "op",
+        "node"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "node": {
+          "$ref": "#/$defs/MapNode"
+        },
+        "op": {
+          "type": "string",
+          "const": "update_node"
+        }
+      },
+      "required": [
+        "op",
+        "node"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "const": "remove_node"
+        }
+      },
+      "required": [
+        "op",
+        "id"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "add_seam"
+        },
+        "seam": {
+          "$ref": "#/$defs/Seam"
+        }
+      },
+      "required": [
+        "op",
+        "seam"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "update_seam"
+        },
+        "seam": {
+          "$ref": "#/$defs/Seam"
+        }
+      },
+      "required": [
+        "op",
+        "seam"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "const": "remove_seam"
+        }
+      },
+      "required": [
+        "op",
+        "id"
+      ]
+    }
+  ],
+  "required": [
+    "op_id"
+  ],
+  "$defs": {
+    "Flow": {
+      "description": "One thing crossing a seam in one direction. `from` and `to` are the seam's two nodes, in\neither order.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "description": "What it carries: a type, a message, a command.",
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FlowKind"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "carries"
+      ]
+    },
+    "FlowKind": {
+      "description": "Data moves; control tells the other side to do something.",
+      "type": "string",
+      "enum": [
+        "data",
+        "control"
+      ]
+    },
+    "MapNode": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/NodeKind"
+        },
+        "path": {
+          "description": "Path inside that repository.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "description": "`owner/name` of the repository holding the code, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ]
+    },
+    "NodeKind": {
+      "oneOf": [
+        {
+          "description": "Owned code with behaviour.",
+          "type": "string",
+          "const": "context"
+        },
+        {
+          "description": "A format or schema others agree on.",
+          "type": "string",
+          "const": "contract"
+        },
+        {
+          "description": "Something we stitch, not build.",
+          "type": "string",
+          "const": "external"
+        }
+      ]
+    },
+    "Seam": {
+      "description": "A seam between two nodes. The owner side is woken when it breaks.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "What this seam is for, in a sentence a newcomer can read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flows": {
+          "description": "What crosses this seam, one entry per thing and direction (ADR 0017). Optional: a seam\nwithout flows is drawn as a plain dependency from `from` to `to`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Flow"
+          }
+        },
+        "from": {
+          "type": "string"
+        },
+        "guard": {
+          "description": "The check that guards this seam.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "owner": {
+          "description": "Node id of the owner side; must be `from` or `to`.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "owner"
+      ]
+    }
+  }
+}
