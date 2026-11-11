@@ -171,6 +171,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_flows_keep_the_previous_map() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("system-map.yml");
+        let mut cfg = Config::for_tests(
+            format!("sqlite://{}/t.db?mode=rwc", tmp.path().display()),
+            "m0x6A",
+        );
+        cfg.map_file = Some(file.clone());
+        let (a, reader) = app(cfg, Arc::new(FakeGitHub::new())).await;
+        std::fs::write(
+            &file,
+            include_str!("../../../../schema/fixtures/maps/flows.yml"),
+        )
+        .unwrap();
+        let good = reload(&a).await.unwrap();
+        assert_eq!(good.map.seam("web-server").unwrap().flows.len(), 3);
+
+        // The file gets a flow that leaves its seam: the load fails naming the seam, is
+        // counted, and the map in use is still the previous one.
+        std::fs::write(
+            &file,
+            include_str!("../../../../schema/fixtures/maps/flows-off-seam.yml"),
+        )
+        .unwrap();
+        let e = reload(&a).await.unwrap_err();
+        assert!(format!("{e:#}").contains("\"web-server\""), "{e:#}");
+        assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
+        let kept = a.map.read().await.clone().unwrap();
+        assert_eq!(kept.version, good.version);
+        assert_eq!(kept.map.name, "flows-fixture");
+    }
+
+    #[tokio::test]
     async fn loaded_at_follows_loads_and_survives_failures() {
         let tmp = tempfile::tempdir().unwrap();
         let db_url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());

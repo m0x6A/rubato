@@ -16,7 +16,7 @@ export interface MapSummary {
   map_version: string;
   name: string;
   nodes: { id: string; kind: string; repo?: string; description?: string }[];
-  seams: { id: string; from: string; to: string; owner: string; carries?: string }[];
+  seams: { id: string; from: string; to: string; owner: string; carries?: string; description?: string; flows?: { kind: string; from: string; to: string; carries: string }[] }[];
   repo: string | null;
   plan_path_template: string;
 }
@@ -49,6 +49,12 @@ export async function summarize(ws: Workspace, cwd: string): Promise<MapSummary>
       if (s.carries) {
         out.carries = s.carries;
       }
+      if (s.description) {
+        out.description = s.description;
+      }
+      if (s.flows?.length) {
+        out.flows = s.flows.map((f) => ({ kind: f.kind, from: f.from, to: f.to, carries: f.carries }));
+      }
       return out;
     }),
     repo,
@@ -66,7 +72,11 @@ export function render(s: MapSummary): string {
     ...s.nodes.map((n) => `- ${n.id} [${n.kind}]${n.repo ? ` ${n.repo}` : ""}${n.description ? ` — ${n.description}` : ""}`),
     "",
     "## Seams (each one you touch needs an O-row)",
-    ...s.seams.map((x) => `- ${x.id}: ${x.from} → ${x.to}, owner ${x.owner}${x.carries ? ` — ${x.carries}` : ""}`),
+    ...s.seams.flatMap((x) => [
+      `- ${x.id}: ${x.from} → ${x.to}, owner ${x.owner}${x.carries ? ` — ${x.carries}` : ""}`,
+      // One line per flow, so a plan's Flows table can name what already crosses the seam.
+      ...(x.flows ?? []).map((f) => `  - ${f.kind}: ${f.from} → ${f.to}: ${f.carries}`),
+    ]),
   ];
   return lines.join("\n");
 }

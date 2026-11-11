@@ -21,6 +21,21 @@ export interface Seam {
   carries?: string;
   owner: string;
   guard?: string;
+  description?: string;
+  /** What crosses the seam, one entry per thing and direction (ADR 0017). */
+  flows?: Flow[];
+}
+
+export interface Flow {
+  kind: "data" | "control";
+  from: string;
+  to: string;
+  carries: string;
+}
+
+/** Whether a flow from `from` to `to` runs along the seam: its two nodes, either way. */
+export function seamJoins(s: Seam, from: string, to: string): boolean {
+  return (from === s.from && to === s.to) || (from === s.to && to === s.from);
 }
 
 export interface RepoRef {
@@ -65,6 +80,11 @@ export function structuralProblems(map: SystemMap): string[] {
     }
     if (s.owner !== s.from && s.owner !== s.to) {
       problems.push(`seam ${JSON.stringify(s.id)} owner ${JSON.stringify(s.owner)} is neither its from nor its to side`);
+    }
+    for (const f of s.flows ?? []) {
+      if (!seamJoins(s, f.from, f.to)) {
+        problems.push(`seam ${JSON.stringify(s.id)} has a flow from ${JSON.stringify(f.from)} to ${JSON.stringify(f.to)}, which are not its two nodes`);
+      }
     }
   }
   return problems;

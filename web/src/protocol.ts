@@ -116,6 +116,10 @@ error: string
 outcome: "failed"
 })
 export type NodeKind = ("context" | "contract" | "external")
+/**
+ * Data moves; control tells the other side to do something.
+ */
+export type FlowKind = ("data" | "control")
 export type PairPollResponse = ({
 status: "pending"
 } | {
@@ -653,6 +657,15 @@ plan_path?: (string | null)
  */
 export interface Seam {
 carries?: (string | null)
+/**
+ * What this seam is for, in a sentence a newcomer can read.
+ */
+description?: (string | null)
+/**
+ * What crosses this seam, one entry per thing and direction (ADR 0017). Optional: a seam
+ * without flows is drawn as a plain dependency from `from` to `to`.
+ */
+flows?: Flow[]
 from: string
 /**
  * The check that guards this seam.
@@ -663,6 +676,19 @@ id: string
  * Node id of the owner side; must be `from` or `to`.
  */
 owner: string
+to: string
+}
+/**
+ * One thing crossing a seam in one direction. `from` and `to` are the seam's two nodes, in
+ * either order.
+ */
+export interface Flow {
+/**
+ * What it carries: a type, a message, a command.
+ */
+carries: string
+from: string
+kind: FlowKind
 to: string
 }
 export interface Me {

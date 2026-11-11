@@ -1,0 +1,29 @@
+# Must fail on both sides, naming the seam: the second flow ends at a node the seam does not join,
+# and the third starts and ends at the same node.
+version: 1
+name: flows-off-seam
+nodes:
+  - id: web
+    kind: context
+  - id: server
+    kind: context
+  - id: store
+    kind: external
+seams:
+  - id: web-server
+    from: web
+    to: server
+    owner: server
+    flows:
+      - kind: data
+        from: server
+        to: web
+        carries: Overview
+      - kind: data
+        from: server
+        to: store
+        carries: rows
+      - kind: control
+        from: web
+        to: web
+        carries: nothing

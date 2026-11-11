@@ -47,6 +47,39 @@
     "nodes"
   ],
   "$defs": {
+    "Flow": {
+      "description": "One thing crossing a seam in one direction. `from` and `to` are the seam's two nodes, in\neither order.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "description": "What it carries: a type, a message, a command.",
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FlowKind"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "carries"
+      ]
+    },
+    "FlowKind": {
+      "description": "Data moves; control tells the other side to do something.",
+      "type": "string",
+      "enum": [
+        "data",
+        "control"
+      ]
+    },
     "MapNode": {
       "type": "object",
       "properties": {
@@ -130,6 +163,20 @@
             "string",
             "null"
           ]
+        },
+        "description": {
+          "description": "What this seam is for, in a sentence a newcomer can read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flows": {
+          "description": "What crosses this seam, one entry per thing and direction (ADR 0017). Optional: a seam\nwithout flows is drawn as a plain dependency from `from` to `to`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Flow"
+          }
         },
         "from": {
           "type": "string"
