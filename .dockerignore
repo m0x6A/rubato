@@ -1,0 +1,18 @@
+# Keep the build context small and secrets out of the image.
+.git
+.github
+.claude
+target
+**/target
+node_modules
+**/node_modules
+web/dist
+web/test-results
+web/playwright-report
+docs
+observability
+*.log
+.env
+.env.*
+*.db
+*.db-*
