@@ -1,9 +1,11 @@
 //! The logged-in user, from the signed session cookie (or the dev user in development).
 
 use super::store;
+use super::team::{self, reason};
 use crate::kernel::state::App;
 use axum::extract::FromRequestParts;
 use axum::http::{HeaderMap, StatusCode, header, request::Parts};
+use chrono::Utc;
 
 pub const COOKIE: &str = "rubato_session";
 
@@ -38,10 +40,17 @@ impl FromRequestParts<App> for CurrentUser {
         }
         let value = cookie_value(&parts.headers, COOKIE).ok_or(StatusCode::UNAUTHORIZED)?;
         let id = app.signer.verify(&value).ok_or(StatusCode::UNAUTHORIZED)?;
-        match store::web_session_login(&app.db, &id).await {
-            Ok(Some(login)) => Ok(CurrentUser(login)),
-            _ => Err(StatusCode::UNAUTHORIZED),
+        let Ok(Some((login, team_checked_at))) = store::web_session(&app.db, &id).await else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        // As a GitHub App, a session counts only with a fresh team record (ADR 0022). This
+        // runs on every route and on the websocket upgrade, so a session from before the
+        // gate, or of someone who lost access, is refused too: 401, and the web logs in again.
+        if app.config.github_app.is_some() && !team::record_is_fresh(team_checked_at, Utc::now()) {
+            app.reject(parts.uri.path(), reason::TEAM_RECORD_STALE, &login);
+            return Err(StatusCode::UNAUTHORIZED);
         }
+        Ok(CurrentUser(login))
     }
 }
 

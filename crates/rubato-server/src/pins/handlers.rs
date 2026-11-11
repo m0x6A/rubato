@@ -8,6 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::Utc;
+use rubato_protocol::pins::routes;
 use rubato_protocol::{IssuePin, PinRequest};
 
 const SLICE: &str = "pins";
@@ -23,10 +24,25 @@ pub async fn add_pin(
         .await
         .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
-    if !map.map.ids().contains(req.target.id()) {
+    let id = req.target.id();
+    if !map.map.ids().contains(id) {
+        app.reject(routes::PINS, "unknown_id", &user);
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            format!("{} is not an id in map {}", req.target.id(), map.version),
+            format!("{id} is not an id in map {}", map.version),
+        ));
+    }
+    // The kind must be the id's own: a node id pinned as a seam would never show on the map.
+    let (kind, of_kind) = if req.target.is_node() {
+        ("part", map.map.node_ids().contains(id))
+    } else {
+        ("seam", map.map.seam_ids().contains(id))
+    };
+    if !of_kind {
+        app.reject(routes::PINS, "kind_mismatch", &user);
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("{id} is not a {kind} in map {}", map.version),
         ));
     }
     store::add_pin(

@@ -71,6 +71,9 @@ current: string
 issue: IssueRef
 kind: "map_version_mismatch"
 launched_with: string
+} | {
+kind: "repo_not_covered"
+repo: string
 })
 /**
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
@@ -652,6 +655,7 @@ login: string
  * The whole picture in one payload: what the web view renders.
  */
 export interface Overview {
+backlog?: Backlog
 companions: PairingInfo[]
 findings: Finding[]
 generated_at: string
@@ -661,6 +665,48 @@ map: MapResponse
  * Sessions not attached to any issue (branch outside the convention).
  */
 unpinned_sessions?: SessionState[]
+}
+/**
+ * Open issues not tracked yet (ADR 0019).
+ */
+export interface Backlog {
+issues?: OpenIssue[]
+/**
+ * One entry per repo the map names, listed or not.
+ */
+repos?: BacklogRepo[]
+}
+/**
+ * An open issue of a repo the map names that Rubato does not track yet: not pinned, launched,
+ * planned or worked on. It has no progress state (ADR 0019).
+ */
+export interface OpenIssue {
+issue: IssueRef
+labels?: string[]
+title: string
+updated_at: string
+url: string
+}
+/**
+ * How fresh one repo's listing is. The trust check for the backlog.
+ */
+export interface BacklogRepo {
+/**
+ * Why the latest listing failed. Absent when it succeeded.
+ */
+error?: (string | null)
+/**
+ * The last good listing. Absent until the first one.
+ */
+listed_at?: (string | null)
+/**
+ * `owner/name`.
+ */
+repo: string
+/**
+ * The listing was cut at the server's cap.
+ */
+truncated?: boolean
 }
 export interface PairingInfo {
 companion_id: string

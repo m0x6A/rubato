@@ -40,7 +40,8 @@ pub use pairing::{
 pub use pins::{IssuePin, PinRequest};
 pub use plan::{AffectedPart, Assumption, AssumptionScope, ORow, PartStatus, Plan};
 pub use progress::{
-    Finding, IssueSummary, Overview, Progress, ProgressInputs, ProgressState, derive_progress,
+    Backlog, BacklogRepo, Finding, IssueSummary, OpenIssue, Overview, Progress, ProgressInputs,
+    ProgressState, derive_progress,
 };
 pub use session::{
     Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,

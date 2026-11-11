@@ -1,51 +1,57 @@
-import { Background, Controls, type Edge, Handle, type Node, type NodeProps, Position, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
-import { STATE_LABEL } from "../../shared/format.ts";
-import { type Graph, type GraphNode, issueCounts, layout, sessionCounts } from "./graph.ts";
+import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { mergeNodes } from "./nodes.ts";
+import type { MapRef } from "../../protocol.ts";
+import type { OnPin } from "./drop.ts";
+import { type Graph, type GraphEdge, type GraphNode, layout } from "./graph.ts";
+import { PartCard } from "./PartCard.tsx";
+import { SeamChip } from "./SeamChip.tsx";
 
-type MapNodeData = { node: GraphNode; selected: boolean };
+type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined };
 type MapFlowNode = Node<MapNodeData, "map">;
+type SeamEdgeData = { seam: GraphEdge; selected: boolean; onSelect: (id: string) => void; onPin: OnPin | undefined };
+type SeamFlowEdge = Edge<SeamEdgeData, "seam">;
 
 function MapNodeCard({ data }: NodeProps<MapFlowNode>) {
-  const { node, selected } = data;
-  const issues = issueCounts(node.issues);
-  const sessions = sessionCounts(node.sessions);
-  const classes = ["map-node", node.kind, node.paint ? `paint-${node.paint}` : "", selected ? "selected" : ""].filter(Boolean).join(" ");
   return (
-    <div className={classes} data-testid={`node-${node.id}`} title={node.description}>
+    <>
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <div className="title">
-        <span className="id">{node.id}</span>
-        <span className="kind">{node.kind}</span>
-      </div>
-      <div className="badges">
-        {Object.entries(issues).map(([state, n]) => (
-          <span key={state} className={`badge ${state}`}>
-            {n} {STATE_LABEL[state as keyof typeof STATE_LABEL].toLowerCase()}
-          </span>
-        ))}
-        {Object.entries(sessions).map(([status, n]) => (
-          <span key={status} className={`badge ${status}`} title="sessions">
-            {n} session{n === 1 ? "" : "s"} {status}
-          </span>
-        ))}
-        {node.paint && <span className={`badge ${node.paint === "new" ? "designing" : ""}`}>{node.paint} by a plan</span>}
-      </div>
-      {node.findings.length > 0 && <div className="warn">⚠ {node.findings.length} finding{node.findings.length === 1 ? "" : "s"}</div>}
+      <PartCard node={data.node} selected={data.selected} onPin={data.onPin} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
-    </div>
+    </>
+  );
+}
+
+/** A seam: the path with its arrowhead, and its chip as an HTML label, which can take a drop. */
+function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }: EdgeProps<SeamFlowEdge>) {
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  return (
+    <>
+      <BaseEdge path={path} {...(markerEnd ? { markerEnd } : {})} />
+      {data && (
+        <EdgeLabelRenderer>
+          <div className="seam-label" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
+            <SeamChip seam={data.seam} selected={data.selected} onSelect={data.onSelect} onPin={data.onPin} />
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 }
 
 const nodeTypes = { map: MapNodeCard };
+const edgeTypes = { seam: SeamEdge };
 
 interface Props {
   graph: Graph;
-  selectedNode: string | null;
-  onSelectNode: (id: string | null) => void;
+  /** The selected part or seam. */
+  selected: MapRef | null;
+  onSelect: (ref: MapRef | null) => void;
+  /** An issue row was dropped on a part or a seam chip. */
+  onPin?: OnPin;
 }
 
-function Inner({ graph, selectedNode, onSelectNode }: Props) {
+function Inner({ graph, selected, onSelect, onPin }: Props) {
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }> | null>(null);
   const { fitView } = useReactFlow();
   const shape = graph.nodes.map((n) => n.id).join(",") + "|" + graph.edges.map((e) => `${e.from}>${e.to}`).join(",");
@@ -71,29 +77,38 @@ function Inner({ graph, selectedNode, onSelectNode }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shape]);
 
-  const nodes: MapFlowNode[] = useMemo(
+  const selectedNode = selected?.kind === "node" ? selected.id : null;
+  const selectedSeam = selected?.kind === "seam" ? selected.id : null;
+
+  const wanted: MapFlowNode[] = useMemo(
     () =>
       graph.nodes.map((n) => ({
         id: n.id,
         type: "map",
         position: positions?.get(n.id) ?? { x: 0, y: 0 },
-        data: { node: n, selected: selectedNode === n.id },
+        data: { node: n, selected: selectedNode === n.id, onPin },
       })),
-    [graph, positions, selectedNode],
+    [graph, positions, selectedNode, onPin],
   );
-  const edges: Edge[] = useMemo(
+  // React Flow draws an edge only between parts it has measured, and it reports a measurement
+  // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
+  // overview updates them in place: a part that is rebuilt from scratch loses its measurement
+  // and its seams (and their chips) disappear until something resizes it.
+  const [nodes, setNodes] = useState<MapFlowNode[]>([]);
+  useEffect(() => setNodes((current) => mergeNodes(current, wanted)), [wanted]);
+  const onNodesChange = useCallback((changes: NodeChange<MapFlowNode>[]) => setNodes((current) => applyNodeChanges(changes, current)), []);
+  const edges: SeamFlowEdge[] = useMemo(
     () =>
       graph.edges.map((e) => ({
         id: e.id,
+        type: "seam",
         source: e.from,
         target: e.to,
-        className: e.collision ? "collision" : e.openPlans.length ? "busy" : "",
-        label: e.openPlans.length ? `${e.id} · ${e.openPlans.length} plan${e.openPlans.length === 1 ? "" : "s"}${e.collision ? " ⚠" : ""}` : e.id,
-        labelBgPadding: [4, 2] as [number, number],
-        labelStyle: { fontSize: 10 },
-        data: { seam: e },
+        className: [e.collision ? "collision" : e.openPlans.length ? "busy" : "", selectedSeam === e.id ? "chosen" : ""].filter(Boolean).join(" "),
+        markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+        data: { seam: e, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin },
       })),
-    [graph],
+    [graph, selectedSeam, onSelect, onPin],
   );
 
   if (!positions) {
@@ -104,11 +119,14 @@ function Inner({ graph, selectedNode, onSelectNode }: Props) {
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      onNodesChange={onNodesChange}
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable
-      onNodeClick={(_e, n) => onSelectNode(n.id)}
-      onPaneClick={() => onSelectNode(null)}
+      onNodeClick={(_e, n) => onSelect({ kind: "node", id: n.id })}
+      onEdgeClick={(_e, edge) => onSelect({ kind: "seam", id: edge.id })}
+      onPaneClick={() => onSelect(null)}
       proOptions={{ hideAttribution: true }}
       minZoom={0.2}
     >

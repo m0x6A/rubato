@@ -4,6 +4,11 @@
   "description": "The whole picture in one payload: what the web view renders.",
   "type": "object",
   "properties": {
+    "backlog": {
+      "description": "Open issues not tracked yet (ADR 0019).",
+      "$ref": "#/$defs/Backlog",
+      "default": {}
+    },
     "companions": {
       "type": "array",
       "items": {
@@ -116,6 +121,58 @@
           "type": "string",
           "const": "seam"
         }
+      ]
+    },
+    "Backlog": {
+      "description": "Every open issue of the map's repos that is not tracked yet, and how fresh each listing is.",
+      "type": "object",
+      "properties": {
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OpenIssue"
+          }
+        },
+        "repos": {
+          "description": "One entry per repo the map names, listed or not.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BacklogRepo"
+          }
+        }
+      }
+    },
+    "BacklogRepo": {
+      "description": "How fresh one repo's listing is. The trust check for the backlog.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "Why the latest listing failed. Absent when it succeeded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "listed_at": {
+          "description": "The last good listing. Absent until the first one.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "repo": {
+          "description": "`owner/name`.",
+          "type": "string"
+        },
+        "truncated": {
+          "description": "The listing was cut at the server's cap.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "repo"
       ]
     },
     "ChecksStatus": {
@@ -293,6 +350,23 @@
             "issue",
             "launched_with",
             "current"
+          ]
+        },
+        {
+          "description": "The GitHub App installation does not cover a repo the map or a tracked issue names, so\nits branches, plans and pull requests cannot be read (ADR 0022).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "repo_not_covered"
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "repo"
           ]
         }
       ]
@@ -535,6 +609,37 @@
         "signal",
         "panel",
         "owner"
+      ]
+    },
+    "OpenIssue": {
+      "description": "An open issue of a repo the map names that Rubato does not track yet: not pinned, launched,\nplanned or worked on. It has no progress state (ADR 0019).",
+      "type": "object",
+      "properties": {
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "title",
+        "url",
+        "updated_at"
       ]
     },
     "PairingInfo": {

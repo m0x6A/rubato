@@ -1,6 +1,7 @@
 //! Composition root: the periodic poll loop and the supervision of background tasks.
 //!
-//! The poll keeps the order of design §9.1: reload the map when `map_age == 0`, then per issue
+//! The poll keeps the order of design §9.1: reload the map when `map_age == 0`, then the open
+//! issues of the map's repos and the installation's coverage (issue #48), then per issue
 //! `upsert_meta → find_branch → (plan, PR) when a branch exists → decisions`, then rate limit,
 //! gauges and `notify("poll")`. The branch is looked up once here and passed to both slices, so
 //! `github_poll` and `plans` name no other slice.
@@ -38,6 +39,18 @@ pub async fn poll_once(app: &App) -> Result<()> {
             .filter_map(|s| s.issue),
     );
     issues.extend(plans::all(&app.db).await?.into_iter().map(|p| p.issue));
+
+    // Before the per-issue reads: every open issue of the map's repos (one listing per repo),
+    // then, as an installation only, which repos it covers.
+    github_poll::list_open_issues(app, &map.map).await;
+    let mut repos: BTreeSet<String> = map
+        .map
+        .repos_named()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    repos.extend(issues.iter().map(|i| i.repo.clone()));
+    github_poll::check_coverage(app, &repos).await;
 
     for issue in &issues {
         if let Err(e) = poll_issue(app, &map, issue).await {

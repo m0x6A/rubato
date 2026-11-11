@@ -148,7 +148,8 @@ export async function layout(graph: Graph): Promise<Map<string, { x: number; y: 
       "elk.algorithm": "layered",
       "elk.direction": "RIGHT",
       "elk.spacing.nodeNode": "40",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "90",
+      // Room between layers for a seam's chip (its id, plus plan and issue counts).
+      "elk.layered.spacing.nodeNodeBetweenLayers": "200",
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
     },
     children: graph.nodes.map((n) => ({ id: n.id, width: NODE_WIDTH, height: NODE_HEIGHT })),

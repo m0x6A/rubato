@@ -87,6 +87,10 @@ impl MapRef {
             Self::Node { id } | Self::Seam { id } => id,
         }
     }
+
+    pub fn is_node(&self) -> bool {
+        matches!(self, Self::Node { .. })
+    }
 }
 
 #[cfg(test)]

@@ -6,6 +6,8 @@ use crate::kernel::github::GitHubApi;
 use crate::kernel::signer::Signer;
 use crate::kernel::telemetry::Metrics;
 use chrono::{DateTime, Utc};
+use opentelemetry::KeyValue;
+use rubato_protocol::otel::attr;
 use rubato_protocol::{ServerMessage, SystemMap, WebEvent};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -54,12 +56,33 @@ impl AppState {
         })
     }
 
-    /// Tell every browser something changed; they refetch the overview.
+    /// Tell every browser something changed; they refetch the overview. One `info` line per
+    /// change says why and to how many, so a change that reached nobody can be told from one
+    /// that was never sent.
     pub fn notify(&self, reason: &str) {
+        let subscribers = self.web_tx.receiver_count();
+        tracing::info!(reason, rubato.subscribers = subscribers, "web fan-out");
         let _ = self.web_tx.send(WebEvent::Changed {
             at: Utc::now(),
             reason: reason.to_owned(),
         });
+    }
+
+    /// A web request refused by a rule: counted by route and reason, and logged with who.
+    pub fn reject(&self, route: &str, reason: &str, user: &str) {
+        self.metrics.web_rejected.add(
+            1,
+            &[
+                KeyValue::new(attr::ROUTE, route.to_owned()),
+                KeyValue::new(attr::DROP_REASON, reason.to_owned()),
+            ],
+        );
+        tracing::info!(
+            rubato.route = route,
+            rubato.reason = reason,
+            rubato.user = user,
+            "web write rejected"
+        );
     }
 
     pub fn connected_companions(&self) -> Vec<Uuid> {

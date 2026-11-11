@@ -28,6 +28,8 @@ pub mod attr {
     pub const CAP_KIND: &str = "rubato.cap.kind";
     /// The background task a `rubato.task.exited` event names.
     pub const TASK: &str = "rubato.task";
+    /// The route a refused web request named (`rubato.web.rejected`).
+    pub const ROUTE: &str = "rubato.route";
 }
 
 /// Metric instrument names.
@@ -50,6 +52,15 @@ pub mod metric {
     pub const WS_CLIENTS: &str = "rubato.ws.clients";
     /// One per server poll tick; `ServerPollSilent` fires when it stops.
     pub const POLL_TICKS: &str = "rubato.poll.ticks";
+    /// Unix seconds of the last good listing of a repo's open issues; 0 for a repo the map no
+    /// longer names. The "Backlog age" panel is `time()` minus this.
+    pub const BACKLOG_LISTED_AT: &str = "rubato.backlog.listed_at";
+    /// Open issues listed per repo, recorded every poll tick.
+    pub const BACKLOG_ISSUES: &str = "rubato.backlog.issues";
+    /// A web request refused by a rule, by route and reason.
+    pub const WEB_REJECTED: &str = "rubato.web.rejected";
+    /// Repos the map or a tracked issue names that the GitHub App installation does not cover.
+    pub const GITHUB_REPOS_UNCOVERED: &str = "rubato.github.repos_uncovered";
 }
 
 /// Span names.
@@ -98,6 +109,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SUBSCRIBERS,
         attr::CAP_KIND,
         attr::TASK,
+        attr::ROUTE,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::SESSIONS_DISCOVERED,
@@ -114,6 +126,10 @@ pub fn all_names() -> Vec<&'static str> {
         metric::MAP_LOADED_AT,
         metric::WS_CLIENTS,
         metric::POLL_TICKS,
+        metric::BACKLOG_LISTED_AT,
+        metric::BACKLOG_ISSUES,
+        metric::WEB_REJECTED,
+        metric::GITHUB_REPOS_UNCOVERED,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

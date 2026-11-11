@@ -6,9 +6,9 @@ use crate::kernel::state::LoadedMap;
 use crate::plans::PlanRow;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{
-    CapKind, DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, Plan,
-    Progress, ProgressInputs, ProgressState, PullRequestState, SessionState, SessionStatus,
-    derive_progress,
+    Backlog, BacklogRepo, CapKind, DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary,
+    Limits, MapRef, OpenIssue, Plan, Progress, ProgressInputs, ProgressState, PullRequestState,
+    SessionState, SessionStatus, derive_progress,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -23,12 +23,17 @@ pub struct OverviewInputs {
     pub cap_hits: HashMap<IssueRef, CapKind>,
     pub meta: HashMap<IssueRef, IssueMeta>,
     pub launch_map_versions: Vec<(IssueRef, String)>,
+    /// Every listed open issue, and each repo's listing state.
+    pub backlog: (Vec<OpenIssue>, Vec<BacklogRepo>),
+    /// Repos the App installation does not cover.
+    pub uncovered_repos: Vec<String>,
 }
 
 pub struct Built {
     pub issues: Vec<IssueSummary>,
     pub findings: Vec<Finding>,
     pub unpinned_sessions: Vec<SessionState>,
+    pub backlog: Backlog,
 }
 
 fn seams_touched(plan: &Plan) -> BTreeSet<&str> {
@@ -205,10 +210,48 @@ pub fn build(
         .filter(|s| s.issue.is_none())
         .cloned()
         .collect();
+    findings.extend(
+        inputs
+            .uncovered_repos
+            .iter()
+            .map(|repo| Finding::RepoNotCovered { repo: repo.clone() }),
+    );
+
+    // The backlog: listed open issues that are not tracked above, and one entry per repo the
+    // map names, listed or not, so "not listed yet" is said and not shown as empty.
+    let (listed, listings) = &inputs.backlog;
+    let backlog = Backlog {
+        issues: listed
+            .iter()
+            .filter(|i| !issues.contains(&i.issue))
+            .cloned()
+            .collect(),
+        repos: match map {
+            Some(m) => m
+                .map
+                .repos_named()
+                .into_iter()
+                .map(|repo| {
+                    listings
+                        .iter()
+                        .find(|l| l.repo == repo)
+                        .cloned()
+                        .unwrap_or(BacklogRepo {
+                            repo: repo.to_owned(),
+                            listed_at: None,
+                            truncated: false,
+                            error: None,
+                        })
+                })
+                .collect(),
+            None => listings.clone(),
+        },
+    };
     Built {
         issues: out,
         findings,
         unpinned_sessions,
+        backlog,
     }
 }
 
@@ -317,6 +360,8 @@ mod tests {
             cap_hits: HashMap::new(),
             meta: HashMap::new(),
             launch_map_versions: vec![],
+            backlog: (vec![], vec![]),
+            uncovered_repos: vec![],
         }
     }
 
@@ -389,6 +434,102 @@ mod tests {
             );
         }
         println!("checked {} cap hit cases", cases.len());
+    }
+
+    fn open(repo: &str, n: u64) -> OpenIssue {
+        OpenIssue {
+            issue: IssueRef::new(repo, n),
+            title: format!("Issue {n}"),
+            url: String::new(),
+            labels: vec![],
+            updated_at: now(),
+        }
+    }
+
+    #[test]
+    fn backlog_excludes_tracked_issues() {
+        let repo = "m0x6A/rubato";
+        let mut inputs = empty();
+        inputs.backlog = (vec![open(repo, 1), open(repo, 2), open(repo, 3)], vec![]);
+        // #1 is pinned and #2 has a session: both are tracked and so not in the backlog.
+        inputs.pins = vec![IssuePin {
+            issue: IssueRef::new(repo, 1),
+            target: MapRef::node("rubato-server"),
+            pinned_by: "m0x6A".into(),
+            pinned_at: now(),
+        }];
+        inputs.sessions = vec![session(
+            &IssueRef::new(repo, 2),
+            SessionStatus::Working,
+            StateSource::Hook,
+        )];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let backlog: Vec<u64> = built
+            .backlog
+            .issues
+            .iter()
+            .map(|i| i.issue.number)
+            .collect();
+        assert_eq!(backlog, [3]);
+        let tracked: Vec<u64> = built.issues.iter().map(|i| i.issue.number).collect();
+        assert_eq!(tracked, [1, 2]);
+        // A backlog issue has no progress: it is not among the issues at all.
+        assert!(built.issues.iter().all(|i| i.issue.number != 3));
+    }
+
+    #[test]
+    fn every_map_repo_has_a_listing_entry_even_before_its_first_listing() {
+        let mut inputs = empty();
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let loaded = map();
+        let named: Vec<&str> = loaded.map.repos_named().into_iter().collect();
+        assert!(!named.is_empty(), "the committed map names a repo");
+        assert_eq!(
+            built
+                .backlog
+                .repos
+                .iter()
+                .map(|r| r.repo.as_str())
+                .collect::<Vec<_>>(),
+            named
+        );
+        assert!(
+            built
+                .backlog
+                .repos
+                .iter()
+                .all(|r| r.listed_at.is_none() && r.error.is_none()),
+            "not listed yet is said, not shown as an empty list"
+        );
+        // A failed listing carries its error and the last good time through.
+        inputs.backlog.1 = vec![BacklogRepo {
+            repo: named[0].to_owned(),
+            listed_at: Some(now()),
+            truncated: true,
+            error: Some("rate limited".into()),
+        }];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert_eq!(
+            built.backlog.repos[0].error.as_deref(),
+            Some("rate limited")
+        );
+        assert!(built.backlog.repos[0].truncated);
+        assert_eq!(built.backlog.repos[0].listed_at, Some(now()));
+    }
+
+    #[test]
+    fn an_uncovered_repo_is_a_finding() {
+        let mut inputs = empty();
+        inputs.uncovered_repos = vec!["o/left-out".into()];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert!(
+            built
+                .findings
+                .iter()
+                .any(|f| matches!(f, Finding::RepoNotCovered { repo } if repo == "o/left-out")),
+            "{:?}",
+            built.findings
+        );
     }
 
     #[test]

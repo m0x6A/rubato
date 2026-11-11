@@ -23,7 +23,7 @@ axum = { version = "0.8", features = ["ws", "json", "macros", "query"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "chrono", "uuid", "json", "migrate", "macros"] }
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
-octocrab = { version = "0.54", default-features = false, features = ["default-client", "rustls", "rustls-ring", "rustls-webpki-tokio", "timeout", "retry", "follow-redirect"] }
+octocrab = { version = "0.54", default-features = false, features = ["default-client", "rustls", "rustls-ring", "rustls-webpki-tokio", "timeout", "retry", "follow-redirect", "jwt-aws-lc-rs"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
 async-trait = "0.1"
 sha2 = "0.10"

@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rubato_server::kernel::config::Config;
-use rubato_server::kernel::github::{FakeGitHub, GitHubApi, LocalGit, Octo};
+use rubato_server::kernel::github::{
+    FakeGitHub, GitHubApi, LocalGit, Octo, READ_TIMEOUT, check_app, read_dev_issues,
+};
 use rubato_server::kernel::state::AppState;
 use rubato_server::kernel::{db, telemetry};
 use rubato_server::{app, map, tasks};
@@ -20,19 +22,63 @@ async fn main() -> Result<()> {
         );
     }
     let pool = db::connect(&config.database_url).await?;
-    let github: Arc<dyn GitHubApi> = match (&config.github_token, &config.local_repos) {
-        (_, Some(spec)) => {
+    let dev_issues = match &config.dev_issues {
+        Some(path) => {
+            tracing::warn!(
+                "RUBATO_DEV_ISSUES is set: open issues come from that file; development and tests only"
+            );
+            read_dev_issues(path)?
+        }
+        None => Default::default(),
+    };
+    let api = config.github_api_url.as_deref();
+    if api.is_some() || config.github_web_url.is_some() {
+        tracing::warn!(
+            api = config.github_api(),
+            web = config.github_web(),
+            "RUBATO_GITHUB_API_URL or RUBATO_GITHUB_WEB_URL is set: not talking to github.com"
+        );
+    }
+    let github: Arc<dyn GitHubApi> = match (
+        &config.local_repos,
+        &config.github_app,
+        &config.github_token,
+    ) {
+        (Some(spec), _, _) => {
             tracing::warn!(
                 "RUBATO_LOCAL_REPOS is set: branches and plan files come from local repositories, not GitHub"
             );
-            Arc::new(LocalGit::from_spec(spec)?)
+            Arc::new(LocalGit::from_spec(spec)?.with_open_issues(dev_issues))
         }
-        (Some(t), None) => Arc::new(Octo::new(t)?),
-        (None, None) => {
-            tracing::warn!(
-                "RUBATO_GITHUB_TOKEN unset: GitHub reads are disabled; map comes from the database copy only"
+        (None, Some(app), _) => {
+            // A wrong key, client id or installation ends the start here, with its name.
+            if let Err(e) = check_app(app, config.github_client_id.as_deref(), api).await {
+                tracing::error!(error = %e, "github app check failed");
+                anyhow::bail!("github app check failed: {e}");
+            }
+            tracing::info!(
+                app_id = app.app_id,
+                installation_id = app.installation_id,
+                "acting as a GitHub App installation; sessions need a team record"
             );
-            Arc::new(FakeGitHub::new())
+            Arc::new(Octo::for_installation(app, api)?)
+        }
+        (None, None, Some(t)) => {
+            tracing::warn!(
+                "no GitHub App configured: reading with RUBATO_GITHUB_TOKEN, login is open to any GitHub account, and map changes cannot be proposed"
+            );
+            Arc::new(match api {
+                Some(base) => Octo::with_base_uri(t, base, READ_TIMEOUT)?,
+                None => Octo::new(t)?,
+            })
+        }
+        (None, None, None) => {
+            tracing::warn!(
+                "no GitHub App and no RUBATO_GITHUB_TOKEN: GitHub reads are disabled; map comes from the database copy only"
+            );
+            let fake = FakeGitHub::new();
+            fake.with(|g| g.open = dev_issues);
+            Arc::new(fake)
         }
     };
     let bind = config.bind;

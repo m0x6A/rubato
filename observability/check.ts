@@ -2,7 +2,8 @@
 /**
  * Structural check of the observability files: every alert in the "never silent" list exists,
  * every rule has a unit test that expects it to fire, every alert names a panel that exists on
- * the dashboard, the "Map age" panel queries `rubato_map_loaded_at`, no expression groups by the
+ * the dashboard, the "Map age" panel queries `rubato_map_loaded_at`, the "Interactive map" panels
+ * of issue #48 exist and query their metrics, no expression groups by the
  * bare label `state`, and the working-sessions line takes `max by`. Reports what it checked.
  * `promtool test rules` is the semantic check; `check.test.ts` makes this one fail on purpose.
  *
@@ -15,6 +16,14 @@ import { parse as parseYaml } from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REQUIRED = ["CompanionSilent", "SessionWorkingNoHooks", "PlanUnknownNodes", "SeamCollision", "GitHubRateLimitLow", "ServerPollSilent"];
+
+/** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
+const INTERACTIVE_MAP: [string, string][] = [
+  ["Backlog age", "rubato_backlog_listed_at"],
+  ["Backlog issues", "rubato_backlog_issues"],
+  ["Web writes rejected", "rubato_web_rejected_total"],
+  ["Repos not covered", "rubato_github_repos_uncovered"],
+];
 
 type Panel = { title: string; type?: string; targets?: { expr?: string }[] };
 
@@ -53,6 +62,12 @@ export function check(rulesText: string, testsText: string, dashboardText: strin
   // The exact name: a unit on the gauge would export it as rubato_map_loaded_at_seconds.
   if (!exprs("Map age").some((e) => /\brubato_map_loaded_at\b/.test(e))) {
     problems.push(`the dashboard has no "Map age" panel that queries rubato_map_loaded_at`);
+  }
+  // Issue #48: each panel a 3 am row names, with the exact metric (no unit suffix on the gauge).
+  for (const [title, metric] of INTERACTIVE_MAP) {
+    if (!exprs(title).some((e) => new RegExp(`\\b${metric}\\b`).test(e))) {
+      problems.push(`the dashboard has no ${JSON.stringify(title)} panel that queries ${metric}`);
+    }
   }
   // Our labels are rubato_*: `rubato.issues.by_state` carries rubato_issue_state, not `state`.
   for (const p of panels) {

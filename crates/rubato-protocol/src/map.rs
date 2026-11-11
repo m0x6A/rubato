@@ -106,6 +106,25 @@ impl SystemMap {
         self.seams.iter().find(|s| s.id == id)
     }
 
+    /// Node ids only.
+    pub fn node_ids(&self) -> BTreeSet<&str> {
+        self.nodes.iter().map(|n| n.id.as_str()).collect()
+    }
+
+    /// Seam ids only.
+    pub fn seam_ids(&self) -> BTreeSet<&str> {
+        self.seams.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    /// Every repository the map names: `repos[]` and each node's `repo` (ADR 0019).
+    pub fn repos_named(&self) -> BTreeSet<&str> {
+        self.repos
+            .iter()
+            .map(|r| r.name.as_str())
+            .chain(self.nodes.iter().filter_map(|n| n.repo.as_deref()))
+            .collect()
+    }
+
     /// Every id a plan or pin may reference: nodes and seams.
     pub fn ids(&self) -> BTreeSet<&str> {
         self.nodes
@@ -183,6 +202,36 @@ pub mod routes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repos_named_joins_the_repo_list_and_the_nodes() {
+        let mut a = node("a");
+        a.repo = Some("o/from-node".into());
+        let m = SystemMap {
+            version: 1,
+            name: "t".into(),
+            owner_rule: None,
+            repos: vec![RepoRef {
+                name: "o/listed".into(),
+                plan_path: None,
+            }],
+            nodes: vec![a, node("b")],
+            seams: vec![Seam {
+                id: "a-b".into(),
+                from: "a".into(),
+                to: "b".into(),
+                carries: None,
+                owner: "a".into(),
+                guard: None,
+            }],
+        };
+        assert_eq!(
+            m.repos_named().into_iter().collect::<Vec<_>>(),
+            ["o/from-node", "o/listed"]
+        );
+        assert!(m.node_ids().contains("a") && !m.node_ids().contains("a-b"));
+        assert!(m.seam_ids().contains("a-b") && !m.seam_ids().contains("a"));
+    }
 
     fn node(id: &str) -> MapNode {
         MapNode {

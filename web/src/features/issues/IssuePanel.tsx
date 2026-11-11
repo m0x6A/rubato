@@ -1,14 +1,21 @@
-import type { IssueRef, IssueSummary, Me, Overview, PinRequest } from "../../protocol.ts";
+import { useEffect, useRef } from "react";
+import { PinMenu } from "../pins/index.ts";
+import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
+import { setIssueDrag } from "../../shared/dnd.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
+import { Backlog } from "./Backlog.tsx";
 
 interface Props {
   overview: Overview;
   me: Me | null;
   selected: IssueSummary | null;
-  selectedNode: string | null;
+  /** The part or seam selected on the map; the list shows the issues pinned to exactly it. */
+  selection: MapRef | null;
   onSelect: (issue: IssueRef | null) => void;
-  onClearNode: () => void;
+  onClearSelection: () => void;
   onLaunch: (issue: IssueRef) => void;
+  /** Adds a pin; an issue may have several. The keyboard twin of dropping a row on the map. */
+  onPin: (issue: IssueRef, target: MapRef) => void;
   onUnpin: (req: PinRequest) => void;
 }
 
@@ -22,10 +29,19 @@ export function ownConnectedCompanions(overview: Overview, me: Me | null) {
 
 const ORDER = ["blocked", "unknown", "building", "designing", "designed", "started", "in_review", "planned", "done"] as const;
 
-export function IssuePanel({ overview, me, selected, selectedNode, onSelect, onClearNode, onLaunch, onUnpin }: Props) {
+export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin }: Props) {
   const own = ownConnectedCompanions(overview, me);
+  // The list gives way to the detail, and a row that was just pinned leaves "Not pinned" with the
+  // button that had focus: put focus on the detail's heading when an issue opens.
+  const heading = useRef<HTMLHeadingElement>(null);
+  const openKey = selected ? issueKey(selected.issue) : null;
+  useEffect(() => {
+    if (openKey) {
+      heading.current?.focus();
+    }
+  }, [openKey]);
   const issues = [...overview.issues]
-    .filter((i) => !selectedNode || i.pins.some((p) => p.id === selectedNode))
+    .filter((i) => !selection || i.pins.some((p) => p.kind === selection.kind && p.id === selection.id))
     .sort((a, b) => ORDER.indexOf(a.progress.state) - ORDER.indexOf(b.progress.state) || a.issue.number - b.issue.number);
 
   if (selected) {
@@ -33,7 +49,7 @@ export function IssuePanel({ overview, me, selected, selectedNode, onSelect, onC
     return (
       <section data-testid="issue-detail">
         <button onClick={() => onSelect(null)}>← all issues</button>
-        <h2 style={{ marginTop: 8 }}>
+        <h2 style={{ marginTop: 8 }} ref={heading} tabIndex={-1}>
           {selected.url ? (
             <a href={selected.url} target="_blank" rel="noreferrer">
               {key}
@@ -68,6 +84,9 @@ export function IssuePanel({ overview, me, selected, selectedNode, onSelect, onC
           ))}
           {selected.pins.length === 0 && <li className="muted">not pinned</li>}
         </ul>
+        <p style={{ marginTop: 8 }}>
+          <PinMenu map={overview.map.map} issue={selected.issue} pinned={selected.pins} onPin={onPin} />
+        </p>
         {(selected.sessions ?? []).length > 0 && (
           <>
             <h3 style={{ marginTop: 12 }}>Sessions</h3>
@@ -150,23 +169,40 @@ export function IssuePanel({ overview, me, selected, selectedNode, onSelect, onC
 
   return (
     <section data-testid="issue-list">
-      {selectedNode && (
-        <p>
-          <span className="muted">on</span> <strong>{selectedNode}</strong> <button onClick={onClearNode}>show all</button>
+      {selection && (
+        <p data-testid="map-filter">
+          <span className="muted">pinned to {selection.kind === "seam" ? "seam" : "part"}</span> <strong>{selection.id}</strong> <button onClick={onClearSelection}>show all</button>
         </p>
       )}
       <ul className="plain">
         {issues.map((i) => (
-          <li key={issueKey(i.issue)} className="issue-row" onClick={() => onSelect(i.issue)} data-testid={`issue-${i.issue.number}`}>
-            <span>
-              <strong>{issueKey(i.issue)}</strong> <span className="muted">{i.title ?? ""}</span>
-              <div className="muted">{i.pins.map((p) => p.id).join(", ") || "not pinned"}</div>
-            </span>
-            <span className={`badge ${i.progress.state}`}>{STATE_LABEL[i.progress.state]}</span>
+          <li key={issueKey(i.issue)} className="issue-row" onClick={() => onSelect(i.issue)} data-testid={`issue-${i.issue.number}`} draggable onDragStart={(e) => setIssueDrag(e, i.issue)} title="Drag onto a part or a seam of the map to add a pin">
+            {/* `issue-row-N` names the whole row for the e2e; `issue-N` is the older id on the same row. */}
+            <div className="row" data-testid={`issue-row-${i.issue.number}`}>
+              <span className="issue-main">
+                {/* A real button, so the row opens from the keyboard; its click reaches the row's handler. */}
+                <button type="button" className="link">
+                  {issueKey(i.issue)}
+                </button>{" "}
+                <span className="muted">{i.title ?? ""}</span>
+                <div className="muted">{i.pins.map((p) => p.id).join(", ") || "not pinned"}</div>
+              </span>
+              <span className="row-end">
+                <span className={`badge ${i.progress.state}`}>{STATE_LABEL[i.progress.state]}</span>
+                <PinMenu map={overview.map.map} issue={i.issue} pinned={i.pins} onPin={onPin} />
+              </span>
+            </div>
           </li>
         ))}
-        {issues.length === 0 && <li className="muted">No issues yet. Pin one to a node or seam.</li>}
+        {issues.length === 0 && (
+          <li className="muted" data-testid="no-tracked-issues">
+            {selection
+              ? `No issue is pinned to ${selection.kind === "seam" ? "seam" : "part"} ${selection.id}.`
+              : "No tracked issues yet. Drag one from Not pinned onto a part or a seam of the map, or use its Pin to… menu."}
+          </li>
+        )}
       </ul>
+      <Backlog backlog={overview.backlog} map={overview.map.map} onPin={onPin} />
       {(overview.unpinned_sessions ?? []).length > 0 && (
         <p className="muted">
           {(overview.unpinned_sessions ?? []).length} session{(overview.unpinned_sessions ?? []).length === 1 ? "" : "s"} on branches outside the convention (unpinned).

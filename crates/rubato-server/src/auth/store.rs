@@ -1,8 +1,8 @@
 //! Tables `users` and `web_sessions`.
 
-use crate::kernel::db::ts;
+use crate::kernel::db::{parse_ts, ts};
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -17,23 +17,44 @@ pub async fn upsert_user(
     Ok(())
 }
 
-pub async fn create_web_session(db: &SqlitePool, login: &str) -> Result<String> {
+/// A new session. `team_checked_at` is when the login was seen to have access to the App's
+/// installation; None when the server is not an App (ADR 0022).
+pub async fn create_web_session(
+    db: &SqlitePool,
+    login: &str,
+    team_checked_at: Option<DateTime<Utc>>,
+) -> Result<String> {
     let id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO web_sessions (id, login, created_at) VALUES (?, ?, ?)")
-        .bind(&id)
-        .bind(login)
-        .bind(ts(Utc::now()))
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO web_sessions (id, login, created_at, team_checked_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(login)
+    .bind(ts(Utc::now()))
+    .bind(team_checked_at.map(ts))
+    .execute(db)
+    .await?;
     Ok(id)
 }
 
-pub async fn web_session_login(db: &SqlitePool, id: &str) -> Result<Option<String>> {
-    Ok(sqlx::query("SELECT login FROM web_sessions WHERE id = ?")
-        .bind(id)
-        .fetch_optional(db)
-        .await?
-        .map(|r| r.get::<String, _>("login")))
+/// A session's login and its team record.
+pub async fn web_session(
+    db: &SqlitePool,
+    id: &str,
+) -> Result<Option<(String, Option<DateTime<Utc>>)>> {
+    Ok(
+        sqlx::query("SELECT login, team_checked_at FROM web_sessions WHERE id = ?")
+            .bind(id)
+            .fetch_optional(db)
+            .await?
+            .map(|r| {
+                (
+                    r.get::<String, _>("login"),
+                    r.get::<Option<String>, _>("team_checked_at")
+                        .map(|t| parse_ts(&t)),
+                )
+            }),
+    )
 }
 
 pub async fn delete_web_session(db: &SqlitePool, id: &str) -> Result<()> {

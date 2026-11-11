@@ -1,7 +1,8 @@
 //! In-memory GitHub for tests and for a server with no token. Records every call in order.
 
-use super::{Comment, GitHubApi, IssueInfo, PullInfo};
+use super::{Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, PullInfo};
 use anyhow::Result;
+use anyhow::anyhow;
 use async_trait::async_trait;
 use rubato_protocol::ChecksStatus;
 use std::collections::HashMap;
@@ -16,6 +17,14 @@ pub struct FakeInner {
     pub pulls: HashMap<(String, String), PullInfo>,
     pub checks: HashMap<String, ChecksStatus>,
     pub rate: (u64, u64),
+    /// Open issues per repo, as a listing answers them.
+    pub open: HashMap<String, Vec<OpenIssueInfo>>,
+    /// Repos whose listing fails, with the error text.
+    pub open_errors: HashMap<String, String>,
+    /// `Some` makes this fake an App installation covering these repos.
+    pub installation: Option<Vec<String>>,
+    /// Whether writes are allowed (tests of the proposal flow turn this on).
+    pub writes: bool,
     /// Every call in order, as (method, args); the guard for the poll order (design D4).
     pub calls: Vec<(&'static str, String)>,
 }
@@ -108,5 +117,33 @@ impl GitHubApi for FakeGitHub {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("rate_limit", String::new()));
         Ok(g.rate)
+    }
+
+    async fn open_issues(&self, repo: &str, max: usize) -> Result<OpenIssues> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("open_issues", repo.to_owned()));
+        if let Some(e) = g.open_errors.get(repo) {
+            return Err(anyhow!("{e}"));
+        }
+        let all = g.open.get(repo).cloned().unwrap_or_default();
+        let truncated = all.len() > max;
+        Ok(OpenIssues {
+            issues: all.into_iter().take(max).collect(),
+            truncated,
+        })
+    }
+
+    fn is_installation(&self) -> bool {
+        self.inner.lock().unwrap().installation.is_some()
+    }
+
+    async fn installation_repos(&self) -> Result<Vec<String>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("installation_repos", String::new()));
+        Ok(g.installation.clone().unwrap_or_default())
+    }
+
+    fn can_write(&self) -> bool {
+        self.inner.lock().unwrap().writes
     }
 }

@@ -96,14 +96,14 @@ unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, task supervision);
 (config, telemetry, db connection, `AppState`, signer, `http::internal`, GitHub port); slices:
 
 ```text
-auth            GitHub OAuth, session cookie, CurrentUser       users, web_sessions
+auth            GitHub login, team record, CurrentUser          users, web_sessions
 pairing         device-code pairing, the caller's pairings      pairing_codes, pairings
 companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
 pins            pin an issue to a node or seam                  pins
 launch          start a session through your own companion      launches, cap_hits
 map             load, validate, cache and serve the map         map_cache
 plans           parse and keep plan files from issue branches   plans
-github_poll     issue metadata, branch, PR, checks, decisions   pull_requests, decisions, issue_meta
+github_poll     issue reads, open issues, repo coverage         pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 ```
@@ -125,16 +125,17 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 <!-- /slices -->
 <!-- slices: web -->
 `web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, selection, handlers);
-`shared/` (`api.ts` request and `ApiError`, `format.ts`); `protocol.ts` (generated); features under
-`features/`, each with an `index.ts`, checked by `features/features.test.ts`:
+`shared/` (`api.ts` request, `ApiError` and needs-login; `format.ts`; `dnd.ts` the dragged issue);
+`protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
+`features/features.test.ts`:
 
 ```text
-live        the overview, kept current over /ws/web              GET /api/overview, /ws/web
+live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
 map         the system map: graph, ELK layout, MapView           (none)
-issues      issue list, issue detail, the start-session gate     (none)
+issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair a companion with a code, list, revoke your own  POST /api/pair/approve, DELETE /api/pairings/:id
-pins        pin an issue to a node or seam, unpin                POST, DELETE /api/pins
+pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
 launch      start a session through your own companion           POST /api/launch
 findings    what the map and the plans disagree about            (none)
 ```
@@ -154,7 +155,7 @@ launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; L
 map        SystemMap, MapResponse; MAP, MAP_RELOAD
 plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord
-progress   derive_progress, Overview, IssueSummary, Finding; OVERVIEW
+progress   derive_progress, Overview, IssueSummary, Backlog, Finding; OVERVIEW
 web_link   WebEvent; WEB_WS
 ```
 

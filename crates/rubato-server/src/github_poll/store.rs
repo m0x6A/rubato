@@ -1,9 +1,11 @@
-//! Tables `pull_requests`, `decisions` and `issue_meta`.
+//! Tables `pull_requests`, `decisions`, `issue_meta`, `open_issues`, `backlog_repos` and
+//! `uncovered_repos`.
 
-use crate::kernel::db::ts;
+use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::github::OpenIssues;
 use anyhow::Result;
-use chrono::Utc;
-use rubato_protocol::{DecisionRecord, IssueRef, PullRequestState};
+use chrono::{DateTime, Utc};
+use rubato_protocol::{BacklogRepo, DecisionRecord, IssueRef, OpenIssue, PullRequestState};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -78,4 +80,114 @@ pub async fn all_issue_meta(db: &SqlitePool) -> Result<HashMap<IssueRef, IssueMe
 
 pub async fn issue_meta(db: &SqlitePool, issue: &IssueRef) -> Result<Option<IssueMeta>> {
     Ok(all_issue_meta(db).await?.remove(issue))
+}
+
+/// Replace a repo's open issues with a fresh listing and mark the listing good, in one
+/// transaction: running it twice gives the same rows.
+pub async fn replace_open_issues(
+    db: &SqlitePool,
+    repo: &str,
+    listing: &OpenIssues,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM open_issues WHERE repo = ?")
+        .bind(repo)
+        .execute(&mut *tx)
+        .await?;
+    for i in &listing.issues {
+        sqlx::query("INSERT OR REPLACE INTO open_issues (repo, number, title, url, labels, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(repo).bind(i.number as i64).bind(&i.title).bind(&i.url).bind(serde_json::to_string(&i.labels)?).bind(ts(i.updated_at)).execute(&mut *tx).await?;
+    }
+    sqlx::query("INSERT INTO backlog_repos (repo, listed_at, truncated, error) VALUES (?, ?, ?, NULL) ON CONFLICT(repo) DO UPDATE SET listed_at = excluded.listed_at, truncated = excluded.truncated, error = NULL")
+        .bind(repo).bind(ts(now)).bind(listing.truncated).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// A listing failed: keep the rows and the last good time, record why.
+pub async fn record_listing_error(db: &SqlitePool, repo: &str, error: &str) -> Result<()> {
+    sqlx::query("INSERT INTO backlog_repos (repo, listed_at, truncated, error) VALUES (?, NULL, 0, ?) ON CONFLICT(repo) DO UPDATE SET error = excluded.error")
+        .bind(repo).bind(error).execute(db).await?;
+    Ok(())
+}
+
+/// A repo the map no longer names: its issues and its listing row go.
+pub async fn forget_repo(db: &SqlitePool, repo: &str) -> Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM open_issues WHERE repo = ?")
+        .bind(repo)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM backlog_repos WHERE repo = ?")
+        .bind(repo)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Every listed open issue and every repo's listing state.
+pub async fn backlog(db: &SqlitePool) -> Result<(Vec<OpenIssue>, Vec<BacklogRepo>)> {
+    let issues = sqlx::query(
+        "SELECT repo, number, title, url, labels, updated_at FROM open_issues ORDER BY repo, number",
+    )
+    .fetch_all(db)
+    .await?
+    .iter()
+    .map(|r| OpenIssue {
+        issue: IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64),
+        title: r.get("title"),
+        url: r.get("url"),
+        labels: serde_json::from_str(&r.get::<String, _>("labels")).unwrap_or_default(),
+        updated_at: parse_ts(&r.get::<String, _>("updated_at")),
+    })
+    .collect();
+    let repos =
+        sqlx::query("SELECT repo, listed_at, truncated, error FROM backlog_repos ORDER BY repo")
+            .fetch_all(db)
+            .await?
+            .iter()
+            .map(|r| BacklogRepo {
+                repo: r.get("repo"),
+                listed_at: r
+                    .get::<Option<String>, _>("listed_at")
+                    .map(|t| parse_ts(&t)),
+                truncated: r.get::<bool, _>("truncated"),
+                error: r.get("error"),
+            })
+            .collect();
+    Ok((issues, repos))
+}
+
+/// Replace the set of repos the installation does not cover.
+pub async fn replace_uncovered(
+    db: &SqlitePool,
+    repos: &[String],
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM uncovered_repos")
+        .execute(&mut *tx)
+        .await?;
+    for repo in repos {
+        sqlx::query("INSERT INTO uncovered_repos (repo, seen_at) VALUES (?, ?)")
+            .bind(repo)
+            .bind(ts(now))
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn uncovered(db: &SqlitePool) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query("SELECT repo FROM uncovered_repos ORDER BY repo")
+            .fetch_all(db)
+            .await?
+            .iter()
+            .map(|r| r.get("repo"))
+            .collect(),
+    )
 }

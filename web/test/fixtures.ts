@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { IssueSummary, Overview, PairingInfo, SystemMap } from "../src/protocol.ts";
+import type { IssueSummary, OpenIssue, Overview, PairingInfo, SystemMap } from "../src/protocol.ts";
 
 export const root = resolve(import.meta.dirname, "../..");
 
@@ -33,4 +33,13 @@ export function issue(number: number, node: string, extra: Partial<IssueSummary>
     progress: { issue: ref, state: "planned", last_seen: new Date().toISOString() },
     ...extra,
   };
+}
+
+export function openIssue(number: number, title: string, extra: Partial<OpenIssue> = {}): OpenIssue {
+  return { issue: { repo: "m0x6A/rubato", number }, title, url: `https://github.com/m0x6A/rubato/issues/${number}`, updated_at: new Date().toISOString(), ...extra };
+}
+
+/** An ISO time `minutes` ago. */
+export function minutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString();
 }

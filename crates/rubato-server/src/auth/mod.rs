@@ -4,6 +4,7 @@
 mod current_user;
 mod handlers;
 mod store;
+mod team;
 
 pub use current_user::CurrentUser;
 pub use handlers::{callback, login, logout, me};

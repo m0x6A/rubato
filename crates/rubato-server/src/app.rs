@@ -123,6 +123,132 @@ mod tests {
         ]
     }
 
+    /// Refusals are counted by route and reason, and logged with who (design O3, O12).
+    #[tokio::test(flavor = "current_thread")]
+    async fn refusals_are_counted_by_route_and_reason() {
+        use crate::kernel::config::GitHubApp;
+        use crate::kernel::telemetry::{capture, metric_reader};
+        use rubato_protocol::otel::{attr, metric};
+        use rubato_protocol::{IssueRef, MapRef, PinRequest, SystemMap};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let (reader, metrics) = metric_reader::start();
+        let mut app = AppState::new(
+            pool,
+            Config::for_tests(url, "m0x6A"),
+            Arc::new(FakeGitHub::new()),
+        );
+        Arc::get_mut(&mut app).unwrap().metrics = metrics;
+        let map: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
+        *app.map.write().await = Some(crate::kernel::state::LoadedMap {
+            map,
+            version: "v".into(),
+            loaded_at: chrono::Utc::now(),
+        });
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let served = app.clone();
+        tokio::spawn(async move { axum::serve(listener, router(served)).await.unwrap() });
+        let http = reqwest::Client::new();
+        let (events, _guard) = capture::start();
+        let count = |reason: &str| {
+            reader
+                .points(metric::WEB_REJECTED)
+                .into_iter()
+                .find(|p| p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some(reason))
+                .map(|p| {
+                    (
+                        p.value,
+                        p.attrs.get(attr::ROUTE).cloned().unwrap_or_default(),
+                    )
+                })
+        };
+
+        // A part's id pinned as a seam, then an id the map does not have.
+        for (target, _) in [
+            (MapRef::seam("rubato-server"), "kind_mismatch"),
+            (MapRef::node("nope"), "unknown_id"),
+        ] {
+            let r = http
+                .post(format!("{base}{}", pin_routes::PINS))
+                .json(&PinRequest {
+                    issue: IssueRef::new("m0x6A/rubato", 48),
+                    target,
+                })
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 422);
+        }
+        assert_eq!(
+            count("kind_mismatch"),
+            Some((1, pin_routes::PINS.to_owned()))
+        );
+        assert_eq!(count("unknown_id"), Some((1, pin_routes::PINS.to_owned())));
+        {
+            let events = events.lock().unwrap();
+            let line = events
+                .iter()
+                .find(|e| {
+                    e.message == "web write rejected"
+                        && e.fields.get("rubato.reason").map(String::as_str)
+                            == Some("kind_mismatch")
+                })
+                .expect("an info line per refusal");
+            assert_eq!(line.level, tracing::Level::INFO);
+            assert_eq!(
+                line.fields.get("rubato.user").map(String::as_str),
+                Some("m0x6A")
+            );
+            assert_eq!(
+                line.fields.get("rubato.route").map(String::as_str),
+                Some(pin_routes::PINS)
+            );
+        }
+
+        // As a GitHub App with no dev user: a session without a team record is refused, counted.
+        let tmp2 = tempfile::tempdir().unwrap();
+        let url2 = format!("sqlite://{}/t.db?mode=rwc", tmp2.path().display());
+        let pool2 = crate::kernel::db::connect(&url2).await.unwrap();
+        let mut cfg = Config::for_tests(url2, "unused");
+        cfg.dev_user = None;
+        cfg.github_app = Some(GitHubApp {
+            app_id: 1,
+            private_key: "unused".into(),
+            installation_id: 2,
+        });
+        let (reader2, metrics2) = metric_reader::start();
+        let mut gated = AppState::new(pool2, cfg, Arc::new(FakeGitHub::new()));
+        Arc::get_mut(&mut gated).unwrap().metrics = metrics2;
+        sqlx::query("INSERT INTO web_sessions (id, login, created_at) VALUES ('s1', 'old-timer', '2026-11-01T00:00:00Z')")
+            .execute(&gated.db)
+            .await
+            .unwrap();
+        let cookie = format!("rubato_session={}", gated.signer.sign("s1"));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let base2 = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router(gated)).await.unwrap() });
+        let r = http
+            .get(format!("{base2}{}", overview_routes::OVERVIEW))
+            .header("cookie", cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401);
+        let stale = reader2.points(metric::WEB_REJECTED);
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        assert_eq!(stale[0].attrs[attr::DROP_REASON], "team_record_stale");
+        assert_eq!(stale[0].attrs[attr::ROUTE], overview_routes::OVERVIEW);
+        println!("checked 3 refusal reasons");
+    }
+
     #[tokio::test]
     async fn every_known_route_answers() {
         let (url, _tmp) = serve(None).await;
