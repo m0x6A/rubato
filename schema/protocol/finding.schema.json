@@ -100,6 +100,23 @@
         "launched_with",
         "current"
       ]
+    },
+    {
+      "description": "The GitHub App installation does not cover a repo the map or a tracked issue names, so\nits branches, plans and pull requests cannot be read (ADR 0022).",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "repo_not_covered"
+        },
+        "repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "repo"
+      ]
     }
   ],
   "$defs": {

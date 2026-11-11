@@ -16,5 +16,7 @@ pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
         cap_hits: launch::issues_with_live_cap_hit(&app.db).await?,
         meta: github_poll::all_issue_meta(&app.db).await?,
         launch_map_versions: launch::launch_map_versions(&app.db).await?,
+        backlog: github_poll::backlog(&app.db).await?,
+        uncovered_repos: github_poll::uncovered(&app.db).await?,
     })
 }

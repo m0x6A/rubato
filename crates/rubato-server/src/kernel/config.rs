@@ -8,6 +8,54 @@ use std::path::PathBuf;
 /// The longest poll interval: the `ServerPollSilent` window is 10 minutes (design D14).
 pub const MAX_POLL_SECS: u64 = 300;
 
+/// The GitHub App the server acts as (ADR 0022). All three settings or none.
+#[derive(Clone, PartialEq, Eq)]
+pub struct GitHubApp {
+    pub app_id: u64,
+    /// The private key, PEM text.
+    pub private_key: String,
+    pub installation_id: u64,
+}
+
+impl std::fmt::Debug for GitHubApp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitHubApp")
+            .field("app_id", &self.app_id)
+            .field("installation_id", &self.installation_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Read the App settings: all of id, key and installation, or none of them.
+fn github_app(
+    id: Option<String>,
+    key: Option<String>,
+    key_file: Option<String>,
+    installation: Option<String>,
+) -> Result<Option<GitHubApp>> {
+    let key = match (key, key_file) {
+        (Some(k), _) => Some(k.replace("\\n", "\n")),
+        (None, Some(path)) => Some(
+            std::fs::read_to_string(&path)
+                .with_context(|| format!("RUBATO_GITHUB_APP_PRIVATE_KEY_FILE {path}"))?,
+        ),
+        (None, None) => None,
+    };
+    match (id, key, installation) {
+        (None, None, None) => Ok(None),
+        (Some(id), Some(private_key), Some(installation)) => Ok(Some(GitHubApp {
+            app_id: id.parse().context("RUBATO_GITHUB_APP_ID is not a number")?,
+            private_key,
+            installation_id: installation
+                .parse()
+                .context("RUBATO_GITHUB_APP_INSTALLATION_ID is not a number")?,
+        })),
+        _ => anyhow::bail!(
+            "the GitHub App needs RUBATO_GITHUB_APP_ID, RUBATO_GITHUB_APP_PRIVATE_KEY (or _FILE) and RUBATO_GITHUB_APP_INSTALLATION_ID together"
+        ),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind: SocketAddr,
@@ -18,6 +66,12 @@ pub struct Config {
     pub github_client_secret: Option<String>,
     /// Token the server itself uses to read repos, plans, PRs and comments.
     pub github_token: Option<String>,
+    /// The GitHub App the server acts as. When set it replaces `github_token`, and a session
+    /// needs a team record (ADR 0022).
+    pub github_app: Option<GitHubApp>,
+    /// Development and tests only: a JSON file `{"owner/name": [{number, title, url, labels}]}`
+    /// giving the local stand-in and the tokenless fake their open issues.
+    pub dev_issues: Option<PathBuf>,
     /// `owner/name=/path/to/repo.git,...`: read plans and branches from local repos instead of GitHub.
     pub local_repos: Option<String>,
     /// `owner/name` of the repo holding `system-map.yml` (ADR 0010).
@@ -77,6 +131,13 @@ impl Config {
             github_client_id: env("GITHUB_CLIENT_ID"),
             github_client_secret: env("GITHUB_CLIENT_SECRET"),
             github_token: env("RUBATO_GITHUB_TOKEN"),
+            github_app: github_app(
+                env("RUBATO_GITHUB_APP_ID"),
+                env("RUBATO_GITHUB_APP_PRIVATE_KEY"),
+                env("RUBATO_GITHUB_APP_PRIVATE_KEY_FILE"),
+                env("RUBATO_GITHUB_APP_INSTALLATION_ID"),
+            )?,
+            dev_issues: env("RUBATO_DEV_ISSUES").map(PathBuf::from),
             local_repos: env("RUBATO_LOCAL_REPOS"),
             map_repo: env("RUBATO_MAP_REPO").unwrap_or_else(|| "m0x6A/rubato".into()),
             map_path: env("RUBATO_MAP_PATH").unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
@@ -109,6 +170,8 @@ impl Config {
             github_client_id: None,
             github_client_secret: None,
             github_token: None,
+            github_app: None,
+            dev_issues: None,
             local_repos: None,
             map_repo: "m0x6A/rubato".into(),
             map_path: "docs/design/rubato-map.yml".into(),
@@ -142,6 +205,32 @@ fn clamp_poll_secs(v: u64, warnings: &mut Vec<String>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_app_needs_all_three_settings_or_none() {
+        let s = |v: &str| Some(v.to_owned());
+        assert_eq!(github_app(None, None, None, None).unwrap(), None);
+        let app = github_app(s("12"), s("-----BEGIN\\nKEY"), None, s("34"))
+            .unwrap()
+            .unwrap();
+        assert_eq!((app.app_id, app.installation_id), (12, 34));
+        assert_eq!(
+            app.private_key, "-----BEGIN\nKEY",
+            "escaped newlines are read"
+        );
+        assert!(
+            !format!("{app:?}").contains("BEGIN"),
+            "the key is not printed"
+        );
+        for partial in [
+            github_app(s("12"), None, None, None),
+            github_app(None, s("k"), None, s("34")),
+            github_app(s("12"), s("k"), None, None),
+        ] {
+            assert!(partial.unwrap_err().to_string().contains("together"));
+        }
+        assert!(github_app(s("x"), s("k"), None, s("34")).is_err());
+    }
 
     #[test]
     fn poll_interval_above_300_is_clamped_with_a_warning() {

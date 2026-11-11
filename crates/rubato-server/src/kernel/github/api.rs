@@ -2,6 +2,7 @@
 //! `rubato.github.call` span that records its error; the client has connect and read timeouts
 //! so a hung call ends as an error (design D15).
 
+use crate::kernel::config::GitHubApp;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -22,6 +23,28 @@ pub struct IssueInfo {
     pub state: String,
     pub url: String,
 }
+
+/// One open issue from a repo listing.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct OpenIssueInfo {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default = "Utc::now")]
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A repo's open issues, pull requests left out. `truncated` when the listing hit the cap.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OpenIssues {
+    pub issues: Vec<OpenIssueInfo>,
+    pub truncated: bool,
+}
+
+/// At most this many issues per page, and so `max / 100` calls per repo per listing.
+pub const ISSUES_PER_PAGE: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comment {
@@ -58,6 +81,54 @@ pub trait GitHubApi: Send + Sync {
     async fn checks(&self, repo: &str, sha: &str) -> Result<ChecksStatus>;
     /// (remaining, limit) of the core REST budget.
     async fn rate_limit(&self) -> Result<(u64, u64)>;
+    /// Open issues of a repo, pull requests excluded, at most `max` (ADR 0019).
+    async fn open_issues(&self, repo: &str, max: usize) -> Result<OpenIssues>;
+    /// Whether this port acts as a GitHub App installation (ADR 0022).
+    fn is_installation(&self) -> bool {
+        false
+    }
+    /// `owner/name` of every repo the installation covers. Only called on an installation.
+    async fn installation_repos(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+    /// Whether this port can write to GitHub: an installation, the local stand-in, or the fake
+    /// when a test turns writes on. A personal-token client cannot (ADR 0018, 0022).
+    fn can_write(&self) -> bool {
+        false
+    }
+}
+
+/// From one page of `GET /repos/{repo}/issues`: the issues, without the pull requests.
+pub fn issues_from_page(page: &serde_json::Value) -> Vec<OpenIssueInfo> {
+    page.as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|i| i.get("pull_request").is_none())
+        .filter_map(|i| {
+            Some(OpenIssueInfo {
+                number: i.get("number")?.as_u64()?,
+                title: i.get("title")?.as_str()?.to_owned(),
+                url: i.get("html_url")?.as_str()?.to_owned(),
+                labels: i
+                    .get("labels")
+                    .and_then(|l| l.as_array())
+                    .map(|l| {
+                        l.iter()
+                            .filter_map(|x| x.get("name").and_then(|n| n.as_str()))
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                updated_at: i
+                    .get("updated_at")
+                    .and_then(|t| t.as_str())
+                    .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+                    .map(|t| t.with_timezone(&Utc))
+                    .unwrap_or_else(Utc::now),
+            })
+        })
+        .collect()
 }
 
 fn split_repo(repo: &str) -> Result<(&str, &str)> {
@@ -68,6 +139,8 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
 
 pub struct Octo {
     client: octocrab::Octocrab,
+    /// Acting as a GitHub App installation, not with a personal token.
+    installation: bool,
 }
 
 impl Octo {
@@ -88,8 +161,41 @@ impl Octo {
         if let Some(uri) = base_uri {
             b = b.base_uri(uri)?;
         }
-        Ok(Self { client: b.build()? })
+        Ok(Self {
+            client: b.build()?,
+            installation: false,
+        })
     }
+
+    /// A client acting as the installation of a GitHub App (ADR 0022). Call from inside the
+    /// runtime. The settings are checked by `kernel::github::check_app` before this is used.
+    pub fn for_installation(app: &GitHubApp, base_uri: Option<&str>) -> Result<Self> {
+        let crab = app_client(app, base_uri, READ_TIMEOUT)?;
+        Ok(Self {
+            client: crab.installation(octocrab::models::InstallationId(app.installation_id))?,
+            installation: true,
+        })
+    }
+}
+
+/// A client authenticated as the App itself (a JWT), for `GET /app` and minting tokens.
+pub(super) fn app_client(
+    app: &GitHubApp,
+    base_uri: Option<&str>,
+    read_timeout: Duration,
+) -> Result<octocrab::Octocrab> {
+    let mut b = octocrab::Octocrab::builder()
+        .set_connect_timeout(Some(CONNECT_TIMEOUT))
+        .set_read_timeout(Some(read_timeout))
+        .app_from_rsa_pem(
+            octocrab::models::AppId(app.app_id),
+            app.private_key.as_bytes(),
+        )
+        .context("the private key is not an RSA key in PEM form")?;
+    if let Some(uri) = base_uri {
+        b = b.base_uri(uri)?;
+    }
+    Ok(b.build()?)
 }
 
 #[async_trait]
@@ -247,6 +353,59 @@ impl GitHubApi for Octo {
             core.get("limit").and_then(|x| x.as_u64()).unwrap_or(0),
         ))
     }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "issues"))]
+    async fn open_issues(&self, repo: &str, max: usize) -> Result<OpenIssues> {
+        let (o, r) = split_repo(repo)?;
+        let pages = max.div_ceil(ISSUES_PER_PAGE).max(1);
+        let mut out = OpenIssues::default();
+        for page in 1..=pages {
+            let route =
+                format!("/repos/{o}/{r}/issues?state=open&per_page={ISSUES_PER_PAGE}&page={page}");
+            let v: serde_json::Value = self.client.get(route, None::<&()>).await?;
+            let rows = v.as_array().map(Vec::len).unwrap_or(0);
+            out.issues.extend(issues_from_page(&v));
+            if rows < ISSUES_PER_PAGE {
+                return Ok(out);
+            }
+        }
+        // Every page allowed was full: there may be more.
+        out.truncated = true;
+        out.issues.truncate(max);
+        Ok(out)
+    }
+
+    fn is_installation(&self) -> bool {
+        self.installation
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "installation_repositories"))]
+    async fn installation_repos(&self) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        for page in 1..=10 {
+            let route = format!("/installation/repositories?per_page=100&page={page}");
+            let v: serde_json::Value = self.client.get(route, None::<&()>).await?;
+            let repos = v
+                .get("repositories")
+                .and_then(|r| r.as_array())
+                .cloned()
+                .unwrap_or_default();
+            out.extend(
+                repos
+                    .iter()
+                    .filter_map(|r| r.get("full_name").and_then(|n| n.as_str()))
+                    .map(str::to_owned),
+            );
+            if repos.len() < 100 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    fn can_write(&self) -> bool {
+        self.installation
+    }
 }
 
 /// Check runs → one status. Any failure is red, any incomplete is pending, none configured is none.
@@ -312,6 +471,33 @@ mod tests {
             "the closed span records the error: {events:?}"
         );
         held.abort();
+    }
+
+    #[test]
+    fn open_issues_skips_pull_requests_and_pages() {
+        // The shape GitHub answers with: a pull request carries a `pull_request` key.
+        let page = serde_json::json!([
+            {"number": 7, "title": "A bug", "html_url": "https://github.com/o/r/issues/7",
+             "labels": [{"name": "bug"}, {"name": "p1"}], "updated_at": "2026-11-10T08:00:00Z"},
+            {"number": 8, "title": "A pull request", "html_url": "https://github.com/o/r/pull/8",
+             "labels": [], "updated_at": "2026-11-10T09:00:00Z", "pull_request": {"url": "x"}},
+            {"number": 9, "title": "No labels", "html_url": "https://github.com/o/r/issues/9",
+             "updated_at": "2026-11-10T10:00:00Z"}
+        ]);
+        let issues = issues_from_page(&page);
+        assert_eq!(
+            issues.iter().map(|i| i.number).collect::<Vec<_>>(),
+            [7, 9],
+            "the pull request is left out"
+        );
+        assert_eq!(issues[0].labels, ["bug", "p1"]);
+        assert!(issues[1].labels.is_empty());
+        assert_eq!(
+            issues[0].updated_at.to_rfc3339(),
+            "2026-11-10T08:00:00+00:00"
+        );
+        assert!(issues_from_page(&serde_json::json!({"message": "Not Found"})).is_empty());
+        println!("checked 3 rows of one page");
     }
 
     #[test]

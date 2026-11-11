@@ -2,7 +2,7 @@
 //! (`RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git,...`). Files and branches are real git;
 //! issues, comments and pull requests do not exist here.
 
-use super::{Comment, GitHubApi, IssueInfo, PullInfo};
+use super::{Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, PullInfo};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use rubato_protocol::ChecksStatus;
@@ -12,6 +12,8 @@ use tokio::process::Command;
 
 pub struct LocalGit {
     repos: HashMap<String, PathBuf>,
+    /// Open issues per repo, from `RUBATO_DEV_ISSUES`. Git has none of its own.
+    open: HashMap<String, Vec<OpenIssueInfo>>,
 }
 
 impl LocalGit {
@@ -27,7 +29,16 @@ impl LocalGit {
         if repos.is_empty() {
             bail!("RUBATO_LOCAL_REPOS is empty");
         }
-        Ok(Self { repos })
+        Ok(Self {
+            repos,
+            open: HashMap::new(),
+        })
+    }
+
+    /// Give the stand-in its open issues.
+    pub fn with_open_issues(mut self, open: HashMap<String, Vec<OpenIssueInfo>>) -> Self {
+        self.open = open;
+        self
     }
 
     fn path(&self, repo: &str) -> Result<&Path> {
@@ -112,6 +123,20 @@ impl GitHubApi for LocalGit {
 
     async fn rate_limit(&self) -> Result<(u64, u64)> {
         Ok((5000, 5000))
+    }
+
+    async fn open_issues(&self, repo: &str, max: usize) -> Result<OpenIssues> {
+        let all = self.open.get(repo).cloned().unwrap_or_default();
+        let truncated = all.len() > max;
+        Ok(OpenIssues {
+            issues: all.into_iter().take(max).collect(),
+            truncated,
+        })
+    }
+
+    /// Real git underneath: branches and files can be written (the map proposal, ADR 0018).
+    fn can_write(&self) -> bool {
+        true
     }
 }
 

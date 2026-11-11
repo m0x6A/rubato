@@ -166,6 +166,44 @@ pub struct IssueSummary {
     pub spend_usd: Option<f64>,
 }
 
+/// An open issue of a repo the map names that Rubato does not track yet: not pinned, launched,
+/// planned or worked on. It has no progress state (ADR 0019).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpenIssue {
+    pub issue: IssueRef,
+    pub title: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// How fresh one repo's listing is. The trust check for the backlog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BacklogRepo {
+    /// `owner/name`.
+    pub repo: String,
+    /// The last good listing. Absent until the first one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listed_at: Option<DateTime<Utc>>,
+    /// The listing was cut at the server's cap.
+    #[serde(default)]
+    pub truncated: bool,
+    /// Why the latest listing failed. Absent when it succeeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Every open issue of the map's repos that is not tracked yet, and how fresh each listing is.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Backlog {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<OpenIssue>,
+    /// One entry per repo the map names, listed or not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repos: Vec<BacklogRepo>,
+}
+
 /// Map versus territory, and plans that disagree with the map. Shown, never suppressed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -186,6 +224,9 @@ pub enum Finding {
         launched_with: String,
         current: String,
     },
+    /// The GitHub App installation does not cover a repo the map or a tracked issue names, so
+    /// its branches, plans and pull requests cannot be read (ADR 0022).
+    RepoNotCovered { repo: String },
 }
 
 /// The whole picture in one payload: what the web view renders.
@@ -198,6 +239,9 @@ pub struct Overview {
     /// Sessions not attached to any issue (branch outside the convention).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unpinned_sessions: Vec<SessionState>,
+    /// Open issues not tracked yet (ADR 0019).
+    #[serde(default)]
+    pub backlog: Backlog,
     pub generated_at: DateTime<Utc>,
 }
 

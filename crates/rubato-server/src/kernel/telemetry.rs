@@ -93,6 +93,11 @@ pub struct Metrics {
     pub ws_clients: Gauge<u64>,
     pub companion_heartbeat: Gauge<u64>,
     pub poll_ticks: Counter<u64>,
+    /// Unix seconds of each repo's last good listing; no unit, like `map_loaded_at`.
+    pub backlog_listed_at: Gauge<u64>,
+    pub backlog_issues: Gauge<u64>,
+    pub web_rejected: Counter<u64>,
+    pub github_repos_uncovered: Gauge<u64>,
 }
 
 impl Metrics {
@@ -119,6 +124,10 @@ impl Metrics {
             ws_clients: m.u64_gauge(otel::metric::WS_CLIENTS).build(),
             companion_heartbeat: m.u64_gauge(otel::metric::COMPANION_HEARTBEAT).build(),
             poll_ticks: m.u64_counter(otel::metric::POLL_TICKS).build(),
+            backlog_listed_at: m.u64_gauge(otel::metric::BACKLOG_LISTED_AT).build(),
+            backlog_issues: m.u64_gauge(otel::metric::BACKLOG_ISSUES).build(),
+            web_rejected: m.u64_counter(otel::metric::WEB_REJECTED).build(),
+            github_repos_uncovered: m.u64_gauge(otel::metric::GITHUB_REPOS_UNCOVERED).build(),
         }
     }
 }

@@ -1205,8 +1205,10 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .into_iter()
         .map(|(m, a)| format!("{m} {a}"))
         .collect();
-    // Recorded on main before the move (poller.rs:142-299), commit 88db1f8.
+    // Recorded on main before the move (poller.rs:142-299), commit 88db1f8. Issue #48 adds one
+    // listing per map repo before the issue loop, on purpose; nothing else moved.
     let expected = [
+        "open_issues m0x6A/rubato",
         "issue m0x6A/rubato#31",
         "branches_with_prefix m0x6A/rubato issue/31-",
         "file m0x6A/rubato docs/plans/31.md issue/31-ok",
@@ -1237,6 +1239,27 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         ov.findings
     );
     println!("checked {} GitHub calls over 3 issues", calls.len());
+
+    // As a GitHub App installation, and only then, one more call: the installation's repos,
+    // after the listing and before the issue loop.
+    h.github.with(|g| {
+        g.installation = Some(vec!["m0x6A/rubato".into()]);
+        g.calls.clear();
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let calls: Vec<String> = h
+        .github
+        .calls()
+        .into_iter()
+        .map(|(m, a)| format!("{m} {a}"))
+        .collect();
+    let mut as_installation: Vec<&str> = expected.to_vec();
+    as_installation.insert(1, "installation_repos ");
+    assert_eq!(
+        calls, as_installation,
+        "one coverage call, installation only"
+    );
+    println!("checked {} GitHub calls as an installation", calls.len());
 }
 
 #[tokio::test]
@@ -1251,4 +1274,257 @@ async fn shutdown_ends_the_supervised_poll_task_cleanly() {
         .await
         .expect("supervise returns within 1 s of shutdown");
     assert!(r.unwrap().is_ok());
+}
+
+// ----- issue #48, PR 1: open issues, pin kinds, the team record ------------------------------
+
+fn open_issue(n: u64, title: &str) -> rubato_server::kernel::github::OpenIssueInfo {
+    rubato_server::kernel::github::OpenIssueInfo {
+        number: n,
+        title: title.into(),
+        url: format!("https://github.com/m0x6A/rubato/issues/{n}"),
+        labels: vec!["enhancement".into()],
+        updated_at: chrono::Utc::now(),
+    }
+}
+
+#[tokio::test]
+async fn open_issues_reach_the_overview_until_they_are_pinned() {
+    let h = harness().await;
+    h.github.with(|g| {
+        g.open.insert(
+            "m0x6A/rubato".into(),
+            vec![
+                open_issue(47, "Show open issues"),
+                open_issue(48, "Interactive map"),
+            ],
+        );
+    });
+
+    // Before the first listing: the repo is named, with no time and no error.
+    let ov = h.overview("m0x6A").await;
+    assert!(ov.backlog.issues.is_empty());
+    assert_eq!(ov.backlog.repos.len(), 1);
+    assert_eq!(ov.backlog.repos[0].repo, "m0x6A/rubato");
+    assert!(ov.backlog.repos[0].listed_at.is_none());
+
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let numbers: Vec<u64> = ov.backlog.issues.iter().map(|i| i.issue.number).collect();
+    assert_eq!(numbers, [47, 48]);
+    assert_eq!(ov.backlog.issues[0].title, "Show open issues");
+    assert_eq!(ov.backlog.issues[0].labels, ["enhancement"]);
+    assert!(ov.backlog.repos[0].listed_at.is_some());
+    assert!(
+        ov.issues.is_empty(),
+        "a backlog issue has no progress state"
+    );
+
+    // Pinning one moves it from the backlog to the tracked issues, as Planned.
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 48),
+            target: MapRef::seam("web-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let ov = h.overview("m0x6A").await;
+    let numbers: Vec<u64> = ov.backlog.issues.iter().map(|i| i.issue.number).collect();
+    assert_eq!(numbers, [47]);
+    assert_eq!(ov.issues.len(), 1);
+    assert_eq!(ov.issues[0].progress.state, ProgressState::Planned);
+
+    // A failed listing is said, with the last good time, and the rows stay.
+    h.github.with(|g| {
+        g.open_errors
+            .insert("m0x6A/rubato".into(), "rate limited".into());
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(ov.backlog.repos[0].error.as_deref(), Some("rate limited"));
+    assert!(ov.backlog.repos[0].listed_at.is_some());
+    assert_eq!(ov.backlog.issues.len(), 1);
+}
+
+#[tokio::test]
+async fn pin_kind_must_match_id() {
+    let h = harness().await;
+    let pin = |target: MapRef| {
+        h.http
+            .post(format!("{}{}", h.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: IssueRef::new("m0x6A/rubato", 48),
+                target,
+            })
+            .send()
+    };
+    // `rubato-server` is a part and `web-server` a seam in docs/design/rubato-map.yml.
+    let cases = [
+        (MapRef::node("rubato-server"), 201),
+        (MapRef::seam("web-server"), 201),
+        (MapRef::seam("rubato-server"), 422),
+        (MapRef::node("web-server"), 422),
+        (MapRef::node("no-such-id"), 422),
+    ];
+    for (target, want) in &cases {
+        let r = pin(target.clone()).await.unwrap();
+        let status = r.status();
+        let body = r.text().await.unwrap();
+        assert_eq!(status.as_u16(), *want, "{target:?}: {body}");
+        if *want == 422 {
+            assert!(body.contains("is not"), "the answer says why: {body}");
+        }
+    }
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(
+        ov.issues[0].pins.len(),
+        2,
+        "nothing stored for the refused ones"
+    );
+    println!("checked {} pin requests", cases.len());
+}
+
+#[tokio::test]
+async fn old_mismatched_pin_still_listed() {
+    let h = harness().await;
+    // A pin stored before the kind check: a part's id kept as a seam.
+    sqlx::query("INSERT INTO pins (repo, number, kind, target, pinned_by, pinned_at) VALUES ('m0x6A/rubato', 5, 'seam', 'rubato-server', 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(ov.issues.len(), 1);
+    assert_eq!(ov.issues[0].pins, vec![MapRef::seam("rubato-server")]);
+}
+
+/// A server acting as a GitHub App, with **no dev user**: the dev-user branch of `CurrentUser`
+/// returns before any session lookup, so a harness with one would pass for the wrong reason.
+async fn app_harness(as_app: bool) -> (String, App, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+    let pool = db::connect(&db_url).await.unwrap();
+    let mut cfg = Config::for_tests(db_url, "unused");
+    cfg.dev_user = None;
+    if as_app {
+        cfg.github_app = Some(rubato_server::kernel::config::GitHubApp {
+            app_id: 12,
+            private_key: "unused: no call is made as the App here".into(),
+            installation_id: 34,
+        });
+    }
+    let github = Arc::new(FakeGitHub::new());
+    let map_yaml = std::fs::read_to_string(repo_root().join("docs/design/rubato-map.yml")).unwrap();
+    github.with(|g| {
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/design/rubato-map.yml".into(),
+                "main".into(),
+            ),
+            map_yaml,
+        );
+        g.branches.insert(
+            "m0x6A/rubato".into(),
+            vec![("main".into(), "mapsha1".into())],
+        );
+    });
+    let app = AppState::new(pool, cfg, github);
+    map::reload(&app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app::router(app.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{addr}"), app, tmp)
+}
+
+/// Insert a web session and return its signed cookie header value.
+async fn session_cookie(app: &App, login: &str, team_checked_days_ago: Option<i64>) -> String {
+    let id = Uuid::new_v4().to_string();
+    let checked = team_checked_days_ago
+        .map(|d| (chrono::Utc::now() - chrono::Duration::days(d)).to_rfc3339());
+    sqlx::query(
+        "INSERT INTO web_sessions (id, login, created_at, team_checked_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(login)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(checked)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    format!("rubato_session={}", app.signer.sign(&id))
+}
+
+/// Status of the three kinds of entry a session is checked on: a read, a write, the websocket.
+async fn statuses(url: &str, cookie: &str) -> [u16; 3] {
+    let http = reqwest::Client::new();
+    let read = http
+        .get(format!("{url}{}", overview_routes::OVERVIEW))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+    let write = http
+        .post(format!("{url}{}", pin_routes::PINS))
+        .header("cookie", cookie)
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 48),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+    let mut req = format!(
+        "ws://{}{}",
+        url.trim_start_matches("http://"),
+        web_routes::WEB_WS
+    )
+    .into_client_request()
+    .unwrap();
+    req.headers_mut().insert("cookie", cookie.parse().unwrap());
+    let ws = match tokio_tungstenite::connect_async(req).await {
+        Ok((_, response)) => response.status().as_u16(),
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => response.status().as_u16(),
+        Err(e) => panic!("websocket: {e}"),
+    };
+    [read, write, ws]
+}
+
+#[tokio::test]
+async fn session_needs_a_fresh_team_record_when_the_app_is_configured() {
+    let (url, app, _tmp) = app_harness(true).await;
+    // A session from before the gate, one whose record is 8 days old, and a fresh one.
+    let before_the_gate = session_cookie(&app, "old-timer", None).await;
+    let stale = session_cookie(&app, "lapsed", Some(8)).await;
+    let fresh = session_cookie(&app, "m0x6A", Some(1)).await;
+    assert_eq!(statuses(&url, &before_the_gate).await, [401, 401, 401]);
+    assert_eq!(statuses(&url, &stale).await, [401, 401, 401]);
+    assert_eq!(statuses(&url, &fresh).await, [200, 201, 101]);
+    assert_eq!(
+        statuses(&url, "rubato_session=forged.sig").await,
+        [401, 401, 401]
+    );
+    println!("checked 4 sessions on 3 entry points");
+}
+
+#[tokio::test]
+async fn without_the_app_login_stays_open() {
+    // Not a GitHub App (a personal token or none): a session needs no team record, as before.
+    let (url, app, _tmp) = app_harness(false).await;
+    let plain = session_cookie(&app, "anyone", None).await;
+    assert_eq!(statuses(&url, &plain).await, [200, 201, 101]);
+    assert!(
+        !app.github.can_write(),
+        "and such a server cannot propose map changes"
+    );
 }
