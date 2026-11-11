@@ -1,0 +1,7 @@
+{
+  "m0x6A/rubato": [
+    { "number": 901, "title": "Lens: a plan with flows", "url": "https://github.com/m0x6A/rubato/issues/901", "labels": ["enhancement"] },
+    { "number": 902, "title": "Backlog: an unpinned issue", "url": "https://github.com/m0x6A/rubato/issues/902", "labels": ["bug"] },
+    { "number": 903, "title": "Backlog: another unpinned issue", "url": "https://github.com/m0x6A/rubato/issues/903", "labels": [] }
+  ]
+}

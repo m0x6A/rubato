@@ -708,6 +708,187 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Interactive map",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 51,
+      "title": "Backlog age",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 46
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Seconds since each repo's open issues were last listed. Healthy: under the poll interval. It grows when the listing fails (token or installation access, rate limit, GitHub down); the Issues tab then says 'could not list'. A repo the map no longer names reports 0 and is left out.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max by (rubato_repo) (rubato_backlog_listed_at > 0)",
+          "legendFormat": "{{rubato_repo}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 900
+              },
+              {
+                "color": "red",
+                "value": 1800
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 52,
+      "title": "Backlog issues",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 46
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Open issues listed per repo. Flat at 500 means the listing is cut and the Issues tab says 'first 500 shown'.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (rubato_repo) (rubato_backlog_issues)",
+          "legendFormat": "{{rubato_repo}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 53,
+      "title": "Web writes rejected",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 46
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, not_on_team, team_record_stale, installation_lookup_failed. Each has an info log line 'web write rejected' with the user.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_route, rubato_reason) (increase(rubato_web_rejected_total[1h]))",
+          "legendFormat": "{{rubato_route}} {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 54,
+      "title": "Repos not covered",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 46
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Repos the map or a tracked issue names that the GitHub App installation does not cover. Their branches, plans and pull requests cannot be read; each is a finding on the map and a warn line 'repo not covered by the installation' with rubato.repo. Fix: add the repo to the App's installation.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_github_repos_uncovered)",
+          "legendFormat": "__auto"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      }
     }
   ]
 }

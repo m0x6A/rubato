@@ -316,6 +316,10 @@ async function main() {
       "rubato.seam.open_plans",
       "rubato.plan.unknown_id_count",
       "rubato.poll.ticks",
+      // Issue #48: recorded on every poll tick, zeros included.
+      "rubato.backlog.listed_at",
+      "rubato.backlog.issues",
+      "rubato.github.repos_uncovered",
     ],
     "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered", "rubato.sessions.by_state"],
   };

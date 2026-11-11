@@ -21,16 +21,30 @@ The binaries are `target/release/rubato-server` and `target/release/rubato-compa
 
 ## 2. GitHub credentials for the server
 
-The server needs two things from GitHub: an OAuth app to log people in, and a token of its own
-to read repositories.
+The server is a **GitHub App** (ADR 0022). One registration does three things: it logs people
+in, it is the identity the server reads and writes GitHub with, and it decides who is on the
+team: a person gets a session only if their GitHub account can access the repositories the App
+is installed on.
 
-1. Create an OAuth app at <https://github.com/settings/developers>. Homepage: the URL the
-   server will be reachable at (for a first run on one machine, `http://127.0.0.1:8080`).
-   Authorization callback: that URL plus `/auth/github/callback`. Note the client id and
-   generate a client secret.
-2. Create a token the server uses for reads: a fine-grained token with *Contents: read*,
-   *Issues: read*, *Pull requests: read* and *Metadata: read* on the repositories you connect
-   (here: `m0x6A/rubato`), or a classic token with `repo` scope.
+1. Register a GitHub App at <https://github.com/settings/apps/new> (an existing OAuth app
+   cannot be converted; this is a new registration with its own client id).
+   - Homepage URL: the URL the server will be reachable at (for a first run on one machine,
+     `http://127.0.0.1:8080`). Callback URL: that URL plus `/auth/github/callback`.
+   - Webhook: off. Rubato polls.
+   - Repository permissions: *Contents: read and write*, *Pull requests: read and write*,
+     *Issues: read*, *Checks: read*, *Metadata: read*. Nothing else.
+   - Where it can be installed: only on this account. One installation covers one account,
+     so all the team's repositories sit under it.
+2. On the App's page: note the **App ID** and the **Client ID**, generate a **client secret**,
+   and generate a **private key** (a `.pem` file downloads).
+3. Install the App on the account, on every repository the map names and the one that holds
+   the map. The **installation id** is the number at the end of the installation's settings URL
+   (`…/settings/installations/<id>`). A repository you leave out is shown as a finding on
+   the map, not as an empty repository.
+
+Without the App settings the server still runs the old way, for a first look: an OAuth app for
+login and `RUBATO_GITHUB_TOKEN` (read-only) for reads. It then warns at start that login is
+open to any GitHub account, and it cannot propose map changes.
 
 ## 3. Run the server
 
@@ -39,9 +53,11 @@ export RUBATO_BIND=127.0.0.1:8080
 export RUBATO_PUBLIC_URL=http://127.0.0.1:8080
 export RUBATO_DATABASE_URL="sqlite://$HOME/.local/state/rubato/server.db?mode=rwc"
 export RUBATO_SESSION_SECRET="$(openssl rand -hex 32)"
-export GITHUB_CLIENT_ID=...            # from step 2
+export GITHUB_CLIENT_ID=...            # the App's client id, from step 2
 export GITHUB_CLIENT_SECRET=...
-export RUBATO_GITHUB_TOKEN=...         # from step 2
+export RUBATO_GITHUB_APP_ID=...
+export RUBATO_GITHUB_APP_PRIVATE_KEY_FILE=/path/to/the-app.private-key.pem
+export RUBATO_GITHUB_APP_INSTALLATION_ID=...   # from step 3
 export RUBATO_MAP_REPO=m0x6A/rubato
 export RUBATO_MAP_PATH=docs/design/rubato-map.yml
 export RUBATO_MAP_REF=main
@@ -50,15 +66,23 @@ mkdir -p "$HOME/.local/state/rubato"
 ./target/release/rubato-server
 ```
 
-The log should show `map loaded` with the git sha of `main` and `rubato-server listening`.
-Open <http://127.0.0.1:8080> and log in with GitHub. The map appears with no issues yet.
+The log should show `acting as a GitHub App installation`, `map loaded` with the git sha of
+`main` and `rubato-server listening`. If the key, the client id and the installation do not
+belong together the server stops at start with `github app check failed` and says which.
+Open <http://127.0.0.1:8080> and log in with GitHub. The map appears, and the Issues tab lists
+every open issue of the map's repositories under "Not pinned".
+
+A session lasts as long as its team check is at most seven days old; after that, or after the
+first start as an App, the browser sends you through login once more. The private key can
+also be given inline as `RUBATO_GITHUB_APP_PRIVATE_KEY` (newlines as `\n`).
 
 Other knobs: `RUBATO_GITHUB_POLL_SECS` (default 60), `RUBATO_SESSION_STALE_SECS` (120),
 `RUBATO_COMPANION_SILENT_SECS` (600), `RUBATO_DEFAULT_SPEND_CAP_USD` (25),
 `RUBATO_DEFAULT_ATTEMPT_LIMIT` (3), `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces and
 metrics. For a run without GitHub at all, `RUBATO_MAP_FILE` reads the map from a local file
 and `RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git` reads branches and plans from local
-bare repositories; `RUBATO_DEV_USER=<login>` skips OAuth and must never be set where others
+bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
+`RUBATO_DEV_USER=<login>` skips OAuth and must never be set where others
 can reach the server.
 
 ## 4. Install the skill on your machine
