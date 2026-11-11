@@ -5,7 +5,7 @@ import { Findings } from "./features/findings/index.ts";
 import { IssuePanel } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe } from "./features/live/index.ts";
-import { MapView, buildGraph, mapApi } from "./features/map/index.ts";
+import { Inspector, MapView, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
 import type { IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
@@ -210,6 +210,18 @@ export function App() {
             </button>
           </nav>
           {overview && <Findings findings={overview.findings} />}
+          {/* The map explains what is selected; an open issue takes the panel instead. */}
+          {overview && tab === "issues" && selection && !selected && (
+            <Inspector
+              overview={overview}
+              selection={selection}
+              onSelect={onSelectOnMap}
+              onSelectIssue={(issue) => {
+                setTab("issues");
+                setSelectedIssue(issue);
+              }}
+            />
+          )}
           {overview && tab === "issues" && (
             <IssuePanel
               overview={overview}

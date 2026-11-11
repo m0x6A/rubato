@@ -175,3 +175,59 @@ test("a dragged part is in the same place in a second browser and after reload",
   await expect.poll(() => canvasPosition(page, "web")).toEqual(before);
   await other.context().close();
 });
+
+test("the data flow lens shows rubato-map.yml's flows with arrowheads", async ({ page }) => {
+  const seams = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { seams: { id: string; flows?: { kind: string; carries: string }[] }[] }).seams;
+  const flows = (kind: string) => seams.flatMap((s) => (s.flows ?? []).filter((f) => f.kind === kind).map((f) => ({ seam: s.id, ...f })));
+  const withHead = page.locator(".react-flow__edge-path[marker-end], .react-flow__edge-path[marker-start]");
+  await page.goto("/");
+  await expect(page.getByTestId("seam-web-server")).toBeVisible();
+
+  // Structure: one arrow per seam, every one with a head, and no flow labels.
+  await expect(page.getByRole("radio", { name: "Structure" })).toBeChecked();
+  await expect(withHead).toHaveCount(seams.length);
+  await expect(page.locator('[data-testid^="flow-"]')).toHaveCount(0);
+
+  for (const kind of ["data", "control"] as const) {
+    const declared = flows(kind);
+    const seamsWithout = seams.filter((s) => !(s.flows ?? []).some((f) => f.kind === kind)).length;
+    await page.getByRole("radio", { name: new RegExp(`^${kind === "data" ? "Data" : "Control"} flow \\(${declared.length}\\)$`) }).click();
+    // One labelled arrow per declared flow of the kind, and a faint plain arrow per seam without one.
+    await expect(page.locator('[data-testid^="flow-"]')).toHaveCount(declared.length);
+    await expect(withHead).toHaveCount(declared.length + seamsWithout);
+    await expect(page.locator(".react-flow__edge.faint")).toHaveCount(seamsWithout);
+    await expect(page.locator(`.react-flow__edge.flow.${kind}`)).toHaveCount(declared.length);
+    // Every seam keeps exactly one chip, so it stays selectable and droppable in every lens.
+    await expect(page.locator('[data-testid^="seam-"]')).toHaveCount(seams.length);
+    const first = declared[0]!;
+    await expect(page.locator(`[data-testid^="flow-${first.seam}#${kind}-0"]`)).toHaveAttribute("title", `${kind} flow over ${first.seam}: ${first.carries}`);
+    await expect(page.getByTestId("legend")).toContainText(kind === "data" ? "solid arrow" : "dashed arrow");
+  }
+  // Control arrows are dashed.
+  await expect(page.locator(".react-flow__edge.flow.control .react-flow__edge-path").first()).toHaveAttribute("style", /stroke-dasharray/);
+  if (process.env["RUBATO_E2E_SHOTS"]) {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await page.getByRole("radio", { name: /^Data flow/ }).click();
+    await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/lens-data.png` });
+  }
+
+  // Selecting a part explains it and dims what is not next to it.
+  await page.getByRole("radio", { name: "Structure" }).click();
+  await page.getByTestId("node-rubato-companion").click();
+  const inspector = page.getByTestId("inspector");
+  await expect(inspector.getByRole("heading", { name: "rubato-companion" })).toBeVisible();
+  await expect(inspector).toContainText("One per developer machine.");
+  await expect(inspector).toContainText("LaunchCommand, for the paired user only from rubato-server over companion-server");
+  await expect(page.getByTestId("node-rubato-server")).not.toHaveClass(/dim/);
+  await expect(page.getByTestId("node-web")).toHaveClass(/dim/);
+  if (process.env["RUBATO_E2E_SHOTS"]) {
+    await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/inspector-part.png` });
+  }
+  // Walk the map from the inspector: to the seam, which explains itself.
+  await inspector.getByRole("button", { name: "companion-server" }).first().click();
+  await expect(inspector.getByRole("heading", { name: "companion-server" })).toBeVisible();
+  await expect(inspector).toContainText("rubato-server is woken when it breaks");
+  await inspector.getByRole("button", { name: "Close" }).click();
+  await expect(inspector).toHaveCount(0);
+  await expect(page.getByTestId("node-web")).not.toHaveClass(/dim/);
+});
