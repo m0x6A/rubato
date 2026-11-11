@@ -9,6 +9,7 @@ pub mod github;
 pub mod hook;
 pub mod ids;
 pub mod launch;
+pub mod layout;
 pub mod limits;
 pub mod map;
 pub mod message;
@@ -28,6 +29,7 @@ pub use ids::{IssueRef, MapRef, ParseIssueRefError};
 pub use launch::{
     CapHit, CapKind, LaunchCommand, LaunchRequest, LaunchResponse, LaunchResult, RefusalReason,
 };
+pub use layout::{MapLayout, Position};
 pub use limits::Limits;
 pub use map::{MapNode, MapResponse, NodeKind, RepoRef, Seam, SystemMap};
 pub use message::{

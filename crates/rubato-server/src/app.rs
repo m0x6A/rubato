@@ -5,13 +5,14 @@
 //! `index.html` for the single-page app's deep links.
 
 use crate::kernel::state::App;
-use crate::{auth, companion_link, launch, map, overview, pairing, pins, web_link};
+use crate::{auth, companion_link, launch, layout, map, overview, pairing, pins, web_link};
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, delete, get, post};
+use axum::routing::{any, delete, get, post, put};
 use rubato_protocol::auth::routes as auth_routes;
 use rubato_protocol::launch::routes as launch_routes;
+use rubato_protocol::layout::routes as layout_routes;
 use rubato_protocol::map::routes as map_routes;
 use rubato_protocol::pairing::routes as pr;
 use rubato_protocol::pins::routes as pin_routes;
@@ -37,6 +38,10 @@ pub fn router(app: App) -> Router {
             post(pins::add_pin).delete(pins::remove_pin),
         )
         .route(launch_routes::LAUNCH, post(launch::launch))
+        .route(
+            layout_routes::LAYOUT,
+            put(layout::put_layout).delete(layout::clear_layout),
+        )
         .route(pr::PAIRINGS, get(pairing::list))
         .route(
             &format!("{}/{{companion_id}}", pr::PAIRINGS),
@@ -110,6 +115,8 @@ mod tests {
             (Method::POST, pin_routes::PINS.into()),
             (Method::DELETE, pin_routes::PINS.into()),
             (Method::POST, launch_routes::LAUNCH.into()),
+            (Method::PUT, layout_routes::LAYOUT.into()),
+            (Method::DELETE, layout_routes::LAYOUT.into()),
             (Method::GET, pr::PAIRINGS.into()),
             (Method::DELETE, revoke),
             (Method::POST, pr::PAIR_APPROVE.into()),
@@ -211,6 +218,55 @@ mod tests {
             );
         }
 
+        // The layout: a part the map lacks and a position off the canvas are refused and
+        // counted; an accepted write and a clear each move `rubato.layout.writes`.
+        use rubato_protocol::layout::{MapLayout, Position};
+        let layout = |id: &str, x: f64| MapLayout {
+            positions: [(id.to_owned(), Position { x, y: 0.0 })].into(),
+        };
+        let put = |l: MapLayout| {
+            http.put(format!("{base}{}", layout_routes::LAYOUT))
+                .json(&l)
+                .send()
+        };
+        assert_eq!(put(layout("nope", 1.0)).await.unwrap().status(), 422);
+        assert_eq!(put(layout("web", 1.0e9)).await.unwrap().status(), 422);
+        assert!(
+            reader.points(metric::LAYOUT_WRITES).is_empty(),
+            "a refused write is not a write"
+        );
+        let by_route = |reason: &str| {
+            reader
+                .points(metric::WEB_REJECTED)
+                .into_iter()
+                .find(|p| {
+                    p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some(reason)
+                        && p.attrs.get(attr::ROUTE).map(String::as_str)
+                            == Some(layout_routes::LAYOUT)
+                })
+                .map(|p| p.value)
+        };
+        assert_eq!(by_route("unknown_id"), Some(1));
+        assert_eq!(by_route("bad_position"), Some(1));
+        assert_eq!(put(layout("web", 10.0)).await.unwrap().status(), 204);
+        let cleared = http
+            .delete(format!("{base}{}", layout_routes::LAYOUT))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cleared.status(), 200);
+        assert_eq!(reader.points(metric::LAYOUT_WRITES)[0].value, 2);
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| e.message == "layout cleared"
+                    && e.level == tracing::Level::INFO
+                    && e.fields.get("rubato.user").map(String::as_str) == Some("m0x6A")),
+            "clearing the team's layout is logged with who did it"
+        );
+
         // As a GitHub App with no dev user: a session without a team record is refused, counted.
         let tmp2 = tempfile::tempdir().unwrap();
         let url2 = format!("sqlite://{}/t.db?mode=rwc", tmp2.path().display());
@@ -246,7 +302,7 @@ mod tests {
         assert_eq!(stale.len(), 1, "{stale:?}");
         assert_eq!(stale[0].attrs[attr::DROP_REASON], "team_record_stale");
         assert_eq!(stale[0].attrs[attr::ROUTE], overview_routes::OVERVIEW);
-        println!("checked 3 refusal reasons");
+        println!("checked 5 refusal reasons");
     }
 
     #[tokio::test]

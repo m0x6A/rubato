@@ -45,6 +45,7 @@ pub async fn overview(
         companions,
         unpinned_sessions: built.unpinned_sessions,
         backlog: built.backlog,
+        layout: built.layout,
         generated_at: Utc::now(),
     }))
 }

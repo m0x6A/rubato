@@ -2,7 +2,7 @@
 
 use super::build::OverviewInputs;
 use crate::kernel::state::App;
-use crate::{companion_link, github_poll, launch, pins, plans};
+use crate::{companion_link, github_poll, launch, layout, pins, plans};
 use anyhow::Result;
 
 pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
@@ -18,5 +18,6 @@ pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
         launch_map_versions: launch::launch_map_versions(&app.db).await?,
         backlog: github_poll::backlog(&app.db).await?,
         uncovered_repos: github_poll::uncovered(&app.db).await?,
+        layout: layout::all(&app.db).await?,
     })
 }

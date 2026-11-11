@@ -171,6 +171,7 @@ LaunchRequest?: LaunchRequest
 LaunchResponse?: LaunchResponse
 LaunchResult?: LaunchResult1
 Limits?: Limits
+MapLayout?: MapLayout
 MapRef?: MapRef
 MapResponse?: MapResponse
 Me?: Me
@@ -573,6 +574,23 @@ session_stale_secs?: number
  */
 team_poll_interval_secs?: number
 }
+/**
+ * Positions by part id. In the overview it is the whole stored layout; as the body of
+ * `PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`
+ * it is what was removed, so a `PUT` of it undoes the removal.
+ */
+export interface MapLayout {
+positions?: {
+[k: string]: Position | undefined
+}
+}
+/**
+ * The top-left corner of a part on the map canvas, in the canvas's own units.
+ */
+export interface Position {
+x: number
+y: number
+}
 export interface MapResponse {
 loaded_at: string
 map: SystemMap
@@ -660,6 +678,7 @@ companions: PairingInfo[]
 findings: Finding[]
 generated_at: string
 issues: IssueSummary[]
+layout?: MapLayout1
 map: MapResponse
 /**
  * Sessions not attached to any issue (branch outside the convention).
@@ -719,6 +738,16 @@ hostname: string
 last_seen?: (string | null)
 revoked_at?: (string | null)
 user: string
+}
+/**
+ * Positions by part id. In the overview it is the whole stored layout; as the body of
+ * `PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`
+ * it is what was removed, so a `PUT` of it undoes the removal.
+ */
+export interface MapLayout1 {
+positions?: {
+[k: string]: Position | undefined
+}
 }
 export interface PairApproveRequest {
 user_code: string

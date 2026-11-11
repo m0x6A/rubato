@@ -101,6 +101,7 @@ pairing         device-code pairing, the caller's pairings      pairing_codes, p
 companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
 pins            pin an issue to a node or seam                  pins
 launch          start a session through your own companion      launches, cap_hits
+layout          where each part sits on the shared map          map_layout
 map             load, validate, cache and serve the map         map_cache
 plans           parse and keep plan files from issue branches   plans
 github_poll     issue reads, open issues, repo coverage         pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos
@@ -152,6 +153,7 @@ session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
 hook       HookEvent
 pins       IssuePin, PinRequest; PINS
 launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
+layout     MapLayout, Position; LAYOUT
 map        SystemMap, MapResponse; MAP, MAP_RELOAD
 plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord

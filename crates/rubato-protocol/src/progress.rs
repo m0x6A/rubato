@@ -5,6 +5,7 @@
 use crate::github::DecisionRecord;
 use crate::github::{ChecksStatus, PullRequestState};
 use crate::ids::{IssueRef, MapRef};
+use crate::layout::MapLayout;
 use crate::map::MapResponse;
 use crate::pairing::PairingInfo;
 use crate::plan::Plan;
@@ -242,6 +243,10 @@ pub struct Overview {
     /// Open issues not tracked yet (ADR 0019).
     #[serde(default)]
     pub backlog: Backlog,
+    /// Where the team has put each part (ADR 0016). Parts without a position are laid out
+    /// automatically. Never an input to progress.
+    #[serde(default)]
+    pub layout: MapLayout,
     pub generated_at: DateTime<Utc>,
 }
 

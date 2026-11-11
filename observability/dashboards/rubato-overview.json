@@ -889,6 +889,36 @@
         "graphMode": "none",
         "textMode": "value"
       }
+    },
+    {
+      "id": 55,
+      "title": "Layout writes",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 52
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Accepted writes to the shared map layout: a part dragged to a new place, or the layout cleared with Auto-arrange (an info log line 'layout cleared' with rubato.user). If people see different maps and this moves, the write landed: look at 'Web clients' and at 'Events dropped' with reason web_lagged. If it does not move, look at 'Web writes rejected' for /api/layout.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rubato_layout_writes_total[1h]))",
+          "legendFormat": "writes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }
