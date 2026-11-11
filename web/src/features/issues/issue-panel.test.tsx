@@ -6,7 +6,7 @@ import { IssuePanel, ownConnectedCompanions } from "./IssuePanel.tsx";
 const me = { login: "m0x6A" };
 
 function renderPanel(ov: ReturnType<typeof overview>, selected = ov.issues[0] ?? null, onLaunch = vi.fn()) {
-  render(<IssuePanel overview={ov} me={me} selected={selected} selectedNode={null} onSelect={() => {}} onClearNode={() => {}} onLaunch={onLaunch} onUnpin={() => {}} />);
+  render(<IssuePanel overview={ov} me={me} selected={selected} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={onLaunch} onPin={() => {}} onUnpin={() => {}} />);
   return onLaunch;
 }
 
@@ -54,5 +54,98 @@ describe("issue list", () => {
     const rows = screen.getAllByTestId(/^issue-\d+$/).map((el) => el.getAttribute("data-testid"));
     expect(rows).toEqual(["issue-2", "issue-3", "issue-1"]);
     expect(screen.getByText("Blocked")).toBeInTheDocument();
+  });
+});
+
+describe("pins on the issue detail and the part filter (N18)", () => {
+  it("unpin posts a delete", () => {
+    const onUnpin = vi.fn();
+    const ov = overview({ issues: [issue(7, "web", { pins: [{ kind: "node", id: "web" }, { kind: "seam", id: "web-server" }] })] });
+    render(<IssuePanel overview={ov} me={me} selected={ov.issues[0] ?? null} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={onUnpin} />);
+    const buttons = screen.getAllByRole("button", { name: "unpin" });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[1] as HTMLElement);
+    expect(onUnpin).toHaveBeenCalledTimes(1);
+    expect(onUnpin).toHaveBeenCalledWith({ issue: { repo: "m0x6A/rubato", number: 7 }, target: { kind: "seam", id: "web-server" } });
+  });
+
+  it("a part filter lists its issues", () => {
+    const onClear = vi.fn();
+    const ov = overview({ issues: [issue(1, "web"), issue(2, "rubato-server"), issue(3, "web")] });
+    render(<IssuePanel overview={ov} me={me} selected={null} selection={{ kind: "node", id: "web" }} onSelect={() => {}} onClearSelection={onClear} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(screen.getAllByTestId(/^issue-\d+$/).map((el) => el.getAttribute("data-testid"))).toEqual(["issue-1", "issue-3"]);
+    fireEvent.click(screen.getByRole("button", { name: "show all" }));
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("seam selection (S4)", () => {
+  // A part and a seam may share an id; the filter must not confuse them.
+  const ov = () =>
+    overview({
+      issues: [issue(1, "web"), issue(2, "web", { pins: [{ kind: "seam", id: "web" }] }), issue(3, "web", { pins: [{ kind: "seam", id: "web-server" }] }), issue(4, "web", { pins: [{ kind: "node", id: "web" }, { kind: "seam", id: "web-server" }] })],
+    });
+  const listed = () => screen.queryAllByTestId(/^issue-\d+$/).map((el) => el.getAttribute("data-testid"));
+  const panel = (selection: { kind: "node" | "seam"; id: string }) =>
+    render(<IssuePanel overview={ov()} me={me} selected={null} selection={selection} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+
+  it("a seam filter matches only seam pins", () => {
+    const { unmount } = panel({ kind: "seam", id: "web-server" });
+    expect(listed()).toEqual(["issue-3", "issue-4"]);
+    expect(screen.getByTestId("map-filter")).toHaveTextContent("pinned to seam web-server");
+    unmount();
+
+    panel({ kind: "seam", id: "web" });
+    expect(listed()).toEqual(["issue-2"]);
+  });
+
+  it("a part filter no longer matches a seam pin with the same id", () => {
+    panel({ kind: "node", id: "web" });
+    expect(listed()).toEqual(["issue-1", "issue-4"]);
+  });
+
+  it("says which part or seam has no issue instead of an empty list", () => {
+    panel({ kind: "seam", id: "companion-server" });
+    expect(listed()).toEqual([]);
+    expect(screen.getByTestId("no-tracked-issues")).toHaveTextContent("No issue is pinned to seam companion-server.");
+  });
+});
+
+describe("pinning from the list (S3)", () => {
+  it("a tracked row is draggable and its Pin to… menu adds a pin", async () => {
+    const { dataTransfer } = await import("../../../test/dnd.ts");
+    const { getIssueDrag } = await import("../../shared/dnd.ts");
+    const onPin = vi.fn();
+    const onSelect = vi.fn();
+    const ov = overview({ issues: [issue(7, "web")] });
+    render(<IssuePanel overview={ov} me={me} selected={null} selection={null} onSelect={onSelect} onClearSelection={() => {}} onLaunch={() => {}} onPin={onPin} onUnpin={() => {}} />);
+    const row = screen.getByTestId("issue-7");
+    const dt = dataTransfer();
+    fireEvent.dragStart(row, { dataTransfer: dt });
+    expect(getIssueDrag({ dataTransfer: dt })).toEqual({ repo: "m0x6A/rubato", number: 7 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pin m0x6A/rubato#7 to…" }));
+    // Where it is pinned already is shown and cannot be chosen again.
+    const here = screen.getByRole("menuitem", { name: /^web\b.*pinned here/ });
+    expect(here).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(here);
+    expect(onPin).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("menuitem", { name: /^rubato-server\b/ }));
+    expect(onPin).toHaveBeenCalledWith({ repo: "m0x6A/rubato", number: 7 }, { kind: "node", id: "rubato-server" });
+    // Using the menu does not open the issue.
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("opening an issue", () => {
+  it("moves focus to the issue's heading", () => {
+    const ov = overview({ issues: [issue(7, "web")] });
+    const props = { overview: ov, me, selection: null, onSelect: () => {}, onClearSelection: () => {}, onLaunch: () => {}, onPin: () => {}, onUnpin: () => {} };
+    const { rerender } = render(<IssuePanel {...props} selected={null} />);
+    expect(document.body).toHaveFocus();
+    rerender(<IssuePanel {...props} selected={ov.issues[0] ?? null} />);
+    const heading = screen.getByRole("heading", { name: "m0x6A/rubato#7" });
+    expect(heading).toHaveAttribute("tabindex", "-1");
+    expect(heading).toHaveFocus();
   });
 });

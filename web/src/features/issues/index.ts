@@ -1,2 +1,2 @@
-/** Issues: the issue list, the issue detail and the start-session gate. */
+/** Issues: the issue list, the not-pinned backlog, the issue detail and the start-session gate. */
 export { IssuePanel, ownConnectedCompanions } from "./IssuePanel.tsx";

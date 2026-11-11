@@ -11,6 +11,11 @@
   --quiet: #9aa3ad;
   --new: #7c3aed;
   --affected: #2f6feb;
+  /* Small text: --warn, --bad, --accent and --muted are for borders, fills and larger text. Checked by styles.test.ts. */
+  --warn-ink: #92400e;
+  --bad-ink: #b42318;
+  --accent-ink: #1d4ed8;
+  --chip-ink: #4b5563;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -25,6 +30,10 @@
     --warn: #d29922;
     --bad: #f85149;
     --quiet: #6e7681;
+    --warn-ink: #d29922;
+    --bad-ink: #ff7b72;
+    --accent-ink: #58a6ff;
+    --chip-ink: #a3adb8;
   }
 }
 * { box-sizing: border-box; }
@@ -38,8 +47,10 @@ body { background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -appl
 .me { font-weight: 600; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block; }
 .dot.live { background: var(--ok); }
-.banner { padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); cursor: pointer; }
-.banner.error { color: var(--bad); }
+.banner { padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.banner.error { color: var(--bad-ink); }
+.banner.notice { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.banner.notice button { padding: 2px 10px; min-height: 24px; flex-shrink: 0; }
 .body { display: grid; grid-template-columns: 1fr 400px; flex: 1; min-height: 0; }
 @media (max-width: 900px) { .body { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } }
 .map { position: relative; min-height: 0; }
@@ -71,9 +82,32 @@ table.mini th, table.mini td { text-align: left; padding: 4px 6px; border-bottom
 .findings ul { margin: 4px 0 0; padding-left: 18px; }
 form.stack { display: flex; flex-direction: column; gap: 8px; }
 input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
-.dialog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: grid; place-items: center; }
-.dialog { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: min(440px, 90vw); display: flex; flex-direction: column; gap: 10px; }
-.actions { display: flex; gap: 8px; justify-content: flex-end; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.warn { color: var(--warn-ink); }
+h2[tabindex="-1"]:focus { outline: none; }
+/* issue rows: tracked and not pinned; both can be dragged onto the map */
+.issue-row[draggable="true"] { cursor: grab; }
+.issue-row > .row { display: flex; justify-content: space-between; gap: 8px; flex: 1; min-width: 0; }
+.issue-row .issue-main { min-width: 0; overflow-wrap: anywhere; }
+.issue-row .row-end { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+button.link { padding: 0; border: 0; background: none; color: var(--ink); font-weight: 600; text-align: left; }
+button.link:hover { text-decoration: underline; }
+.backlog { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.backlog h3, .backlog p { margin: 0; }
+.backlog-row { border-style: dashed; cursor: grab; }
+.backlog-row .labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.repo-status { font-size: 12px; gap: 2px; }
+.repo-status li.warn { font-size: 12px; }
+/* "Pin to…": the keyboard twin of the drag */
+.pin-menu { position: relative; display: inline-block; flex-shrink: 0; }
+.pin-menu > button { padding: 2px 8px; font-size: 12px; white-space: nowrap; min-height: 24px; }
+.pin-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; width: 260px; max-width: calc(100vw - 32px); max-height: 280px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); cursor: default; }
+.pin-menu-heading { padding: 6px 8px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.pin-menu-list [role="menuitem"] { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; width: 100%; border: 0; border-radius: 4px; padding: 5px 8px; text-align: left; background: none; min-height: 24px; }
+.pin-menu-list [role="menuitem"] .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.pin-menu-list [role="menuitem"]:hover, .pin-menu-list [role="menuitem"]:focus-visible { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); outline: none; }
+.pin-menu-list [role="menuitem"][aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
 /* map nodes */
 .map-node { width: 220px; min-height: 96px; background: var(--panel); border: 2px solid var(--line); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
 .map-node.contract { border-style: dashed; }
@@ -85,9 +119,20 @@ input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); 
 .map-node .id { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .map-node .kind { font-size: 10px; color: var(--muted); text-transform: uppercase; }
 .map-node .badges { display: flex; flex-wrap: wrap; gap: 4px; }
-.map-node .warn { color: var(--warn); font-size: 11px; }
+.map-node .warn { color: var(--warn-ink); font-size: 11px; }
+.map-node.drop-over { border-color: var(--accent); border-style: solid; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
+.map-node .drop-hint { font-size: 11px; color: var(--accent); font-weight: 600; pointer-events: none; }
 .react-flow__edge-path { stroke: var(--line); stroke-width: 1.5; }
 .react-flow__edge.collision .react-flow__edge-path { stroke: var(--bad); stroke-width: 2.5; }
 .react-flow__edge.busy .react-flow__edge-path { stroke: var(--accent); stroke-width: 2; }
-.edge-label { font-size: 10px; color: var(--muted); background: var(--bg); padding: 1px 4px; border-radius: 4px; }
-.edge-label.collision { color: var(--bad); font-weight: 600; }
+.react-flow__edge.chosen .react-flow__edge-path { stroke: var(--accent); stroke-width: 2.5; }
+/* seam chips: the label of a seam, a button and a drop target */
+.seam-label { position: absolute; pointer-events: all; }
+.seam-chip { font-size: 11px; line-height: 1.3; min-height: 24px; padding: 2px 8px; border-radius: 12px; color: var(--chip-ink); background: var(--bg); border: 1px solid var(--line); white-space: nowrap; }
+.seam-chip:hover { color: var(--ink); border-color: var(--muted); }
+.seam-chip.busy { color: var(--accent-ink); border-color: var(--accent); }
+.seam-chip.collision { color: var(--bad-ink); border-color: var(--bad); font-weight: 600; }
+.seam-chip.selected { color: var(--ink); border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.seam-chip.drop-over { color: var(--ink); border-color: var(--accent); border-style: solid; background: color-mix(in srgb, var(--accent) 18%, var(--panel)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
+/* Seam chips are HTML labels: keep them above the part cards where an edge runs close to one. */
+.react-flow__edgelabel-renderer { z-index: 5; }

@@ -11,6 +11,8 @@ export function findingText(f: Finding): string {
       return `${issueKey(f.issue)}: ${f.path} does not parse: ${f.error}`;
     case "map_version_mismatch":
       return `${issueKey(f.issue)} was launched with map ${f.launched_with}; the server holds ${f.current}`;
+    case "repo_not_covered":
+      return `${f.repo} is not covered by the GitHub App installation; its branches, plans and pull requests cannot be read`;
   }
 }
 

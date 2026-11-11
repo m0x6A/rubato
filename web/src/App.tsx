@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { LoginPage, authApi } from "./features/auth/index.ts";
 import { CompanionsPanel } from "./features/companions/index.ts";
 import { Findings } from "./features/findings/index.ts";
@@ -6,9 +6,9 @@ import { IssuePanel } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe } from "./features/live/index.ts";
 import { MapView, buildGraph } from "./features/map/index.ts";
-import { PinDialog, pinsApi } from "./features/pins/index.ts";
-import type { IssueRef, Me, Overview, PinRequest } from "./protocol.ts";
-import { ApiError } from "./shared/api.ts";
+import { pinsApi } from "./features/pins/index.ts";
+import type { IssueRef, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
+import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
 import { issueKey, relative } from "./shared/format.ts";
 
 type Tab = "issues" | "companions";
@@ -21,9 +21,8 @@ export function App() {
   const [live, setLive] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [selectedIssue, setSelectedIssue] = useState<IssueRef | null>(null);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [selection, setSelection] = useState<MapRef | null>(null);
   const [tab, setTab] = useState<Tab>("issues");
-  const [pinOpen, setPinOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -34,7 +33,7 @@ export function App() {
       setRefreshedAt(new Date().toISOString());
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        setNeedsLogin(true);
+        // `request` raised needs-login; the login page follows.
       } else if (e instanceof ApiError && e.status === 503) {
         setError("The server has no map loaded yet.");
       } else {
@@ -44,38 +43,59 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    // A 401 from any call, or from the probe after the websocket closes, leads here (design S24).
+    const offNeedsLogin = onNeedsLogin(() => setNeedsLogin(true));
     authApi
       .me()
       .then((m) => {
         setMe(m);
+        resetNeedsLogin();
         setNeedsLogin(false);
       })
-      .catch((e) => {
-        if (e instanceof ApiError && e.status === 401) {
-          setNeedsLogin(true);
-        }
+      .catch(() => {
+        // A 401 is raised by `request`; any other failure shows through the overview's error.
       });
     void refresh();
-    return subscribe(() => void refresh(), setLive);
+    const unsubscribe = subscribe(() => void refresh(), setLive);
+    return () => {
+      unsubscribe();
+      offNeedsLogin();
+    };
   }, [refresh]);
 
-  const onPin = async (req: PinRequest) => {
-    try {
-      await pinsApi.addPin(req);
-      setPinOpen(false);
-      setSelectedIssue(req.issue);
-      await refresh();
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+  /** Adds a pin: from a drop on the map or from a row's "Pin to…" menu. A refusal shows the server's reason. */
+  const onPin = useCallback(
+    async (issue: IssueRef, target: MapRef) => {
+      try {
+        await pinsApi.addPin({ issue, target });
+        setNotice(`${issueKey(issue)} pinned to ${target.id}`);
+        setTab("issues");
+        setSelectedIssue(issue);
+        await refresh();
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          return;
+        }
+        setNotice(`${issueKey(issue)} was not pinned to ${target.id}: ${failureText(e)}`);
+      }
+    },
+    [refresh],
+  );
+
+  const onSelectOnMap = useCallback((ref: MapRef | null) => {
+    setSelection(ref);
+    if (ref) {
+      setTab("issues");
+      setSelectedIssue(null);
     }
-  };
+  }, []);
 
   const onUnpin = async (req: PinRequest) => {
     try {
       await pinsApi.removePin(req);
       await refresh();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      setNotice(`${issueKey(req.issue)} was not unpinned from ${req.target.id}: ${failureText(e)}`);
     }
   };
 
@@ -85,15 +105,17 @@ export function App() {
       setNotice(launchNotice(r, issue));
       await refresh();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      setNotice(`No session was started for ${issueKey(issue)}: ${failureText(e)}`);
     }
   };
 
+  const graph = useMemo(() => (overview ? buildGraph(overview) : null), [overview]);
+
+  // After every hook: the login page replaces the whole shell.
   if (needsLogin) {
     return <LoginPage />;
   }
 
-  const graph = overview ? buildGraph(overview) : null;
   const selected = overview && selectedIssue ? (overview.issues.find((i) => issueKey(i.issue) === issueKey(selectedIssue)) ?? null) : null;
 
   return (
@@ -110,22 +132,19 @@ export function App() {
         </div>
       </header>
       {error && <div className="banner error">{error}</div>}
-      {notice && (
-        <div className="banner" onClick={() => setNotice(null)} role="status">
-          {notice}
-        </div>
-      )}
+      {/* The live region stays mounted so a screen reader hears each notice; the button sits outside it. */}
+      <div className={notice ? "banner notice" : undefined}>
+        <span role="status">{notice}</span>
+        {notice && (
+          <button type="button" onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
+        )}
+      </div>
       <div className="body">
         <section className="map">
           {graph && overview ? (
-            <MapView
-              graph={graph}
-              selectedNode={selectedNode}
-              onSelectNode={(id) => {
-                setSelectedNode(id);
-                setTab("issues");
-              }}
-            />
+            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} />
           ) : (
             <div className="empty">{error ?? "Loading the map…"}</div>
           )}
@@ -138,9 +157,6 @@ export function App() {
             <button className={tab === "companions" ? "active" : ""} onClick={() => setTab("companions")}>
               Companions{overview ? ` (${overview.companions.filter((c) => c.connected).length} live)` : ""}
             </button>
-            <button onClick={() => setPinOpen(true)} disabled={!overview}>
-              Pin an issue
-            </button>
           </nav>
           {overview && <Findings findings={overview.findings} />}
           {overview && tab === "issues" && (
@@ -148,17 +164,17 @@ export function App() {
               overview={overview}
               me={me}
               selected={selected}
-              selectedNode={selectedNode}
+              selection={selection}
               onSelect={setSelectedIssue}
-              onClearNode={() => setSelectedNode(null)}
+              onClearSelection={() => setSelection(null)}
               onLaunch={onLaunch}
+              onPin={onPin}
               onUnpin={onUnpin}
             />
           )}
           {overview && tab === "companions" && <CompanionsPanel companions={overview.companions} me={me} onChanged={refresh} />}
         </aside>
       </div>
-      {pinOpen && overview && <PinDialog map={overview.map.map} onSubmit={onPin} onClose={() => setPinOpen(false)} />}
     </div>
   );
 }

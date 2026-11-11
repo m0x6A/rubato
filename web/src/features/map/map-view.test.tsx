@@ -6,7 +6,7 @@ import { MapView } from "./MapView.tsx";
 
 describe("MapView", () => {
   it("renders a card for every node of rubato-map.yml", async () => {
-    render(<MapView graph={buildGraph(overview())} selectedNode={null} onSelectNode={() => {}} />);
+    render(<MapView graph={buildGraph(overview())} selected={null} onSelect={() => {}} />);
     await waitFor(() => expect(screen.getByTestId("node-rubato-server")).toBeInTheDocument(), { timeout: 5000 });
     for (const n of realMap().nodes) {
       expect(screen.getByTestId(`node-${n.id}`)).toBeInTheDocument();

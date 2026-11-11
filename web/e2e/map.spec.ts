@@ -34,6 +34,43 @@ test("the map renders every node id from system-map.yml", async ({ page }) => {
   await expect(page.getByText("map rubato @")).toBeVisible();
 });
 
+test("drag a not-pinned issue onto a part and onto a seam", async ({ page }) => {
+  // The harness serves three open issues of m0x6A/rubato: #901, #902 and #903, none tracked.
+  const key = (n: number) => `m0x6A/rubato#${n}`;
+  await page.goto("/");
+  const backlog = page.getByTestId("backlog");
+  await expect(backlog.getByTestId("backlog-row-902")).toContainText("Backlog: an unpinned issue");
+  await expect(backlog.getByTestId("backlog-row-903")).toContainText("Backlog: another unpinned issue");
+  await expect(page.getByTestId("issue-row-902")).toHaveCount(0);
+  await expect(page.getByTestId("issue-row-903")).toHaveCount(0);
+
+  // Onto a part. A pin selects the issue, so its detail opens: Planned, pinned to the part.
+  await backlog.getByTestId("backlog-row-902").dragTo(page.getByTestId("node-rubato-server"));
+  const detail = page.getByTestId("issue-detail");
+  await expect(detail).toContainText(key(902));
+  await expect(detail).toContainText("Planned");
+  await expect(detail).toContainText("node rubato-server");
+  await page.getByRole("button", { name: "← all issues" }).click();
+  await expect(page.getByTestId("issue-row-902")).toContainText("Planned");
+  await expect(page.getByTestId("issue-row-902")).toContainText("rubato-server");
+  await expect(page.getByTestId("backlog-row-902")).toHaveCount(0);
+
+  // Onto a seam: the drop target is the seam's chip.
+  await page.getByTestId("backlog-row-903").dragTo(page.getByTestId("seam-web-server"));
+  await expect(detail).toContainText(key(903));
+  await expect(detail).toContainText("Planned");
+  await expect(detail).toContainText("seam web-server");
+  await page.getByRole("button", { name: "← all issues" }).click();
+  await expect(page.getByTestId("issue-row-903")).toContainText("Planned");
+  await expect(page.getByTestId("issue-row-903")).toContainText("web-server");
+  await expect(page.getByTestId("backlog-row-903")).toHaveCount(0);
+
+  // The issue nobody dragged is still not pinned, and both targets now count their issue.
+  await expect(page.getByTestId("backlog-row-901")).toBeVisible();
+  await expect(page.getByTestId("node-rubato-server")).toContainText("planned");
+  await expect(page.getByTestId("seam-web-server")).toContainText("1 issue");
+});
+
 test("start session appears only for the current user's own connected companion", async ({ page }) => {
   // Pin an issue so there is something to select.
   const pin = await fetch(`${base}/api/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } }) });
