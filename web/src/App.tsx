@@ -5,7 +5,7 @@ import { Findings } from "./features/findings/index.ts";
 import { IssuePanel } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe } from "./features/live/index.ts";
-import { Inspector, MapView, buildGraph, mapApi } from "./features/map/index.ts";
+import { Inspector, MapView, PlanInspector, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
 import type { IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
@@ -195,7 +195,7 @@ export function App() {
       <div className="body">
         <section className="map">
           {graph && overview ? (
-            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={() => void onAutoArrange()} />
+            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={() => void onAutoArrange()} plan={selected?.plan ? { issue: selected.issue, plan: selected.plan } : null} />
           ) : (
             <div className="empty">{error ?? "Loading the map…"}</div>
           )}
@@ -233,6 +233,16 @@ export function App() {
               onLaunch={onLaunch}
               onPin={onPin}
               onUnpin={onUnpin}
+            />
+          )}
+          {/* An open issue with a plan: the map shows the plan, and below the issue this says what the plan says. */}
+          {overview && tab === "issues" && selected?.plan && (
+            <PlanInspector
+              issue={selected}
+              onSelect={(ref) => {
+                setSelectedIssue(null);
+                onSelectOnMap(ref);
+              }}
             />
           )}
           {overview && tab === "companions" && <CompanionsPanel companions={overview.companions} me={me} onChanged={refresh} />}

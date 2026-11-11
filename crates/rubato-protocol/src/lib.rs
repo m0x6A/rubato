@@ -40,7 +40,7 @@ pub use pairing::{
     PairingInfo,
 };
 pub use pins::{IssuePin, PinRequest};
-pub use plan::{AffectedPart, Assumption, AssumptionScope, ORow, PartStatus, Plan};
+pub use plan::{AffectedPart, Assumption, AssumptionScope, ORow, PartStatus, Plan, PlanFlow};
 pub use progress::{
     Backlog, BacklogRepo, Finding, IssueSummary, OpenIssue, Overview, Progress, ProgressInputs,
     ProgressState, derive_progress,

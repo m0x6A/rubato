@@ -29,6 +29,8 @@ export interface GraphEdge {
   openPlans: IssueRef[];
   collision: boolean;
   issues: IssueSummary[];
+  /** Findings that are about this seam: a plan's flow that the seam does not join. */
+  findings: Finding[];
 }
 
 export interface Graph {
@@ -71,6 +73,7 @@ export function buildGraph(ov: Overview): Graph {
     openPlans: [],
     collision: false,
     issues: ov.issues.filter((i) => i.pins.some((p) => p.kind === "seam" && p.id === s.id)),
+    findings: [],
   }));
   const edgeById = new Map(edges.map((e) => [e.id, e]));
 
@@ -110,6 +113,8 @@ export function buildGraph(ov: Overview): Graph {
       if (e) {
         e.collision = true;
       }
+    } else if (f.kind === "flow_off_seam") {
+      edgeById.get(f.seam)?.findings.push(f);
     } else if (f.kind === "unknown_ids" || f.kind === "plan_parse_error" || f.kind === "map_version_mismatch") {
       const issue = ov.issues.find((i) => issueKey(i.issue) === issueKey(f.issue));
       for (const pin of issue?.pins ?? []) {

@@ -17,7 +17,7 @@ interface Props {
 export function SeamChip({ seam, selected, onSelect, onPin }: Props) {
   const { over, handlers } = useIssueDrop<HTMLButtonElement>({ kind: "seam", id: seam.id }, onPin);
   const plans = seam.openPlans.length;
-  const classes = ["seam-chip", "nodrag", "nopan", seam.collision ? "collision" : plans ? "busy" : "", selected ? "selected" : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
+  const classes = ["seam-chip", "nodrag", "nopan", seam.collision || seam.findings.length ? "collision" : plans ? "busy" : "", selected ? "selected" : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
   const pinned = seam.issues.length;
   return (
     <button
@@ -35,6 +35,16 @@ export function SeamChip({ seam, selected, onSelect, onPin }: Props) {
       {seam.id}
       {plans > 0 && ` · ${plans} plan${plans === 1 ? "" : "s"}`}
       {pinned > 0 && ` · ${pinned} issue${pinned === 1 ? "" : "s"}`}
+      {seam.findings.length > 0 && (
+        <>
+          {" "}
+          <span aria-hidden="true">⚠</span>
+          <span className="sr-only">
+            {" "}
+            {seam.findings.length} finding{seam.findings.length === 1 ? "" : "s"}: a plan sends something over this seam that it does not join
+          </span>
+        </>
+      )}
       {seam.collision && (
         <>
           {" "}

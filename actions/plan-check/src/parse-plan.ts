@@ -39,6 +39,15 @@ export interface Assumption {
   scope: AssumptionScope;
 }
 
+/** One row of the `## Flows` table (ADR 0021). */
+export interface PlanFlow {
+  from: string;
+  to: string;
+  seam: string;
+  kind: "data" | "control";
+  carries: string;
+}
+
 export interface Plan {
   issue: IssueRef;
   title?: string;
@@ -48,6 +57,7 @@ export interface Plan {
   affected_parts: AffectedPart[];
   o_rows?: ORow[];
   assumed?: Assumption[];
+  flows?: PlanFlow[];
 }
 
 export class PlanParseError extends Error {
@@ -182,6 +192,7 @@ function firstWord(cell: string): string {
 export const AFFECTED_PARTS_HEADING = /^affected parts/i;
 export const O_ROWS_HEADING = /^o-rows/i;
 export const ASSUMED_HEADING = /^assumed, not yet approved/i;
+export const FLOWS_HEADING = /^flows/i;
 
 export function parsePlan(text: string, path: string): Plan {
   const { body, data } = splitFrontmatter(text);
@@ -273,6 +284,26 @@ export function parsePlan(text: string, path: string): Plan {
     }
     if (list.length) {
       plan.assumed = list;
+    }
+  }
+
+  const flows = tableAfterHeading(body, FLOWS_HEADING);
+  if (flows) {
+    const fromCol = requireColumn(flows, "flows", "from", /^from/);
+    const toCol = requireColumn(flows, "flows", "to", /^to/);
+    const seamCol = requireColumn(flows, "flows", "seam", /^seam/);
+    const kindCol = requireColumn(flows, "flows", "kind", /^kind/);
+    const carriesCol = requireColumn(flows, "flows", "carries", /^carries/);
+    const list: PlanFlow[] = [];
+    for (const row of flows.rows) {
+      const kind = firstWord(row[kindCol] ?? "");
+      if (kind !== "data" && kind !== "control") {
+        throw new PlanParseError(`flows: kind must be data or control, got ${JSON.stringify(kind)}`);
+      }
+      list.push({ from: cleanId(row[fromCol] ?? ""), to: cleanId(row[toCol] ?? ""), seam: cleanId(row[seamCol] ?? ""), kind, carries: row[carriesCol] ?? "" });
+    }
+    if (list.length) {
+      plan.flows = list;
     }
   }
   return plan;

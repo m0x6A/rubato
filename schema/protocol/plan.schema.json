@@ -23,6 +23,13 @@
       "format": "uint32",
       "minimum": 0
     },
+    "flows": {
+      "description": "What the plan will send across seams, from its `## Flows` table (ADR 0021). Optional.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PlanFlow"
+      }
+    },
     "git_ref": {
       "description": "Git ref the plan was read from (branch name or commit sha).",
       "type": [
@@ -136,6 +143,14 @@
         }
       ]
     },
+    "FlowKind": {
+      "description": "Data moves; control tells the other side to do something.",
+      "type": "string",
+      "enum": [
+        "data",
+        "control"
+      ]
+    },
     "IssueRef": {
       "description": "A GitHub issue, addressed as `owner/name#number`.",
       "type": "object",
@@ -195,6 +210,34 @@
         "affected",
         "new",
         "quiet"
+      ]
+    },
+    "PlanFlow": {
+      "description": "One row of the plan's Flows table: something the change sends from one part to another over\na seam. The seam must join the two parts.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FlowKind"
+        },
+        "seam": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "seam",
+        "kind",
+        "carries"
       ]
     }
   }

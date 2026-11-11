@@ -3,7 +3,7 @@
 //! shared contract (seam `server-plan-file`).
 
 use rubato_protocol::{
-    AffectedPart, Assumption, AssumptionScope, IssueRef, ORow, PartStatus, Plan,
+    AffectedPart, Assumption, AssumptionScope, FlowKind, IssueRef, ORow, PartStatus, Plan, PlanFlow,
 };
 use thiserror::Error;
 
@@ -25,6 +25,8 @@ pub enum PlanParseError {
     },
     #[error("table after heading {0} has no header separator row")]
     NoSeparator(&'static str),
+    #[error("flows: kind must be data or control, got {0:?}")]
+    BadFlowKind(String),
 }
 
 struct Frontmatter<'a> {
@@ -259,6 +261,7 @@ pub fn parse_plan(text: &str, path: &str) -> Result<Plan, PlanParseError> {
         affected_parts: vec![],
         o_rows: vec![],
         assumed: vec![],
+        flows: vec![],
     };
 
     let parts = table_after_heading(fm.body, "affected parts", "affected parts")?
@@ -335,6 +338,27 @@ pub fn parse_plan(text: &str, path: &str) -> Result<Plan, PlanParseError> {
             });
         }
     }
+    if let Some(t) = table_after_heading(fm.body, "flows", "flows")? {
+        let from = require(&t, "flows", "from", &["from"])?;
+        let to = require(&t, "flows", "to", &["to"])?;
+        let seam = require(&t, "flows", "seam", &["seam"])?;
+        let kind = require(&t, "flows", "kind", &["kind"])?;
+        let carries = require(&t, "flows", "carries", &["carries"])?;
+        for row in &t.rows {
+            let k = match first_word(&cell(row, kind)).as_str() {
+                "data" => FlowKind::Data,
+                "control" => FlowKind::Control,
+                other => return Err(PlanParseError::BadFlowKind(other.to_owned())),
+            };
+            plan.flows.push(PlanFlow {
+                from: clean_id(&cell(row, from)),
+                to: clean_id(&cell(row, to)),
+                seam: clean_id(&cell(row, seam)),
+                kind: k,
+                carries: cell(row, carries),
+            });
+        }
+    }
     Ok(plan)
 }
 
@@ -358,6 +382,59 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan, expected);
+    }
+
+    #[test]
+    fn flows_fixture_matches_typescript() {
+        let path = "schema/fixtures/plans/flows.md";
+        let text = std::fs::read_to_string(root().join(path)).unwrap();
+        let plan = parse_plan(&text, path).unwrap();
+        let expected: Plan = serde_json::from_str(
+            &std::fs::read_to_string(root().join("schema/fixtures/plans/flows.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(plan, expected);
+        assert_eq!(plan.flows.len(), 2);
+
+        let map: rubato_protocol::SystemMap = serde_yaml_ng::from_str(
+            &std::fs::read_to_string(root().join("docs/design/rubato-map.yml")).unwrap(),
+        )
+        .unwrap();
+        assert!(plan.unknown_ids(&map).is_empty());
+        assert!(plan.flows_off_seam(&map).is_empty());
+
+        // The two fixtures that must fail, each for its own reason.
+        let read = |name: &str| {
+            let p = format!("schema/fixtures/plans/{name}");
+            parse_plan(&std::fs::read_to_string(root().join(&p)).unwrap(), &p).unwrap()
+        };
+        let off = read("flow-off-seam.md");
+        assert!(off.unknown_ids(&map).is_empty());
+        let off_seam: Vec<_> = off
+            .flows_off_seam(&map)
+            .iter()
+            .map(|f| (f.from.as_str(), f.to.as_str(), f.seam.as_str()))
+            .collect();
+        assert_eq!(off_seam, [("web", "github", "web-server")]);
+        let unknown = read("unknown-flow-id.md");
+        assert_eq!(
+            unknown.unknown_ids(&map),
+            ["rubato-orchestrator", "web-nowhere"]
+        );
+        assert!(
+            unknown.flows_off_seam(&map).is_empty(),
+            "an unknown seam is an unknown id, not a second finding"
+        );
+
+        // A plan without the table parses as before, and a kind that is neither is an error.
+        let old = read("valid.md");
+        assert!(old.flows.is_empty());
+        let bad = text.replace("| data |", "| magic |");
+        assert_eq!(
+            parse_plan(&bad, path),
+            Err(PlanParseError::BadFlowKind("magic".into()))
+        );
+        println!("checked 4 plan fixtures, 6 flows");
     }
 
     #[test]

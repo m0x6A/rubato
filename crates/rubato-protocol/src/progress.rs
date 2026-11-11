@@ -228,6 +228,13 @@ pub enum Finding {
     /// The GitHub App installation does not cover a repo the map or a tracked issue names, so
     /// its branches, plans and pull requests cannot be read (ADR 0022).
     RepoNotCovered { repo: String },
+    /// A plan's flow names a seam that does not join the flow's two parts (ADR 0021).
+    FlowOffSeam {
+        issue: IssueRef,
+        seam: String,
+        from: String,
+        to: String,
+    },
 }
 
 /// The whole picture in one payload: what the web view renders.

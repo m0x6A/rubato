@@ -256,16 +256,20 @@ mod tests {
             .unwrap();
         assert_eq!(cleared.status(), 200);
         assert_eq!(reader.points(metric::LAYOUT_WRITES)[0].value, 2);
-        assert!(
-            events
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|e| e.message == "layout cleared"
+        {
+            let events = events.lock().unwrap();
+            assert!(
+                events.iter().any(|e| e.message == "layout cleared"
                     && e.level == tracing::Level::INFO
                     && e.fields.get("rubato.user").map(String::as_str) == Some("m0x6A")),
-            "clearing the team's layout is logged with who did it"
-        );
+                "clearing the team's layout is logged with who did it; max level {:?}, captured: {:?}",
+                tracing::level_filters::LevelFilter::current(),
+                events
+                    .iter()
+                    .map(|e| format!("{} {} {:?}", e.level, e.message, e.fields))
+                    .collect::<Vec<_>>()
+            );
+        }
 
         // As a GitHub App with no dev user: a session without a team record is refused, counted.
         let tmp2 = tempfile::tempdir().unwrap();

@@ -131,6 +131,21 @@ describe("plan.ts", () => {
     expect(r.ok, JSON.stringify(r.line)).toBe(true);
     expect(r.line["rubato.issue"]).toBe("m0x6A/rubato#12");
 
+    // The skeleton's Flows table is empty and reads as no flows; a filled row is checked.
+    expect(readFileSync(file, "utf8")).toContain("## Flows\n");
+    expect(r.line["flows_checked"]).toBe(0);
+    const flowRow = "| From | To | Seam | Kind | Carries |\n| --- | --- | --- | --- | --- |\n";
+    writeFileSync(file, filled.replace(`${flowRow}| | | | | |`, `${flowRow}| rubato-companion | rubato-server | companion-server | data | the new field |`));
+    const withFlow = await check(ws, a);
+    expect(withFlow.ok, JSON.stringify(withFlow.line)).toBe(true);
+    expect(withFlow.line["flows_checked"]).toBe(1);
+    // A flow over a seam that does not join its two parts fails the check.
+    writeFileSync(file, filled.replace(`${flowRow}| | | | | |`, `${flowRow}| rubato-companion | web | companion-server | data | the new field |`));
+    const offSeam = await check(ws, a);
+    expect(offSeam.ok).toBe(false);
+    expect(offSeam.line["flows_off_seam"]).toEqual(["rubato-companion → web over companion-server"]);
+    writeFileSync(file, filled);
+
     // And the on-purpose failure: an unknown node.
     writeFileSync(file, filled.replace("| rubato-companion |", "| rubato-orchestrator |"));
     const bad = await check(ws, a, pathA);

@@ -134,6 +134,12 @@ button.link:hover { text-decoration: underline; }
 .react-flow__edge.faint .react-flow__edge-path { opacity: 0.35; }
 .react-flow__edge.flow .react-flow__edge-path { stroke: var(--muted); stroke-width: 2; }
 .react-flow__edge.flow.chosen .react-flow__edge-path { stroke: var(--accent); }
+/* a flow a plan proposes: it moves, so it reads as not there yet */
+.react-flow__edge.moving .react-flow__edge-path { stroke: var(--new); stroke-width: 2.5; animation: flow-move 1.2s linear infinite; }
+.react-flow__edge.moving.reversed .react-flow__edge-path { animation-direction: reverse; }
+@keyframes flow-move { to { stroke-dashoffset: -24; } }
+@media (prefers-reduced-motion: reduce) { .react-flow__edge.moving .react-flow__edge-path { animation: none; } }
+.lens button:disabled { opacity: 0.6; cursor: default; }
 /* something is selected: what is not next to it steps back */
 .react-flow__edge.dim { opacity: 0.25; }
 .map-node.dim { opacity: 0.35; }

@@ -3,8 +3,8 @@
  * named `rubato.plan.check`, carrying the `rubato.*` attributes from `rubato-protocol::otel`.
  */
 import { readFileSync } from "node:fs";
-import { mapIds, type SystemMap } from "./map.ts";
-import { parsePlan, PlanParseError, type Plan } from "./parse-plan.ts";
+import { mapIds, seamJoins, type SystemMap } from "./map.ts";
+import { parsePlan, PlanParseError, type Plan, type PlanFlow } from "./parse-plan.ts";
 import { validator } from "./schema.ts";
 
 export interface PlanCheckResult {
@@ -15,7 +15,19 @@ export interface PlanCheckResult {
   unknownIds: string[];
   seamsWithoutORow: string[];
   idsChecked: number;
+  /** Rows of the plan's Flows table that were checked (ADR 0021). */
+  flowsChecked: number;
+  /** Flows whose seam does not join their two parts, as `from → to over seam`. */
+  flowsOffSeam: string[];
   ok: boolean;
+}
+
+/** Flows whose seam the map has but which does not join the flow's two parts. */
+export function flowsOffSeam(plan: Plan, map: SystemMap): PlanFlow[] {
+  return (plan.flows ?? []).filter((f) => {
+    const seam = (map.seams ?? []).find((s) => s.id === f.seam);
+    return seam !== undefined && !seamJoins(seam, f.from, f.to);
+  });
 }
 
 export function referencedIds(plan: Plan): string[] {
@@ -29,6 +41,11 @@ export function referencedIds(plan: Plan): string[] {
   for (const o of plan.o_rows ?? []) {
     ids.add(o.seam);
     ids.add(o.owner);
+  }
+  for (const f of plan.flows ?? []) {
+    ids.add(f.from);
+    ids.add(f.to);
+    ids.add(f.seam);
   }
   return [...ids].sort();
 }
@@ -55,6 +72,8 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
     unknownIds: [],
     seamsWithoutORow: [],
     idsChecked: 0,
+    flowsChecked: 0,
+    flowsOffSeam: [],
     ok: false,
   };
   let plan: Plan;
@@ -74,7 +93,9 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
   result.idsChecked = ids.length;
   result.unknownIds = ids.filter((id) => !known.has(id));
   result.seamsWithoutORow = seamsWithoutORow(plan);
-  result.ok = result.schemaErrors.length === 0 && result.unknownIds.length === 0 && result.seamsWithoutORow.length === 0;
+  result.flowsChecked = plan.flows?.length ?? 0;
+  result.flowsOffSeam = flowsOffSeam(plan, map).map((f) => `${f.from} → ${f.to} over ${f.seam}`);
+  result.ok = result.schemaErrors.length === 0 && result.unknownIds.length === 0 && result.seamsWithoutORow.length === 0 && result.flowsOffSeam.length === 0;
   return result;
 }
 
@@ -92,6 +113,8 @@ export function logLine(r: PlanCheckResult): Record<string, unknown> {
     "rubato.plan.unknown_ids": r.unknownIds,
     "rubato.plan.o_rows_missing": r.seamsWithoutORow,
     ids_checked: r.idsChecked,
+    flows_checked: r.flowsChecked,
+    flows_off_seam: r.flowsOffSeam,
     schema_errors: r.schemaErrors,
     parse_error: r.parseError,
     ok: r.ok,

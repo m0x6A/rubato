@@ -70,6 +70,14 @@ One paragraph: what this change does and why, in the words of the issue.
 | --- | --- | --- | --- | --- |
 | | | | | |
 
+## Flows
+
+<!-- What this change sends across seams, one row per thing and direction. Kind: data | control. The seam must join From and To. Rubato draws these on the shared map. -->
+
+| From | To | Seam | Kind | Carries |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
 ## Review map
 
 1.

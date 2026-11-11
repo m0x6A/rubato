@@ -1,4 +1,4 @@
-import type { Flow, IssueRef, MapRef, Overview } from "../../protocol.ts";
+import type { Flow, IssueRef, IssueSummary, MapRef, Overview } from "../../protocol.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
 import { type FlowLine, type Touching, explain } from "./explain.ts";
 
@@ -243,6 +243,98 @@ export function Inspector({ overview, selection, onSelect, onSelectIssue }: Prop
       )}
       <h3>Touching it now</h3>
       <TouchingNow touching={x.touching} onSelectIssue={onSelectIssue} />
+    </section>
+  );
+}
+
+interface PlanProps {
+  issue: IssueSummary;
+  onSelect: (ref: MapRef | null) => void;
+}
+
+/**
+ * The selected issue's plan, next to the map that is showing it (design S11): what it changes
+ * where, what it will send across seams, how a break would be found at 3 am, the seam-level
+ * questions that wait for a human, and the decisions recorded on the issue with who and when.
+ */
+export function PlanInspector({ issue, onSelect }: PlanProps) {
+  const plan = issue.plan;
+  if (!plan) {
+    return null;
+  }
+  const seamQuestions = (plan.assumed ?? []).filter((a) => a.scope === "seam");
+  const decisions = issue.decisions ?? [];
+  return (
+    <section className="inspector" data-testid="plan-inspector" aria-label={`The plan of ${issueKey(issue.issue)}`}>
+      <header>
+        <h2>The plan on the map</h2>
+        <span className="kind">{plan.path}</span>
+      </header>
+      <h3>Changes</h3>
+      <ul className="plain">
+        {plan.affected_parts.map((p) => (
+          <li key={p.node}>
+            <Ref target={{ kind: "node", id: p.node }} onSelect={onSelect} /> <span className={`badge ${p.status === "new" ? "designing" : ""}`}>{p.status}</span> {p.change}
+          </li>
+        ))}
+      </ul>
+      <h3>Sends</h3>
+      {(plan.flows ?? []).length ? (
+        <ul className="plain">
+          {(plan.flows ?? []).map((f, i) => (
+            <li key={i}>
+              <span className={`flow-kind ${f.kind}`}>{f.kind}</span> {f.carries}: <Ref target={{ kind: "node", id: f.from }} onSelect={onSelect} /> → <Ref target={{ kind: "node", id: f.to }} onSelect={onSelect} />{" "}
+              <span className="muted">over</span> <Ref target={{ kind: "seam", id: f.seam }} onSelect={onSelect} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="gap">The plan has no Flows table: what it sends across seams is {NOT_DESCRIBED}.</p>
+      )}
+      <h3>If it breaks at 3 am</h3>
+      {(plan.o_rows ?? []).length ? (
+        <ul className="plain">
+          {(plan.o_rows ?? []).map((row, i) => (
+            <li key={i}>
+              <Ref target={{ kind: "seam", id: row.seam }} onSelect={onSelect} />
+              {row.breaks_like ? ` (${row.breaks_like})` : ""}: {row.signal} <span className="muted">on panel</span> {row.panel}, <span className="muted">wakes</span> {row.owner}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="gap">The plan has no O-rows.</p>
+      )}
+      <h3>Waiting for a human</h3>
+      {seamQuestions.length ? (
+        <ul className="plain">
+          {seamQuestions.map((a) => (
+            <li key={a.id} className="warn">
+              {a.id}: {a.decision} <span className="muted">assumed</span> {a.chosen}
+              {a.alternatives ? ` (instead of ${a.alternatives})` : ""}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No seam-level question is open.</p>
+      )}
+      <h3>Decisions</h3>
+      {decisions.length ? (
+        <ul className="plain">
+          {decisions.map((d) => (
+            <li key={d.comment_id}>
+              <a href={d.url} target="_blank" rel="noreferrer">
+                {d.title}
+              </a>{" "}
+              <span className="muted">
+                {d.author}, {relative(d.created_at)}
+              </span>
+              {d.chosen ? `: ${d.chosen}` : ""}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No Decision: comment on the issue yet.</p>
+      )}
     </section>
   );
 }
