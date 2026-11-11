@@ -41,6 +41,13 @@
     "map": {
       "$ref": "#/$defs/MapResponse"
     },
+    "queue": {
+      "description": "What each developer intends to run on their companions, lane by lane (ADR 0020).\nNever an input to progress.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QueuedIssue"
+      }
+    },
     "unpinned_sessions": {
       "description": "Sessions not attached to any issue (branch outside the convention).",
       "type": "array",
@@ -1029,6 +1036,47 @@
         "checks",
         "updated_at",
         "url"
+      ]
+    },
+    "QueuedIssue": {
+      "description": "One issue waiting on one companion.",
+      "type": "object",
+      "properties": {
+        "companion_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "last_start_error": {
+          "description": "Why the latest start from the queue did not start, as the companion reported it. Absent\nuntil a start is refused or fails; the entry stays queued.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "position": {
+          "description": "Place in the lane, from 0.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "queued_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "queued_by": {
+          "description": "GitHub login of who queued it: the companion's own user.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "companion_id",
+        "queued_by",
+        "queued_at",
+        "position"
       ]
     },
     "RepoRef": {

@@ -320,6 +320,7 @@ async function main() {
       "rubato.backlog.listed_at",
       "rubato.backlog.issues",
       "rubato.github.repos_uncovered",
+      "rubato.queue.depth",
     ],
     "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered", "rubato.sessions.by_state"],
   };

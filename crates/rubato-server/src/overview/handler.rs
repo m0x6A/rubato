@@ -28,11 +28,23 @@ pub async fn overview(
         .await
         .map_err(|e| internal(SLICE, e))?;
     let built = build::build(&inputs, Some(&map), &app.config.limits, Utc::now());
-    let companions = pairing::list_pairings(&app.db, None)
+    let companions: Vec<_> = pairing::list_pairings(&app.db, None)
         .await
         .map_err(|e| internal(SLICE, e))?
         .into_iter()
         .map(|r| pairing::to_info(&app, r))
+        .collect();
+    // A revoked companion's lane takes no starts, so its queue is not shown (its rows go with
+    // the next queue write).
+    let queue = inputs
+        .queue
+        .iter()
+        .filter(|q| {
+            companions
+                .iter()
+                .any(|c| c.companion_id == q.companion_id && c.revoked_at.is_none())
+        })
+        .cloned()
         .collect();
     Ok(Json(Overview {
         map: MapResponse {
@@ -46,6 +58,7 @@ pub async fn overview(
         unpinned_sessions: built.unpinned_sessions,
         backlog: built.backlog,
         layout: built.layout,
+        queue,
         generated_at: Utc::now(),
     }))
 }

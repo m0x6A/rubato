@@ -919,6 +919,36 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 56,
+      "title": "Queue depth",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 52
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Issues queued per companion (what its owner intends to run there), recorded every poll tick for every pairing, 0 for an empty or revoked one. Queues that grow while 'Sessions by state' stays flat are intent without sessions: a question for the person, not a fault. A start that did not start keeps its entry and logs 'queue entry kept, launch not started' with rubato.companion_id and rubato.issue.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (rubato_companion_id) (rubato_queue_depth)",
+          "legendFormat": "{{rubato_companion_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

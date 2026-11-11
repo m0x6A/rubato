@@ -196,6 +196,8 @@ PinRequest?: PinRequest
 Plan?: Plan
 Progress?: Progress
 PullRequestState?: PullRequestState
+QueueOrder?: QueueOrder
+QueueRequest?: QueueRequest
 ServerEnvelope?: ServerEnvelope
 SessionState?: SessionState
 StaleSession?: StaleSession1
@@ -728,6 +730,11 @@ issues: IssueSummary[]
 layout?: MapLayout1
 map: MapResponse
 /**
+ * What each developer intends to run on their companions, lane by lane (ADR 0020).
+ * Never an input to progress.
+ */
+queue?: QueuedIssue[]
+/**
  * Sessions not attached to any issue (branch outside the convention).
  */
 unpinned_sessions?: SessionState[]
@@ -796,6 +803,27 @@ positions?: {
 [k: string]: Position | undefined
 }
 }
+/**
+ * One issue waiting on one companion.
+ */
+export interface QueuedIssue {
+companion_id: string
+issue: IssueRef
+/**
+ * Why the latest start from the queue did not start, as the companion reported it. Absent
+ * until a start is refused or fails; the entry stays queued.
+ */
+last_start_error?: (string | null)
+/**
+ * Place in the lane, from 0.
+ */
+position: number
+queued_at: string
+/**
+ * GitHub login of who queued it: the companion's own user.
+ */
+queued_by: string
+}
 export interface PairApproveRequest {
 user_code: string
 }
@@ -823,6 +851,21 @@ verification_url: string
 export interface PinRequest {
 issue: IssueRef
 target: MapRef
+}
+/**
+ * Body of `PUT`: the full order of one lane. Refused when its set of issues differs from what
+ * is stored, so a reorder never drops an entry added elsewhere meanwhile.
+ */
+export interface QueueOrder {
+companion_id: string
+issues: IssueRef[]
+}
+/**
+ * Body of `POST` (add) and `DELETE` (remove) on the queue route.
+ */
+export interface QueueRequest {
+companion_id: string
+issue: IssueRef
 }
 export interface ServerEnvelope {
 message: ServerMessage

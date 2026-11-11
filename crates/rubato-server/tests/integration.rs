@@ -11,6 +11,7 @@ use rubato_protocol::pairing::{
 };
 use rubato_protocol::pins::routes as pin_routes;
 use rubato_protocol::progress::routes as overview_routes;
+use rubato_protocol::queue::routes as queue_routes;
 use rubato_protocol::web_link::routes as web_routes;
 use rubato_protocol::{
     ChecksStatus, CompanionEnvelope, CompanionMessage, Finding, IssueRef, MapRef, Overview,
@@ -1649,4 +1650,250 @@ async fn layout_delete_returns_removed_positions() {
         r.json::<MapLayout>().await.unwrap().positions.is_empty(),
         "nothing left to remove"
     );
+}
+
+impl Harness {
+    /// A queue write as `user`: the status and the body.
+    async fn queue(
+        &self,
+        method: reqwest::Method,
+        user: &str,
+        body: serde_json::Value,
+    ) -> (u16, String) {
+        let r = self
+            .http
+            .request(method, format!("{}{}", self.url, queue_routes::QUEUE))
+            .header("x-rubato-dev-user", user)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        (r.status().as_u16(), r.text().await.unwrap())
+    }
+
+    /// The numbers queued on a companion, in order, as everyone sees them.
+    async fn queued(&self, companion_id: Uuid) -> Vec<u64> {
+        self.overview("m0x6A")
+            .await
+            .queue
+            .iter()
+            .filter(|q| q.companion_id == companion_id)
+            .map(|q| q.issue.number)
+            .collect()
+    }
+}
+
+fn queue_body(companion_id: Uuid, number: u64) -> serde_json::Value {
+    serde_json::json!({ "issue": { "repo": "m0x6A/rubato", "number": number }, "companion_id": companion_id })
+}
+
+#[tokio::test]
+async fn queue_add_reorder_remove() {
+    use reqwest::Method;
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let (lane, _token) = h.pair("m0x6A").await;
+    assert!(h.overview("m0x6A").await.queue.is_empty());
+
+    // Add three; adding one twice changes nothing.
+    for n in [5, 6, 7, 6] {
+        let (status, body) = h.queue(Method::POST, "m0x6A", queue_body(lane, n)).await;
+        assert_eq!(status, 201, "{body}");
+    }
+    await_reason(&mut web, "queue").await;
+    assert_eq!(h.queued(lane).await, [5, 6, 7]);
+    let ov = h.overview("alice").await;
+    assert_eq!(ov.queue.len(), 3, "everyone sees every queue");
+    assert_eq!(ov.queue[0].queued_by, "m0x6A");
+    assert_eq!(
+        ov.queue.iter().map(|q| q.position).collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+    // An issue nobody pinned can be queued; it is not a tracked issue and has no progress.
+    assert!(ov.issues.is_empty());
+
+    // Reorder with the full order of the lane.
+    let order = |numbers: &[u64]| {
+        serde_json::json!({
+            "companion_id": lane,
+            "issues": numbers.iter().map(|n| serde_json::json!({ "repo": "m0x6A/rubato", "number": n })).collect::<Vec<_>>(),
+        })
+    };
+    let (status, body) = h.queue(Method::PUT, "m0x6A", order(&[7, 5, 6])).await;
+    assert_eq!(status, 204, "{body}");
+    assert_eq!(h.queued(lane).await, [7, 5, 6]);
+    // An order that drops or adds an entry is refused: a reorder never deletes what another
+    // tab added.
+    for stale in [order(&[7, 5]), order(&[7, 5, 6, 8]), order(&[7, 7, 5])] {
+        let (status, body) = h.queue(Method::PUT, "m0x6A", stale).await;
+        assert_eq!(status, 409, "{body}");
+        assert!(body.contains("differs"), "{body}");
+    }
+    assert_eq!(h.queued(lane).await, [7, 5, 6]);
+
+    // Remove one; the rest close up. Removing it again is 404.
+    let (status, _) = h.queue(Method::DELETE, "m0x6A", queue_body(lane, 5)).await;
+    assert_eq!(status, 204);
+    assert_eq!(h.queued(lane).await, [7, 6]);
+    assert_eq!(
+        h.overview("m0x6A")
+            .await
+            .queue
+            .iter()
+            .map(|q| q.position)
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+    let (status, _) = h.queue(Method::DELETE, "m0x6A", queue_body(lane, 5)).await;
+    assert_eq!(status, 404);
+
+    // A lane holds at most 50.
+    for n in 100..148 {
+        let (status, body) = h.queue(Method::POST, "m0x6A", queue_body(lane, n)).await;
+        assert_eq!(status, 201, "{n}: {body}");
+    }
+    let (status, body) = h.queue(Method::POST, "m0x6A", queue_body(lane, 999)).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("50"), "{body}");
+    println!("checked 53 adds, 4 reorders, 2 removes");
+}
+
+#[tokio::test]
+async fn queue_refuses_another_users_and_revoked_companions() {
+    use reqwest::Method;
+    let h = harness().await;
+    let (mine, _t1) = h.pair("m0x6A").await;
+    let (alices, _t2) = h.pair("alice").await;
+    let (status, _) = h.queue(Method::POST, "alice", queue_body(alices, 1)).await;
+    assert_eq!(status, 201);
+    let order = |c: Uuid| serde_json::json!({ "companion_id": c, "issues": [{ "repo": "m0x6A/rubato", "number": 1 }] });
+
+    // m0x6A on alice's lane: all three methods are forbidden, and nothing changes.
+    let attempts = [
+        (Method::POST, queue_body(alices, 2)),
+        (Method::PUT, order(alices)),
+        (Method::DELETE, queue_body(alices, 1)),
+    ];
+    for (method, body) in &attempts {
+        let (status, text) = h.queue(method.clone(), "m0x6A", body.clone()).await;
+        assert_eq!(status, 403, "{method}: {text}");
+    }
+    assert_eq!(h.queued(alices).await, [1]);
+    // A companion nobody has is refused the same way, not revealed as missing.
+    let (status, _) = h
+        .queue(Method::POST, "m0x6A", queue_body(Uuid::new_v4(), 2))
+        .await;
+    assert_eq!(status, 403);
+
+    // My own lane, then revoked: its entries are no longer shown and it takes no writes.
+    let (status, _) = h.queue(Method::POST, "m0x6A", queue_body(mine, 3)).await;
+    assert_eq!(status, 201);
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, mine))
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success());
+    assert!(
+        h.queued(mine).await.is_empty(),
+        "a revoked lane shows no queue"
+    );
+    for (method, body) in [
+        (Method::POST, queue_body(mine, 4)),
+        (
+            Method::PUT,
+            serde_json::json!({ "companion_id": mine, "issues": [{ "repo": "m0x6A/rubato", "number": 3 }] }),
+        ),
+        (Method::DELETE, queue_body(mine, 3)),
+    ] {
+        let (status, text) = h.queue(method.clone(), "m0x6A", body).await;
+        assert_eq!(status, 403, "{method}: {text}");
+    }
+    // The next accepted queue write clears the revoked lane's rows.
+    let (status, _) = h.queue(Method::POST, "alice", queue_body(alices, 9)).await;
+    assert_eq!(status, 201);
+    let left: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM companion_queue WHERE companion_id = ?")
+            .bind(mine.to_string())
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+    println!("checked 7 refused queue writes");
+}
+
+#[tokio::test]
+async fn queue_entry_leaves_on_started_and_stays_on_refused() {
+    use reqwest::Method;
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (lane, mut ws) = ready_to_launch(&h, &issue).await;
+    let (status, _) = h.queue(Method::POST, "m0x6A", queue_body(lane, 3)).await;
+    assert_eq!(status, 201);
+    let before = progress_of(&h, &issue).await;
+
+    // Start from the queue: the web sends only the issue and the lane's companion.
+    let launch = |h: &Harness| {
+        h.http
+            .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+            .json(&serde_json::json!({ "issue": issue, "companion_id": lane }))
+            .send()
+    };
+    let command_id = |t: String| {
+        let env: ServerEnvelope = serde_json::from_str(&t).unwrap();
+        let ServerMessage::Launch(cmd) = env.message else {
+            panic!("{:?}", env.message)
+        };
+        cmd.id
+    };
+    assert_eq!(launch(&h).await.unwrap().status(), 200);
+    let Some(Ok(Message::Text(t))) = ws.next().await else {
+        panic!("no launch on the socket")
+    };
+    let first = command_id(t.to_string());
+    assert_eq!(
+        h.queued(lane).await,
+        [3],
+        "sent, not yet started: still queued"
+    );
+
+    // The companion refuses: the entry stays, with the reason, and progress is what it was.
+    let refused = CompanionEnvelope {
+        seq: 30,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Refused {
+            command_id: first,
+            reason: rubato_protocol::RefusalReason::MissingDependency,
+            detail: "tmux-ide 2.9 is needed".into(),
+            at: chrono::Utc::now(),
+        }),
+    };
+    send(&mut ws, &refused).await;
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(ov.queue.len(), 1);
+    assert_eq!(
+        ov.queue[0].last_start_error.as_deref(),
+        Some("missing_dependency: tmux-ide 2.9 is needed")
+    );
+    assert_eq!(progress_of(&h, &issue).await.state, before.state);
+
+    // The second start is reported as started: the entry leaves the queue.
+    assert_eq!(launch(&h).await.unwrap().status(), 200);
+    let Some(Ok(Message::Text(t))) = ws.next().await else {
+        panic!("no second launch on the socket")
+    };
+    let started = CompanionEnvelope {
+        seq: 31,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Started {
+            command_id: command_id(t.to_string()),
+            session_id: Uuid::new_v4(),
+            worktree: "/w".into(),
+            tmux_session: "s".into(),
+            at: chrono::Utc::now(),
+        }),
+    };
+    send(&mut ws, &started).await;
+    assert!(h.queued(lane).await.is_empty());
 }

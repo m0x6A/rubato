@@ -104,6 +104,7 @@ launch          start a session through your own companion      launches, cap_hi
 layout          where each part sits on the shared map          map_layout
 map             load, validate, cache and serve the map         map_cache
 plans           parse and keep plan files from issue branches   plans
+queue           issues queued on your own companions, in order  companion_queue
 github_poll     issue reads, open issues, repo coverage         pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
@@ -158,6 +159,7 @@ map        SystemMap, MapResponse; MAP, MAP_RELOAD
 plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord
 progress   derive_progress, Overview, IssueSummary, Backlog, Finding; OVERVIEW
+queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 web_link   WebEvent; WEB_WS
 ```
 

@@ -24,6 +24,7 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Web writes rejected", "rubato_web_rejected_total"],
   ["Repos not covered", "rubato_github_repos_uncovered"],
   ["Layout writes", "rubato_layout_writes_total"],
+  ["Queue depth", "rubato_queue_depth"],
 ];
 
 type Panel = { title: string; type?: string; targets?: { expr?: string }[] };

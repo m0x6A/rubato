@@ -31,6 +31,7 @@ const SLICES: &[&str] = &[
     "layout",
     "map",
     "plans",
+    "queue",
     "github_poll",
     "overview",
     "web_link",

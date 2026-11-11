@@ -9,6 +9,7 @@ use crate::layout::MapLayout;
 use crate::map::MapResponse;
 use crate::pairing::PairingInfo;
 use crate::plan::Plan;
+use crate::queue::QueuedIssue;
 use crate::session::{SessionState, SessionStatus};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
@@ -254,6 +255,10 @@ pub struct Overview {
     /// automatically. Never an input to progress.
     #[serde(default)]
     pub layout: MapLayout,
+    /// What each developer intends to run on their companions, lane by lane (ADR 0020).
+    /// Never an input to progress.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queue: Vec<QueuedIssue>,
     pub generated_at: DateTime<Utc>,
 }
 
