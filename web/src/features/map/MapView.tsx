@@ -1,5 +1,6 @@
-import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeProps, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
+import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { mergeNodes } from "./nodes.ts";
 import type { MapRef } from "../../protocol.ts";
 import type { OnPin } from "./drop.ts";
 import { type Graph, type GraphEdge, type GraphNode, layout } from "./graph.ts";
@@ -79,7 +80,7 @@ function Inner({ graph, selected, onSelect, onPin }: Props) {
   const selectedNode = selected?.kind === "node" ? selected.id : null;
   const selectedSeam = selected?.kind === "seam" ? selected.id : null;
 
-  const nodes: MapFlowNode[] = useMemo(
+  const wanted: MapFlowNode[] = useMemo(
     () =>
       graph.nodes.map((n) => ({
         id: n.id,
@@ -89,6 +90,13 @@ function Inner({ graph, selected, onSelect, onPin }: Props) {
       })),
     [graph, positions, selectedNode, onPin],
   );
+  // React Flow draws an edge only between parts it has measured, and it reports a measurement
+  // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
+  // overview updates them in place: a part that is rebuilt from scratch loses its measurement
+  // and its seams (and their chips) disappear until something resizes it.
+  const [nodes, setNodes] = useState<MapFlowNode[]>([]);
+  useEffect(() => setNodes((current) => mergeNodes(current, wanted)), [wanted]);
+  const onNodesChange = useCallback((changes: NodeChange<MapFlowNode>[]) => setNodes((current) => applyNodeChanges(changes, current)), []);
   const edges: SeamFlowEdge[] = useMemo(
     () =>
       graph.edges.map((e) => ({
@@ -112,6 +120,7 @@ function Inner({ graph, selected, onSelect, onPin }: Props) {
       edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
+      onNodesChange={onNodesChange}
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable

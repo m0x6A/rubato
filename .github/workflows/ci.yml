@@ -72,6 +72,13 @@ jobs:
       - run: cd web && pnpm exec playwright install --with-deps chromium
       - name: End to end against the real server
         run: cd web && ./e2e/run.sh
+      - name: Keep the Playwright traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-traces
+          path: web/test-results
+          retention-days: 7
 
   e2e:
     name: End to end (two repos, three issues) and alert rules
