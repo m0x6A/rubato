@@ -3,7 +3,7 @@ feature: 48-interactive-map
 issue: 48
 title: Make the system map interactive and link it to open issues
 track: full
-status: approved
+status: implemented
 date: 2026-11-10
 author: Mattias Jonsson
 produced_by: { model: claude-fable-5-2, model_name: Claude Fable 5.2, tool: Claude Code (plan mode, then feature-design), effort: unknown }
