@@ -3,7 +3,7 @@
  * sessions; seams badged with open plans and collisions. Pure, so it is tested without a DOM.
  */
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
-import type { Finding, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Seam, SessionState, SessionStatus } from "../../protocol.ts";
+import type { Finding, Flow, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Seam, SessionState, SessionStatus } from "../../protocol.ts";
 import { issueKey } from "../../shared/format.ts";
 
 export type Paint = PartStatus | null;
@@ -24,6 +24,8 @@ export interface GraphEdge {
   to: string;
   owner: string;
   carries: string | undefined;
+  /** What crosses the seam, as the map declares it (ADR 0017). Empty when it declares none. */
+  flows: Flow[];
   openPlans: IssueRef[];
   collision: boolean;
   issues: IssueSummary[];
@@ -65,6 +67,7 @@ export function buildGraph(ov: Overview): Graph {
     to: s.to,
     owner: s.owner,
     carries: s.carries ?? undefined,
+    flows: s.flows ?? [],
     openPlans: [],
     collision: false,
     issues: ov.issues.filter((i) => i.pins.some((p) => p.kind === "seam" && p.id === s.id)),

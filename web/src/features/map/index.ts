@@ -2,3 +2,4 @@
 export { buildGraph } from "./graph.ts";
 export { MapView } from "./MapView.tsx";
 export { mapApi } from "./api.ts";
+export { Inspector } from "./Inspector.tsx";

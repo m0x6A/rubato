@@ -3,37 +3,61 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mergeNodes } from "./nodes.ts";
 import type { MapLayout, MapRef } from "../../protocol.ts";
 import { type XY, placePart, positionsToSave } from "./layout.ts";
+import { lit } from "./explain.ts";
+import { type Arrow, LENSES, type Lens, arrowsFor, flowCounts } from "./flows.ts";
 import type { OnPin } from "./drop.ts";
 import { type Graph, type GraphEdge, type GraphNode, layout } from "./graph.ts";
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 
-type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined };
+type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean };
 type MapFlowNode = Node<MapNodeData, "map">;
-type SeamEdgeData = { seam: GraphEdge; selected: boolean; onSelect: (id: string) => void; onPin: OnPin | undefined };
+type SeamEdgeData = { seam: GraphEdge; arrow: Arrow; /** This arrow carries the seam's chip: one chip per seam in every lens. */ chip: boolean; selected: boolean; onSelect: (id: string) => void; onPin: OnPin | undefined };
 type SeamFlowEdge = Edge<SeamEdgeData, "seam">;
 
 function MapNodeCard({ data }: NodeProps<MapFlowNode>) {
   return (
     <>
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <PartCard node={data.node} selected={data.selected} onPin={data.onPin} />
+      <PartCard node={data.node} selected={data.selected} onPin={data.onPin} dim={data.dim} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
     </>
   );
 }
 
-/** A seam: the path with its arrowhead, and its chip as an HTML label, which can take a drop. */
-function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }: EdgeProps<SeamFlowEdge>) {
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+/** How far above a flow's own label the seam's chip sits. */
+const CHIP_ABOVE_FLOW = 24;
+// A label must fit between two columns of parts (200 px apart); the title carries the whole text.
+const FLOW_LABEL_MAX = 28;
+
+/**
+ * One arrow of a seam: the seam itself, or one declared flow. The path keeps the seam's own
+ * geometry, shifted sideways so parallel flows do not overlap; a flow that runs against the
+ * seam's direction has its head at the start. The seam's chip is an HTML label, which can take
+ * a drop; a flow's label says what it carries.
+ */
+function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, markerStart, data }: EdgeProps<SeamFlowEdge>) {
+  const offset = data?.arrow.offset ?? 0;
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY: sourceY + offset, targetX, targetY: targetY + offset, sourcePosition, targetPosition });
+  const flow = data && data.arrow.kind !== "structure" ? data.arrow : null;
+  const label = flow?.label ?? "";
   return (
     <>
-      <BaseEdge path={path} {...(markerEnd ? { markerEnd } : {})} />
+      <BaseEdge path={path} {...(markerEnd ? { markerEnd } : {})} {...(markerStart ? { markerStart } : {})} {...(data?.arrow.dashed ? { style: { strokeDasharray: "7 5" } } : {})} />
       {data && (
         <EdgeLabelRenderer>
-          <div className="seam-label" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
-            <SeamChip seam={data.seam} selected={data.selected} onSelect={data.onSelect} onPin={data.onPin} />
-          </div>
+          {flow && (
+            <div className={`seam-label flow-label ${flow.kind}`} data-testid={`flow-${flow.id}`} title={`${flow.kind} flow over ${data.seam.id}: ${label}`} style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
+              <span aria-hidden="true">{flow.reversed ? "← " : ""}</span>
+              {label.length > FLOW_LABEL_MAX ? `${label.slice(0, FLOW_LABEL_MAX - 1)}…` : label}
+              <span aria-hidden="true">{flow.reversed ? "" : " →"}</span>
+            </div>
+          )}
+          {data.chip && (
+            <div className="seam-label" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - (flow ? CHIP_ABOVE_FLOW : 0)}px)` }}>
+              <SeamChip seam={data.seam} selected={data.selected} onSelect={data.onSelect} onPin={data.onPin} />
+            </div>
+          )}
         </EdgeLabelRenderer>
       )}
     </>
@@ -87,6 +111,10 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shape]);
 
+  const [lens, setLens] = useState<Lens>("structure");
+  const counts = useMemo(() => flowCounts(graph.edges), [graph]);
+  // What stays lit while something is selected: it, its neighbours and the seams between them.
+  const litNow = useMemo(() => lit(graph.edges, selected), [graph, selected]);
   const selectedNode = selected?.kind === "node" ? selected.id : null;
   const selectedSeam = selected?.kind === "seam" ? selected.id : null;
 
@@ -101,11 +129,11 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         id: n.id,
         type: "map",
         position: held.current.get(n.id) ?? settled.get(n.id) ?? { x: 0, y: 0 },
-        data: { node: n, selected: selectedNode === n.id, onPin },
+        data: { node: n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id) },
       })),
     // `heldRevision` stands for `held`, a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, settled, selectedNode, onPin, heldRevision],
+    [graph, settled, selectedNode, onPin, heldRevision, litNow],
   );
   // React Flow draws an edge only between parts it has measured, and it reports a measurement
   // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
@@ -173,16 +201,29 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   );
   const edges: SeamFlowEdge[] = useMemo(
     () =>
-      graph.edges.map((e) => ({
-        id: e.id,
-        type: "seam",
-        source: e.from,
-        target: e.to,
-        className: [e.collision ? "collision" : e.openPlans.length ? "busy" : "", selectedSeam === e.id ? "chosen" : ""].filter(Boolean).join(" "),
-        markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-        data: { seam: e, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin },
-      })),
-    [graph, selectedSeam, onSelect, onPin],
+      graph.edges.flatMap((e) =>
+        arrowsFor(e, lens).map((arrow, i) => {
+          const marker = { type: MarkerType.ArrowClosed, width: 18, height: 18 };
+          return {
+            id: arrow.id,
+            type: "seam" as const,
+            source: e.from,
+            target: e.to,
+            className: [
+              e.collision ? "collision" : e.openPlans.length ? "busy" : "",
+              selectedSeam === e.id ? "chosen" : "",
+              arrow.kind === "structure" ? "" : `flow ${arrow.kind}`,
+              arrow.faint ? "faint" : "",
+              litNow !== null && !litNow.seams.has(e.id) ? "dim" : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
+            ...(arrow.reversed ? { markerStart: marker } : { markerEnd: marker }),
+            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin },
+          };
+        }),
+      ),
+    [graph, lens, selectedSeam, onSelect, onPin, litNow],
   );
 
   if (!positions) {
@@ -199,13 +240,42 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       nodesConnectable={false}
       elementsSelectable
       onNodeClick={(_e, n) => onSelect({ kind: "node", id: n.id })}
-      onEdgeClick={(_e, edge) => onSelect({ kind: "seam", id: edge.id })}
+      onEdgeClick={(_e, edge) => onSelect({ kind: "seam", id: edge.data?.seam.id ?? edge.id })}
       onPaneClick={() => onSelect(null)}
       proOptions={{ hideAttribution: true }}
       minZoom={0.2}
     >
       <Background gap={24} />
       <Controls showInteractive={false} />
+      <Panel position="top-left">
+        <div className="lens" role="radiogroup" aria-label="What the arrows show">
+          {LENSES.map((l) => (
+            <button key={l.id} type="button" role="radio" aria-checked={lens === l.id} className={lens === l.id ? "active" : ""} onClick={() => setLens(l.id)}>
+              {l.label}
+              {l.id !== "structure" && ` (${counts[l.id]})`}
+            </button>
+          ))}
+        </div>
+        <p className="legend" data-testid="legend">
+          {lens === "structure" && "Each arrow points from the part that depends to the part it depends on."}
+          {lens === "data" && (
+            <>
+              <svg width="34" height="8" aria-hidden="true">
+                <line x1="0" y1="4" x2="34" y2="4" className="legend-line" />
+              </svg>{" "}
+              Data moves along a solid arrow, in the arrow's direction. A faint seam declares no data flow.
+            </>
+          )}
+          {lens === "control" && (
+            <>
+              <svg width="34" height="8" aria-hidden="true">
+                <line x1="0" y1="4" x2="34" y2="4" className="legend-line" strokeDasharray="7 5" />
+              </svg>{" "}
+              Control runs along a dashed arrow: one side tells the other to act. A faint seam declares no control flow.
+            </>
+          )}
+        </p>
+      </Panel>
       {onAutoArrange && (
         <Panel position="top-right">
           <button type="button" className="map-action" onClick={onAutoArrange} disabled={Object.keys(stored?.positions ?? {}).length === 0} title="Remove every saved position, for the whole team, and lay the map out automatically">

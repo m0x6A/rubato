@@ -32,6 +32,36 @@ describe("map", () => {
     expect(problems).toContain('owner "zzz"');
   });
 
+  it("map fixtures", () => {
+    // The same two files `rubato_protocol::map::tests::map_fixtures` reads: same result on both sides.
+    const dir = resolve(root, "schema/fixtures/maps");
+    const good = loadMapText(readFileSync(resolve(dir, "flows.yml"), "utf8"), schemaDir);
+    expect(good).toEqual(JSON.parse(readFileSync(resolve(dir, "flows.json"), "utf8")));
+    let err: unknown;
+    try {
+      loadMapText(readFileSync(resolve(dir, "flows-off-seam.yml"), "utf8"), schemaDir);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(MapError);
+    expect((err as MapError).problems).toEqual([
+      'seam "web-server" has a flow from "server" to "store", which are not its two nodes',
+      'seam "web-server" has a flow from "web" to "web", which are not its two nodes',
+    ]);
+  });
+
+  it("an old map and an old plan validate against the new schemas", () => {
+    // A map written before flows and seam descriptions existed.
+    const old = loadMapText("version: 1\nname: old\nnodes:\n  - {id: a, kind: context}\n  - {id: b, kind: context}\nseams:\n  - {id: a-b, from: a, to: b, owner: a}\n", schemaDir);
+    expect(old.seams?.[0]?.flows).toBeUndefined();
+    // A flow of an unknown kind is refused by the schema.
+    expect(() => loadMapText("version: 1\nname: x\nnodes:\n  - {id: a, kind: context}\n  - {id: b, kind: context}\nseams:\n  - {id: a-b, from: a, to: b, owner: a, flows: [{kind: magic, from: a, to: b, carries: x}]}\n", schemaDir)).toThrow(MapError);
+    // The plan fixture from before the Flows table still passes.
+    expect(checkPlanFile(resolve(fixtures, "valid.md"), map, schemaDir).ok).toBe(true);
+    // The team's own map declares flows on every seam.
+    expect((map.seams ?? []).filter((s) => !s.flows?.length || !s.description).map((s) => s.id)).toEqual([]);
+  });
+
   it("rejects a map with a wrong kind", () => {
     expect(() => loadMapText("version: 1\nname: x\nnodes:\n  - id: a\n    kind: thing\n", schemaDir)).toThrow(MapError);
   });

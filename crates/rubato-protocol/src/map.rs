@@ -84,6 +84,39 @@ pub struct Seam {
     /// The check that guards this seam.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard: Option<String>,
+    /// What this seam is for, in a sentence a newcomer can read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// What crosses this seam, one entry per thing and direction (ADR 0017). Optional: a seam
+    /// without flows is drawn as a plain dependency from `from` to `to`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flows: Vec<Flow>,
+}
+
+/// Data moves; control tells the other side to do something.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowKind {
+    Data,
+    Control,
+}
+
+/// One thing crossing a seam in one direction. `from` and `to` are the seam's two nodes, in
+/// either order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Flow {
+    pub kind: FlowKind,
+    pub from: String,
+    pub to: String,
+    /// What it carries: a type, a message, a command.
+    pub carries: String,
+}
+
+impl Seam {
+    /// Whether a flow from `from` to `to` runs along this seam: its two nodes, either way.
+    pub fn joins(&self, from: &str, to: &str) -> bool {
+        (from == self.from && to == self.to) || (from == self.to && to == self.from)
+    }
 }
 
 /// A reference the map does not declare.
@@ -95,6 +128,12 @@ pub enum MapError {
     UnknownNode { seam: String, node: String },
     #[error("seam {seam:?} owner {owner:?} is neither its from nor its to side")]
     OwnerNotASide { seam: String, owner: String },
+    #[error("seam {seam:?} has a flow from {from:?} to {to:?}, which are not its two nodes")]
+    FlowOffSeam {
+        seam: String,
+        from: String,
+        to: String,
+    },
 }
 
 impl SystemMap {
@@ -163,6 +202,15 @@ impl SystemMap {
                     owner: s.owner.clone(),
                 });
             }
+            for f in &s.flows {
+                if !s.joins(&f.from, &f.to) {
+                    errors.push(MapError::FlowOffSeam {
+                        seam: s.id.clone(),
+                        from: f.from.clone(),
+                        to: f.to.clone(),
+                    });
+                }
+            }
         }
         if errors.is_empty() {
             Ok(())
@@ -223,6 +271,8 @@ mod tests {
                 carries: None,
                 owner: "a".into(),
                 guard: None,
+                description: None,
+                flows: vec![],
             }],
         };
         assert_eq!(
@@ -265,7 +315,89 @@ mod tests {
             carries: None,
             owner: owner.into(),
             guard: None,
+            description: None,
+            flows: vec![],
         }
+    }
+
+    fn flow(kind: FlowKind, from: &str, to: &str) -> Flow {
+        Flow {
+            kind,
+            from: from.into(),
+            to: to.into(),
+            carries: "x".into(),
+        }
+    }
+
+    #[test]
+    fn flow_ends_must_be_the_seams_nodes() {
+        let mut s = seam("a-b", "a", "b", "b");
+        s.flows = vec![
+            flow(FlowKind::Data, "a", "b"),
+            flow(FlowKind::Control, "b", "a"),
+        ];
+        assert_eq!(map(vec![s.clone()]).validate(), Ok(()), "either direction");
+        s.flows = vec![
+            flow(FlowKind::Data, "a", "b"),
+            flow(FlowKind::Data, "a", "c"),
+            flow(FlowKind::Data, "a", "a"),
+        ];
+        let errors = map(vec![s]).validate().unwrap_err();
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            errors
+                .iter()
+                .all(|e| matches!(e, MapError::FlowOffSeam { seam, .. } if seam == "a-b"))
+        );
+        assert!(errors[0].to_string().contains("\"a-b\""), "{}", errors[0]);
+    }
+
+    #[test]
+    fn map_without_flows_still_validates() {
+        // A map file written before flows existed: no `flows`, no seam `description`.
+        let yaml = "version: 1\nname: old\nnodes:\n  - {id: a, kind: context}\n  - {id: b, kind: context}\nseams:\n  - {id: a-b, from: a, to: b, owner: a}\n";
+        let m: SystemMap = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(m.validate(), Ok(()));
+        assert!(m.seams[0].flows.is_empty() && m.seams[0].description.is_none());
+        // And it is written back without the new keys.
+        let out = serde_json::to_string(&m).unwrap();
+        assert!(
+            !out.contains("flows") && !out.contains("description"),
+            "{out}"
+        );
+        // The team's own map.
+        let own: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
+        assert_eq!(own.validate(), Ok(()));
+    }
+
+    /// The fixtures the TypeScript side reads too (plan-check "map fixtures").
+    #[test]
+    fn map_fixtures() {
+        let good: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../schema/fixtures/maps/flows.yml"))
+                .unwrap();
+        assert_eq!(good.validate(), Ok(()));
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../../../schema/fixtures/maps/flows.json")).unwrap();
+        assert_eq!(serde_json::to_value(&good).unwrap(), expected);
+        let bad: SystemMap = serde_yaml_ng::from_str(include_str!(
+            "../../../schema/fixtures/maps/flows-off-seam.yml"
+        ))
+        .unwrap();
+        let errors = bad.validate().unwrap_err();
+        let said: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            said,
+            [
+                "seam \"web-server\" has a flow from \"server\" to \"store\", which are not its two nodes",
+                "seam \"web-server\" has a flow from \"web\" to \"web\", which are not its two nodes",
+            ]
+        );
+        println!(
+            "checked 2 map fixtures, {} flows",
+            good.seams[0].flows.len() + 3
+        );
     }
 
     #[test]

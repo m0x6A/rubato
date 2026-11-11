@@ -76,6 +76,24 @@ describe("map.ts", () => {
     expect(render(s)).toContain("- rubato-companion [context]");
   });
 
+  it("map.ts lists flows per seam", async () => {
+    const { dir, ws } = tempMapRepo();
+    writeFileSync(join(dir, "system-map.yml"), readFileSync(join(root, "schema/fixtures/maps/flows.yml"), "utf8"));
+    const s = await summarize(ws, dir);
+    const seam = s.seams.find((x) => x.id === "web-server");
+    expect(seam?.flows).toEqual([
+      { kind: "data", from: "server", to: "web", carries: "Overview" },
+      { kind: "data", from: "web", to: "server", carries: "PinRequest" },
+      { kind: "control", from: "server", to: "web", carries: "WebEvent Changed" },
+    ]);
+    expect(seam?.description).toBe("The browser reads the whole picture and writes pins.");
+    // A seam without flows lists none.
+    expect(s.seams.find((x) => x.id === "server-store")?.flows).toBeUndefined();
+    const text = render(s);
+    expect(text).toContain("  - data: server → web: Overview");
+    expect(text).toContain("  - control: server → web: WebEvent Changed");
+  });
+
   it("refuses a map that fails the schema", async () => {
     const { dir, ws } = tempMapRepo();
     writeFileSync(join(dir, "system-map.yml"), "version: 1\nname: x\nnodes:\n  - id: a\n    kind: nonsense\n");

@@ -7,14 +7,16 @@ interface Props {
   selected: boolean;
   /** Called when an issue row is dropped on the card. Without it the card takes no drops. */
   onPin?: OnPin | undefined;
+  /** Something else is selected and this part is not next to it. */
+  dim?: boolean | undefined;
 }
 
 /** One part of the map. Renders without React Flow, so it is tested on its own. */
-export function PartCard({ node, selected, onPin }: Props) {
+export function PartCard({ node, selected, onPin, dim }: Props) {
   const { over, handlers } = useIssueDrop<HTMLDivElement>({ kind: "node", id: node.id }, onPin);
   const issues = issueCounts(node.issues);
   const sessions = sessionCounts(node.sessions);
-  const classes = ["map-node", node.kind, node.paint ? `paint-${node.paint}` : "", selected ? "selected" : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
+  const classes = ["map-node", node.kind, node.paint ? `paint-${node.paint}` : "", selected ? "selected" : "", dim ? "dim" : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes} data-testid={`node-${node.id}`} title={node.description} {...handlers}>
       <div className="title">
