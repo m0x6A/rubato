@@ -1,8 +1,8 @@
 # 0019. List open issues for the repos named in the map
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-10
-- **Decided by:** agent (Claude Code, issue #48 design session); proposed for Mattias Jonsson to accept
+- **Decided by:** Mattias Jonsson, accepted 2026-11-11 (drafted by agent, Claude Code issue #48 design session)
 - **Seam:** server-github
 - **Issue:** m0x6A/rubato#48
 

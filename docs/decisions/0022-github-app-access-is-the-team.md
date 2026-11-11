@@ -1,8 +1,8 @@
 # 0022. Register Rubato as a GitHub App; access to its installation decides who is on the team
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-10
-- **Decided by:** agent (Claude Code, issue #48 design session), from Mattias Jonsson's answers in that session ("give the app access through the app registration"; team gate "App access"); proposed for him to accept
+- **Decided by:** Mattias Jonsson, accepted 2026-11-11 (drafted by agent, Claude Code issue #48 design session)
 - **Seam:** server-github, web-server
 - **Issue:** m0x6A/rubato#48
 

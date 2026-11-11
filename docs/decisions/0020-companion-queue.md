@@ -1,8 +1,8 @@
 # 0020. Keep a queue of intended issues per companion, writable only by its owner
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-10
-- **Decided by:** agent (Claude Code, issue #48 design session); proposed for Mattias Jonsson to accept
+- **Decided by:** Mattias Jonsson, accepted 2026-11-11 (drafted by agent, Claude Code issue #48 design session)
 - **Seam:** web-server
 - **Issue:** m0x6A/rubato#48
 
