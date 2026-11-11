@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QueueOrder",
+  "description": "Body of `PUT`: the full order of one lane. Refused when its set of issues differs from what\nis stored, so a reorder never drops an entry added elsewhere meanwhile.",
+  "type": "object",
+  "properties": {
+    "companion_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/IssueRef"
+      }
+    }
+  },
+  "required": [
+    "companion_id",
+    "issues"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

@@ -104,6 +104,7 @@ launch          start a session through your own companion      launches, cap_hi
 layout          where each part sits on the shared map          map_layout
 map             load, validate, cache and serve the map         map_cache
 plans           parse and keep plan files from issue branches   plans
+queue           issues queued on your own companions, in order  companion_queue
 github_poll     issue reads, open issues, repo coverage         pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
@@ -135,8 +136,9 @@ live        the overview, kept current over /ws/web              GET /api/overvi
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
 map         the system map: graph, shared layout over ELK, MapView  PUT, DELETE /api/layout
 issues      issue list, not-pinned backlog, detail, start gate   (none)
-companions  pair a companion with a code, list, revoke your own  POST /api/pair/approve, DELETE /api/pairings/:id
+companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
+queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
 launch      start a session through your own companion           POST /api/launch
 findings    what the map and the plans disagree about            (none)
 ```
@@ -158,6 +160,7 @@ map        SystemMap, MapResponse; MAP, MAP_RELOAD
 plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord
 progress   derive_progress, Overview, IssueSummary, Backlog, Finding; OVERVIEW
+queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 web_link   WebEvent; WEB_WS
 ```
 

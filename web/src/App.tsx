@@ -7,8 +7,10 @@ import { launchApi, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe } from "./features/live/index.ts";
 import { Inspector, MapView, PlanInspector, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
+import { queueApi } from "./features/queue/index.ts";
 import type { IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
+import { hasIssueDrag } from "./shared/dnd.ts";
 import { issueKey, relative } from "./shared/format.ts";
 
 type Tab = "issues" | "companions";
@@ -128,6 +130,74 @@ export function App() {
     }
   }, [refresh, restoreLayout, setNotice]);
 
+  /** Queue an issue on one of the caller's own lanes: a drop on the lane, or "Queue on…". */
+  const onQueue = useCallback(
+    async (issue: IssueRef, companionId: string) => {
+      const lane = overview?.companions.find((c) => c.companion_id === companionId)?.hostname ?? "your companion";
+      try {
+        await queueApi.add({ issue, companion_id: companionId });
+        setNotice(`${issueKey(issue)} queued on ${lane}`);
+        await refresh();
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          return;
+        }
+        setNotice(`${issueKey(issue)} was not queued on ${lane}: ${failureText(e)}`);
+      }
+    },
+    [overview, refresh, setNotice],
+  );
+
+  const onReorder = useCallback(
+    async (companionId: string, issues: IssueRef[]) => {
+      try {
+        await queueApi.reorder(companionId, issues);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          return;
+        }
+        setNotice(`The queue was not reordered: ${failureText(e)}`);
+      }
+      // Also after a refusal: the lane shown is then the lane as it is.
+      await refresh();
+    },
+    [refresh, setNotice],
+  );
+
+  const onUnqueue = useCallback(
+    async (issue: IssueRef, companionId: string) => {
+      try {
+        await queueApi.remove({ issue, companion_id: companionId });
+        // Removing is undone by queueing it again, at the end of the lane.
+        setNotice(`${issueKey(issue)} removed from the queue`, () => void onQueue(issue, companionId));
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          return;
+        }
+        setNotice(`${issueKey(issue)} was not removed from the queue: ${failureText(e)}`);
+      }
+      await refresh();
+    },
+    [refresh, setNotice, onQueue],
+  );
+
+  /** Start from the queue: only the issue and the lane's companion are sent; the server resolves the caps. */
+  const onStart = useCallback(
+    async (issue: IssueRef, companionId: string) => {
+      try {
+        const r = await launchApi.launch({ issue, companion_id: companionId });
+        setNotice(`${launchNotice(r, issue)} It leaves the queue when the companion reports it started.`);
+        await refresh();
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          return;
+        }
+        setNotice(`No session was started for ${issueKey(issue)}; it stays queued: ${failureText(e)}`);
+      }
+    },
+    [refresh, setNotice],
+  );
+
   const onSelectOnMap = useCallback((ref: MapRef | null) => {
     setSelection(ref);
     if (ref) {
@@ -205,7 +275,16 @@ export function App() {
             <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
               Issues{overview ? ` (${overview.issues.length})` : ""}
             </button>
-            <button className={tab === "companions" ? "active" : ""} onClick={() => setTab("companions")}>
+            {/* Dragging an issue over this tab opens it, so the issue can be dropped on a lane. */}
+            <button
+              className={tab === "companions" ? "active" : ""}
+              onClick={() => setTab("companions")}
+              onDragEnter={(e) => {
+                if (hasIssueDrag(e)) {
+                  setTab("companions");
+                }
+              }}
+            >
               Companions{overview ? ` (${overview.companions.filter((c) => c.connected).length} live)` : ""}
             </button>
           </nav>
@@ -233,6 +312,7 @@ export function App() {
               onLaunch={onLaunch}
               onPin={onPin}
               onUnpin={onUnpin}
+              onQueue={onQueue}
             />
           )}
           {/* An open issue with a plan: the map shows the plan, and below the issue this says what the plan says. */}
@@ -245,7 +325,7 @@ export function App() {
               }}
             />
           )}
-          {overview && tab === "companions" && <CompanionsPanel companions={overview.companions} me={me} onChanged={refresh} />}
+          {overview && tab === "companions" && <CompanionsPanel overview={overview} me={me} onChanged={refresh} onQueue={onQueue} onReorder={onReorder} onUnqueue={onUnqueue} onStart={onStart} />}
         </aside>
       </div>
     </div>

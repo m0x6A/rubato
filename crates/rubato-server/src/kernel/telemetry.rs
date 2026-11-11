@@ -99,6 +99,7 @@ pub struct Metrics {
     pub web_rejected: Counter<u64>,
     pub github_repos_uncovered: Gauge<u64>,
     pub layout_writes: Counter<u64>,
+    pub queue_depth: Gauge<u64>,
 }
 
 impl Metrics {
@@ -130,6 +131,7 @@ impl Metrics {
             web_rejected: m.u64_counter(otel::metric::WEB_REJECTED).build(),
             github_repos_uncovered: m.u64_gauge(otel::metric::GITHUB_REPOS_UNCOVERED).build(),
             layout_writes: m.u64_counter(otel::metric::LAYOUT_WRITES).build(),
+            queue_depth: m.u64_gauge(otel::metric::QUEUE_DEPTH).build(),
         }
     }
 }

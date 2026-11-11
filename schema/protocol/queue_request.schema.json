@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QueueRequest",
+  "description": "Body of `POST` (add) and `DELETE` (remove) on the queue route.",
+  "type": "object",
+  "properties": {
+    "companion_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    }
+  },
+  "required": [
+    "issue",
+    "companion_id"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

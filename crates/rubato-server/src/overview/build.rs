@@ -5,6 +5,7 @@ use crate::github_poll::IssueMeta;
 use crate::kernel::state::LoadedMap;
 use crate::plans::PlanRow;
 use chrono::{DateTime, Utc};
+use rubato_protocol::QueuedIssue;
 use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
     Backlog, BacklogRepo, CapKind, DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary,
@@ -30,6 +31,8 @@ pub struct OverviewInputs {
     pub uncovered_repos: Vec<String>,
     /// Every stored position, rows for parts the map no longer has included.
     pub layout: MapLayout,
+    /// Every queued issue, lanes of revoked companions included; the handler leaves those out.
+    pub queue: Vec<QueuedIssue>,
 }
 
 pub struct Built {
@@ -395,6 +398,7 @@ mod tests {
             backlog: (vec![], vec![]),
             uncovered_repos: vec![],
             layout: MapLayout::default(),
+            queue: vec![],
         }
     }
 
@@ -514,6 +518,45 @@ mod tests {
         // With no map there is nothing to place.
         let none = build(&inputs, None, &Limits::default(), now());
         assert!(none.layout.positions.is_empty());
+    }
+
+    #[test]
+    fn queue_layout_and_draft_do_not_change_progress() {
+        use rubato_protocol::layout::Position;
+        let repo = "m0x6A/rubato";
+        let pinned = IssueRef::new(repo, 1);
+        let mut inputs = empty();
+        inputs.pins = vec![IssuePin {
+            issue: pinned.clone(),
+            target: MapRef::node("rubato-server"),
+            pinned_by: "m0x6A".into(),
+            pinned_at: now(),
+        }];
+        let before = build(&inputs, Some(&map()), &Limits::default(), now());
+
+        // The pinned issue and one nobody tracks are queued, and a part is moved.
+        let queued = |issue: IssueRef, position: u32| QueuedIssue {
+            issue,
+            companion_id: Uuid::nil(),
+            queued_by: "m0x6A".into(),
+            queued_at: now(),
+            position,
+            last_start_error: Some("missing_dependency: tmux-ide".into()),
+        };
+        inputs.queue = vec![queued(pinned.clone(), 0), queued(IssueRef::new(repo, 2), 1)];
+        inputs.layout.positions =
+            [("rubato-server".to_owned(), Position { x: 1.0, y: 2.0 })].into();
+        let after = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert_eq!(
+            after.issues, before.issues,
+            "state and reason are unchanged"
+        );
+        assert_eq!(after.findings, before.findings);
+        assert_eq!(
+            after.issues.len(),
+            1,
+            "a queued issue nobody pinned does not become a tracked issue"
+        );
     }
 
     #[test]

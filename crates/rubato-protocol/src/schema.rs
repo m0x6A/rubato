@@ -39,6 +39,8 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::pairing::PairApproveRequest>("pair_approve_request"),
         one::<crate::pins::PinRequest>("pin_request"),
         one::<crate::layout::MapLayout>("map_layout"),
+        one::<crate::queue::QueueRequest>("queue_request"),
+        one::<crate::queue::QueueOrder>("queue_order"),
         one::<crate::launch::LaunchRequest>("launch_request"),
         one::<crate::launch::LaunchResponse>("launch_response"),
         one::<crate::progress::Overview>("overview"),

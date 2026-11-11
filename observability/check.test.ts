@@ -37,6 +37,11 @@ test("a dashboard without the Backlog age panel is rejected", () => {
   assert.deepEqual(r.problems, ['the dashboard has no "Backlog age" panel that queries rubato_backlog_listed_at']);
 });
 
+test("a dashboard without the Queue depth panel is rejected", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Queue depth")));
+  assert.deepEqual(r.problems, ['the dashboard has no "Queue depth" panel that queries rubato_queue_depth']);
+});
+
 test("a dashboard without the Layout writes panel is rejected", () => {
   const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Layout writes")));
   assert.deepEqual(r.problems, ['the dashboard has no "Layout writes" panel that queries rubato_layout_writes_total']);

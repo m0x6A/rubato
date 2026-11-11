@@ -5,7 +5,7 @@
 //! `index.html` for the single-page app's deep links.
 
 use crate::kernel::state::App;
-use crate::{auth, companion_link, launch, layout, map, overview, pairing, pins, web_link};
+use crate::{auth, companion_link, launch, layout, map, overview, pairing, pins, queue, web_link};
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -17,6 +17,7 @@ use rubato_protocol::map::routes as map_routes;
 use rubato_protocol::pairing::routes as pr;
 use rubato_protocol::pins::routes as pin_routes;
 use rubato_protocol::progress::routes as overview_routes;
+use rubato_protocol::queue::routes as queue_routes;
 use rubato_protocol::web_link::routes as web_routes;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -41,6 +42,10 @@ pub fn router(app: App) -> Router {
         .route(
             layout_routes::LAYOUT,
             put(layout::put_layout).delete(layout::clear_layout),
+        )
+        .route(
+            queue_routes::QUEUE,
+            post(queue::add).put(queue::reorder).delete(queue::remove),
         )
         .route(pr::PAIRINGS, get(pairing::list))
         .route(
@@ -117,6 +122,9 @@ mod tests {
             (Method::POST, launch_routes::LAUNCH.into()),
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
+            (Method::POST, queue_routes::QUEUE.into()),
+            (Method::PUT, queue_routes::QUEUE.into()),
+            (Method::DELETE, queue_routes::QUEUE.into()),
             (Method::GET, pr::PAIRINGS.into()),
             (Method::DELETE, revoke),
             (Method::POST, pr::PAIR_APPROVE.into()),
@@ -271,6 +279,46 @@ mod tests {
             );
         }
 
+        // The queue: a lane that is not the caller's (or does not exist) refuses all three
+        // writes, each counted.
+        use rubato_protocol::queue::{QueueOrder, QueueRequest};
+        let nobody = uuid::Uuid::new_v4();
+        let entry = QueueRequest {
+            issue: IssueRef::new("m0x6A/rubato", 48),
+            companion_id: nobody,
+        };
+        let url = format!("{base}{}", queue_routes::QUEUE);
+        assert_eq!(
+            http.post(&url).json(&entry).send().await.unwrap().status(),
+            403
+        );
+        assert_eq!(
+            http.delete(&url)
+                .json(&entry)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+        let order = QueueOrder {
+            companion_id: nobody,
+            issues: vec![],
+        };
+        assert_eq!(
+            http.put(&url).json(&order).send().await.unwrap().status(),
+            403
+        );
+        let refused = reader
+            .points(metric::WEB_REJECTED)
+            .into_iter()
+            .find(|p| {
+                p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("not_own_companion")
+            })
+            .expect("counted");
+        assert_eq!(refused.value, 3);
+        assert_eq!(refused.attrs[attr::ROUTE], queue_routes::QUEUE);
+
         // As a GitHub App with no dev user: a session without a team record is refused, counted.
         let tmp2 = tempfile::tempdir().unwrap();
         let url2 = format!("sqlite://{}/t.db?mode=rwc", tmp2.path().display());
@@ -306,7 +354,7 @@ mod tests {
         assert_eq!(stale.len(), 1, "{stale:?}");
         assert_eq!(stale[0].attrs[attr::DROP_REASON], "team_record_stale");
         assert_eq!(stale[0].attrs[attr::ROUTE], overview_routes::OVERVIEW);
-        println!("checked 5 refusal reasons");
+        println!("checked 6 refusal reasons");
     }
 
     #[tokio::test]

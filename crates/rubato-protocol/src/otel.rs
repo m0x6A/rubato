@@ -63,6 +63,8 @@ pub mod metric {
     pub const GITHUB_REPOS_UNCOVERED: &str = "rubato.github.repos_uncovered";
     /// Accepted writes to the shared map layout: a part moved, or the layout cleared.
     pub const LAYOUT_WRITES: &str = "rubato.layout.writes";
+    /// Issues queued per companion, recorded every poll tick for every pairing, zeros included.
+    pub const QUEUE_DEPTH: &str = "rubato.queue.depth";
 }
 
 /// Span names.
@@ -133,6 +135,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::WEB_REJECTED,
         metric::GITHUB_REPOS_UNCOVERED,
         metric::LAYOUT_WRITES,
+        metric::QUEUE_DEPTH,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

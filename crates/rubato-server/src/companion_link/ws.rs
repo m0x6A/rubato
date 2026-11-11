@@ -4,7 +4,7 @@
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
-use crate::{launch, pairing};
+use crate::{launch, pairing, queue};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -249,7 +249,8 @@ async fn on_envelope(
             CompanionMessage::Launch(result) => {
                 match launch::record_result(&app.db, &result).await {
                     Ok(Some(issue)) => {
-                        tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result")
+                        tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result");
+                        settle_queue(app, companion_id, &issue, &result).await;
                     }
                     Ok(None) => tracing::warn!("launch result for an unknown command"),
                     Err(e) => tracing::error!(error = %e, "storing launch result"),
@@ -303,6 +304,44 @@ fn record_sessions_by_state(metrics: &Metrics, companion_id: Uuid, sessions: &[S
                 KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
             ],
         );
+    }
+}
+
+/// A launch result settles the issue's queue entry on this companion, if it has one: started
+/// takes it off the lane; refused or failed keeps it there with the reason (ADR 0020).
+async fn settle_queue(
+    app: &App,
+    companion_id: Uuid,
+    issue: &rubato_protocol::IssueRef,
+    result: &rubato_protocol::LaunchResult,
+) {
+    use rubato_protocol::LaunchResult;
+    let why = match result {
+        LaunchResult::Started { .. } => None,
+        LaunchResult::Refused { reason, detail, .. } => {
+            let reason = serde_json::to_value(reason)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            Some(format!("{reason}: {detail}"))
+        }
+        LaunchResult::Failed { error, .. } => Some(error.clone()),
+    };
+    let done = match &why {
+        None => queue::launch_started(&app.db, companion_id, issue).await,
+        Some(w) => queue::launch_not_started(&app.db, companion_id, issue, w).await,
+    };
+    match (done, why) {
+        (Ok(true), Some(why)) => tracing::info!(
+            rubato.companion_id = %companion_id,
+            rubato.issue = %issue,
+            reason = %why,
+            "queue entry kept, launch not started"
+        ),
+        (Ok(_), _) => {}
+        (Err(e), _) => {
+            tracing::error!(rubato.companion_id = %companion_id, rubato.issue = %issue, error = %e, "settling the queue entry failed")
+        }
     }
 }
 

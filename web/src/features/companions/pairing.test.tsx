@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { companion } from "../../../test/fixtures.ts";
+import { companion, overview } from "../../../test/fixtures.ts";
 import { CompanionsPanel } from "./CompanionsPanel.tsx";
 
 const me = { login: "m0x6A" };
+const noQueue = { onQueue: () => {}, onReorder: () => {}, onUnqueue: () => {}, onStart: () => {} };
 
 function stubFetch(status: number, body: unknown) {
   const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(body === undefined ? null : JSON.stringify(body), { status }));
@@ -17,7 +18,7 @@ describe("pairing a companion (N17)", () => {
   it("approving a code posts it", async () => {
     const fetchMock = stubFetch(200, companion("m0x6A", false));
     const onChanged = vi.fn();
-    render(<CompanionsPanel companions={[]} me={me} onChanged={onChanged} />);
+    render(<CompanionsPanel overview={overview()} me={me} onChanged={onChanged} {...noQueue} />);
 
     const approve = screen.getByRole("button", { name: "Approve" });
     expect(approve).toBeDisabled();
@@ -40,7 +41,7 @@ describe("pairing a companion (N17)", () => {
     const mine = companion("m0x6A", true, { companion_id: "11111111-1111-1111-1111-111111111111" });
     const theirs = companion("alice", true, { companion_id: "22222222-2222-2222-2222-222222222222" });
     const revoked = companion("m0x6A", false, { companion_id: "33333333-3333-3333-3333-333333333333", revoked_at: new Date().toISOString() });
-    render(<CompanionsPanel companions={[mine, theirs, revoked]} me={me} onChanged={onChanged} />);
+    render(<CompanionsPanel overview={overview({ companions: [mine, theirs, revoked] })} me={me} onChanged={onChanged} {...noQueue} />);
 
     expect(within(screen.getByTestId("companion-alice")).queryByRole("button", { name: "revoke" })).toBeNull();
     // One button in total: my live pairing has it, my revoked one and alice's do not.
