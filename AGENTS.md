@@ -133,7 +133,7 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 ```text
 live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
-map         the system map: graph, ELK layout, MapView           (none)
+map         the system map: graph, shared layout over ELK, MapView  PUT, DELETE /api/layout
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair a companion with a code, list, revoke your own  POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins

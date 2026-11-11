@@ -5,9 +5,9 @@ import { Findings } from "./features/findings/index.ts";
 import { IssuePanel } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe } from "./features/live/index.ts";
-import { MapView, buildGraph } from "./features/map/index.ts";
+import { MapView, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
-import type { IssueRef, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
+import type { IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
 import { issueKey, relative } from "./shared/format.ts";
 
@@ -23,7 +23,10 @@ export function App() {
   const [selectedIssue, setSelectedIssue] = useState<IssueRef | null>(null);
   const [selection, setSelection] = useState<MapRef | null>(null);
   const [tab, setTab] = useState<Tab>("issues");
-  const [notice, setNotice] = useState<string | null>(null);
+  // A notice may carry one way back ("Undo"), offered to the person who caused it.
+  const [noticeState, setNoticeState] = useState<{ text: string; undo?: (() => void) | undefined } | null>(null);
+  const notice = noticeState?.text ?? null;
+  const setNotice = useCallback((text: string | null, undo?: () => void) => setNoticeState(text === null ? null : { text, undo }), []);
 
   const refresh = useCallback(async () => {
     try {
@@ -79,8 +82,51 @@ export function App() {
         setNotice(`${issueKey(issue)} was not pinned to ${target.id}: ${failureText(e)}`);
       }
     },
-    [refresh],
+    [refresh, setNotice],
   );
+
+  /** Parts were dragged, or moved with the arrow keys: saved for the whole team (ADR 0016). */
+  const onMove = useCallback(
+    async (moved: MapLayout) => {
+      try {
+        await mapApi.putLayout(moved);
+        await refresh();
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          return;
+        }
+        setNotice(`The new position of ${Object.keys(moved.positions ?? {}).join(", ")} was not saved: ${failureText(e)}`);
+      }
+    },
+    [refresh, setNotice],
+  );
+
+  const restoreLayout = useCallback(
+    async (removed: MapLayout) => {
+      try {
+        await mapApi.putLayout(removed);
+        await refresh();
+        setNotice("The saved positions are back");
+      } catch (e) {
+        setNotice(`The saved positions were not restored: ${failureText(e)}`);
+      }
+    },
+    [refresh, setNotice],
+  );
+
+  const onAutoArrange = useCallback(async () => {
+    try {
+      const removed = await mapApi.clearLayout();
+      await refresh();
+      const n = Object.keys(removed.positions ?? {}).length;
+      setNotice(`Auto-arranged for everyone: ${n} saved position${n === 1 ? "" : "s"} removed`, () => void restoreLayout(removed));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        return;
+      }
+      setNotice(`The map was not auto-arranged: ${failureText(e)}`);
+    }
+  }, [refresh, restoreLayout, setNotice]);
 
   const onSelectOnMap = useCallback((ref: MapRef | null) => {
     setSelection(ref);
@@ -135,6 +181,11 @@ export function App() {
       {/* The live region stays mounted so a screen reader hears each notice; the button sits outside it. */}
       <div className={notice ? "banner notice" : undefined}>
         <span role="status">{notice}</span>
+        {noticeState?.undo && (
+          <button type="button" onClick={noticeState.undo}>
+            Undo
+          </button>
+        )}
         {notice && (
           <button type="button" onClick={() => setNotice(null)}>
             Dismiss
@@ -144,7 +195,7 @@ export function App() {
       <div className="body">
         <section className="map">
           {graph && overview ? (
-            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} />
+            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={() => void onAutoArrange()} />
           ) : (
             <div className="empty">{error ?? "Loading the map…"}</div>
           )}

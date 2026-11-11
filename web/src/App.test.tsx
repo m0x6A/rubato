@@ -17,11 +17,16 @@ const REPO = "m0x6A/rubato";
 /** What `POST /api/pins` does in this test: a status and body, or "offline" for a fetch that rejects. */
 let pinAnswer: { status: number; body?: string } | "offline";
 let pinned: Map<number, MapRef[]>;
+/** The team's stored layout, as `PUT` and `DELETE /api/layout` change it. */
+let layoutStore: Record<string, { x: number; y: number }>;
+let layoutAnswer: { status: number; body?: string };
 
 beforeEach(() => {
   resetNeedsLogin();
   pinAnswer = { status: 201 };
   pinned = new Map();
+  layoutStore = {};
+  layoutAnswer = { status: 204 };
   vi.stubGlobal("WebSocket", QuietSocket);
   vi.stubGlobal(
     "fetch",
@@ -32,7 +37,19 @@ beforeEach(() => {
       if (url === "/api/overview") {
         const open = [openIssue(902, "Backlog: an unpinned issue")].filter((i) => !pinned.has(i.issue.number));
         const tracked = [...pinned].map(([n, pins]) => issue(n, "", { pins, title: "Backlog: an unpinned issue" }));
-        return new Response(JSON.stringify(overview({ issues: tracked, backlog: { issues: open, repos: [{ repo: REPO, listed_at: minutesAgo(1) }] } })), { status: 200 });
+        return new Response(JSON.stringify(overview({ issues: tracked, backlog: { issues: open, repos: [{ repo: REPO, listed_at: minutesAgo(1) }] }, layout: { positions: { ...layoutStore } } })), { status: 200 });
+      }
+      if (url === "/api/layout" && init?.method === "DELETE") {
+        const removed = { positions: layoutStore };
+        layoutStore = {};
+        return new Response(JSON.stringify(removed), { status: 200 });
+      }
+      if (url === "/api/layout" && init?.method === "PUT") {
+        if (layoutAnswer.status >= 300) {
+          return new Response(layoutAnswer.body ?? null, { status: layoutAnswer.status });
+        }
+        layoutStore = { ...layoutStore, ...(JSON.parse(String(init.body)) as { positions: typeof layoutStore }).positions };
+        return new Response(null, { status: 204 });
       }
       if (url === "/api/pins" && init?.method === "POST") {
         if (pinAnswer === "offline") {
@@ -93,5 +110,39 @@ describe("pinning from the shell (S3, N16)", () => {
     await pinFromTheMenu(/^rubato-server\b/);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("m0x6A/rubato#902 was not pinned to rubato-server: Could not reach the server"));
     expect(screen.getByRole("status")).not.toHaveTextContent("Failed to fetch");
+  });
+});
+
+describe("the shared layout from the shell (S7)", () => {
+  const where = (id: string) => document.querySelector<HTMLElement>(`.react-flow__node[data-id="${id}"]`)?.style.transform;
+
+  it("Auto-arrange then Undo restores", async () => {
+    layoutStore = { web: { x: 1234, y: 567 }, "rubato-server": { x: 40, y: 900 } };
+    render(<App />);
+    await waitFor(() => expect(where("web")).toBe("translate(1234px,567px)"), { timeout: 5000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Auto-arrange" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Auto-arranged for everyone: 2 saved positions removed"));
+    expect(layoutStore).toEqual({});
+    await waitFor(() => expect(where("web")).not.toBe("translate(1234px,567px)"));
+    expect(screen.getByRole("button", { name: "Auto-arrange" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The saved positions are back"));
+    expect(layoutStore).toEqual({ web: { x: 1234, y: 567 }, "rubato-server": { x: 40, y: 900 } });
+    await waitFor(() => expect(where("web")).toBe("translate(1234px,567px)"));
+    expect(where("rubato-server")).toBe("translate(40px,900px)");
+    // Undo is offered once.
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("a restore the server refuses says so and offers no second Undo", async () => {
+    layoutStore = { web: { x: 1, y: 2 } };
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Auto-arrange" }, { timeout: 5000 }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument());
+    layoutAnswer = { status: 422, body: "web is not a part in map v2" };
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The saved positions were not restored: web is not a part in map v2"));
   });
 });
