@@ -100,6 +100,10 @@ pub struct Metrics {
     pub github_repos_uncovered: Gauge<u64>,
     pub layout_writes: Counter<u64>,
     pub queue_depth: Gauge<u64>,
+    pub map_draft_ops: Gauge<u64>,
+    pub map_proposals: Counter<u64>,
+    /// Unix seconds; no unit, like `map_loaded_at`.
+    pub map_proposal_state_since: Gauge<u64>,
 }
 
 impl Metrics {
@@ -132,6 +136,9 @@ impl Metrics {
             github_repos_uncovered: m.u64_gauge(otel::metric::GITHUB_REPOS_UNCOVERED).build(),
             layout_writes: m.u64_counter(otel::metric::LAYOUT_WRITES).build(),
             queue_depth: m.u64_gauge(otel::metric::QUEUE_DEPTH).build(),
+            map_draft_ops: m.u64_gauge(otel::metric::MAP_DRAFT_OPS).build(),
+            map_proposals: m.u64_counter(otel::metric::MAP_PROPOSALS).build(),
+            map_proposal_state_since: m.u64_gauge(otel::metric::MAP_PROPOSAL_STATE_SINCE).build(),
         }
     }
 }

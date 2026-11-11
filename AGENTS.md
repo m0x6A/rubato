@@ -103,6 +103,7 @@ pins            pin an issue to a node or seam                  pins
 launch          start a session through your own companion      launches, cap_hits
 layout          where each part sits on the shared map          map_layout
 map             load, validate, cache and serve the map         map_cache
+map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
 plans           parse and keep plan files from issue branches   plans
 queue           issues queued on your own companions, in order  companion_queue
 github_poll     issue reads, open issues, repo coverage         pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos
@@ -157,6 +158,7 @@ pins       IssuePin, PinRequest; PINS
 launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
 layout     MapLayout, Position; LAYOUT
 map        SystemMap, MapResponse; MAP, MAP_RELOAD
+map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
 plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord
 progress   derive_progress, Overview, IssueSummary, Backlog, Finding; OVERVIEW

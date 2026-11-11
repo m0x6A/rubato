@@ -25,6 +25,12 @@ pub struct FakeInner {
     pub installation: Option<Vec<String>>,
     /// Whether writes are allowed (tests of the proposal flow turn this on).
     pub writes: bool,
+    /// A write call that fails when it is made, by its name (`create_ref`, `put_file`,
+    /// `create_pull`, `close_pull`, `delete_ref`), with the error text.
+    pub fail_write: Option<(&'static str, String)>,
+    /// `create_pull` creates the pull request and then fails, as a call that timed out does.
+    pub pull_times_out: bool,
+    next_pull: u64,
     /// Every call in order, as (method, args); the guard for the poll order (design D4).
     pub calls: Vec<(&'static str, String)>,
 }
@@ -145,5 +151,103 @@ impl GitHubApi for FakeGitHub {
 
     fn can_write(&self) -> bool {
         self.inner.lock().unwrap().writes
+    }
+
+    async fn create_ref(&self, repo: &str, branch: &str, sha: &str) -> Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        g.write("create_ref", format!("{repo} {branch} {sha}"))?;
+        let branches = g.branches.entry(repo.to_owned()).or_default();
+        if !branches.iter().any(|(n, _)| n == branch) {
+            branches.push((branch.to_owned(), sha.to_owned()));
+        }
+        Ok(())
+    }
+
+    async fn put_file(
+        &self,
+        repo: &str,
+        branch: &str,
+        path: &str,
+        content: &str,
+        message: &str,
+    ) -> Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        g.write("put_file", format!("{repo} {branch} {path} {message}"))?;
+        g.files.insert(
+            (repo.to_owned(), path.to_owned(), branch.to_owned()),
+            content.to_owned(),
+        );
+        Ok(())
+    }
+
+    async fn create_pull(
+        &self,
+        repo: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<(u64, String)> {
+        let mut g = self.inner.lock().unwrap();
+        g.write(
+            "create_pull",
+            format!("{repo} {head} {base} {title}\n{body}"),
+        )?;
+        g.next_pull += 1;
+        let number = 100 + g.next_pull;
+        let url = format!("https://github.com/{repo}/pull/{number}");
+        g.pulls.insert(
+            (repo.to_owned(), head.to_owned()),
+            PullInfo {
+                number,
+                open: true,
+                draft: false,
+                head_sha: "proposed".into(),
+                merged_at: None,
+                updated_at: chrono::Utc::now(),
+                url: url.clone(),
+            },
+        );
+        if g.pull_times_out {
+            g.pull_times_out = false;
+            return Err(anyhow!("operation timed out"));
+        }
+        Ok((number, url))
+    }
+
+    async fn close_pull(&self, repo: &str, number: u64) -> Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        g.write("close_pull", format!("{repo} {number}"))?;
+        for ((r, _), p) in g.pulls.iter_mut() {
+            if r == repo && p.number == number {
+                p.open = false;
+            }
+        }
+        Ok(())
+    }
+
+    async fn delete_ref(&self, repo: &str, branch: &str) -> Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        g.write("delete_ref", format!("{repo} {branch}"))?;
+        if let Some(b) = g.branches.get_mut(repo) {
+            b.retain(|(n, _)| n != branch);
+        }
+        Ok(())
+    }
+}
+
+impl FakeInner {
+    /// Record a write call; fail it when writes are off or the test asked for this one to fail.
+    fn write(&mut self, name: &'static str, args: String) -> Result<()> {
+        self.calls.push((name, args));
+        if !self.writes {
+            return Err(anyhow!("this GitHub connection cannot write"));
+        }
+        if let Some((failing, why)) = &self.fail_write
+            && *failing == name
+        {
+            return Err(anyhow!("{why}"));
+        }
+        Ok(())
     }
 }

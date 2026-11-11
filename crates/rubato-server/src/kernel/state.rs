@@ -24,6 +24,9 @@ pub struct LoadedMap {
     pub map: SystemMap,
     pub version: String,
     pub loaded_at: DateTime<Utc>,
+    /// The map file's text as it was loaded: what a proposal must find unchanged on the map
+    /// branch, and what it checks for keys a rewrite would drop (ADR 0018).
+    pub yaml: String,
 }
 
 pub struct AppState {

@@ -331,6 +331,7 @@ mod tests {
             map,
             version: "abc".into(),
             loaded_at: now(),
+            yaml: text,
         }
     }
 

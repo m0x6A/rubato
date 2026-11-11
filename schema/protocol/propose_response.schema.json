@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProposeResponse",
+  "description": "Answer of `POST /api/map/draft/propose`.",
+  "type": "object",
+  "properties": {
+    "proposal": {
+      "$ref": "#/$defs/Proposal"
+    }
+  },
+  "required": [
+    "proposal"
+  ],
+  "$defs": {
+    "Proposal": {
+      "description": "The one proposal there can be. While it exists the draft takes no operations.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "pr_number": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pr_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proposed_by": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ProposalState"
+        },
+        "state_since": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "state",
+        "state_since",
+        "branch",
+        "proposed_by"
+      ]
+    },
+    "ProposalState": {
+      "oneOf": [
+        {
+          "description": "The server is writing the branch and opening the pull request, or a step failed.",
+          "type": "string",
+          "const": "opening"
+        },
+        {
+          "description": "The pull request is open.",
+          "type": "string",
+          "const": "proposed"
+        },
+        {
+          "description": "The pull request was merged; the draft empties once the map has been loaded again.",
+          "type": "string",
+          "const": "merged"
+        }
+      ]
+    }
+  }
+}

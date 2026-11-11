@@ -62,6 +62,7 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
         map,
         version: version.clone(),
         loaded_at: Utc::now(),
+        yaml: yaml.clone(),
     };
     store::store_map(&app.db, &version, &yaml, loaded.loaded_at).await?;
     *app.map.write().await = Some(loaded.clone());
@@ -107,6 +108,7 @@ async fn load_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> 
         map,
         version: version.clone(),
         loaded_at: Utc::now(),
+        yaml: yaml.clone(),
     };
     store::store_map(&app.db, &version, &yaml, loaded.loaded_at).await?;
     *app.map.write().await = Some(loaded.clone());
@@ -126,6 +128,7 @@ pub async fn warm(app: &App) -> Result<()> {
             map,
             version,
             loaded_at,
+            yaml,
         });
         // The stored time, so a restart during a GitHub outage shows the real age.
         record_loaded_at(app, loaded_at);

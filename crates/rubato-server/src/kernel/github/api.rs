@@ -96,6 +96,44 @@ pub trait GitHubApi: Send + Sync {
     fn can_write(&self) -> bool {
         false
     }
+
+    // The writes of a map proposal (ADR 0018). Each is one step with a name on-call can read
+    // in the log. A port that cannot write answers with an error.
+
+    /// Create branch `branch` at `sha`. A branch that exists already is not an error: a
+    /// proposal that is resumed finds its own branch.
+    async fn create_ref(&self, _repo: &str, _branch: &str, _sha: &str) -> Result<()> {
+        Err(anyhow::anyhow!("this GitHub connection cannot write"))
+    }
+    /// Write `content` to `path` on `branch` as one commit.
+    async fn put_file(
+        &self,
+        _repo: &str,
+        _branch: &str,
+        _path: &str,
+        _content: &str,
+        _message: &str,
+    ) -> Result<()> {
+        Err(anyhow::anyhow!("this GitHub connection cannot write"))
+    }
+    /// Open a pull request from `head` into `base`: its number and its page.
+    async fn create_pull(
+        &self,
+        _repo: &str,
+        _head: &str,
+        _base: &str,
+        _title: &str,
+        _body: &str,
+    ) -> Result<(u64, String)> {
+        Err(anyhow::anyhow!("this GitHub connection cannot write"))
+    }
+    async fn close_pull(&self, _repo: &str, _number: u64) -> Result<()> {
+        Err(anyhow::anyhow!("this GitHub connection cannot write"))
+    }
+    /// Delete branch `branch`. A branch that is gone already is not an error.
+    async fn delete_ref(&self, _repo: &str, _branch: &str) -> Result<()> {
+        Err(anyhow::anyhow!("this GitHub connection cannot write"))
+    }
 }
 
 /// From one page of `GET /repos/{repo}/issues`: the issues, without the pull requests.
@@ -405,6 +443,109 @@ impl GitHubApi for Octo {
 
     fn can_write(&self) -> bool {
         self.installation
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "create_ref"))]
+    async fn create_ref(&self, repo: &str, branch: &str, sha: &str) -> Result<()> {
+        let (o, r) = split_repo(repo)?;
+        let reference = octocrab::params::repos::Reference::Branch(branch.to_owned());
+        match self.client.repos(o, r).create_ref(&reference, sha).await {
+            Ok(_) => Ok(()),
+            // 422 "Reference already exists": the branch of a proposal being resumed.
+            Err(octocrab::Error::GitHub { source, .. }) if source.status_code.as_u16() == 422 => {
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, content), err, fields(rubato.github.endpoint = "put_contents"))]
+    async fn put_file(
+        &self,
+        repo: &str,
+        branch: &str,
+        path: &str,
+        content: &str,
+        message: &str,
+    ) -> Result<()> {
+        let (o, r) = split_repo(repo)?;
+        let repos = self.client.repos(o, r);
+        // The file's blob sha on that branch: GitHub refuses an update without it, which is
+        // what turns a change that landed in between into a conflict and not a silent revert.
+        let existing = match repos.get_content().path(path).r#ref(branch).send().await {
+            Ok(items) => items.items.into_iter().next().map(|i| i.sha),
+            Err(octocrab::Error::GitHub { source, .. }) if source.status_code.as_u16() == 404 => {
+                None
+            }
+            Err(e) => return Err(e.into()),
+        };
+        match existing {
+            Some(sha) => {
+                repos
+                    .update_file(path, message, content, sha)
+                    .branch(branch)
+                    .send()
+                    .await?;
+            }
+            None => {
+                repos
+                    .create_file(path, message, content)
+                    .branch(branch)
+                    .send()
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, body), err, fields(rubato.github.endpoint = "create_pull"))]
+    async fn create_pull(
+        &self,
+        repo: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<(u64, String)> {
+        let (o, r) = split_repo(repo)?;
+        let pr = self
+            .client
+            .pulls(o, r)
+            .create(title, head, base)
+            .body(body)
+            .send()
+            .await?;
+        Ok((
+            pr.number,
+            pr.html_url.map(|u| u.to_string()).unwrap_or_default(),
+        ))
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "close_pull"))]
+    async fn close_pull(&self, repo: &str, number: u64) -> Result<()> {
+        let (o, r) = split_repo(repo)?;
+        self.client
+            .pulls(o, r)
+            .update(number)
+            .state(octocrab::params::pulls::State::Closed)
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "delete_ref"))]
+    async fn delete_ref(&self, repo: &str, branch: &str) -> Result<()> {
+        let (o, r) = split_repo(repo)?;
+        let reference = octocrab::params::repos::Reference::Branch(branch.to_owned());
+        match self.client.repos(o, r).delete_ref(&reference).await {
+            Ok(_) => Ok(()),
+            Err(octocrab::Error::GitHub { source, .. })
+                if matches!(source.status_code.as_u16(), 404 | 422) =>
+            {
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }
 

@@ -5,7 +5,7 @@ use super::inputs::build_overview_inputs;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
-use crate::pairing;
+use crate::{map_draft, pairing};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -46,6 +46,18 @@ pub async fn overview(
         })
         .cloned()
         .collect();
+    let draft = map_draft::snapshot(&app.db, &map.map)
+        .await
+        .map_err(|e| internal(SLICE, e))?;
+    // A part that exists only in the draft may have a position too (ADR 0016).
+    let mut layout = built.layout;
+    if let Some(preview) = &draft.preview {
+        for n in &preview.nodes {
+            if let Some(p) = inputs.layout.positions.get(&n.id) {
+                layout.positions.insert(n.id.clone(), *p);
+            }
+        }
+    }
     Ok(Json(Overview {
         map: MapResponse {
             map: map.map,
@@ -57,8 +69,9 @@ pub async fn overview(
         companions,
         unpinned_sessions: built.unpinned_sessions,
         backlog: built.backlog,
-        layout: built.layout,
+        layout,
         queue,
+        draft,
         generated_at: Utc::now(),
     }))
 }

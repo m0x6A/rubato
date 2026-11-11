@@ -15,6 +15,7 @@ pub mod github_poll;
 pub mod launch;
 pub mod layout;
 pub mod map;
+pub mod map_draft;
 pub mod overview;
 pub mod pairing;
 pub mod pins;

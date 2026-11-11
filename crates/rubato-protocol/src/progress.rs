@@ -7,6 +7,7 @@ use crate::github::{ChecksStatus, PullRequestState};
 use crate::ids::{IssueRef, MapRef};
 use crate::layout::MapLayout;
 use crate::map::MapResponse;
+use crate::map_draft::MapDraft;
 use crate::pairing::PairingInfo;
 use crate::plan::Plan;
 use crate::queue::QueuedIssue;
@@ -259,6 +260,9 @@ pub struct Overview {
     /// Never an input to progress.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queue: Vec<QueuedIssue>,
+    /// The shared draft of the map and its proposal (ADR 0018). Never an input to progress.
+    #[serde(default)]
+    pub draft: MapDraft,
     pub generated_at: DateTime<Utc>,
 }
 
