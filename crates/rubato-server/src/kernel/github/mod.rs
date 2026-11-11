@@ -8,7 +8,7 @@ mod local;
 
 pub use api::{
     Comment, GitHubApi, ISSUES_PER_PAGE, IssueInfo, Octo, OpenIssueInfo, OpenIssues, PullInfo,
-    issues_from_page, summarize_check_runs,
+    READ_TIMEOUT, issues_from_page, summarize_check_runs,
 };
 pub use app::{AppCheckError, check_app};
 pub use fake::{FakeGitHub, FakeInner};

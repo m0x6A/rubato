@@ -76,6 +76,10 @@ A session lasts as long as its team check is at most seven days old; after that,
 first start as an App, the browser sends you through login once more. The private key can
 also be given inline as `RUBATO_GITHUB_APP_PRIVATE_KEY` (newlines as `\n`).
 
+For a GitHub other than github.com (a GitHub Enterprise Server), set `RUBATO_GITHUB_API_URL`
+to its REST API root and `RUBATO_GITHUB_WEB_URL` to its web root. The browser tests use the
+same two settings to run the whole App login against a stand-in (`web/e2e/github-standin.ts`).
+
 Other knobs: `RUBATO_GITHUB_POLL_SECS` (default 60), `RUBATO_SESSION_STALE_SECS` (120),
 `RUBATO_COMPANION_SILENT_SECS` (600), `RUBATO_DEFAULT_SPEND_CAP_USD` (25),
 `RUBATO_DEFAULT_ATTEMPT_LIMIT` (3), `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces and

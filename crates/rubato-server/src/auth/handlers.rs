@@ -47,9 +47,15 @@ fn oauth_client(app: &App) -> Option<OAuthClient> {
     Some(
         oauth2::basic::BasicClient::new(ClientId::new(id))
             .set_client_secret(ClientSecret::new(secret))
-            .set_auth_uri(AuthUrl::new("https://github.com/login/oauth/authorize".into()).ok()?)
+            .set_auth_uri(
+                AuthUrl::new(format!("{}/login/oauth/authorize", app.config.github_web())).ok()?,
+            )
             .set_token_uri(
-                TokenUrl::new("https://github.com/login/oauth/access_token".into()).ok()?,
+                TokenUrl::new(format!(
+                    "{}/login/oauth/access_token",
+                    app.config.github_web()
+                ))
+                .ok()?,
             )
             .set_redirect_uri(redirect),
     )
@@ -126,7 +132,7 @@ pub async fn callback(
         }
     };
     let user: GitHubUser = match http
-        .get("https://api.github.com/user")
+        .get(format!("{}/user", app.config.github_api()))
         .bearer_auth(token.access_token().secret())
         .header(header::USER_AGENT, "rubato-server")
         .header(header::ACCEPT, "application/vnd.github+json")
@@ -153,7 +159,10 @@ pub async fn callback(
     let mut team_checked_at = None;
     if let Some(app_cfg) = &app.config.github_app {
         let answer = http
-            .get("https://api.github.com/user/installations?per_page=100")
+            .get(format!(
+                "{}/user/installations?per_page=100",
+                app.config.github_api()
+            ))
             .bearer_auth(token.access_token().secret())
             .header(header::USER_AGENT, "rubato-server")
             .header(header::ACCEPT, "application/vnd.github+json")

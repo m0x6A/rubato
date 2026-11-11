@@ -69,6 +69,11 @@ pub struct Config {
     /// The GitHub App the server acts as. When set it replaces `github_token`, and a session
     /// needs a team record (ADR 0022).
     pub github_app: Option<GitHubApp>,
+    /// Another GitHub than github.com: the REST API root (`RUBATO_GITHUB_API_URL`) and the web
+    /// root that serves the OAuth pages (`RUBATO_GITHUB_WEB_URL`). For a GitHub Enterprise
+    /// Server, and for the stand-in of the browser tests. Unset means github.com.
+    pub github_api_url: Option<String>,
+    pub github_web_url: Option<String>,
     /// Development and tests only: a JSON file `{"owner/name": [{number, title, url, labels}]}`
     /// giving the local stand-in and the tokenless fake their open issues.
     pub dev_issues: Option<PathBuf>,
@@ -137,6 +142,8 @@ impl Config {
                 env("RUBATO_GITHUB_APP_PRIVATE_KEY_FILE"),
                 env("RUBATO_GITHUB_APP_INSTALLATION_ID"),
             )?,
+            github_api_url: env("RUBATO_GITHUB_API_URL").map(trim_slash),
+            github_web_url: env("RUBATO_GITHUB_WEB_URL").map(trim_slash),
             dev_issues: env("RUBATO_DEV_ISSUES").map(PathBuf::from),
             local_repos: env("RUBATO_LOCAL_REPOS"),
             map_repo: env("RUBATO_MAP_REPO").unwrap_or_else(|| "m0x6A/rubato".into()),
@@ -161,6 +168,20 @@ impl Config {
         })
     }
 
+    /// The REST API root, without a trailing slash.
+    pub fn github_api(&self) -> &str {
+        self.github_api_url
+            .as_deref()
+            .unwrap_or("https://api.github.com")
+    }
+
+    /// The web root that serves `/login/oauth/*`, without a trailing slash.
+    pub fn github_web(&self) -> &str {
+        self.github_web_url
+            .as_deref()
+            .unwrap_or("https://github.com")
+    }
+
     /// A config for tests and local runs with no GitHub at all.
     pub fn for_tests(database_url: String, dev_user: &str) -> Self {
         Self {
@@ -171,6 +192,8 @@ impl Config {
             github_client_secret: None,
             github_token: None,
             github_app: None,
+            github_api_url: None,
+            github_web_url: None,
             dev_issues: None,
             local_repos: None,
             map_repo: "m0x6A/rubato".into(),
@@ -188,6 +211,10 @@ impl Config {
             warnings: Vec::new(),
         }
     }
+}
+
+fn trim_slash(url: String) -> String {
+    url.trim_end_matches('/').to_owned()
 }
 
 /// Clamp the poll interval to `MAX_POLL_SECS`, noting it once in `warnings`.
@@ -230,6 +257,17 @@ mod tests {
             assert!(partial.unwrap_err().to_string().contains("together"));
         }
         assert!(github_app(s("x"), s("k"), None, s("34")).is_err());
+    }
+
+    #[test]
+    fn github_is_github_com_unless_another_root_is_given() {
+        let mut c = Config::for_tests("sqlite::memory:".into(), "m0x6A");
+        assert_eq!(c.github_api(), "https://api.github.com");
+        assert_eq!(c.github_web(), "https://github.com");
+        c.github_api_url = Some(trim_slash("http://127.0.0.1:9/api/v3/".into()));
+        c.github_web_url = Some(trim_slash("http://127.0.0.1:9/".into()));
+        assert_eq!(c.github_api(), "http://127.0.0.1:9/api/v3");
+        assert_eq!(c.github_web(), "http://127.0.0.1:9");
     }
 
     #[test]
