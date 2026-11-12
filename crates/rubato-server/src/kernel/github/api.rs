@@ -25,7 +25,7 @@ pub struct IssueInfo {
 }
 
 /// One open issue from a repo listing.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
 pub struct OpenIssueInfo {
     pub number: u64,
     pub title: String,
@@ -34,6 +34,32 @@ pub struct OpenIssueInfo {
     pub labels: Vec<String>,
     #[serde(default = "Utc::now")]
     pub updated_at: DateTime<Utc>,
+    /// The first [`BODY_EXCERPT_BYTES`] of the body: for the `Map:` line and the suggested
+    /// place (ADR 0026). Kept in memory for one listing; never stored or sent to a browser.
+    #[serde(default)]
+    pub body: String,
+    /// GitHub's `author_association` of the issue's author (`OWNER`, `MEMBER`,
+    /// `COLLABORATOR`, `CONTRIBUTOR`, `NONE`, …): whether its `Map:` line is trusted.
+    #[serde(default)]
+    pub author_association: String,
+    /// Login of the issue's author.
+    #[serde(default)]
+    pub author: String,
+}
+
+/// How much of an issue body is read for placement (ADR 0026, design A7).
+pub const BODY_EXCERPT_BYTES: usize = 4096;
+
+/// At most `max` bytes of `s`, cut at a character boundary.
+pub fn excerpt(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_owned();
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_owned()
 }
 
 /// A repo's open issues, pull requests left out. `truncated` when the listing hit the cap.
@@ -184,6 +210,20 @@ pub fn issues_from_page(page: &serde_json::Value) -> Vec<OpenIssueInfo> {
                     .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
                     .map(|t| t.with_timezone(&Utc))
                     .unwrap_or_else(Utc::now),
+                body: excerpt(
+                    i.get("body").and_then(|b| b.as_str()).unwrap_or_default(),
+                    BODY_EXCERPT_BYTES,
+                ),
+                author_association: i
+                    .get("author_association")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                author: i
+                    .pointer("/user/login")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
             })
         })
         .collect()
@@ -702,6 +742,31 @@ mod tests {
         );
         assert!(issues_from_page(&serde_json::json!({"message": "Not Found"})).is_empty());
         println!("checked 3 rows of one page");
+    }
+
+    /// ADR 0026: the body and the author's association come from the same listing page, at no
+    /// extra call; a long body is cut at a character boundary.
+    #[test]
+    fn open_issues_carry_body_and_author_association() {
+        let long = format!("{}é{}", "a".repeat(BODY_EXCERPT_BYTES - 1), "b".repeat(100));
+        let page = serde_json::json!([
+            {"number": 1, "title": "T", "html_url": "u", "author_association": "MEMBER",
+             "user": {"login": "m0x6A"}, "body": "Map: seam web-server"},
+            {"number": 2, "title": "T", "html_url": "u", "body": null},
+            {"number": 3, "title": "T", "html_url": "u", "author_association": "NONE", "body": long}
+        ]);
+        let issues = issues_from_page(&page);
+        assert_eq!(issues[0].body, "Map: seam web-server");
+        assert_eq!(issues[0].author_association, "MEMBER");
+        assert_eq!(issues[0].author, "m0x6A");
+        assert_eq!(issues[1].body, "");
+        assert_eq!(issues[1].author_association, "");
+        assert_eq!(
+            issues[2].body.len(),
+            BODY_EXCERPT_BYTES - 1,
+            "cut before the é"
+        );
+        assert!(issues[2].body.chars().all(|c| c == 'a'));
     }
 
     #[test]

@@ -86,6 +86,27 @@ describe("the Not pinned section (S2)", () => {
   });
 });
 
+describe("suggested places (ADR 0026)", () => {
+  it("Pin here pins at the suggested place with one click", () => {
+    const scored = { ...openIssue(904, "rubato-server is slow"), suggestion: { target: { kind: "node" as const, id: "rubato-server" }, score: 100, why: ["id rubato-server in the issue"] } };
+    const plain = openIssue(905, "Nothing to go on");
+    const onPin = renderBacklog({ issues: [scored, plain], repos: [{ repo: REPO, listed_at: minutesAgo(1) }] });
+    const s = screen.getByTestId("suggestion-904");
+    expect(s).toHaveTextContent("Suggested: part rubato-server");
+    expect(s).toHaveTextContent("id rubato-server in the issue");
+    expect(screen.queryByTestId("suggestion-905")).toBeNull();
+    expect(onPin).not.toHaveBeenCalled();
+    fireEvent.click(within(s).getByRole("button", { name: "Pin m0x6A/rubato#904 to part rubato-server" }));
+    expect(onPin).toHaveBeenCalledWith({ repo: REPO, number: 904 }, { kind: "node", id: "rubato-server" });
+  });
+
+  it("says when the place comes from a non-member's Map: line", () => {
+    const seam = { kind: "seam" as const, id: "web-server" };
+    renderBacklog({ issues: [{ ...openIssue(906, "From outside"), map_line: seam, suggestion: { target: seam, score: 100 } }], repos: [{ repo: REPO, listed_at: minutesAgo(1) }] });
+    expect(screen.getByTestId("suggestion-906")).toHaveTextContent("Suggested: seam web-server (its Map: line, from someone outside the team)");
+  });
+});
+
 describe("the row menu (S3, N16)", () => {
   it("Pin to… pins by keyboard", () => {
     const onPin = renderBacklog({ issues: [openIssue(902, "Backlog: an unpinned issue")], repos: [{ repo: REPO, listed_at: minutesAgo(1) }] });

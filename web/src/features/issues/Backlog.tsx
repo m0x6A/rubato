@@ -45,6 +45,25 @@ function RepoStatus({ repo }: { repo: BacklogRepo }) {
   );
 }
 
+/** A suggested place (ADR 0026), confirmed with one click. Nothing is pinned until then. */
+function Suggestion({ issue, onPin }: { issue: OpenIssue; onPin: (issue: IssueRef, target: MapRef) => void }) {
+  const s = issue.suggestion;
+  if (!s) {
+    return null;
+  }
+  const where = `${s.target.kind === "seam" ? "seam" : "part"} ${s.target.id}`;
+  const from = issue.map_line ? "its Map: line, from someone outside the team" : (s.why ?? []).join("; ");
+  return (
+    <span className="suggestion" data-testid={`suggestion-${issue.issue.number}`}>
+      Suggested: <strong>{where}</strong>
+      {from && <span className="muted"> ({from})</span>}{" "}
+      <button type="button" onClick={() => onPin(issue.issue, s.target)} aria-label={`Pin ${issueKey(issue.issue)} to ${where}`}>
+        Pin here
+      </button>
+    </span>
+  );
+}
+
 function matches(i: OpenIssue, needle: string): boolean {
   return [issueKey(i.issue), i.title, ...(i.labels ?? [])].some((s) => s.toLowerCase().includes(needle));
 }
@@ -88,6 +107,7 @@ export function Backlog({ backlog, map, onPin, lanes = [], queue = [], onQueue }
                       ))}
                     </span>
                   )}
+                  <Suggestion issue={i} onPin={onPin} />
                 </span>
                 <span className="row-end">
                   <PinMenu map={map} issue={i.issue} onPin={onPin} />

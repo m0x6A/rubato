@@ -80,6 +80,10 @@ pub mod metric {
     /// recorded every poll tick: the time for the current state, 0 for every other. No unit,
     /// like `rubato.map.loaded_at`. "Map proposal age" is `time()` minus this, where it is not 0.
     pub const MAP_PROPOSAL_STATE_SINCE: &str = "rubato.map.proposal.state_since";
+    /// `Map:` lines read from the open-issues listing, by `rubato.outcome`: `pinned`,
+    /// `already_pinned`, `unknown_id`, `kind_mismatch` once per line applied; `untrusted_author`
+    /// per listing that holds a line from someone outside the team (ADR 0026).
+    pub const BACKLOG_MAP_LINES: &str = "rubato.backlog.map_lines";
 }
 
 /// Span names.
@@ -155,6 +159,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::MAP_DRAFT_OPS,
         metric::MAP_PROPOSALS,
         metric::MAP_PROPOSAL_STATE_SINCE,
+        metric::BACKLOG_MAP_LINES,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

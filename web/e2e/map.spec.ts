@@ -35,6 +35,23 @@ test("the map renders every node id from system-map.yml", async ({ page }) => {
   await expect(page.getByText("map rubato @")).toBeVisible();
 });
 
+test("a member's Map: line places an issue without a drag; a stranger's only suggests", async ({ page }) => {
+  // fixtures/issues.json: #912 by the owner names seam companion-server; #913 by someone
+  // outside the team names part plan-check (ADR 0026).
+  await page.goto("/");
+  await expect(page.getByTestId("issue-row-912")).toContainText("Planned");
+  await expect(page.getByTestId("issue-row-912")).toContainText("companion-server");
+  await expect(page.getByTestId("backlog-row-912")).toHaveCount(0);
+  await expect(page.getByTestId("seam-companion-server")).toContainText("1 issue");
+
+  const stranger = page.getByTestId("backlog-row-913");
+  await expect(stranger).toBeVisible();
+  await expect(page.getByTestId("issue-row-913")).toHaveCount(0);
+  const suggestion = page.getByTestId("suggestion-913");
+  await expect(suggestion).toContainText("Suggested: part plan-check");
+  await expect(suggestion).toContainText("from someone outside the team");
+});
+
 test("drag a not-pinned issue onto a part and onto a seam", async ({ page }) => {
   // The harness serves three open issues of m0x6A/rubato: #901, #902 and #903, none tracked.
   const key = (n: number) => `m0x6A/rubato#${n}`;

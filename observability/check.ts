@@ -27,6 +27,8 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Queue depth", "rubato_queue_depth"],
   ["Map proposals", "rubato_map_proposals_total"],
   ["Map proposal age", "rubato_map_proposal_state_since"],
+  // Issue #71.
+  ["Map lines", "rubato_backlog_map_lines_total"],
 ];
 
 type Panel = { title: string; type?: string; targets?: { expr?: string }[] };

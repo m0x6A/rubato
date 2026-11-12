@@ -102,6 +102,7 @@ button.link:hover { text-decoration: underline; }
 .backlog h3, .backlog p { margin: 0; }
 .backlog-row { border-style: dashed; cursor: grab; }
 .backlog-row .labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.backlog-row .suggestion { display: block; margin-top: 4px; font-size: 0.9em; }
 .repo-status { font-size: 12px; gap: 2px; }
 .repo-status li.warn { font-size: 12px; }
 /* "Pin to…": the keyboard twin of the drag */
