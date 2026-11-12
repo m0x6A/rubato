@@ -68,6 +68,15 @@ test("a failed installation lookup is reported as a fault, not as no access", as
 test("when the session ends mid-work the next write leads back to login, and nothing was written", async ({ page }) => {
   await logInAs(page, "member");
   await expect(page.getByTestId("backlog-row-911")).toBeVisible();
+  // The app can also find out by itself: a poll event makes it read the overview, which now
+  // answers 401, and the login page replaces the row before the drag. Hold the app's own reads
+  // until the write has answered, so the write is what finds out.
+  let release = () => {};
+  const held = new Promise<void>((done) => (release = done));
+  await page.route(/\/api\/(overview|me)(\?|$)/, async (route) => {
+    await held;
+    await route.continue().catch(() => {});
+  });
   // The session ends on the server (as it does when the team record is too old).
   expect((await page.request.post("/auth/logout")).status()).toBe(204);
 
@@ -76,6 +85,8 @@ test("when the session ends mid-work the next write leads back to login, and not
     page.getByTestId("backlog-row-911").dragTo(page.getByTestId("node-rubato-server")),
   ]);
   expect(refused.status()).toBe(401);
+  release();
+  await page.unroute(/\/api\/(overview|me)(\?|$)/);
   await expect(page.getByRole("link", { name: "Log in with GitHub" })).toBeVisible();
 
   // Logging in again brings the work back; the refused pin left the issue not pinned.
