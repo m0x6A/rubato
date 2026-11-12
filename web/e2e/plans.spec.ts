@@ -19,10 +19,10 @@ test("plans from voice-note issues show where they fit", async ({ page }) => {
   const where = page.getByTestId("where-it-fits");
   await expect(where.getByTestId("fit-verdict")).toHaveText("fits the map");
   await expect(where.getByTestId("data-models")).toContainText("voice_notes");
-  await expect(where.getByTestId("data-models")).toContainText("crosses web-server");
+  await expect(where.getByTestId("data-models")).toContainText("crosses companion-server");
   await expect(where.getByTestId("accept-why")).toContainText("cannot comment as you");
   // Not pinned, it still shows on the parts its plan names.
-  await expect(page.getByTestId("node-web")).toContainText("planned here");
+  await expect(page.getByTestId("node-rubato-companion")).toContainText("planned here");
 });
 
 test("connected repos list the map's repo", async ({ page }) => {
