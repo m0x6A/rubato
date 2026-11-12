@@ -83,7 +83,6 @@ pub struct Metrics {
     pub heartbeat: Gauge<u64>,
     pub hook_forwarded: Counter<u64>,
     pub sessions_discovered: Gauge<u64>,
-    pub sessions_by_state: Gauge<u64>,
     pub events_dropped: Counter<u64>,
 }
 
@@ -101,7 +100,6 @@ impl Metrics {
                 .build(),
             hook_forwarded: m.u64_counter(otel::metric::HOOK_FORWARDED).build(),
             sessions_discovered: m.u64_gauge(otel::metric::SESSIONS_DISCOVERED).build(),
-            sessions_by_state: m.u64_gauge(otel::metric::SESSIONS_BY_STATE).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
         }
     }

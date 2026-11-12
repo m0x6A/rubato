@@ -133,18 +133,8 @@ impl Registry {
             .find(|e| e.session_id.as_deref() == Some(session_id))
     }
 
-    /// Count by status, for the `rubato.sessions.by_state` gauge. Every status is present, zero
-    /// included: a gauge keeps its last value, so a status that empties must be recorded as 0.
-    pub fn counts(&self) -> HashMap<SessionStatus, usize> {
-        let mut m: HashMap<_, _> = SessionStatus::ALL.iter().map(|s| (*s, 0)).collect();
-        for e in &self.entries {
-            *m.entry(e.status).or_insert(0) += 1;
-        }
-        m
-    }
-
-    /// Count by source, for the `rubato.sessions.discovered` gauge. Every source is present,
-    /// zero included, for the same reason.
+    /// Count by source, for the `rubato.sessions.discovered` gauge. Every source is present, zero
+    /// included: a gauge keeps its last value, so a source that empties must be recorded as 0.
     pub fn counts_by_source(&self) -> HashMap<StateSource, usize> {
         let mut m: HashMap<_, _> = StateSource::ALL.iter().map(|s| (*s, 0)).collect();
         for e in &self.entries {
@@ -159,10 +149,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counts_include_every_status() {
+    fn counts_include_every_source() {
         let mut r = Registry::new(Uuid::nil(), "m0x6A");
-        let counts = r.counts();
-        assert_eq!(counts.len(), SessionStatus::ALL.len(), "{counts:?}");
+        let counts = r.counts_by_source();
+        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
         assert!(counts.values().all(|n| *n == 0), "{counts:?}");
         r.entries.push(Entry {
             session_id: Some("s1".into()),
@@ -184,16 +174,15 @@ mod tests {
             stale_reported: false,
             ended: false,
         });
-        let counts = r.counts();
-        assert_eq!(counts.len(), SessionStatus::ALL.len(), "{counts:?}");
-        assert_eq!(counts[&SessionStatus::Working], 1);
-        for status in [
-            SessionStatus::Idle,
-            SessionStatus::Blocked,
-            SessionStatus::Ended,
-            SessionStatus::Unknown,
+        let counts = r.counts_by_source();
+        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
+        assert_eq!(counts[&StateSource::Hook], 1);
+        for source in [
+            StateSource::TmuxIde,
+            StateSource::Scraped,
+            StateSource::Launch,
         ] {
-            assert_eq!(counts.get(&status), Some(&0), "{status:?}");
+            assert_eq!(counts.get(&source), Some(&0), "{source:?}");
         }
     }
 }

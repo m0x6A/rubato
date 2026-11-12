@@ -54,8 +54,9 @@ async fn forward(
     metrics.hook_forwarded.add(
         1,
         &[
+            // No session id: one series per session would grow for the life of the process
+            // (#43). The `rubato.hook.forward` span around this carries it.
             KeyValue::new(attr::HOOK_EVENT, format!("{:?}", ev.hook_event_name)),
-            KeyValue::new(attr::SESSION_ID, ev.session_id.clone()),
             KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
         ],
     );
@@ -129,11 +130,28 @@ mod tests {
         }
         let hook = points
             .iter()
-            .find(|p| p.attrs.contains_key(attr::SESSION_ID))
+            .find(|p| p.attrs.contains_key(attr::HOOK_EVENT))
             .unwrap();
         assert_eq!(hook.value, 1);
-        assert_eq!(hook.attrs[attr::SESSION_ID], "s1");
         assert_eq!(hook.attrs[attr::HOOK_EVENT], "PreToolUse");
+        // One series per companion and event, not per session (#43): the session id is on the
+        // `rubato.hook.forward` span only.
+        assert!(!hook.attrs.contains_key(attr::SESSION_ID), "{hook:?}");
+
+        // A second session adds no series.
+        let ev2 = HookEvent::from_payload(
+            serde_json::json!({"session_id": "s2", "hook_event_name": "PreToolUse", "cwd": "/y"}),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        on_event(&ev2, &registry, &out, &metrics, id).await;
+        let points = reader.points(metric::HOOK_FORWARDED);
+        assert_eq!(points.len(), 2, "{points:?}");
+        let hook = points
+            .iter()
+            .find(|p| p.attrs.contains_key(attr::HOOK_EVENT))
+            .unwrap();
+        assert_eq!(hook.value, 2);
 
         // The arm's order is unchanged: `Hook`, then `Sessions`.
         assert!(matches!(sent.recv().await, Some(CompanionMessage::Hook(_))));

@@ -38,8 +38,12 @@ pub mod attr {
 /// Metric instrument names.
 pub mod metric {
     pub const COMPANION_HEARTBEAT: &str = "rubato.companion.heartbeat";
+    /// Companion counter, by `rubato.hook_event` and `rubato.companion_id`. No session id: that
+    /// is on the `rubato.hook.forward` span, so the series stay bounded (#43).
     pub const HOOK_FORWARDED: &str = "rubato.hook.forwarded";
     pub const SESSIONS_DISCOVERED: &str = "rubato.sessions.discovered";
+    /// Server gauge, from each companion snapshot, by `rubato.session_state` and
+    /// `rubato.companion_id`. Only the server records it (#43), so a sum counts each session once.
     pub const SESSIONS_BY_STATE: &str = "rubato.sessions.by_state";
     pub const ISSUES_BY_STATE: &str = "rubato.issues.by_state";
     pub const EVENTS_DROPPED: &str = "rubato.events.dropped";
