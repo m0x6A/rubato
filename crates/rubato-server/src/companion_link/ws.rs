@@ -259,8 +259,8 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::CapHit(hit) => {
-                tracing::warn!(rubato.issue = %hit.issue, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
-                if let Err(e) = launch::record_cap_hit(&app.db, &hit).await {
+                tracing::warn!(rubato.issue = %hit.issue, rubato.session_id = ?hit.session_id, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
+                if let Err(e) = launch::record_cap_hit(&app.db, &hit, now).await {
                     tracing::error!(error = %e, "storing cap hit");
                 }
                 app.notify("cap hit");
@@ -288,19 +288,12 @@ async fn on_envelope(
 /// gauge keeps its last value, so without the zero a session that stops working would leave
 /// `working` at 1 and `SessionWorkingNoHooks` would page on every finished turn.
 fn record_sessions_by_state(metrics: &Metrics, companion_id: Uuid, sessions: &[SessionState]) {
-    const STATUSES: [SessionStatus; 5] = [
-        SessionStatus::Working,
-        SessionStatus::Idle,
-        SessionStatus::Blocked,
-        SessionStatus::Ended,
-        SessionStatus::Unknown,
-    ];
-    for status in STATUSES {
+    for status in SessionStatus::ALL {
         let n = sessions.iter().filter(|s| s.status == status).count();
         metrics.sessions_by_state.record(
             n as u64,
             &[
-                KeyValue::new(attr::SESSION_STATE, format!("{status:?}").to_lowercase()),
+                KeyValue::new(attr::SESSION_STATE, status.name()),
                 KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
             ],
         );

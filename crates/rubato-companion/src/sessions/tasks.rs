@@ -9,7 +9,7 @@ use anyhow::Result;
 use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
-use rubato_protocol::{CompanionMessage, Limits, StateSource};
+use rubato_protocol::{CompanionMessage, Limits};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, watch};
@@ -133,16 +133,6 @@ impl TeamPoll {
     }
 }
 
-/// The source as the protocol spells it on the wire (snake_case).
-fn source_name(source: StateSource) -> &'static str {
-    match source {
-        StateSource::Hook => "hook",
-        StateSource::TmuxIde => "tmux_ide",
-        StateSource::Launch => "launch",
-        StateSource::Scraped => "scraped",
-    }
-}
-
 /// `rubato.sessions.discovered` per source and `rubato.sessions.by_state` per status, each with
 /// this companion's id and each including its zeros.
 fn record_gauges(reg: &Registry, metrics: &Metrics) {
@@ -151,7 +141,7 @@ fn record_gauges(reg: &Registry, metrics: &Metrics) {
         metrics.sessions_discovered.record(
             n as u64,
             &[
-                KeyValue::new(attr::SESSION_SOURCE, source_name(source)),
+                KeyValue::new(attr::SESSION_SOURCE, source.name()),
                 KeyValue::new(attr::COMPANION_ID, companion.clone()),
             ],
         );
@@ -160,7 +150,7 @@ fn record_gauges(reg: &Registry, metrics: &Metrics) {
         metrics.sessions_by_state.record(
             n as u64,
             &[
-                KeyValue::new(attr::SESSION_STATE, format!("{status:?}").to_lowercase()),
+                KeyValue::new(attr::SESSION_STATE, status.name()),
                 KeyValue::new(attr::COMPANION_ID, companion.clone()),
             ],
         );
@@ -225,21 +215,6 @@ mod tests {
         let by_state = reader.points(metric::SESSIONS_BY_STATE);
         assert_eq!(state(&by_state, "working"), Some(0));
         assert_eq!(state(&by_state, "idle"), Some(1));
-    }
-
-    #[test]
-    fn source_names_are_the_protocol_names() {
-        for source in [
-            StateSource::Hook,
-            StateSource::TmuxIde,
-            StateSource::Launch,
-            StateSource::Scraped,
-        ] {
-            assert_eq!(
-                serde_json::to_value(source).unwrap(),
-                serde_json::json!(source_name(source))
-            );
-        }
     }
 
     /// A `tmux-ide` stand-in: a shell script with the given body.
