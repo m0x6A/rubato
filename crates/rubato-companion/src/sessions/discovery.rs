@@ -27,16 +27,27 @@ fn tmux_ide_status(state: &str) -> SessionStatus {
 }
 
 /// Commands a pane may run when Claude Code is in it. Node is included because `claude` is a Node program.
-fn looks_like_agent(command: &str) -> bool {
+pub fn looks_like_agent(command: &str) -> bool {
     matches!(command, "claude" | "node" | "claude-code")
 }
 
 impl Registry {
     /// Pane metadata from tmux. New agent panes appear as `Scraped`/`Unknown`; vanished panes end.
     pub fn apply_panes(&mut self, panes: &[Pane], now: DateTime<Utc>) {
+        self.apply_panes_with(panes, &Default::default(), now)
+    }
+
+    /// As [`Self::apply_panes`], with the panes whose process tree runs Claude Code under a
+    /// wrapper (`kernel::ps`) counted as agent panes too.
+    pub fn apply_panes_with(
+        &mut self,
+        panes: &[Pane],
+        wrapped: &std::collections::HashSet<String>,
+        now: DateTime<Utc>,
+    ) {
         let agent_panes: Vec<&Pane> = panes
             .iter()
-            .filter(|p| looks_like_agent(&p.current_command))
+            .filter(|p| looks_like_agent(&p.current_command) || wrapped.contains(&p.pane_id))
             .collect();
         for p in &agent_panes {
             if let Some(e) = self.find_by_pane(&p.pane_id) {
@@ -79,6 +90,9 @@ impl Registry {
                 spend_cap_usd: None,
                 stale_reported: false,
                 ended: false,
+                head: None,
+                head_mtime: None,
+                branch_drift: None,
             });
         }
         let live: std::collections::HashSet<&str> =
@@ -155,6 +169,9 @@ impl Registry {
                 spend_cap_usd: None,
                 stale_reported: false,
                 ended: false,
+                head: None,
+                head_mtime: None,
+                branch_drift: None,
             });
         }
     }

@@ -109,6 +109,9 @@ impl Registry {
             spend_cap_usd: Some(cmd.spend_cap_usd),
             stale_reported: false,
             ended: false,
+            head: None,
+            head_mtime: None,
+            branch_drift: None,
         };
         match discovered {
             Some(i) => self.entries[i] = launched,

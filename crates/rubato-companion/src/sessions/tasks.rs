@@ -65,17 +65,28 @@ pub async fn reconcile(
         let t = tmux.clone();
         let panes = tokio::task::spawn_blocking(move || t.panes()).await?;
         let fleet = team_poll.poll(&tmux_ide).await?;
+        let wrapped = match &panes {
+            Ok(p) => wrapped_agents(p).await,
+            Err(_) => Default::default(),
+        };
         {
             let mut reg = registry.lock().await;
             let now = Utc::now();
             match panes {
-                Ok(p) => reg.apply_panes(&p, now),
+                Ok(p) => reg.apply_panes_with(&p, &wrapped, now),
                 Err(e) => tracing::warn!(error = %e, "tmux list-panes failed"),
             }
             if let Some(f) = fleet {
                 reg.apply_fleet(&f, now);
             }
             reg.sweep(now, 300);
+        }
+        // Identity again where a checkout changed it: git off the lock (design 80 §5).
+        let checks = registry.lock().await.identity_checks();
+        let found = tokio::task::spawn_blocking(move || crate::sessions::recheck(checks)).await?;
+        {
+            let mut reg = registry.lock().await;
+            reg.apply_identities(found);
             let snap = reg.snapshot();
             record_gauges(&reg, &metrics);
             let key = serde_json::to_string(&snap).unwrap_or_default();
@@ -90,6 +101,35 @@ pub async fn reconcile(
             _ = poll_rx.recv() => {}
             _ = shutdown.changed() => return Ok(()),
         }
+    }
+}
+
+/// Panes whose own command is not Claude Code but whose process tree runs it (a wrapper
+/// script). One `ps` when there is such a pane at all; a failed `ps` finds none.
+async fn wrapped_agents(panes: &[crate::kernel::tmux::Pane]) -> std::collections::HashSet<String> {
+    let others: Vec<(String, u32)> = panes
+        .iter()
+        .filter(|p| !super::discovery::looks_like_agent(&p.current_command))
+        .map(|p| (p.pane_id.clone(), p.pid))
+        .collect();
+    if others.is_empty() {
+        return Default::default();
+    }
+    let roots: Vec<u32> = others.iter().map(|(_, pid)| *pid).collect();
+    match tokio::task::spawn_blocking(crate::kernel::ps::table).await {
+        Ok(Ok(table)) => {
+            let hit = crate::kernel::ps::roots_running_claude(&table, &roots);
+            others
+                .into_iter()
+                .filter(|(_, pid)| hit.contains(pid))
+                .map(|(id, _)| id)
+                .collect()
+        }
+        Ok(Err(e)) => {
+            tracing::debug!(error = %format!("{e:#}"), "ps failed; wrapped agents not looked for");
+            Default::default()
+        }
+        Err(_) => Default::default(),
     }
 }
 

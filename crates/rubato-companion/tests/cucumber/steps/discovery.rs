@@ -35,6 +35,82 @@ async fn given_worktree_with_pane(w: &mut RubatoWorld, branch: String, repo: Str
         .unwrap();
 }
 
+#[given(
+    expr = "a worktree for branch {string} of {string} with a tmux pane running the stand-in claude under a wrapper script"
+)]
+async fn given_worktree_with_wrapped_pane(w: &mut RubatoWorld, branch: String, repo: String) {
+    let clone = w.repos.get(&repo).cloned().expect("repo created");
+    let wt = default_worktree_path(&clone, &branch);
+    std::fs::create_dir_all(wt.parent().unwrap()).unwrap();
+    RubatoWorld::git(
+        &clone,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            &branch,
+            &wt.to_string_lossy(),
+            "main",
+        ],
+    );
+    // Not `exec`: the shell stays the pane's command and claude runs as its child.
+    let wrapper = w.root.join("wrapper.sh");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\n'{}'\necho done\n",
+            w.workspace.companion.claude_command
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &wrapper,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    w.tmux()
+        .new_session(
+            &session_name(&repo, &branch),
+            &wt,
+            &format!("sh '{}'", wrapper.display()),
+        )
+        .unwrap();
+}
+
+#[given(expr = "a tmux pane running the stand-in claude in the clone of {string}")]
+async fn given_pane_in_clone(w: &mut RubatoWorld, repo: String) {
+    let clone = w.repos.get(&repo).cloned().expect("repo created");
+    let claude = w.workspace.companion.claude_command.clone();
+    w.tmux().new_session("plain", &clone, &claude).unwrap();
+}
+
+#[when(expr = "the clone of {string} checks out a new branch {string}")]
+async fn when_checkout(w: &mut RubatoWorld, repo: String, branch: String) {
+    let clone = w.repos.get(&repo).cloned().expect("repo created");
+    // mtime granularity: the checkout must land on a later time than the first read.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    RubatoWorld::git(&clone, &["checkout", "-q", "-b", &branch]);
+}
+
+#[then(
+    expr = "the server receives a sessions snapshot with a session on branch {string} and no issue"
+)]
+async fn then_snapshot_no_issue(w: &mut RubatoWorld, branch: String) {
+    let got = w
+        .server()
+        .wait_for(Duration::from_secs(15), |m| match m {
+            CompanionMessage::Sessions { sessions } => sessions
+                .iter()
+                .find(|s| s.branch.as_deref() == Some(branch.as_str()))
+                .cloned(),
+            _ => None,
+        })
+        .await;
+    let s = got.expect("a session on the branch");
+    assert_eq!(s.issue, None);
+}
+
 #[given("a private tmux server")]
 async fn given_private_tmux(w: &mut RubatoWorld) {
     w.tmux().new_session("probe", &w.root, "sh").unwrap();

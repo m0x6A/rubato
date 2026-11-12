@@ -549,6 +549,7 @@ mod tests {
             source,
             last_seen: now(),
             spend_usd: Some(1.5),
+            branch_drift: None,
         }
     }
 

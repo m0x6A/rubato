@@ -983,6 +983,13 @@
             "null"
           ]
         },
+        "branch_drift": {
+          "description": "A launched session that has moved off its launch branch: the branch it is on now. It\nkeeps its launch issue (its spend cap and telemetry are that issue's); this says so.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "companion_id": {
           "type": "string",
           "format": "uuid"

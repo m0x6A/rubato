@@ -365,6 +365,7 @@ mod tests {
             source,
             last_seen: now() - chrono::Duration::seconds(ago),
             spend_usd: None,
+            branch_drift: None,
         }
     }
 
