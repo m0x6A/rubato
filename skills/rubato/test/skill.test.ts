@@ -1,12 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { legacyKeys } from "../../../actions/plan-check/src/parse-plan.ts";
 import { listAdrs, parseAdr } from "../scripts/adrs.ts";
 import { HOOK_EVENTS, renderHooks, templatePath } from "../scripts/hooks.ts";
+import { install } from "../scripts/install.ts";
+import { normalisePlan, planSha } from "../scripts/lib/plan-sha.ts";
 import { render, summarize } from "../scripts/map.ts";
-import { check, init } from "../scripts/plan.ts";
+import { check, FRONT_MATTER_KEYS, init, planTemplate, SPEC_HEADINGS } from "../scripts/plan.ts";
 import { parseWorkspace, repoForCwd, workspaceCandidates, type Workspace } from "../scripts/lib/workspace.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -167,11 +170,109 @@ describe("plan.ts", () => {
     expect(bad.line["rubato.plan.unknown_ids"]).toEqual(["rubato-orchestrator"]);
   });
 
+  it("writes only the ADR 0027 front-matter keys and the four spec headings", async () => {
+    const { ws } = tempMapRepo();
+    const a = tempRepo("m0x6A/rubato", "issue/14-keys");
+    const path = await init(ws, a, { issue: "m0x6A/rubato#14", slug: "keys", title: "Keys" });
+    const text = readFileSync(join(a, path), "utf8");
+    const front = text.split("\n---\n")[0]!.replace(/^---\n/, "");
+    const keys = front.split("\n").map((l) => l.split(":")[0]);
+    expect(keys).toEqual([...FRONT_MATTER_KEYS]);
+    // Fails on purpose if a legacy key comes back: plan-check counts it on the same text.
+    expect(legacyKeys(text)).toEqual([]);
+    expect(legacyKeys(text.replace("title: Keys\n", "title: Keys\nstatus: proposed\ntrack: small\n"))).toEqual(["track", "status"]);
+    const headings = text.split("\n").filter((l) => l.startsWith("## ")).map((l) => l.slice(3));
+    expect(headings.slice(0, 4)).toEqual([...SPEC_HEADINGS]);
+    // The spec headings come before the tables the check reads.
+    expect(headings.indexOf("Affected parts")).toBeGreaterThan(3);
+  });
+
   it("refuses to overwrite an existing plan", async () => {
     const { ws } = tempMapRepo();
     const a = tempRepo("m0x6A/rubato", "issue/13-x");
     await init(ws, a, { issue: "m0x6A/rubato#13", slug: "x" });
     await expect(init(ws, a, { issue: "m0x6A/rubato#13", slug: "x" })).rejects.toThrow(/already exists/);
+  });
+});
+
+describe("plan.ts sha", () => {
+  const dir = resolve(root, "schema/fixtures/plans/approval-hash");
+  const cases = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+
+  it("matches the shared fixtures, so ticking tasks keeps the sha and any other edit changes it", () => {
+    expect(cases).toEqual(["edited.md", "ticked.md", "unticked.md"]);
+    for (const f of cases) {
+      const want = readFileSync(join(dir, f.replace(/\.md$/, ".txt")), "utf8").trim();
+      expect(planSha(readFileSync(join(dir, f), "utf8")), f).toBe(want);
+    }
+    const sha = (f: string) => planSha(readFileSync(join(dir, f), "utf8"));
+    expect(sha("ticked.md")).toBe(sha("unticked.md"));
+    expect(sha("edited.md")).not.toBe(sha("ticked.md"));
+  });
+
+  it("is git's blob sha of the normalised text", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "rubato-sha-"));
+    git(tmp, "init", "-q");
+    for (const f of cases) {
+      const text = readFileSync(join(dir, f), "utf8");
+      const norm = join(tmp, f);
+      writeFileSync(norm, normalisePlan(text));
+      expect(planSha(text), f).toBe(git(tmp, "hash-object", norm));
+    }
+    // Only list-item checkboxes are cleared; a `[x]` in prose is not a task.
+    const ticked = readFileSync(join(dir, "ticked.md"), "utf8");
+    expect(normalisePlan(ticked)).toContain("A [x] that is not a list item");
+    expect(normalisePlan(ticked)).not.toMatch(/^\s*(?:[-*+]|\d+[.)])\s+\[[xX]\]/m);
+  });
+
+  it("plan.ts sha <path> prints the sha without a workspace", () => {
+    const out = execFileSync("node", ["--experimental-strip-types", resolve(root, "skills/rubato/scripts/plan.ts"), "sha", join(dir, "ticked.md")], {
+      encoding: "utf8",
+      env: { ...process.env, RUBATO_WORKSPACE: join(tmpdir(), "no-such-workspace.yml") },
+    }).trim();
+    expect(out).toBe(readFileSync(join(dir, "ticked.txt"), "utf8").trim());
+  });
+});
+
+describe("approval stays human (ADR 0027)", () => {
+  const skill = resolve(root, "skills/rubato");
+
+  function files(d: string): string[] {
+    return readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      if (e.name === "node_modules" || e.name === "test") {
+        return [];
+      }
+      const p = join(d, e.name);
+      return e.isDirectory() ? files(p) : [p];
+    });
+  }
+
+  it("no script or template writes a line that starts with Approved:", () => {
+    const checked = files(skill);
+    expect(checked.length).toBeGreaterThan(10);
+    const offenders = checked.filter((f) => /^\s*Approved:/m.test(readFileSync(f, "utf8")));
+    expect(offenders).toEqual([]);
+    const template = planTemplate({ issue: "m0x6A/rubato#1", slug: "x" }, "abc123");
+    expect(template).not.toMatch(/^\s*Approved:/m);
+    // Fails on purpose: the same scan finds one.
+    expect(/^\s*Approved:/m.test("x\nApproved: plan 0123\n")).toBe(true);
+  });
+
+  it("the review template starts with Review: and names the plan sha", () => {
+    const t = readFileSync(join(skill, "review-template.md"), "utf8");
+    expect(t.split("\n")[0]).toMatch(/^Review: /);
+    expect(t).toContain("<plan sha>");
+    for (const h of ["## Plan", "## Spec check", "## Track check", "## Fixed", "## Left open"]) {
+      expect(t).toContain(h);
+    }
+  });
+
+  it("install copies the review template and checklist", () => {
+    const to = mkdtempSync(join(tmpdir(), "rubato-install-"));
+    install(join(to, "rubato"), false);
+    for (const f of ["SKILL.md", "review-template.md", "review-checklist.md", "decision-template.md", "scripts/lib/plan-sha.ts"]) {
+      expect(existsSync(join(to, "rubato", f)), f).toBe(true);
+    }
   });
 });
 

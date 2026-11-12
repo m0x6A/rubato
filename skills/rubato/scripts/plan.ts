@@ -1,14 +1,17 @@
 #!/usr/bin/env -S node --experimental-strip-types
 /**
- * Create and check the plan file at the agreed path (ADR 0005, ADR 0009).
+ * Create and check the plan file at the agreed path (ADR 0005, ADR 0009, ADR 0027), and print
+ * the version an approval names.
  *
  *   plan.ts init  --issue <owner/name#n> --slug <slug> [--title <t>] [--cwd <repo>] [--spend-cap <usd>] [--attempts <n>]
  *   plan.ts path  --issue <owner/name#n> --slug <slug> [--cwd <repo>]
  *   plan.ts check [<plan path>] [--cwd <repo>]
+ *   plan.ts sha   [<plan path>] [--cwd <repo>]
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { currentBranch, issueFromBranch, originRepo } from "./lib/git.ts";
+import { planSha } from "./lib/plan-sha.ts";
 import { planCheck, schemaDir } from "./lib/vendor.ts";
 import { loadWorkspace, mapFile, repoForCwd, type Workspace } from "./lib/workspace.ts";
 
@@ -20,13 +23,20 @@ export interface InitOptions {
   attemptLimit?: number;
 }
 
+/**
+ * The only front-matter keys a plan carries (ADR 0027). Track, review and approval are issue
+ * comments that Rubato reads; status is derived, never written.
+ */
+export const FRONT_MATTER_KEYS = ["issue", "title", "map_version", "spend_cap_usd", "attempt_limit"] as const;
+
+/** The spec headings, the same as the in-app issue form's (ADR 0028). */
+export const SPEC_HEADINGS = ["What the change does", "How we'll know it works", "What it must not break", "How we'll debug it at 3 am"] as const;
+
 export function planTemplate(o: InitOptions, mapVersion: string): string {
   const title = o.title ?? `Issue ${o.issue}`;
   return `---
 issue: ${o.issue}
 title: ${title}
-status: proposed
-date: ${new Date().toISOString().slice(0, 10)}
 map_version: ${mapVersion}
 spend_cap_usd: ${o.spendCapUsd ?? 25}
 attempt_limit: ${o.attemptLimit ?? 3}
@@ -35,6 +45,30 @@ attempt_limit: ${o.attemptLimit ?? 3}
 # ${title}
 
 One paragraph: what this change does and why, in the words of the issue.
+
+## ${SPEC_HEADINGS[0]}
+
+<!-- Behaviour, one bullet each, in the user's or the other side's terms. -->
+
+-
+
+## ${SPEC_HEADINGS[1]}
+
+<!-- Checkboxes, each one a test or an observation that proves a bullet above. -->
+
+- [ ]
+
+## ${SPEC_HEADINGS[2]}
+
+<!-- What keeps working, and what guards it (an existing test, a check, a scenario). -->
+
+-
+
+## ${SPEC_HEADINGS[3]}
+
+<!-- Point at the O-rows below; name any log line or finding that is new. -->
+
+See the O-rows.
 
 ## Affected parts
 
@@ -134,6 +168,19 @@ export async function check(ws: Workspace, cwd: string, planPath?: string): Prom
   return { ok: result.ok, line: checkMod.logLine(result) };
 }
 
+/** The sha a person's `Approved: plan <sha>` comment names for the plan at `planPath`. */
+export async function sha(ws: Workspace, cwd: string, planPath?: string): Promise<{ path: string; sha: string }> {
+  let path = planPath;
+  if (!path) {
+    const n = issueFromBranch(currentBranch(cwd));
+    if (n === null) {
+      throw new Error("not on an issue/<n>-<slug> branch; pass the plan path");
+    }
+    path = (await resolvePlanPath(ws, cwd, n, "")).path;
+  }
+  return { path, sha: planSha(readFileSync(resolve(cwd, path), "utf8")) };
+}
+
 function opt(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
@@ -143,6 +190,12 @@ async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   const cwd = resolve(opt(rest, "--cwd") ?? process.cwd());
   try {
+    const given = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd")[0];
+    if (cmd === "sha" && given) {
+      // A named file needs no workspace: the hash depends on the text alone.
+      console.log(planSha(readFileSync(resolve(cwd, given), "utf8")));
+      return 0;
+    }
     const ws = loadWorkspace();
     if (cmd === "init" || cmd === "path") {
       const issue = opt(rest, "--issue");
@@ -172,13 +225,18 @@ async function main(argv: string[]): Promise<number> {
       console.log(`wrote ${path}; fill the tables, then: plan.ts check ${path}`);
       return 0;
     }
-    if (cmd === "check") {
+    if (cmd === "check" || cmd === "sha") {
       const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd");
+      if (cmd === "sha") {
+        const r = await sha(ws, cwd, positional[0]);
+        console.log(r.sha);
+        return 0;
+      }
       const r = await check(ws, cwd, positional[0]);
       console.log(JSON.stringify(r.line));
       return r.ok ? 0 : 1;
     }
-    console.error("usage: plan.ts init|path|check ...");
+    console.error("usage: plan.ts init|path|check|sha ...");
     return 2;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));

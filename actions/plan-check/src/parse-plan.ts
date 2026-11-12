@@ -95,6 +95,23 @@ function splitFrontmatter(text: string): Frontmatter {
   return { body: lines.slice(end + 1).join("\n"), data };
 }
 
+/**
+ * Front-matter keys ADR 0027 moved out of plan files: track, review and approval are issue
+ * comments now, and progress is derived. Old plans keep them; the check counts them, never fails.
+ */
+export const LEGACY_KEYS = ["review", "approval", "track", "status"] as const;
+
+/** The legacy keys a plan's front matter still carries, in `LEGACY_KEYS` order. */
+export function legacyKeys(text: string): string[] {
+  let data: Record<string, unknown>;
+  try {
+    data = splitFrontmatter(text).data;
+  } catch {
+    return [];
+  }
+  return LEGACY_KEYS.filter((k) => Object.hasOwn(data, k));
+}
+
 /** Split a table row on `|` outside backticks. */
 function splitRow(line: string): string[] {
   const cells: string[] = [];

@@ -194,10 +194,14 @@ Identity comes from the branch: pane cwd → worktree → branch → issue. No m
 
 Every signal carries a last-seen time. A session with no heartbeat renders as *unknown*, never as *working*. Trust check first: is the signal still flowing?
 
-## How we work (same workflow as PantryPilot)
+## How we work
+
+One planning workflow, the `rubato` skill (`skills/rubato/SKILL.md`, ADR 0028), here and in every connected repo.
 
 - **Every design starts from the map.** Read `system-map.yml`, mark nodes affected, new or quiet, write the affected-parts table and the data flow across contexts. For work on Rubato itself, the map is `docs/design/rubato-map.yml`.
-- **Plan before code.** A plan file at `docs/plans/<issue>.md` using `schema/plan.schema.json`. Open decisions go in a section headed **Assumed, not yet approved**; a decision that touches a seam blocks, a decision inside one node may be assumed and labelled.
+- **Size the track first.** Trivial, small or full, with the triggers in the skill; a full plan gets a design note in `docs/plans/<issue>-<slug>/design.md`.
+- **Plan before code.** A plan file at `docs/plans/<issue>.md` using `schema/plan.schema.json`, under the spec headings (what the change does, how we'll know it works, what it must not break, how we'll debug it at 3 am). Front matter is `issue`, `title`, `map_version`, `spend_cap_usd` and `attempt_limit` only (ADR 0027). Open decisions go in a section headed **Assumed, not yet approved**; a decision that touches a seam blocks, a decision inside one node may be assumed and labelled.
+- **Review and approval are issue comments.** The design review is posted as a `Review:` comment (`skills/rubato/review-template.md`, checklist in `review-checklist.md`). A person approves with a comment naming the plan's sha (`plan.ts sha`); an agent never posts it. Rubato reads both and shows them; neither is written into the plan file.
 - **Small, reversible changes.** One task, one branch named `issue/<n>-<slug>`, one PR.
 - **Every check reports how many things it checked and has a test that makes it fail on purpose.** This includes the plan check and every Gherkin suite.
 - **Ask with a question, not with prose.** When a choice can't be settled from the code, raise it as a numbered question with options; don't bury it in a paragraph.

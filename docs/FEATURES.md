@@ -1,5 +1,9 @@
 # Feature index — rubato
 
+**Frozen as of #71 (ADR 0028).** New work is not added here. Rubato shows each issue's plan,
+its `Review:` comment and its approval, derived from the plan file and the issue's comments
+(ADR 0027), so a hand-kept status column would only drift. The rows below stay as a record.
+
 Features that went through the feature workflow, newest first. Full track: a `design.md` in
 `docs/plans/<N>-<slug>/` and the plan `docs/plans/<N>.md`. Small track: `docs/plans/<N>.md` alone. The status column mirrors the design's
 `status:` frontmatter. Plans 1–7 and v0 predate this index.

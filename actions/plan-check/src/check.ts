@@ -1,10 +1,11 @@
 /**
- * The plan check: unknown ids, seams without an O-row, schema validity. One log line per plan,
+ * The plan check: unknown ids, seams without an O-row, schema validity. Legacy front-matter keys
+ * are counted and reported, never failed (ADR 0027). One log line per plan,
  * named `rubato.plan.check`, carrying the `rubato.*` attributes from `rubato-protocol::otel`.
  */
 import { readFileSync } from "node:fs";
 import { mapIds, seamJoins, type SystemMap } from "./map.ts";
-import { parsePlan, PlanParseError, type Plan, type PlanFlow } from "./parse-plan.ts";
+import { legacyKeys, parsePlan, PlanParseError, type Plan, type PlanFlow } from "./parse-plan.ts";
 import { validator } from "./schema.ts";
 
 export interface PlanCheckResult {
@@ -19,6 +20,8 @@ export interface PlanCheckResult {
   flowsChecked: number;
   /** Flows whose seam does not join their two parts, as `from → to over seam`. */
   flowsOffSeam: string[];
+  /** Front-matter keys ADR 0027 moved to issue comments (review, approval, track, status). Reported, never failed. */
+  legacyKeys: string[];
   ok: boolean;
 }
 
@@ -74,6 +77,7 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
     idsChecked: 0,
     flowsChecked: 0,
     flowsOffSeam: [],
+    legacyKeys: legacyKeys(text),
     ok: false,
   };
   let plan: Plan;
@@ -115,6 +119,8 @@ export function logLine(r: PlanCheckResult): Record<string, unknown> {
     ids_checked: r.idsChecked,
     flows_checked: r.flowsChecked,
     flows_off_seam: r.flowsOffSeam,
+    legacy_keys: r.legacyKeys.length,
+    legacy_key_names: r.legacyKeys,
     schema_errors: r.schemaErrors,
     parse_error: r.parseError,
     ok: r.ok,
