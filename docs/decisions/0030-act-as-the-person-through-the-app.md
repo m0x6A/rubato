@@ -1,8 +1,8 @@
 # 0030. Rubato acts on GitHub as the person through the App's user-to-server tokens
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-12
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #80), from Mattias Jonsson's request in the planning session; a human accepts
+- **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #80)
 - **Seam:** server-github
 - **Issue:** m0x6A/rubato#80
 

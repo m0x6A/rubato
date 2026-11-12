@@ -1,8 +1,8 @@
 # 0032. Discover plans by branch prefix in every map repo
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-12
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #80); a human accepts
+- **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #80)
 - **Seam:** server-github
 - **Issue:** m0x6A/rubato#80
 

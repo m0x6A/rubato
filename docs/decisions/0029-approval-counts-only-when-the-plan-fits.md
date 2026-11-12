@@ -1,8 +1,8 @@
 # 0029. An approval counts only while the plan fits the map
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-12
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #80), from Mattias Jonsson's answer in the planning session; a human accepts
+- **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #80)
 - **Seam:** server-plan-file, web-server
 - **Issue:** m0x6A/rubato#80
 

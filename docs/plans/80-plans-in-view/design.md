@@ -1,7 +1,7 @@
 # Design: plans in view with their architecture fit, accepted in Rubato (#80)
 
 Plan: [../80.md](../80.md) · ADRs 0029 (fit gate), 0030 (act as the person), 0031 (data models),
-0032 (discover plans by branch prefix in every map repo). All proposed.
+0032 (discover plans by branch prefix in every map repo). All accepted by Mattias Jonsson 2026-11-12.
 
 Revised after the design review (stage 2, five blockers): idempotency of Accept keyed on intent,
 App user-token rotation, no change to stored repo spelling, a discovery pass with a real budget,

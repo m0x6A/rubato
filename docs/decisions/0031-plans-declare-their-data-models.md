@@ -1,8 +1,8 @@
 # 0031. A plan declares its data models as a parsed table
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-12
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #80), from Mattias Jonsson's request in the planning session; a human accepts
+- **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #80)
 - **Seam:** skill-plan-file, server-plan-file, plan-check-plan-file
 - **Issue:** m0x6A/rubato#80
 
