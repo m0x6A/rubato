@@ -757,6 +757,11 @@ owner_rule?: (string | null)
  * Repositories behind the nodes, with per-repo overrides (ADR 0009).
  */
 repos?: RepoRef[]
+/**
+ * Named journeys through the system, as ordered steps over declared flows (ADR 0024).
+ * Optional; a map without scenarios is still version 1.
+ */
+scenarios?: Scenario[]
 seams?: Seam[]
 /**
  * Map format version. v0 is `1`.
@@ -775,6 +780,40 @@ name: string
  * Plan path template with `{issue}` and `{slug}` placeholders. Default `docs/plans/{issue}.md`.
  */
 plan_path?: (string | null)
+}
+/**
+ * A named journey: what crosses which seam, in order, when someone uses the system (ADR 0024).
+ * Its id shares the namespace of node and seam ids but is not one a pin or plan may name.
+ */
+export interface Scenario {
+description?: (string | null)
+id: string
+/**
+ * Short title shown in the scenario picker.
+ */
+name: string
+/**
+ * In order. Steps need not be contiguous: a journey may jump to another part.
+ */
+steps: ScenarioStep[]
+}
+/**
+ * One step: a flow declared on `seam`, picked by its kind and direction, and by `carries` when
+ * the seam declares more than one flow with that kind and direction.
+ */
+export interface ScenarioStep {
+/**
+ * Must equal the flow's `carries`; required only to tell two such flows apart.
+ */
+carries?: (string | null)
+from: string
+kind: FlowKind
+/**
+ * What happens at this step, in words, for the caption.
+ */
+says?: (string | null)
+seam: string
+to: string
 }
 export interface Me {
 avatar_url?: (string | null)

@@ -33,7 +33,7 @@ describe("the inspector explains what is selected (S9, S26)", () => {
     // In and out, from the team's own map: the overview goes out to web, pins come in.
     const receives = within(box).getByRole("heading", { name: "Receives" }).nextElementSibling as HTMLElement;
     const sends = within(box).getByRole("heading", { name: "Sends" }).nextElementSibling as HTMLElement;
-    expect(receives).toHaveTextContent("PinRequest, MapLayout, PairApproveRequest from web over web-server");
+    expect(receives).toHaveTextContent("PinRequest, MapLayout, PairApproveRequest, map draft operations from web over web-server");
     expect(sends).toHaveTextContent(/Overview: map, issues.* to web over web-server/);
     expect(sends).toHaveTextContent("LaunchCommand, for the paired user only to rubato-companion over companion-server");
     // Dependencies from seam direction.

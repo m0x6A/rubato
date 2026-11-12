@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { overview, realMap } from "../../../test/fixtures.ts";
 import { buildGraph } from "./graph.ts";
@@ -38,6 +38,36 @@ describe("MapView", () => {
   it("Auto-arrange is disabled when nothing is stored", async () => {
     const view = render(<MapView graph={buildGraph(overview())} selected={null} onSelect={() => {}} layout={{ positions: {} }} onMove={async () => {}} onAutoArrange={() => {}} />);
     expect(await view.findByRole("button", { name: "Auto-arrange" }, { timeout: 5000 })).toBeDisabled();
+  });
+
+  it("plays a scenario step by step, with a caption a screen reader hears (ADR 0024)", async () => {
+    const view = render(<MapView graph={buildGraph(overview())} selected={null} onSelect={() => {}} />);
+    await view.findByTestId("node-rubato-server", undefined, { timeout: 5000 });
+    expect(view.queryByRole("group", { name: "Scenario player" })).toBeNull();
+    fireEvent.click(view.getByRole("radio", { name: "Scenarios (3)" }));
+    const player = view.getByRole("group", { name: "Scenario player" });
+    expect(within(player).getByRole("combobox", { name: "Scenario" })).toHaveValue("start-a-session");
+    const live = view.getByTestId("scenario-caption");
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live).toHaveTextContent("Step 1 of 11: web → rubato-server, control: LaunchRequest");
+    expect(within(player).getByRole("button", { name: "Previous step" })).toBeDisabled();
+    fireEvent.click(within(player).getByRole("button", { name: "Next step" }));
+    expect(live).toHaveTextContent("Step 2 of 11: rubato-server → rubato-companion, control: LaunchCommand, for the paired user only — the server sends the launch to your own companion only");
+    // The keyboard steps too.
+    fireEvent.keyDown(player, { key: "ArrowRight" });
+    expect(live).toHaveTextContent("Step 3 of 11");
+    fireEvent.keyDown(player, { key: "ArrowLeft" });
+    expect(live).toHaveTextContent("Step 2 of 11");
+    // The step list jumps; the current step is marked.
+    const steps = within(player).getByRole("list", { name: "Steps" });
+    fireEvent.click(within(steps).getAllByRole("button")[6]!);
+    expect(live).toHaveTextContent("Step 7 of 11: rubato-server → web, data:");
+    expect(within(steps).getAllByRole("button")[6]).toHaveAttribute("aria-current", "step");
+    // Data and control look different without colour: the legend says dot and ring.
+    expect(view.getByTestId("legend")).toHaveTextContent("data moves control: one side tells the other to act");
+    // Another scenario starts at its first step.
+    fireEvent.change(within(player).getByRole("combobox", { name: "Scenario" }), { target: { value: "plan-comes-back" } });
+    expect(live).toHaveTextContent("Step 1 of 7: system-map → skill-rubato, data:");
   });
 
   it("renders a card for every node of rubato-map.yml", async () => {

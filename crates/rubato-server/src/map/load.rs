@@ -217,6 +217,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_scenarios_keep_the_previous_map() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("system-map.yml");
+        let mut cfg = Config::for_tests(
+            format!("sqlite://{}/t.db?mode=rwc", tmp.path().display()),
+            "m0x6A",
+        );
+        cfg.map_file = Some(file.clone());
+        let (a, reader) = app(cfg, Arc::new(FakeGitHub::new())).await;
+        std::fs::write(
+            &file,
+            include_str!("../../../../schema/fixtures/maps/scenarios.yml"),
+        )
+        .unwrap();
+        let good = reload(&a).await.unwrap();
+        assert_eq!(good.map.scenarios.len(), 2);
+
+        // A scenario step with no declared flow, or one that matches two: the load fails naming
+        // the scenario, is counted once, and the map in use is still the previous one.
+        std::fs::write(
+            &file,
+            include_str!("../../../../schema/fixtures/maps/scenarios-bad.yml"),
+        )
+        .unwrap();
+        let e = format!("{:#}", reload(&a).await.unwrap_err());
+        assert!(e.contains("scenario \"off-flow\" step 1"), "{e}");
+        assert!(e.contains("name one with carries"), "{e}");
+        assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
+        let kept = a.map.read().await.clone().unwrap();
+        assert_eq!(kept.map.name, "scenarios-fixture");
+    }
+
+    #[tokio::test]
     async fn loaded_at_follows_loads_and_survives_failures() {
         let tmp = tempfile::tempdir().unwrap();
         let db_url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());

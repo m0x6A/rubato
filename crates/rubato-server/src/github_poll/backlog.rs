@@ -210,6 +210,7 @@ mod tests {
                 description: None,
             }],
             seams: vec![],
+            scenarios: vec![],
         }
     }
 

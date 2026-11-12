@@ -180,5 +180,47 @@ seams:
     flows:
       - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions, backlog, layout" }
       - { kind: control, from: rubato-server, to: web, carries: "WebEvent Changed over /ws/web: fetch the overview again" }
-      - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest" }
-      - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion; map reload; login and logout" }
+      - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations" }
+      - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout" }
+
+# Journeys through the system, step by step over the flows above (ADR 0024). The map view plays
+# them. A step names `carries` only where its seam has two flows with the same kind and direction.
+scenarios:
+  - id: start-a-session
+    name: Start a session on an issue
+    description: "A person starts a Claude Code session on a pinned issue, on their own companion, and sees it working on the map."
+    steps:
+      - { seam: web-server, from: web, to: rubato-server, kind: control, says: "you press Start on a pinned issue" }
+      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "LaunchCommand, for the paired user only", says: "the server sends the launch to your own companion only" }
+      - { seam: companion-tmux-ide, from: rubato-companion, to: tmux-ide, kind: control, says: "the companion creates a worktree on the issue branch" }
+      - { seam: companion-claude-code, from: rubato-companion, to: claude-code, kind: control, says: "Claude Code starts with hooks and telemetry attributes" }
+      - { seam: companion-server, from: rubato-companion, to: rubato-server, kind: data, says: "the launch result and the new session come back" }
+      - { seam: web-server, from: rubato-server, to: web, kind: control, says: "every browser is told something changed" }
+      - { seam: web-server, from: rubato-server, to: web, kind: data, says: "the issue shows Started" }
+      - { seam: companion-claude-code, from: claude-code, to: rubato-companion, kind: data, says: "the session fires hooks as it works" }
+      - { seam: companion-server, from: rubato-companion, to: rubato-server, kind: data, says: "hook events reach the server" }
+      - { seam: web-server, from: rubato-server, to: web, kind: control, says: "browsers are told again" }
+      - { seam: web-server, from: rubato-server, to: web, kind: data, says: "the issue shows Designing" }
+  - id: plan-comes-back
+    name: A plan comes back
+    description: "The agent plans from the map, the plan check reads it on the pull request, and the server paints the map with it."
+    steps:
+      - { seam: skill-system-map, from: system-map, to: skill-rubato, kind: data, says: "the skill offers the session the map's ids and flows" }
+      - { seam: skill-plan-file, from: skill-rubato, to: plan-file, kind: data, says: "the plan is written on the issue branch" }
+      - { seam: plan-check-plan-file, from: plan-file, to: plan-check, kind: data, says: "the Action reads the plan" }
+      - { seam: plan-check-plan-file, from: plan-check, to: plan-file, kind: control, says: "pass or fail on the pull request" }
+      - { seam: server-plan-file, from: plan-file, to: rubato-server, kind: data, says: "the server reads the plan from the branch" }
+      - { seam: web-server, from: rubato-server, to: web, kind: control, says: "browsers are told" }
+      - { seam: web-server, from: rubato-server, to: web, kind: data, says: "the affected parts light up; the issue shows Designed" }
+  - id: propose-a-map-change
+    name: Propose a map change
+    description: "The team edits the map as one shared draft, proposes it as a pull request, and the merged map comes back."
+    steps:
+      - { seam: web-server, from: web, to: rubato-server, kind: data, says: "a person adds a part or a seam to the draft" }
+      - { seam: web-server, from: web, to: rubato-server, kind: control, says: "someone proposes the draft" }
+      - { seam: server-system-map, from: rubato-server, to: system-map, kind: control, says: "the draft becomes a change to the map file" }
+      - { seam: server-github, from: rubato-server, to: github, kind: control, says: "a branch, a commit and a pull request, as the App" }
+      - { seam: server-github, from: github, to: rubato-server, kind: data, carries: "open issues, issue state, Decision: comments, pull requests, check runs, plan files and the map from branches", says: "the pull request merges and the server reads the new map" }
+      - { seam: server-system-map, from: system-map, to: rubato-server, kind: data, says: "the map is validated and loaded" }
+      - { seam: web-server, from: rubato-server, to: web, kind: control, says: "browsers are told" }
+      - { seam: web-server, from: rubato-server, to: web, kind: data, says: "everyone sees the new map" }
