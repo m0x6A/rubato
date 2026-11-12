@@ -57,7 +57,9 @@ function usage(input: number, output: number) {
 
 // A real session thinks between tool calls; pause so the progress model can be observed moving.
 const pause = Number(process.env["RUBATO_STANDIN_DELAY_MS"] ?? "1500");
-const sleep = (ms: number) => { const until = Date.now() + ms; while (Date.now() < until) { /* busy wait keeps the pane process in the foreground */ } };
+// Blocks without using a processor: three sessions spinning at once starved the server and the
+// companion on a small CI runner. The process still stays in the pane's foreground.
+const sleep = (ms: number) => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 fire("SessionStart", { source: "startup" });
 fire("UserPromptSubmit", { prompt });
