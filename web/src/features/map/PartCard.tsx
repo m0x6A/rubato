@@ -50,6 +50,16 @@ export function PartCard({ node, selected, onPin, dim, draft }: Props) {
           </span>
         ))}
         {node.paint && <span className={`badge ${node.paint === "new" ? "designing" : ""}`}>{node.paint} by a plan</span>}
+        {node.planned.length > 0 && (
+          <span className="badge planned-here" title={node.planned.map((i) => `#${i.issue.number}`).join(", ")}>
+            {node.planned.length} planned here
+          </span>
+        )}
+        {node.models > 0 && (
+          <span className="badge models" title="data models the open plans introduce or change here">
+            +{node.models} model{node.models === 1 ? "" : "s"}
+          </span>
+        )}
         {approvals.approved > 0 && <span className="badge approved">{approvals.approved} approved</span>}
         {approvals.stale > 0 && (
           <span className="badge approval-stale" title="the plan changed after it was approved">

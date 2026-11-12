@@ -4,6 +4,8 @@
     { "number": 902, "title": "Backlog: an unpinned issue", "url": "https://github.com/m0x6A/rubato/issues/902", "labels": ["bug"] },
     { "number": 903, "title": "Backlog: another unpinned issue", "url": "https://github.com/m0x6A/rubato/issues/903", "labels": [] },
     { "number": 912, "title": "Voice: hooks stop on a slow launch", "url": "https://github.com/m0x6A/rubato/issues/912", "labels": [], "author": "m0x6A", "author_association": "OWNER", "body": "## Summary\nHooks wait behind a slow launch.\n\nMap: seam companion-server\n" },
-    { "number": 913, "title": "Voice: from someone outside", "url": "https://github.com/m0x6A/rubato/issues/913", "labels": [], "author": "stranger", "author_association": "NONE", "body": "Map: node plan-check\n" }
+    { "number": 913, "title": "Voice: from someone outside", "url": "https://github.com/m0x6A/rubato/issues/913", "labels": [], "author": "stranger", "author_association": "NONE", "body": "Map: node plan-check\n" },
+    { "number": 914, "title": "Voice: plans show where they fit", "url": "https://github.com/m0x6A/rubato/issues/914", "labels": [], "author": "m0x6A", "author_association": "OWNER", "body": "## Summary\nShow plans in Rubato.\n\n<details><summary>Original voice note</summary>\n\nPlans should show where they fit.\n\n</details>\n" },
+    { "number": 915, "title": "Voice: a plan that does not fit", "url": "https://github.com/m0x6A/rubato/issues/915", "labels": [], "author": "m0x6A", "author_association": "OWNER", "body": "## Summary\nA plan with no O-row.\n" }
   ]
 }

@@ -9,13 +9,15 @@ import { liveApi, subscribe } from "./features/live/index.ts";
 import { NewIssueForm } from "./features/new_issue/index.ts";
 import { Inspector, MapView, PlanInspector, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
+import { PlansPanel, groupPlans } from "./features/plans/index.ts";
+import { ConnectedRepos } from "./features/repos/index.ts";
 import { queueApi } from "./features/queue/index.ts";
 import type { IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
 import { hasIssueDrag } from "./shared/dnd.ts";
 import { issueKey, relative } from "./shared/format.ts";
 
-type Tab = "issues" | "companions";
+type Tab = "issues" | "plans" | "companions" | "repos";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -333,6 +335,9 @@ export function App() {
             <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
               Issues{overview ? ` (${overview.issues.length})` : ""}
             </button>
+            <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")} data-testid="tab-plans">
+              Plans{overview ? ` (${groupPlans(overview).proposed.length} proposed)` : ""}
+            </button>
             {/* Dragging an issue over this tab opens it, so the issue can be dropped on a lane. */}
             <button
               className={tab === "companions" ? "active" : ""}
@@ -344,6 +349,9 @@ export function App() {
               }}
             >
               Companions{overview ? ` (${overview.companions.filter((c) => c.connected).length} live)` : ""}
+            </button>
+            <button className={tab === "repos" ? "active" : ""} onClick={() => setTab("repos")} data-testid="tab-repos">
+              Repos{overview ? ` (${(overview.repos ?? []).length})` : ""}
             </button>
           </nav>
           {overview && <Findings findings={overview.findings} />}
@@ -394,8 +402,27 @@ export function App() {
               onPin={onPin}
               onUnpin={onUnpin}
               onQueue={onQueue}
+              onNotice={(text) => {
+                setNotice(text);
+                void refresh();
+              }}
             />
           )}
+          {overview && tab === "plans" && (
+            <PlansPanel
+              overview={overview}
+              me={me}
+              onSelect={(issue) => {
+                setTab("issues");
+                setSelectedIssue(issue);
+              }}
+              onNotice={(text) => {
+                setNotice(text);
+                void refresh();
+              }}
+            />
+          )}
+          {overview && tab === "repos" && <ConnectedRepos overview={overview} />}
           {/* An open issue with a plan: the map shows the plan, and below the issue this says what the plan says. */}
           {overview && tab === "issues" && selected?.plan && (
             <PlanInspector

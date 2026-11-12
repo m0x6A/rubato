@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { PinMenu } from "../pins/index.ts";
+import { WhereItFits } from "../plans/index.ts";
 import { QueueMenu } from "../queue/index.ts";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
 import { setIssueDrag } from "../../shared/dnd.ts";
@@ -21,6 +22,8 @@ interface Props {
   onUnpin: (req: PinRequest) => void;
   /** Queue an issue on one of the caller's own companions. Without it no "Queue on…" is offered. */
   onQueue?: ((issue: IssueRef, companionId: string) => void) | undefined;
+  /** Says what *Accept plan* did. */
+  onNotice?: ((text: string) => void) | undefined;
 }
 
 /** Companions the current user may queue issues on: their own, paired, not revoked (ADR 0020). */
@@ -41,7 +44,7 @@ export function ownConnectedCompanions(overview: Overview, me: Me | null) {
 
 const ORDER = ["blocked", "unknown", "building", "designing", "designed", "started", "in_review", "planned", "done"] as const;
 
-export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue }: Props) {
+export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice }: Props) {
   const own = ownConnectedCompanions(overview, me);
   const lanes = onQueue ? ownLanes(overview, me) : [];
   // The list gives way to the detail, and a row that was just pinned leaves "Not pinned" with the
@@ -120,28 +123,11 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             </table>
           </>
         )}
-        {selected.plan && (
+        {(selected.plan || selected.fit) && (
           <>
-            <h3 style={{ marginTop: 12 }}>Plan · {selected.plan.path}</h3>
-            <table className="mini">
-              <thead>
-                <tr>
-                  <th>Node</th>
-                  <th>Status</th>
-                  <th>Seams</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selected.plan.affected_parts.map((p) => (
-                  <tr key={p.node}>
-                    <td>{p.node}</td>
-                    <td>{p.status}</td>
-                    <td className="muted">{(p.seams ?? []).join(", ")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {selected.plan.assumed && selected.plan.assumed.some((a) => a.scope === "seam") && (
+            <h3 style={{ marginTop: 12 }}>Plan · {selected.plan?.path ?? "does not parse"}</h3>
+            <WhereItFits issue={selected} map={overview.map.map} me={me} onNotice={(t) => onNotice?.(t)} />
+            {selected.plan?.assumed && selected.plan.assumed.some((a) => a.scope === "seam") && (
               <p className="warn">⚠ {selected.plan.assumed.filter((a) => a.scope === "seam").length} seam-level question(s) wait for a human.</p>
             )}
           </>
