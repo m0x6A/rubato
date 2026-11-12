@@ -191,8 +191,40 @@ What happens next, and what to watch:
 ## Observability
 
 Point `OTEL_EXPORTER_OTLP_ENDPOINT` at your collector for both binaries and set the same
-endpoint under `otel` in `workspace.yml` so launched sessions export too. Import
-`observability/dashboards/rubato-overview.json` into Grafana and load
-`observability/alerts/rubato.rules.yml` into Prometheus or Mimir. The five rules cover the
-"never silent" list from `AGENTS.md`; `promtool test rules observability/alerts/tests/rubato.test.yml`
-fires each on purpose.
+endpoint under `otel` in `workspace.yml` so launched sessions export too. The rules in
+`observability/alerts/rubato.rules.yml` cover the "never silent" list from `AGENTS.md`;
+`promtool test rules observability/alerts/tests/rubato.test.yml` fires each on purpose.
+
+### Publishing to Grafana
+
+A merge to `main` that changes `observability/` publishes the dashboard and the alert rules
+(`.github/workflows/publish-observability.yml`). The dashboard goes into the folder "Rubato".
+The rules are sent in their Prometheus form to Grafana's import route and become
+Grafana-managed rules in the same folder, evaluated against the metrics datasource. The job
+publishes only from `main`, also when started by hand.
+
+The workflow reads three repository variables and one secret:
+
+| Name | Kind | Value |
+| --- | --- | --- |
+| `GRAFANA_URL` | variable | the stack's address, such as `https://<stack>.grafana.net` (not the OTLP gateway) |
+| `GRAFANA_PROM_DS` | variable | the name of the metrics datasource |
+| `GRAFANA_LOKI_DS` | variable | the name of the logs datasource |
+| `GRAFANA_API_TOKEN` | secret | a service account token that may read datasources and write folders, dashboards and alert rules |
+
+Set the variable `GRAFANA_ALERTS_PAUSED` to `true` to import the alert rules paused: they are
+on the stack but do not evaluate or fire. Remove it and run the workflow again to make them
+active.
+
+By hand, with the same four in the environment:
+
+```
+pnpm observability:publish --dry-run       # resolves datasources and the folder, writes nothing
+pnpm observability:publish                 # writes, reads back and compares
+pnpm observability:publish --verify-live   # metrics the files query that the stack has never stored
+```
+
+Sending a rule group replaces it, so a rule removed from the file leaves the stack. A whole
+group or dashboard removed from the repository stays in Grafana until someone deletes it there.
+Until a server exports to the stack, `ServerPollSilent` fires unless the rules are paused: it
+is the rule for "no poll tick seen".

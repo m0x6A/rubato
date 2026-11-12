@@ -6,6 +6,7 @@ Features that went through the feature workflow, newest first. Full track: a `de
 
 | Feature | Track | Status | Date | What it changes |
 |---|---|---|---|---|
+| [#57 Publish the dashboard and alert rules to Grafana on merge](plans/57.md) | small | approved | 2026-11-11 | a Node publisher and a workflow send `observability/` to the Grafana stack on merge, read it back, and list queried metrics the stack has never stored |
 | [#48 Make the system map interactive and link it to open issues](plans/48-interactive-map/design.md) · [plan](plans/48.md) | full | implemented | 2026-11-11 | a map that explains the system: flows, movable parts, all open issues pinned by drag, companion lanes with a queue, a plan lens, map edits proposed as a pull request; GitHub App access |
 | [#31 Dashboard: show map staleness](plans/31.md) | small | implemented | 2026-11-10 | a `rubato.map.loaded_at` gauge and a "Map age" panel; read and parse failures counted |
 | [#30 Companion: emit CapHit for the attempt limit](plans/30.md) | small | implemented | 2026-11-10 | an over-limit launch is a cap-hit event on the server and the companion; the issue shows Blocked unless a session is live |

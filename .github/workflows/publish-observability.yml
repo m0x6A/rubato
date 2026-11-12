@@ -1,0 +1,58 @@
+name: publish observability
+
+# The dashboard and the alert rules are code under observability/. A merge to main that changes
+# them sends them to the Grafana stack, so a panel or rule never exists only in the file (#57).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "observability/**"
+      - ".github/workflows/publish-observability.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel part-way: a run writes the dashboard, then each rule group, and stops at the
+# first error. Two runs wait for each other instead.
+concurrency:
+  group: publish-observability
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish dashboard and alert rules to Grafana
+    # Run by hand, it still publishes only what is on main: a branch's dashboards and rules
+    # never reach the shared stack.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GRAFANA_URL: ${{ vars.GRAFANA_URL }}
+      GRAFANA_PROM_DS: ${{ vars.GRAFANA_PROM_DS }}
+      GRAFANA_LOKI_DS: ${{ vars.GRAFANA_LOKI_DS }}
+      GRAFANA_ALERTS_PAUSED: ${{ vars.GRAFANA_ALERTS_PAUSED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Checked again here: this is the path that writes to a shared stack, and it should not
+      # lean on another workflow having run first.
+      - run: pnpm observability:check
+      - run: pnpm observability:test
+      - name: Publish (fails on a missing setting, an unknown datasource, a refused call or a short read-back)
+        run: pnpm observability:publish
+        # The token is given to the two steps that call Grafana, not to the install or the tests.
+        env:
+          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
+      # Advisory: a counter that has never counted is not stored, so a new metric looks missing
+      # until it first fires. What this catches is a query that names a series nothing emits.
+      - name: Metrics the files query that the stack has never stored
+        continue-on-error: true
+        run: pnpm observability:publish --verify-live
+        env:
+          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
