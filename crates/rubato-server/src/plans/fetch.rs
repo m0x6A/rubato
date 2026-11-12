@@ -35,6 +35,17 @@ pub async fn fetch_and_store(
         Some(text) => match parse_plan(&text, &path) {
             Ok(mut plan) => {
                 plan.git_ref = Some(branch.to_owned());
+                // Logged where the fit can change: a new head of the plan (ADR 0029).
+                if let Some(fit) = rubato_protocol::plan_fit(Some(&plan), None, &map.map)
+                    && !fit.fits
+                {
+                    tracing::info!(
+                        rubato.issue = %issue,
+                        branch,
+                        reasons = ?fit.reasons,
+                        "plan does not fit"
+                    );
+                }
                 let sha = approval_hash(&text);
                 store::upsert_plan(&app.db, issue, branch, &path, Some(&plan), None, &sha).await?;
             }

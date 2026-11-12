@@ -17,6 +17,26 @@ pub const READ_TIMEOUT: Duration = Duration::from_secs(15);
 /// `#[instrument(name = …)]` takes a bare identifier.
 const GITHUB_CALL: &str = rubato_protocol::otel::span::GITHUB_CALL;
 
+/// Count GitHub REST calls, one per page, by endpoint (`rubato.github.calls`, ADR 0032).
+fn count_call(endpoint: &'static str, pages: u64) {
+    use opentelemetry::KeyValue;
+    use std::sync::OnceLock;
+    static CALLS: OnceLock<opentelemetry::metrics::Counter<u64>> = OnceLock::new();
+    CALLS
+        .get_or_init(|| {
+            opentelemetry::global::meter("rubato-server")
+                .u64_counter(rubato_protocol::otel::metric::GITHUB_CALLS)
+                .build()
+        })
+        .add(
+            pages,
+            &[KeyValue::new(
+                rubato_protocol::otel::attr::GITHUB_ENDPOINT,
+                endpoint,
+            )],
+        );
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueInfo {
     pub title: String,
@@ -94,6 +114,9 @@ pub struct PullInfo {
     pub merged_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
     pub url: String,
+    /// The branch it merges into, when known: the bottom of a stack targets the default branch
+    /// (ADR 0032).
+    pub base: Option<String>,
 }
 
 /// A branch and the commit it points at.
@@ -362,6 +385,7 @@ fn app_client_with(
 impl GitHubApi for Octo {
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "contents"))]
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>> {
+        count_call("contents", 1);
         let (o, r) = split_repo(repo)?;
         match self
             .client
@@ -386,6 +410,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "branch"))]
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>> {
+        count_call("branch", 1);
         let (o, r) = split_repo(repo)?;
         let route = format!("/repos/{o}/{r}/branches/{branch}");
         match self
@@ -406,27 +431,48 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "branches"))]
     async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>> {
-        let (o, r) = split_repo(repo)?;
-        let page = self
-            .client
-            .repos(o, r)
-            .list_branches()
-            .per_page(100)
-            .send()
-            .await?;
-        let all = self.client.all_pages(page).await?;
-        Ok(all
-            .into_iter()
-            .filter(|b| b.name.starts_with(prefix))
-            .map(|b| BranchHead {
-                name: b.name,
-                sha: b.commit.sha,
-            })
-            .collect())
+        // `git/matching-refs` filters by prefix on GitHub's side, so the pages count only the
+        // matching refs, not every branch of the repo (ADR 0032).
+        #[derive(serde::Deserialize)]
+        struct Obj {
+            sha: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Ref {
+            #[serde(rename = "ref")]
+            name: String,
+            object: Obj,
+        }
+        split_repo(repo)?;
+        let mut heads = Vec::new();
+        let mut pages = 0;
+        for page in 1.. {
+            let refs: Vec<Ref> = self
+                .client
+                .get(
+                    format!("/repos/{repo}/git/matching-refs/heads/{prefix}"),
+                    Some(&[("per_page", "100".to_owned()), ("page", page.to_string())]),
+                )
+                .await?;
+            pages += 1;
+            let full = refs.len() >= 100;
+            heads.extend(refs.into_iter().filter_map(|r| {
+                r.name.strip_prefix("refs/heads/").map(|n| BranchHead {
+                    name: n.to_owned(),
+                    sha: r.object.sha,
+                })
+            }));
+            if !full {
+                break;
+            }
+        }
+        count_call("branches", pages);
+        Ok(heads)
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pulls"))]
     async fn open_pulls(&self, repo: &str) -> Result<OpenPulls> {
+        count_call("pulls", 1);
         let (o, r) = split_repo(repo)?;
         let page = self
             .client
@@ -458,6 +504,7 @@ impl GitHubApi for Octo {
                             merged_at: p.merged_at,
                             updated_at: p.updated_at.unwrap_or_else(Utc::now),
                             url: p.html_url.map(|u| u.to_string()).unwrap_or_default(),
+                            base: Some(p.base.ref_field.clone()),
                         },
                     )
                 })
@@ -467,6 +514,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "issue"))]
     async fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueInfo>> {
+        count_call("issue", 1);
         let (o, r) = split_repo(repo)?;
         match self.client.issues(o, r).get(number).await {
             Ok(i) => Ok(Some(IssueInfo {
@@ -492,6 +540,7 @@ impl GitHubApi for Octo {
             .send()
             .await?;
         let all = self.client.all_pages(page).await?;
+        count_call("comments", (all.len() as u64).div_ceil(100).max(1));
         Ok(all
             .into_iter()
             .map(|c| Comment {
@@ -513,6 +562,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pulls"))]
     async fn pull_for_branch(&self, repo: &str, branch: &str) -> Result<Option<PullInfo>> {
+        count_call("pulls", 1);
         let (o, r) = split_repo(repo)?;
         let page = self
             .client
@@ -533,11 +583,13 @@ impl GitHubApi for Octo {
             merged_at: p.merged_at,
             updated_at: p.updated_at.unwrap_or_else(Utc::now),
             url: p.html_url.map(|u| u.to_string()).unwrap_or_default(),
+            base: Some(p.base.ref_field.clone()),
         }))
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "check-runs"))]
     async fn checks(&self, repo: &str, sha: &str) -> Result<ChecksStatus> {
+        count_call("check-runs", 1);
         let (o, r) = split_repo(repo)?;
         let route = format!("/repos/{o}/{r}/commits/{sha}/check-runs?per_page=100");
         let v: serde_json::Value = self.client.get(route, None::<&()>).await?;
@@ -556,6 +608,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "rate_limit"))]
     async fn rate_limit(&self) -> Result<(u64, u64)> {
+        count_call("rate_limit", 1);
         let v: serde_json::Value = self.client.get("/rate_limit", None::<&()>).await?;
         let core = v.pointer("/resources/core").cloned().unwrap_or_default();
         Ok((
@@ -566,6 +619,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "issues"))]
     async fn open_issues(&self, repo: &str, max: usize) -> Result<OpenIssues> {
+        count_call("issues", 1);
         let (o, r) = split_repo(repo)?;
         let pages = max.div_ceil(ISSUES_PER_PAGE).max(1);
         let mut out = OpenIssues::default();
@@ -591,6 +645,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "installation_repositories"))]
     async fn installation_repos(&self) -> Result<Vec<String>> {
+        count_call("installation_repositories", 1);
         let mut out = Vec::new();
         for page in 1..=10 {
             let route = format!("/installation/repositories?per_page=100&page={page}");
@@ -619,6 +674,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "create_ref"))]
     async fn create_ref(&self, repo: &str, branch: &str, sha: &str) -> Result<()> {
+        count_call("create_ref", 1);
         let (o, r) = split_repo(repo)?;
         let reference = octocrab::params::repos::Reference::Branch(branch.to_owned());
         match self.client.repos(o, r).create_ref(&reference, sha).await {
@@ -640,6 +696,7 @@ impl GitHubApi for Octo {
         content: &str,
         message: &str,
     ) -> Result<()> {
+        count_call("put_contents", 1);
         let (o, r) = split_repo(repo)?;
         let repos = self.client.repos(o, r);
         // The file's blob sha on that branch: GitHub refuses an update without it, which is
@@ -679,6 +736,7 @@ impl GitHubApi for Octo {
         title: &str,
         body: &str,
     ) -> Result<(u64, String)> {
+        count_call("create_pull", 1);
         let (o, r) = split_repo(repo)?;
         let pr = self
             .client
@@ -695,6 +753,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "close_pull"))]
     async fn close_pull(&self, repo: &str, number: u64) -> Result<()> {
+        count_call("close_pull", 1);
         let (o, r) = split_repo(repo)?;
         self.client
             .pulls(o, r)
@@ -711,6 +770,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "installation"))]
     async fn refresh_issue_permission(&self) -> Result<bool> {
+        count_call("installation", 1);
         let Some(a) = &self.as_app else {
             return Ok(false);
         };
@@ -731,6 +791,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self, body), err, fields(rubato.github.endpoint = "create_issue"))]
     async fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<(u64, String)> {
+        count_call("create_issue", 1);
         let (o, r) = split_repo(repo)?;
         let Some(a) = &self.as_app else {
             anyhow::bail!("this GitHub connection cannot create issues");
@@ -766,6 +827,7 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "delete_ref"))]
     async fn delete_ref(&self, repo: &str, branch: &str) -> Result<()> {
+        count_call("delete_ref", 1);
         let (o, r) = split_repo(repo)?;
         let reference = octocrab::params::repos::Reference::Branch(branch.to_owned());
         match self.client.repos(o, r).delete_ref(&reference).await {

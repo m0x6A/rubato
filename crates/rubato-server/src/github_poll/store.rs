@@ -303,6 +303,24 @@ pub async fn all_reviews(db: &SqlitePool) -> Result<Vec<ReviewRecord>> {
         .collect())
 }
 
+/// The branch the newest approval of each issue names, for issues whose newest approval names
+/// one (ADR 0032: the plan is read from that branch).
+pub async fn approved_branches(db: &SqlitePool) -> Result<HashMap<IssueRef, String>> {
+    let mut newest: HashMap<IssueRef, ApprovalRecord> = HashMap::new();
+    for (a, _) in all_approvals(db).await? {
+        match newest.get(&a.issue) {
+            Some(n) if (n.created_at, n.comment_id) >= (a.created_at, a.comment_id) => {}
+            _ => {
+                newest.insert(a.issue.clone(), a);
+            }
+        }
+    }
+    Ok(newest
+        .into_iter()
+        .filter_map(|(i, a)| a.branch.map(|b| (i, b)))
+        .collect())
+}
+
 /// Every approval, with the plan hash of the branch it names when it names another one.
 pub async fn all_approvals(db: &SqlitePool) -> Result<Vec<(ApprovalRecord, Option<String>)>> {
     let rows = sqlx::query(

@@ -1162,6 +1162,11 @@
           "refId": "A",
           "expr": "max(rubato_plans_approval_stale)",
           "legendFormat": "stale approvals"
+        },
+        {
+          "refId": "B",
+          "expr": "max(rubato_plans_not_fitting)",
+          "legendFormat": "plans not fitting"
         }
       ],
       "fieldConfig": {
@@ -1194,6 +1199,36 @@
         "graphMode": "none",
         "textMode": "value_and_name"
       }
+    },
+    {
+      "id": 72,
+      "title": "GitHub calls by endpoint",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 71
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_github_endpoint) (rate(rubato_github_calls_total[5m]) * 60)",
+          "legendFormat": "{{rubato_github_endpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "GitHub REST calls per minute, one per page (ADR 0032). The budget is 5000 per hour."
     }
   ]
 }

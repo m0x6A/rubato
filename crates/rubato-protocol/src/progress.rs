@@ -10,12 +10,13 @@ use crate::layout::MapLayout;
 use crate::map::MapResponse;
 use crate::map_draft::MapDraft;
 use crate::pairing::PairingInfo;
-use crate::plan::Plan;
+use crate::plan::{Plan, PlanFit};
 use crate::queue::QueuedIssue;
 use crate::session::{SessionState, SessionStatus};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
@@ -172,6 +173,9 @@ pub struct IssueSummary {
     /// badge, not a progress state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalState>,
+    /// Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<PlanFit>,
     /// Sum over this issue's sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_usd: Option<f64>,
@@ -258,6 +262,38 @@ pub enum Finding {
         approved_sha: String,
         current_sha: String,
     },
+    /// An approval names the current plan, but the plan does not fit the map, so it does not
+    /// count (ADR 0029).
+    ApprovedWithoutFit { issue: IssueRef },
+    /// A live session Rubato cannot tie to an issue: its branch is not `issue/<n>-…`, or its
+    /// repo is unknown.
+    UnattributedSession {
+        companion: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+    },
+}
+
+/// One repo the map names, and what Rubato sees of it: whether the App covers it, and its open
+/// issues, plans and sessions. A repo outside the map with tracked work appears with
+/// `in_map: false`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConnectedRepo {
+    /// `owner/name`, in the map's spelling.
+    pub repo: String,
+    pub in_map: bool,
+    /// The App installation covers it (ADR 0022). False also when coverage is not known yet.
+    pub covered: bool,
+    /// Open issues in the latest listing.
+    pub open_issues: u32,
+    /// Tracked issues with a plan file.
+    pub plans: u32,
+    /// Live sessions tied to an issue of this repo.
+    pub sessions: u32,
+    /// Live sessions in this repo with no issue.
+    pub unattributed: u32,
 }
 
 /// The whole picture in one payload: what the web view renders.
@@ -288,6 +324,9 @@ pub struct Overview {
     /// Issues: write, or the server runs on the local stand-in (ADR 0025).
     #[serde(default)]
     pub can_create_issues: bool,
+    /// One row per repo the map names, plus repos of tracked work outside the map.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repos: Vec<ConnectedRepo>,
     pub generated_at: DateTime<Utc>,
 }
 

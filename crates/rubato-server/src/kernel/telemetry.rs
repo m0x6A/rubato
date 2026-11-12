@@ -108,6 +108,7 @@ pub struct Metrics {
     pub backlog_map_lines: Counter<u64>,
     pub issues_created: Counter<u64>,
     pub issues_opening: Gauge<u64>,
+    pub plans_not_fitting: Gauge<u64>,
 }
 
 impl Metrics {
@@ -147,6 +148,7 @@ impl Metrics {
             backlog_map_lines: m.u64_counter(otel::metric::BACKLOG_MAP_LINES).build(),
             issues_created: m.u64_counter(otel::metric::ISSUES_CREATED).build(),
             issues_opening: m.u64_gauge(otel::metric::ISSUES_OPENING).build(),
+            plans_not_fitting: m.u64_gauge(otel::metric::PLANS_NOT_FITTING).build(),
         }
     }
 }

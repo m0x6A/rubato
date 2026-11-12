@@ -47,5 +47,13 @@ pub async fn refresh_gauges(app: &App, map: &LoadedMap) -> Result<()> {
         .filter(|f| matches!(f, rubato_protocol::Finding::ApprovalStale { .. }))
         .count();
     app.metrics.plans_approval_stale.record(stale as u64, &[]);
+    let not_fitting = built
+        .issues
+        .iter()
+        .filter(|i| i.fit.as_ref().is_some_and(|f| !f.fits))
+        .count();
+    app.metrics
+        .plans_not_fitting
+        .record(not_fitting as u64, &[]);
     Ok(())
 }

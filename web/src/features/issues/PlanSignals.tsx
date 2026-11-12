@@ -32,7 +32,13 @@ export function PlanSignals({ issue }: { issue: IssueSummary }) {
                 by <code>{approval.record.author}</code>
               </a>{" "}
               <span className="muted">
-                {approval.version === "current" ? "current version" : approval.version === "earlier" ? "the plan changed since" : ""}
+                {approval.version === "current"
+                  ? "current version"
+                  : approval.version === "earlier"
+                    ? "the plan changed since"
+                    : approval.version === "does_not_fit"
+                      ? "the plan does not fit the map (ADR 0029)"
+                      : ""}
                 {approval.record.branch ? ` · on ${approval.record.branch}` : ""} · {relative(approval.record.created_at)}
               </span>
             </>
@@ -59,7 +65,13 @@ export function SignalBadges({ issue }: { issue: IssueSummary }) {
       )}
       {issue.approval && (
         <span className={`badge ${approvalClass(issue.approval)}`} title={approvalLabel(issue.approval)}>
-          {issue.approval.version === "current" ? "approved" : issue.approval.version === "earlier" ? "approval stale" : "approved, unchecked"}
+          {issue.approval.version === "current"
+            ? "approved"
+            : issue.approval.version === "earlier"
+              ? "approval stale"
+              : issue.approval.version === "does_not_fit"
+                ? "approved, doesn't fit"
+                : "approved, unchecked"}
         </span>
       )}
     </>

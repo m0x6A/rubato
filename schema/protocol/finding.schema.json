@@ -171,6 +171,53 @@
         "approved_sha",
         "current_sha"
       ]
+    },
+    {
+      "description": "An approval names the current plan, but the plan does not fit the map, so it does not\ncount (ADR 0029).",
+      "type": "object",
+      "properties": {
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "approved_without_fit"
+        }
+      },
+      "required": [
+        "kind",
+        "issue"
+      ]
+    },
+    {
+      "description": "A live session Rubato cannot tie to an issue: its branch is not `issue/<n>-…`, or its\nrepo is unknown.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "companion": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "type": "string",
+          "const": "unattributed_session"
+        },
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "companion"
+      ]
     }
   ],
   "$defs": {

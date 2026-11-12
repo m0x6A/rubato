@@ -113,6 +113,14 @@ approved_sha: string
 current_sha: string
 issue: IssueRef
 kind: "approval_stale"
+} | {
+issue: IssueRef
+kind: "approved_without_fit"
+} | {
+branch?: (string | null)
+companion: string
+kind: "unattributed_session"
+repo?: (string | null)
 })
 /**
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
@@ -131,7 +139,33 @@ kind: "seam"
 /**
  * How an approval relates to the plan Rubato holds now.
  */
-export type ApprovalVersion = ("current" | "earlier" | "not_named" | "no_plan")
+export type ApprovalVersion = ("current" | "earlier" | "not_named" | "no_plan" | "does_not_fit")
+/**
+ * Why a plan does not fit the map (ADR 0029). Each one alone makes `PlanFit::fits` false.
+ */
+export type FitReason = ({
+kind: "parse_error"
+message: string
+} | {
+ids: string[]
+kind: "unknown_ids"
+} | {
+from: string
+kind: "flow_off_seam"
+seam: string
+to: string
+} | {
+kind: "missing_o_row"
+seam: string
+} | {
+kind: "model_off_part"
+model: string
+part: string
+} | {
+kind: "model_off_seam"
+model: string
+seam: string
+})
 export type PartStatus = ("affected" | "new" | "quiet")
 export type AssumptionScope = ("node" | "seam")
 export type ModelChange = ("new" | "changed" | "removed")
@@ -518,6 +552,10 @@ export interface IssueSummary {
  */
 approval?: (ApprovalState | null)
 decisions?: DecisionRecord[]
+/**
+ * Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.
+ */
+fit?: (PlanFit | null)
 issue: IssueRef
 pins: MapRef[]
 plan?: (Plan | null)
@@ -566,6 +604,14 @@ note?: (string | null)
  */
 sha?: (string | null)
 url: string
+}
+/**
+ * Where a plan fits the map, and whether it does (ADR 0029). An approval counts only while
+ * `fits` is true.
+ */
+export interface PlanFit {
+fits: boolean
+reasons?: FitReason[]
 }
 export interface Plan {
 affected_parts: AffectedPart[]
@@ -1004,6 +1050,10 @@ map: MapResponse
  */
 queue?: QueuedIssue[]
 /**
+ * One row per repo the map names, plus repos of tracked work outside the map.
+ */
+repos?: ConnectedRepo[]
+/**
  * Sessions not attached to any issue (branch outside the convention).
  */
 unpinned_sessions?: SessionState[]
@@ -1142,6 +1192,38 @@ queued_at: string
  * GitHub login of who queued it: the companion's own user.
  */
 queued_by: string
+}
+/**
+ * One repo the map names, and what Rubato sees of it: whether the App covers it, and its open
+ * issues, plans and sessions. A repo outside the map with tracked work appears with
+ * `in_map: false`.
+ */
+export interface ConnectedRepo {
+/**
+ * The App installation covers it (ADR 0022). False also when coverage is not known yet.
+ */
+covered: boolean
+in_map: boolean
+/**
+ * Open issues in the latest listing.
+ */
+open_issues: number
+/**
+ * Tracked issues with a plan file.
+ */
+plans: number
+/**
+ * `owner/name`, in the map's spelling.
+ */
+repo: string
+/**
+ * Live sessions tied to an issue of this repo.
+ */
+sessions: number
+/**
+ * Live sessions in this repo with no issue.
+ */
+unattributed: number
 }
 export interface PairApproveRequest {
 user_code: string

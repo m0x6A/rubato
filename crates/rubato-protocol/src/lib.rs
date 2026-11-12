@@ -57,12 +57,12 @@ pub use pairing::{
 };
 pub use pins::{IssuePin, PinRequest};
 pub use plan::{
-    AffectedPart, Assumption, AssumptionScope, DataModel, DataModelKind, ModelChange, ORow,
-    PartStatus, Plan, PlanFlow,
+    AffectedPart, Assumption, AssumptionScope, DataModel, DataModelKind, FitReason, ModelChange,
+    ORow, PartStatus, Plan, PlanFit, PlanFlow, plan_fit,
 };
 pub use progress::{
-    Backlog, BacklogRepo, Finding, IssueSummary, OpenIssue, Overview, Progress, ProgressInputs,
-    ProgressState, derive_progress,
+    Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,
+    ProgressInputs, ProgressState, derive_progress,
 };
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use session::{

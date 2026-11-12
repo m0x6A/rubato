@@ -17,6 +17,10 @@ export function findingText(f: Finding): string {
       return `${issueKey(f.issue)}: the plan changed after it was approved (approved ${f.approved_sha.slice(0, 7)}, now ${f.current_sha.slice(0, 7)})`;
     case "repo_not_covered":
       return `${f.repo} is not covered by the GitHub App installation; its branches, plans and pull requests cannot be read`;
+    case "approved_without_fit":
+      return `${issueKey(f.issue)} was approved, but its plan does not fit the map, so the approval does not count`;
+    case "unattributed_session":
+      return `a session${f.repo ? ` in ${f.repo}` : ""} on ${f.branch ? `branch ${f.branch}` : "no branch"} is not tied to an issue; name its branch issue/<n>-…`;
   }
 }
 
