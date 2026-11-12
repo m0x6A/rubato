@@ -1,7 +1,8 @@
 //! tmux as a CLI, honouring a private socket directory. Pane *metadata* only (cwd, command,
 //! ids); pane content is never read. State comes from hooks and tmux-ide.
 
-use anyhow::{Context, Result, bail};
+use crate::kernel::proc;
+use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,6 +10,8 @@ use std::process::Command;
 pub struct Tmux {
     pub command: String,
     pub tmpdir: Option<PathBuf>,
+    /// Every call; [`proc::LOCAL_TIMEOUT`] unless a test shortens it.
+    pub timeout: std::time::Duration,
 }
 
 /// One pane's metadata.
@@ -27,6 +30,7 @@ impl Tmux {
         Self {
             command: command.into(),
             tmpdir,
+            timeout: proc::LOCAL_TIMEOUT,
         }
     }
 
@@ -45,11 +49,13 @@ impl Tmux {
     }
 
     fn run(&self, args: &[&str]) -> Result<String> {
-        let out = self
-            .cmd()
-            .args(args)
-            .output()
-            .with_context(|| format!("running {} {}", self.command, args.join(" ")))?;
+        let mut c = self.cmd();
+        c.args(args);
+        let out = proc::output(
+            c,
+            &format!("{} {}", self.command, args.join(" ")),
+            self.timeout,
+        )?;
         if !out.status.success() {
             bail!(
                 "{} {} failed: {}",
@@ -61,17 +67,30 @@ impl Tmux {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
-    pub fn server_running(&self) -> bool {
-        self.cmd()
-            .args(["list-sessions"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+    /// `Err` only on a timeout: a wedged server is not "no server" (plan 40 N7), or every
+    /// session would be reported as ended.
+    pub fn server_running(&self) -> Result<bool> {
+        self.succeeds(&["list-sessions"])
     }
 
-    /// Every pane on the server. Empty when no server is running.
+    /// Exit status only. A command that cannot start counts as failed; a timeout is `Err`.
+    fn succeeds(&self, args: &[&str]) -> Result<bool> {
+        let mut c = self.cmd();
+        c.args(args);
+        match proc::output(
+            c,
+            &format!("{} {}", self.command, args.join(" ")),
+            self.timeout,
+        ) {
+            Ok(o) => Ok(o.status.success()),
+            Err(e) if proc::is_timeout(&e) => Err(e),
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Every pane on the server. Empty when no server is running; `Err` when tmux hangs.
     pub fn panes(&self) -> Result<Vec<Pane>> {
-        if !self.server_running() {
+        if !self.server_running()? {
             return Ok(vec![]);
         }
         let out = self.run(&["list-panes", "-a", "-F", "#{session_name}\t#{window_index}\t#{pane_id}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_pid}"])?;
@@ -93,12 +112,8 @@ impl Tmux {
         Ok(panes)
     }
 
-    pub fn has_session(&self, name: &str) -> bool {
-        self.cmd()
-            .args(["has-session", "-t", &format!("={name}")])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+    pub fn has_session(&self, name: &str) -> Result<bool> {
+        self.succeeds(&["has-session", "-t", &format!("={name}")])
     }
 
     /// Start a detached session running `command` in `cwd`; returns the pane id.
@@ -124,7 +139,7 @@ impl Tmux {
     }
 
     pub fn kill_server(&self) {
-        let _ = self.cmd().args(["kill-server"]).output();
+        let _ = self.succeeds(&["kill-server"]);
     }
 }
 
@@ -147,6 +162,43 @@ pub fn session_name(repo: &str, branch: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// A stand-in `tmux` running `body`, written by a child `sh` (see `launch::arm::tests`).
+    fn standin(dir: &Path, body: &str) -> Tmux {
+        let script = dir.join("tmux");
+        let ok = Command::new("sh")
+            .arg("-c")
+            .arg("printf '%s' \"$1\" > \"$2\" && chmod +x \"$2\"")
+            .arg("sh")
+            .arg(format!("#!/bin/sh\n{body}\n"))
+            .arg(&script)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        Tmux {
+            timeout: Duration::from_millis(300),
+            ..Tmux::new(script.to_string_lossy(), None)
+        }
+    }
+
+    /// Plan 40 N7: a hung tmux is an error, so reconcile keeps its entries; no server is empty.
+    #[test]
+    fn a_hung_tmux_is_an_error_not_an_empty_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let hung = standin(dir.path(), "sleep 5");
+        let e = hung.panes().unwrap_err();
+        assert!(proc::is_timeout(&e), "{e:#}");
+        assert!(hung.has_session("x").is_err());
+
+        let dir = tempfile::tempdir().unwrap();
+        let none = standin(dir.path(), "exit 1");
+        assert_eq!(none.panes().unwrap(), vec![]);
+        assert!(!none.has_session("x").unwrap());
+    }
+
     #[test]
     fn session_names_are_tmux_safe() {
         assert_eq!(

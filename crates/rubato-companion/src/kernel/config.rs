@@ -74,6 +74,15 @@ pub struct CompanionConfig {
     pub pricing: BTreeMap<String, ModelPrice>,
     /// Permission mode passed to Claude Code at launch.
     pub permission_mode: String,
+    /// Deadline for the launch's `git fetch` and every tmux-ide call; a launch that hits it is
+    /// `Failed` (plan 40 S3, A1).
+    pub command_timeout_secs: u64,
+}
+
+impl CompanionConfig {
+    pub fn command_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.command_timeout_secs)
+    }
 }
 
 impl Default for CompanionConfig {
@@ -87,6 +96,7 @@ impl Default for CompanionConfig {
             limits: Limits::default(),
             pricing: BTreeMap::new(),
             permission_mode: "acceptEdits".into(),
+            command_timeout_secs: crate::kernel::tmux_ide::DEFAULT_TIMEOUT.as_secs(),
         }
     }
 }
@@ -94,6 +104,11 @@ impl Default for CompanionConfig {
 impl Workspace {
     pub fn parse(text: &str) -> Result<Self> {
         let ws: Self = serde_yaml_ng::from_str(text).context("workspace.yml does not parse")?;
+        // Zero would time every tmux-ide call out at once, with nothing pointing here (plan 40).
+        anyhow::ensure!(
+            ws.companion.command_timeout_secs > 0,
+            "workspace.yml: companion.command_timeout_secs must be at least 1"
+        );
         Ok(ws)
     }
 
@@ -226,6 +241,26 @@ mod tests {
         assert_eq!(ws.map.repo, "m0x6A/rubato");
         assert_eq!(ws.companion.claude_command, "claude");
         assert_eq!(ws.companion.limits.session_stale_secs, 120);
+        assert_eq!(ws.companion.command_timeout_secs, 120);
+    }
+
+    #[test]
+    fn a_zero_command_timeout_is_refused_by_name() {
+        let text = include_str!("../../../../skills/rubato/workspace.example.yml");
+        let zero = format!("{text}\ncompanion:\n  command_timeout_secs: 0\n");
+        let e = Workspace::parse(&zero).unwrap_err();
+        assert!(
+            format!("{e:#}").contains("companion.command_timeout_secs"),
+            "{e:#}"
+        );
+        let five = format!("{text}\ncompanion:\n  command_timeout_secs: 5\n");
+        assert_eq!(
+            Workspace::parse(&five)
+                .unwrap()
+                .companion
+                .command_timeout_secs,
+            5
+        );
     }
 
     #[test]
