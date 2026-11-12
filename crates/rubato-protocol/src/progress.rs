@@ -271,6 +271,10 @@ pub struct Overview {
     /// The shared draft of the map and its proposal (ADR 0018). Never an input to progress.
     #[serde(default)]
     pub draft: MapDraft,
+    /// Whether "New issue here…" can create an issue: the GitHub App's installation has
+    /// Issues: write, or the server runs on the local stand-in (ADR 0025).
+    #[serde(default)]
+    pub can_create_issues: bool,
     pub generated_at: DateTime<Utc>,
 }
 

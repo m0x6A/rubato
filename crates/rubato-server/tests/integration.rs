@@ -1419,8 +1419,9 @@ async fn poll_makes_the_same_github_calls_per_issue() {
     assert_eq!(get(32).progress.state, ProgressState::Done);
     println!("checked {} GitHub calls on a fast tick", fast.len());
 
-    // As a GitHub App installation, and only then, one more call: the installation's repos,
-    // after the listing and before the issue loop.
+    // As a GitHub App installation, and only then, two more calls on a full tick: the
+    // installation's repos, and its permissions (Issues: write, ADR 0025), after the listing and
+    // before the issue loop.
     h.github.with(|g| {
         g.installation = Some(vec!["m0x6A/rubato".into()]);
         g.calls.clear();
@@ -1434,11 +1435,12 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .collect();
     let mut as_installation: Vec<&str> = expected.to_vec();
     as_installation.insert(1, "installation_repos ");
+    as_installation.insert(2, "installation ");
     // #32's pull request is stored as merged by now: final, not looked up again (S5).
     as_installation.retain(|c| *c != "pull_for_branch m0x6A/rubato issue/32-bad");
     assert_eq!(
         calls, as_installation,
-        "one coverage call, installation only"
+        "one coverage call and one permission read, installation only"
     );
     println!("checked {} GitHub calls as an installation", calls.len());
 }
@@ -3527,4 +3529,228 @@ async fn poll_falls_back_when_the_pull_listing_fails() {
     assert_eq!(h.call_args("pull_for_branch"), ["m0x6A/rubato issue/9-x"]);
     assert_eq!(h.state_of(9).await, ProgressState::InReview);
     println!("checked the fallback");
+}
+
+// ----- issue #71, PR 4: issues created from Rubato (ADR 0025) --------------------------------
+
+fn new_issue(request_id: &str, target: MapRef) -> rubato_protocol::NewIssueRequest {
+    rubato_protocol::NewIssueRequest {
+        request_id: request_id.into(),
+        repo: "m0x6A/rubato".into(),
+        target,
+        title: "Poll less".into(),
+        summary: "The poll costs too many calls.".into(),
+        does: vec!["Lists branches once per repo.".into()],
+        know: vec!["The call-order test asserts fewer calls.".into()],
+        must_not_break: vec!["Progress latency.".into()],
+        context: None,
+        open_questions: vec![],
+    }
+}
+
+impl Harness {
+    async fn create_issue(
+        &self,
+        req: &rubato_protocol::NewIssueRequest,
+    ) -> (u16, rubato_protocol::NewIssueResponse) {
+        let r = self
+            .http
+            .post(format!(
+                "{}{}",
+                self.url,
+                rubato_protocol::issue_new::routes::ISSUES
+            ))
+            .json(req)
+            .send()
+            .await
+            .unwrap();
+        let status = r.status().as_u16();
+        let text = r.text().await.unwrap();
+        let body = serde_json::from_str(&text).unwrap_or(rubato_protocol::NewIssueResponse {
+            state: rubato_protocol::CreationState::Failed,
+            issue: None,
+            url: None,
+            message: Some(text),
+        });
+        (status, body)
+    }
+
+    fn creates(&self) -> usize {
+        self.call_args("create_issue").len()
+    }
+
+    fn can_create(&self, yes: bool) {
+        self.github.with(|g| {
+            g.writes = true;
+            g.issues_write = yes;
+        });
+    }
+}
+
+#[tokio::test]
+async fn an_issue_created_from_a_part_is_pinned_there_once() {
+    use rubato_protocol::CreationState;
+    let h = harness().await;
+    h.can_create(true);
+    let ov = h.overview("m0x6A").await;
+    assert!(ov.can_create_issues);
+    let req = new_issue("r-1", MapRef::node("rubato-server"));
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!(status, 201, "{r:?}");
+    assert_eq!(r.state, CreationState::Created);
+    let issue = r.issue.clone().unwrap();
+    // The body GitHub got: the pattern, the creator in backticks, the two lines.
+    let body = h.github.inner.lock().unwrap().open["m0x6A/rubato"]
+        .iter()
+        .find(|i| i.number == issue.number)
+        .unwrap()
+        .body
+        .clone();
+    assert!(body.starts_with("## Summary\n"), "{body}");
+    assert!(body.contains("Opened in Rubato by `m0x6A`."), "{body}");
+    assert!(
+        body.ends_with("Rubato-Request: r-1\nMap: node rubato-server\n"),
+        "{body}"
+    );
+    let ov = h.overview("m0x6A").await;
+    let s = ov
+        .issues
+        .iter()
+        .find(|i| i.issue == issue)
+        .expect("tracked");
+    assert_eq!(s.progress.state, ProgressState::Planned);
+
+    // The same request again: the same answer, no second issue.
+    let (status, again) = h.create_issue(&req).await;
+    assert_eq!(status, 200);
+    assert_eq!(again.issue, Some(issue.clone()));
+    assert_eq!(h.creates(), 1, "one POST for one request id");
+
+    // A person unpins it; the next tick does not pin it again from its Map: line.
+    let r = h
+        .http
+        .delete(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: issue.clone(),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert!(
+        ov.issues.iter().all(|i| i.issue != issue),
+        "the unpin sticks"
+    );
+}
+
+/// The gate: without Issues: write nothing is sent. Remove the `can_create_issues` check in the
+/// handler and this fails on the `create_issue` call count.
+#[tokio::test]
+async fn creation_is_refused_without_the_permission_and_for_unknown_targets() {
+    let h = harness().await;
+    let (status, r) = h
+        .create_issue(&new_issue("r-1", MapRef::node("rubato-server")))
+        .await;
+    assert_eq!(status, 409, "a port that cannot write: {r:?}");
+    h.can_create(false);
+    let (status, r) = h
+        .create_issue(&new_issue("r-2", MapRef::node("rubato-server")))
+        .await;
+    assert_eq!(status, 409, "{r:?}");
+    assert!(r.message.unwrap().contains("Issues: write"));
+    assert!(!h.overview("m0x6A").await.can_create_issues);
+    h.can_create(true);
+    let (status, _) = h
+        .create_issue(&new_issue("r-3", MapRef::node("billing")))
+        .await;
+    assert_eq!(status, 422);
+    let (status, _) = h
+        .create_issue(&new_issue("r-4", MapRef::seam("rubato-server")))
+        .await;
+    assert_eq!(status, 422, "a node id as a seam");
+    let mut no_know = new_issue("r-5", MapRef::node("web"));
+    no_know.know.clear();
+    let (status, r) = h.create_issue(&no_know).await;
+    assert_eq!(status, 422);
+    assert!(r.message.unwrap().contains("How we'll know it works"));
+    assert_eq!(h.creates(), 0, "nothing was sent");
+    println!("checked 6 refusals");
+}
+
+#[tokio::test]
+async fn a_403_fails_the_request_and_clears_the_capability() {
+    use rubato_protocol::CreationState;
+    let h = harness().await;
+    h.can_create(true);
+    h.github.with(|g| {
+        g.fail_write = Some((
+            "create_issue",
+            "403 Resource not accessible by integration".into(),
+        ))
+    });
+    let (status, r) = h.create_issue(&new_issue("r-1", MapRef::node("web"))).await;
+    assert_eq!(status, 502, "{r:?}");
+    assert_eq!(r.state, CreationState::Failed);
+    assert!(!h.overview("m0x6A").await.can_create_issues);
+    let (status, _) = h.create_issue(&new_issue("r-2", MapRef::node("web"))).await;
+    assert_eq!(status, 409, "refused until the next permission read");
+    assert_eq!(h.creates(), 1);
+}
+
+/// A create that does not answer: the row stays opening, a resubmit sends nothing, and the next
+/// listing finds the issue by its `Rubato-Request:` line and pins it.
+#[tokio::test]
+async fn a_create_that_timed_out_is_found_by_its_request_line() {
+    use rubato_protocol::CreationState;
+    let h = harness().await;
+    h.can_create(true);
+    h.github.with(|g| g.issue_times_out = true);
+    let req = new_issue("r-1", MapRef::seam("web-server"));
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!(status, 202, "{r:?}");
+    assert_eq!(r.state, CreationState::Opening);
+    assert!(r.message.unwrap().contains("may exist"));
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!(status, 202);
+    assert!(r.message.unwrap().starts_with("Still opening"));
+    assert_eq!(h.creates(), 1, "a resubmit while opening sends nothing");
+
+    tasks::poll_once(&h.app).await.unwrap();
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!(status, 200);
+    assert_eq!(r.state, CreationState::Created);
+    let issue = r.issue.unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert!(
+        ov.issues.iter().any(|i| i.issue == issue),
+        "found and pinned"
+    );
+    assert_eq!(h.creates(), 1);
+}
+
+#[tokio::test]
+async fn a_create_unseen_for_ten_minutes_fails() {
+    use rubato_protocol::CreationState;
+    let h = harness().await;
+    h.can_create(true);
+    // GitHub answers with an error and creates nothing.
+    h.github
+        .with(|g| g.fail_write = Some(("create_issue", "connection reset".into())));
+    let req = new_issue("r-1", MapRef::node("web"));
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!((status, r.state), (202, CreationState::Opening));
+    // Within ten minutes the listing does not give up on it.
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(h.create_issue(&req).await.1.state, CreationState::Opening);
+    sqlx::query("UPDATE issue_creations SET created_at = '2026-01-01T00:00:00+00:00'")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!((status, r.state), (409, CreationState::Failed));
+    assert_eq!(h.creates(), 1);
 }

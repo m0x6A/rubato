@@ -52,6 +52,25 @@ test("a member's Map: line places an issue without a drag; a stranger's only sug
   await expect(suggestion).toContainText("from someone outside the team");
 });
 
+test("an issue created from a part is pinned on it (ADR 0025)", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("node-plan-check").click();
+  await page.getByTestId("inspector").getByTestId("new-issue-here").click();
+  const form = page.getByTestId("new-issue");
+  await form.getByLabel("Title").fill("Plan check: report the flows it checked");
+  await form.getByLabel("Summary").fill("The plan check counts flows but does not name them.");
+  await form.getByLabel("What the change does").fill("Names each flow it checked in the log line");
+  await form.getByLabel("How we'll know it works").fill("The fixture run prints the flow names");
+  await form.getByLabel("What it must not break").fill("The count in the summary line");
+  await form.getByRole("button", { name: "Create in m0x6A/rubato" }).click();
+  // The new issue opens, Planned, pinned to the part it was started on.
+  const detail = page.getByTestId("issue-detail");
+  // The title arrives with the next listing (the poll runs every 5 s here).
+  await expect(detail).toContainText("Plan check: report the flows it checked", { timeout: 15_000 });
+  await expect(detail).toContainText("Planned");
+  await expect(detail).toContainText("node plan-check");
+});
+
 test("drag a not-pinned issue onto a part and onto a seam", async ({ page }) => {
   // The harness serves three open issues of m0x6A/rubato: #901, #902 and #903, none tracked.
   const key = (n: number) => `m0x6A/rubato#${n}`;

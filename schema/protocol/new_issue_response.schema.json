@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NewIssueResponse",
+  "description": "The answer to `POST /api/issues`.",
+  "type": "object",
+  "properties": {
+    "issue": {
+      "description": "Set once created.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IssueRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "message": {
+      "description": "What to tell the person, for `opening` and `failed`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "state": {
+      "$ref": "#/$defs/CreationState"
+    },
+    "url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "$defs": {
+    "CreationState": {
+      "description": "Where a creation stands.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "created",
+            "failed"
+          ]
+        },
+        {
+          "description": "Sent to GitHub, not confirmed yet: it may exist. The next listing finds it by its\n`Rubato-Request:` line, or after ten minutes unseen it is `failed`.",
+          "type": "string",
+          "const": "opening"
+        }
+      ]
+    },
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

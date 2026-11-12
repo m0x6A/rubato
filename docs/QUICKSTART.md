@@ -32,7 +32,13 @@ is installed on.
      `http://127.0.0.1:8080`). Callback URL: that URL plus `/auth/github/callback`.
    - Webhook: off. Rubato polls.
    - Repository permissions: *Contents: read and write*, *Pull requests: read and write*,
-     *Issues: read*, *Checks: read*, *Metadata: read*. Nothing else.
+     *Issues: read and write*, *Checks: read*, *Metadata: read*. Nothing else. Issues: write
+     is for "New issue here…" (ADR 0025); without it Rubato still runs and the form says why
+     it cannot create.
+   - An App registered before #71 has *Issues: read*. Change it to *read and write*; GitHub
+     then asks the installation's owner to approve the new permission. Rubato reads the
+     installation's permissions on every full poll pass (every five minutes), so no restart is
+     needed.
    - Where it can be installed: only on this account. One installation covers one account,
      so all the team's repositories sit under it.
 2. On the App's page: note the **App ID** and the **Client ID**, generate a **client secret**,

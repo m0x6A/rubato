@@ -8,6 +8,8 @@ interface Props {
   selection: MapRef;
   onSelect: (ref: MapRef | null) => void;
   onSelectIssue: (issue: IssueRef) => void;
+  /** "New issue here…": start an issue on the selected part or seam (ADR 0025). */
+  onNewIssue?: ((target: MapRef) => void) | undefined;
 }
 
 /** What nobody has written down yet is said, not left blank: a gap in the shared picture. */
@@ -122,7 +124,7 @@ function TouchingNow({ touching, onSelectIssue }: { touching: Touching; onSelect
  * sends, what depends on what, and what touches it now. A seam: its ends, owner, guard, what it
  * carries, its flows, and the O-rows open plans have written for it.
  */
-export function Inspector({ overview, selection, onSelect, onSelectIssue }: Props) {
+export function Inspector({ overview, selection, onSelect, onSelectIssue, onNewIssue }: Props) {
   const x = explain(overview, selection);
   if (!x) {
     return (
@@ -134,9 +136,16 @@ export function Inspector({ overview, selection, onSelect, onSelectIssue }: Prop
     );
   }
   const close = (
-    <button type="button" onClick={() => onSelect(null)}>
-      Close
-    </button>
+    <>
+      {onNewIssue && (
+        <button type="button" onClick={() => onNewIssue(selection)} data-testid="new-issue-here">
+          New issue here…
+        </button>
+      )}
+      <button type="button" onClick={() => onSelect(null)}>
+        Close
+      </button>
+    </>
   );
   if (x.kind === "seam") {
     const s = x.seam;

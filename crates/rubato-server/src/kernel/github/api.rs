@@ -180,6 +180,26 @@ pub trait GitHubApi: Send + Sync {
     async fn delete_ref(&self, _repo: &str, _branch: &str) -> Result<()> {
         Err(anyhow::anyhow!("this GitHub connection cannot write"))
     }
+
+    // Issues created from Rubato (ADR 0025).
+
+    /// Whether this port can open issues: an installation whose permissions, as last read,
+    /// include Issues: write; the local stand-in; the fake when a test says so.
+    fn can_create_issues(&self) -> bool {
+        false
+    }
+    /// Read the installation's Issues permission again and remember it. Called at start and on
+    /// every full poll pass, so a re-approved installation is noticed without a restart.
+    async fn refresh_issue_permission(&self) -> Result<bool> {
+        Ok(self.can_create_issues())
+    }
+    /// Open an issue: its number and page. Sent once, with no retry: an issue POST is not
+    /// idempotent. A 403 clears [`GitHubApi::can_create_issues`] until the next refresh.
+    async fn create_issue(&self, _repo: &str, _title: &str, _body: &str) -> Result<(u64, String)> {
+        Err(anyhow::anyhow!(
+            "this GitHub connection cannot create issues"
+        ))
+    }
 }
 
 /// From one page of `GET /repos/{repo}/issues`: the issues, without the pull requests.
@@ -239,6 +259,17 @@ pub struct Octo {
     client: octocrab::Octocrab,
     /// Acting as a GitHub App installation, not with a personal token.
     installation: bool,
+    /// As an installation only: the App itself (a JWT), to read the installation's permissions,
+    /// and an installation client with retries off, for the issue POST (ADR 0025).
+    as_app: Option<AsApp>,
+    /// The installation's Issues permission is `write`, as last read.
+    issues_write: std::sync::atomic::AtomicBool,
+}
+
+struct AsApp {
+    app: octocrab::Octocrab,
+    no_retry: octocrab::Octocrab,
+    installation_id: u64,
 }
 
 impl Octo {
@@ -262,6 +293,8 @@ impl Octo {
         Ok(Self {
             client: b.build()?,
             installation: false,
+            as_app: None,
+            issues_write: Default::default(),
         })
     }
 
@@ -269,9 +302,17 @@ impl Octo {
     /// runtime. The settings are checked by `kernel::github::check_app` before this is used.
     pub fn for_installation(app: &GitHubApp, base_uri: Option<&str>) -> Result<Self> {
         let crab = app_client(app, base_uri, READ_TIMEOUT)?;
+        let id = octocrab::models::InstallationId(app.installation_id);
+        let no_retry = app_client_with(app, base_uri, READ_TIMEOUT, false)?.installation(id)?;
         Ok(Self {
-            client: crab.installation(octocrab::models::InstallationId(app.installation_id))?,
+            client: crab.installation(id)?,
             installation: true,
+            as_app: Some(AsApp {
+                app: crab,
+                no_retry,
+                installation_id: app.installation_id,
+            }),
+            issues_write: Default::default(),
         })
     }
 }
@@ -282,7 +323,24 @@ pub(super) fn app_client(
     base_uri: Option<&str>,
     read_timeout: Duration,
 ) -> Result<octocrab::Octocrab> {
+    app_client_with(app, base_uri, read_timeout, true)
+}
+
+/// As [`app_client`], with octocrab's retries on or off.
+fn app_client_with(
+    app: &GitHubApp,
+    base_uri: Option<&str>,
+    read_timeout: Duration,
+    retries: bool,
+) -> Result<octocrab::Octocrab> {
+    use octocrab::service::middleware::retry::RetryConfig;
+    let retry = if retries {
+        RetryConfig::Simple(3)
+    } else {
+        RetryConfig::None
+    };
     let mut b = octocrab::Octocrab::builder()
+        .add_retry_config(retry)
         .set_connect_timeout(Some(CONNECT_TIMEOUT))
         .set_read_timeout(Some(read_timeout))
         .app_from_rsa_pem(
@@ -636,6 +694,65 @@ impl GitHubApi for Octo {
         Ok(())
     }
 
+    fn can_create_issues(&self) -> bool {
+        self.installation && self.issues_write.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "installation"))]
+    async fn refresh_issue_permission(&self) -> Result<bool> {
+        let Some(a) = &self.as_app else {
+            return Ok(false);
+        };
+        let route = format!("/app/installations/{}", a.installation_id);
+        let v: serde_json::Value = a.app.get(route, None::<&()>).await?;
+        let write = v.pointer("/permissions/issues").and_then(|p| p.as_str()) == Some("write");
+        let was = self
+            .issues_write
+            .swap(write, std::sync::atomic::Ordering::Relaxed);
+        if was != write {
+            tracing::info!(
+                issues_write = write,
+                "installation Issues permission changed"
+            );
+        }
+        Ok(write)
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, body), err, fields(rubato.github.endpoint = "create_issue"))]
+    async fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<(u64, String)> {
+        let (o, r) = split_repo(repo)?;
+        let Some(a) = &self.as_app else {
+            anyhow::bail!("this GitHub connection cannot create issues");
+        };
+        // A plain POST: the answer is read for its number and page only.
+        let route = format!("/repos/{o}/{r}/issues");
+        let sent = serde_json::json!({"title": title, "body": body});
+        match a
+            .no_retry
+            .post::<_, serde_json::Value>(route, Some(&sent))
+            .await
+        {
+            Ok(v) => Ok((
+                v.get("number")
+                    .and_then(|n| n.as_u64())
+                    .context("the created issue has no number")?,
+                v.get("html_url")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+            )),
+            Err(octocrab::Error::GitHub { source, .. }) if source.status_code.as_u16() == 403 => {
+                self.issues_write
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                Err(anyhow::anyhow!(
+                    "GitHub refused the issue (403): {}; the installation needs Issues: write",
+                    source.message
+                ))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "delete_ref"))]
     async fn delete_ref(&self, repo: &str, branch: &str) -> Result<()> {
         let (o, r) = split_repo(repo)?;
@@ -713,6 +830,48 @@ mod tests {
         assert!(
             events.iter().any(|e| e.level == tracing::Level::ERROR),
             "the closed span records the error: {events:?}"
+        );
+        held.abort();
+    }
+
+    /// ADR 0025: the client the issue POST goes through does not retry, so a create that does
+    /// not answer is sent once. The same hung listener takes four read timeouts with retries.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_issue_client_sends_once() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = accepted.clone();
+        let held = tokio::spawn(async move {
+            let mut open = Vec::new();
+            loop {
+                let (sock, _) = listener.accept().await.unwrap();
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                open.push(sock);
+            }
+        });
+        let app = GitHubApp {
+            app_id: 12,
+            private_key: super::super::app::tests::test_key(),
+            installation_id: 34,
+        };
+        let base = format!("http://{addr}");
+        let read = Duration::from_millis(400);
+        let once = app_client_with(&app, Some(&base), read, false).unwrap();
+        let r: std::result::Result<serde_json::Value, _> = once.get("/app", None::<&()>).await;
+        assert!(r.is_err());
+        let sent_once = accepted.load(std::sync::atomic::Ordering::SeqCst);
+        let retried = app_client_with(&app, Some(&base), read, true).unwrap();
+        let r: std::result::Result<serde_json::Value, _> = retried.get("/app", None::<&()>).await;
+        assert!(r.is_err());
+        let with_retries = accepted.load(std::sync::atomic::Ordering::SeqCst) - sent_once;
+        println!("without retries {sent_once} attempt(s), with retries {with_retries}");
+        assert_eq!(sent_once, 1, "the no-retry client sends once");
+        assert!(
+            with_retries > 1,
+            "the default client retries: {with_retries}"
         );
         held.abort();
     }

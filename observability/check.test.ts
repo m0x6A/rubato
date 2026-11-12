@@ -42,6 +42,11 @@ test("a dashboard without the Map lines panel is rejected (#71)", () => {
   assert.deepEqual(r.problems, ['the dashboard has no "Map lines" panel that queries rubato_backlog_map_lines_total']);
 });
 
+test("a dashboard without the Issues created panel is rejected (#71)", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Issues created")));
+  assert.deepEqual(r.problems, ['the dashboard has no "Issues created" panel that queries rubato_issues_created_total', 'the dashboard has no "Issues created" panel that queries rubato_issues_opening']);
+});
+
 test("a dashboard without the Map proposal age panel is rejected", () => {
   const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Map proposal age")));
   assert.deepEqual(r.problems, ['the dashboard has no "Map proposal age" panel that queries rubato_map_proposal_state_since']);

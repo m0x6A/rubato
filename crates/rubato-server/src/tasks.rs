@@ -7,7 +7,9 @@
 //! `github_poll` and `plans` name no other slice.
 
 use crate::kernel::state::{App, LoadedMap};
-use crate::{companion_link, github_poll, launch, map, map_draft, overview, pins, plans, queue};
+use crate::{
+    companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins, plans, queue,
+};
 use anyhow::{Result, anyhow};
 use rubato_protocol::otel::event;
 use rubato_protocol::{IssueRef, SessionStatus};
@@ -112,6 +114,17 @@ impl Poller {
         // Before the per-issue reads: every open issue of the map's repos (one listing per
         // repo), then, as an installation only, which repos it covers.
         let listed = github_poll::list_open_issues(app, &map.map).await;
+        // Creations GitHub did not confirm, found by their `Rubato-Request:` line (ADR 0025).
+        let found: Vec<new_issue::Found> = listed
+            .requests()
+            .into_iter()
+            .map(|(issue, url, request_id)| new_issue::Found {
+                issue,
+                url,
+                request_id,
+            })
+            .collect();
+        new_issue::reconcile(app, &found, listed.fresh_repos()).await;
         // `Map:` lines of trusted authors pin their issues (ADR 0026). No GitHub call: the
         // bodies came with the listing. A newly pinned issue is read from the next tick on.
         let lines: Vec<pins::Line> = listed
@@ -132,6 +145,14 @@ impl Poller {
             .collect();
         repos.extend(issues.iter().map(|i| i.repo.clone()));
         github_poll::check_coverage(app, &repos).await;
+        // As an installation, on the full lane: whether Issues: write is granted (ADR 0025), so a
+        // re-approved installation is noticed within five minutes and no restart.
+        if lane == Lane::Full
+            && app.github.is_installation()
+            && let Err(e) = app.github.refresh_issue_permission().await
+        {
+            tracing::warn!(error = %format!("{e:#}"), "reading the installation's permissions failed");
+        }
 
         let mut view = github_poll::RepoView::default();
         let (mut settled, mut failed) = (0usize, 0usize);

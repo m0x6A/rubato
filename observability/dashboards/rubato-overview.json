@@ -1093,6 +1093,41 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 60,
+      "title": "Issues created",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 58
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Issues created from Rubato's 'New issue here…' (ADR 0025), by outcome: created (GitHub answered), found (GitHub did not answer, and the listing found the issue by its Rubato-Request line), failed (refused with a 403, or unseen for ten minutes). 'opening' is how many creations wait for a confirmation now. A failure logs 'issue creation failed' with step (create, unseen), rubato.repo and request_id: a 403 means the installation lacks Issues: write (an admin approves it; Rubato reads the permission every full poll pass). Refusals before sending are in 'Web writes rejected' under route /api/issues.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_issues_created_total[1h]))",
+          "legendFormat": "{{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "max(rubato_issues_opening)",
+          "legendFormat": "opening"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

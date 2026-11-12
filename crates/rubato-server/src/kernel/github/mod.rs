@@ -48,6 +48,12 @@ mod tests {
             ["o/covered"],
             "the installation reads through its own token"
         );
+        // ADR 0025: creating issues waits for the permission read, as the App.
+        assert!(!installation.can_create_issues());
+        assert!(installation.refresh_issue_permission().await.unwrap());
+        assert!(installation.can_create_issues());
+        assert!(!token.can_create_issues());
+        assert!(!token.refresh_issue_permission().await.unwrap());
 
         // The tokenless fake cannot write until a test turns writes on.
         let fake = FakeGitHub::new();

@@ -45,6 +45,8 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::queue::QueueOrder>("queue_order"),
         one::<crate::launch::LaunchRequest>("launch_request"),
         one::<crate::launch::LaunchResponse>("launch_response"),
+        one::<crate::issue_new::NewIssueRequest>("new_issue_request"),
+        one::<crate::issue_new::NewIssueResponse>("new_issue_response"),
         one::<crate::progress::Overview>("overview"),
         one::<crate::web_link::WebEvent>("web_event"),
     ]

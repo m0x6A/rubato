@@ -73,6 +73,27 @@ pub async fn apply_map_lines(app: &App, map: &SystemMap, version: &str, lines: &
     pinned
 }
 
+/// Pin an issue Rubato just created where it was started (ADR 0025), and record its `Map:` line
+/// as applied, so a person's later unpin sticks. Running it twice changes nothing.
+pub async fn pin_created(
+    app: &App,
+    issue: &IssueRef,
+    target: &MapRef,
+    by: &str,
+) -> anyhow::Result<()> {
+    store::add_pin(
+        &app.db,
+        &IssuePin {
+            issue: issue.clone(),
+            target: target.clone(),
+            pinned_by: by.to_owned(),
+            pinned_at: Utc::now(),
+        },
+    )
+    .await?;
+    store::record_map_line(&app.db, issue, target, "pinned").await
+}
+
 /// `None` when the line was applied on an earlier tick (not counted again).
 async fn apply_one(
     app: &App,

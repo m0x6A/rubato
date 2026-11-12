@@ -84,6 +84,12 @@ pub mod metric {
     /// `already_pinned`, `unknown_id`, `kind_mismatch` once per line applied; `untrusted_author`
     /// per listing that holds a line from someone outside the team (ADR 0026).
     pub const BACKLOG_MAP_LINES: &str = "rubato.backlog.map_lines";
+    /// Issues created from Rubato (ADR 0025), by `rubato.outcome`: `created` (the create call
+    /// answered), `found` (a create that did not answer, seen in the listing by its
+    /// `Rubato-Request:` line), `failed` (refused, or unseen for ten minutes).
+    pub const ISSUES_CREATED: &str = "rubato.issues.created";
+    /// Creations sent and not yet confirmed, recorded every poll tick.
+    pub const ISSUES_OPENING: &str = "rubato.issues.opening";
 }
 
 /// Span names.
@@ -160,6 +166,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::MAP_PROPOSALS,
         metric::MAP_PROPOSAL_STATE_SINCE,
         metric::BACKLOG_MAP_LINES,
+        metric::ISSUES_CREATED,
+        metric::ISSUES_OPENING,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
