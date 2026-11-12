@@ -1,8 +1,8 @@
 # 0034. List every open pull request of the map's repos; read a pull request's detail on demand
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-12
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #82); budget choice (Q3) and fork rule (Q4) answered by Mattias Jonsson 2026-11-12; a human accepts
+- **Decided by:** Mattias Jonsson (m0x6A), accepted 2026-11-12 by approval comment https://github.com/m0x6A/rubato/issues/82#issuecomment-6837330107 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #82); budget choice (Q3) and fork rule (Q4) answered by Mattias Jonsson 2026-11-12
 - **Seam:** server-github
 - **Issue:** m0x6A/rubato#82
 
