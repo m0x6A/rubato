@@ -181,7 +181,7 @@ request: **open** or **final** (merged or closed). No new columns.
 
 ## 10. Decisions
 
-### 1. Per-repo listings and two lanes → ADR 0023 (proposed)
+### 1. Per-repo listings and two lanes → ADR 0023 (accepted 2026-11-12)
 
 Branches and open pull requests listed once per repo per tick; comments, closed issues and
 "is there a PR yet" on a 300 s full lane. Rejected: conditional requests (ETag/304). octocrab's

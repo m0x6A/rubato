@@ -1,8 +1,8 @@
 # 0023. Poll GitHub per repo, and comments and closed issues on a slower lane
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-12
-- **Decided by:** proposed by agent (Claude Code, claude-opus-5-5, issue #49); awaiting Mattias Jonsson
+- **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #49)
 - **Seam:** server-github
 - **Issue:** m0x6A/rubato#49
 
