@@ -2125,12 +2125,23 @@ async fn draft_ops_build_a_preview() {
     assert!(h.draft().await.preview.is_none());
 
     // Add a part, describe it, join it to the server with a seam, give the seam a flow and a
-    // description, then remove an existing seam. Two people, one draft.
+    // description, then change an existing seam. Two people, one draft. (Every merged seam is a
+    // step of a scenario, so removing one is refused below; ADR 0024.)
     let mut described = draft_node("billing");
     described["description"] = "Invoices and payments.".into();
     let mut seam = draft_seam("server-billing", "rubato-server", "billing", "billing");
     seam["description"] = "The server asks billing what an issue cost.".into();
     seam["flows"] = serde_json::json!([{ "kind": "data", "from": "billing", "to": "rubato-server", "carries": "cost per issue" }]);
+    let mut plan_seam = serde_json::to_value(
+        h.overview("m0x6A")
+            .await
+            .map
+            .map
+            .seam("skill-plan-file")
+            .unwrap(),
+    )
+    .unwrap();
+    plan_seam["description"] = "The skill writes the plan.".into();
     let steps = [
         (
             "m0x6A",
@@ -2150,8 +2161,8 @@ async fn draft_ops_build_a_preview() {
         ("alice", "update_seam", serde_json::json!({ "seam": seam })),
         (
             "m0x6A",
-            "remove_seam",
-            serde_json::json!({ "id": "skill-plan-file" }),
+            "update_seam",
+            serde_json::json!({ "seam": plan_seam }),
         ),
     ];
     for (user, op, body) in &steps {
@@ -2185,12 +2196,27 @@ async fn draft_ops_build_a_preview() {
         s.description.as_deref(),
         Some("The server asks billing what an issue cost.")
     );
-    assert!(preview.seam("skill-plan-file").is_none());
+    assert_eq!(
+        preview
+            .seam("skill-plan-file")
+            .unwrap()
+            .description
+            .as_deref(),
+        Some("The skill writes the plan.")
+    );
     assert_eq!(preview.validate(), Ok(()));
     // The merged map is untouched: the draft is an overlay.
     let ov = h.overview("m0x6A").await;
     assert!(ov.map.map.node("billing").is_none());
-    assert!(ov.map.map.seam("skill-plan-file").is_some());
+    assert_ne!(
+        ov.map
+            .map
+            .seam("skill-plan-file")
+            .unwrap()
+            .description
+            .as_deref(),
+        Some("The skill writes the plan.")
+    );
 
     // An invalid operation says why and stores nothing; so does one that conflicts with an
     // earlier operation of the draft.
@@ -2209,6 +2235,11 @@ async fn draft_ops_build_a_preview() {
             "remove_node",
             serde_json::json!({ "id": "billing" }),
             "still an end of server-billing",
+        ),
+        (
+            "remove_seam",
+            serde_json::json!({ "id": "skill-plan-file" }),
+            "scenario \"plan-comes-back\" step 2 names unknown seam \"skill-plan-file\"",
         ),
     ];
     for (op, body, word) in &refused {
@@ -2295,12 +2326,31 @@ async fn draft_remove_with_pins_is_409() {
     assert_eq!(status, 409, "{text}");
     assert!(text.contains("m0x6A/rubato#7"), "{text}");
     assert!(h.draft().await.ops.is_empty());
-    // A seam nobody pinned can go.
+    // A seam nobody pinned but a scenario steps over cannot go either; the answer names the
+    // scenario (ADR 0024).
     let (status, text) = h
         .draft_op(
             "m0x6A",
             "remove_seam",
             serde_json::json!({ "id": "skill-plan-file" }),
+        )
+        .await;
+    assert_eq!(status, 422, "{text}");
+    assert!(text.contains("scenario \"plan-comes-back\""), "{text}");
+    // A seam nobody pinned and no scenario uses can go.
+    let (status, text) = h
+        .draft_op(
+            "m0x6A",
+            "add_seam",
+            serde_json::json!({ "seam": draft_seam("web-plan-check", "web", "plan-check", "web") }),
+        )
+        .await;
+    assert_eq!(status, 201, "{text}");
+    let (status, text) = h
+        .draft_op(
+            "m0x6A",
+            "remove_seam",
+            serde_json::json!({ "id": "web-plan-check" }),
         )
         .await;
     assert_eq!(status, 201, "{text}");

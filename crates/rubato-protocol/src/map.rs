@@ -21,6 +21,39 @@ pub struct SystemMap {
     pub nodes: Vec<MapNode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seams: Vec<Seam>,
+    /// Named journeys through the system, as ordered steps over declared flows (ADR 0024).
+    /// Optional; a map without scenarios is still version 1.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scenarios: Vec<Scenario>,
+}
+
+/// A named journey: what crosses which seam, in order, when someone uses the system (ADR 0024).
+/// Its id shares the namespace of node and seam ids but is not one a pin or plan may name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Scenario {
+    pub id: String,
+    /// Short title shown in the scenario picker.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// In order. Steps need not be contiguous: a journey may jump to another part.
+    pub steps: Vec<ScenarioStep>,
+}
+
+/// One step: a flow declared on `seam`, picked by its kind and direction, and by `carries` when
+/// the seam declares more than one flow with that kind and direction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScenarioStep {
+    pub seam: String,
+    pub from: String,
+    pub to: String,
+    pub kind: FlowKind,
+    /// Must equal the flow's `carries`; required only to tell two such flows apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carries: Option<String>,
+    /// What happens at this step, in words, for the caption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub says: Option<String>,
 }
 
 /// A repository behind one or more nodes.
@@ -117,6 +150,33 @@ impl Seam {
     pub fn joins(&self, from: &str, to: &str) -> bool {
         (from == self.from && to == self.to) || (from == self.to && to == self.from)
     }
+
+    /// The declared flows a scenario step could mean: same kind and direction, and same
+    /// `carries` when the step names one.
+    pub fn flows_matching<'a>(&'a self, step: &'a ScenarioStep) -> impl Iterator<Item = &'a Flow> {
+        self.flows.iter().filter(move |f| {
+            f.kind == step.kind
+                && f.from == step.from
+                && f.to == step.to
+                && step.carries.as_ref().is_none_or(|c| c == &f.carries)
+        })
+    }
+}
+
+impl FlowKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FlowKind::Data => "data",
+            FlowKind::Control => "control",
+        }
+    }
+}
+
+fn carrying(carries: &Option<String>) -> String {
+    carries
+        .as_ref()
+        .map(|c| format!(" carrying {c:?}"))
+        .unwrap_or_default()
 }
 
 /// A reference the map does not declare.
@@ -134,6 +194,42 @@ pub enum MapError {
         from: String,
         to: String,
     },
+    #[error("scenario {0:?} has no steps")]
+    EmptyScenario(String),
+    #[error("scenario {scenario:?} step {step} names unknown seam {seam:?}")]
+    ScenarioUnknownSeam {
+        scenario: String,
+        step: usize,
+        seam: String,
+    },
+    #[error(
+        "scenario {scenario:?} step {step} on seam {seam:?}: no declared {} flow from {from:?} to {to:?}{}",
+        kind.as_str(),
+        carrying(carries)
+    )]
+    ScenarioStepNoFlow {
+        scenario: String,
+        /// 1-based.
+        step: usize,
+        seam: String,
+        kind: FlowKind,
+        from: String,
+        to: String,
+        carries: Option<String>,
+    },
+    #[error(
+        "scenario {scenario:?} step {step} on seam {seam:?}: {count} declared {} flows from {from:?} to {to:?}; name one with carries",
+        kind.as_str()
+    )]
+    ScenarioStepAmbiguous {
+        scenario: String,
+        step: usize,
+        seam: String,
+        kind: FlowKind,
+        from: String,
+        to: String,
+        count: usize,
+    },
 }
 
 impl SystemMap {
@@ -143,6 +239,17 @@ impl SystemMap {
 
     pub fn seam(&self, id: &str) -> Option<&Seam> {
         self.seams.iter().find(|s| s.id == id)
+    }
+
+    pub fn scenario(&self, id: &str) -> Option<&Scenario> {
+        self.scenarios.iter().find(|s| s.id == id)
+    }
+
+    /// The one declared flow a scenario step means, if it means exactly one.
+    pub fn flow_for<'a>(&'a self, step: &'a ScenarioStep) -> Option<&'a Flow> {
+        let mut found = self.seam(&step.seam)?.flows_matching(step);
+        let first = found.next()?;
+        found.next().is_none().then_some(first)
     }
 
     /// Node ids only.
@@ -173,7 +280,8 @@ impl SystemMap {
             .collect()
     }
 
-    /// Structural checks beyond the schema: unique ids, seams between declared nodes, owner is a side.
+    /// Structural checks beyond the schema: unique ids, seams between declared nodes, owner is a
+    /// side, flows along their seam, every scenario step is exactly one declared flow.
     pub fn validate(&self) -> Result<(), Vec<MapError>> {
         let mut errors = Vec::new();
         let mut seen = BTreeSet::new();
@@ -182,6 +290,7 @@ impl SystemMap {
             .iter()
             .map(|n| &n.id)
             .chain(self.seams.iter().map(|s| &s.id))
+            .chain(self.scenarios.iter().map(|s| &s.id))
         {
             if !seen.insert(id.as_str()) {
                 errors.push(MapError::DuplicateId(id.clone()));
@@ -209,6 +318,42 @@ impl SystemMap {
                         from: f.from.clone(),
                         to: f.to.clone(),
                     });
+                }
+            }
+        }
+        for sc in &self.scenarios {
+            if sc.steps.is_empty() {
+                errors.push(MapError::EmptyScenario(sc.id.clone()));
+            }
+            for (i, step) in sc.steps.iter().enumerate() {
+                let Some(seam) = self.seam(&step.seam) else {
+                    errors.push(MapError::ScenarioUnknownSeam {
+                        scenario: sc.id.clone(),
+                        step: i + 1,
+                        seam: step.seam.clone(),
+                    });
+                    continue;
+                };
+                match seam.flows_matching(step).count() {
+                    1 => {}
+                    0 => errors.push(MapError::ScenarioStepNoFlow {
+                        scenario: sc.id.clone(),
+                        step: i + 1,
+                        seam: step.seam.clone(),
+                        kind: step.kind,
+                        from: step.from.clone(),
+                        to: step.to.clone(),
+                        carries: step.carries.clone(),
+                    }),
+                    count => errors.push(MapError::ScenarioStepAmbiguous {
+                        scenario: sc.id.clone(),
+                        step: i + 1,
+                        seam: step.seam.clone(),
+                        kind: step.kind,
+                        from: step.from.clone(),
+                        to: step.to.clone(),
+                        count,
+                    }),
                 }
             }
         }
@@ -274,6 +419,7 @@ mod tests {
                 description: None,
                 flows: vec![],
             }],
+            scenarios: vec![],
         };
         assert_eq!(
             m.repos_named().into_iter().collect::<Vec<_>>(),
@@ -304,6 +450,7 @@ mod tests {
             }],
             nodes: vec![node("a"), node("b")],
             seams,
+            scenarios: vec![],
         }
     }
 
@@ -369,6 +516,68 @@ mod tests {
         let own: SystemMap =
             serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
         assert_eq!(own.validate(), Ok(()));
+    }
+
+    /// The scenario fixtures the TypeScript side reads too (plan-check "scenario fixtures").
+    #[test]
+    fn scenario_fixtures() {
+        let good: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../schema/fixtures/maps/scenarios.yml"))
+                .unwrap();
+        assert_eq!(good.validate(), Ok(()));
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../../../schema/fixtures/maps/scenarios.json"))
+                .unwrap();
+        assert_eq!(serde_json::to_value(&good).unwrap(), expected);
+        // Scenario ids are not ids a pin or plan may use.
+        assert!(!good.ids().contains("pin-an-issue"));
+        assert_eq!(
+            good.scenario("pin-an-issue").map(|s| s.steps.len()),
+            Some(4)
+        );
+        let bad: SystemMap = serde_yaml_ng::from_str(include_str!(
+            "../../../schema/fixtures/maps/scenarios-bad.yml"
+        ))
+        .unwrap();
+        let said: Vec<String> = bad
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "duplicate id \"web\"",
+                "scenario \"off-flow\" step 1 on seam \"web-server\": no declared control flow from \"web\" to \"server\"",
+                "scenario \"ambiguous\" step 1 on seam \"web-server\": 2 declared control flows from \"server\" to \"web\"; name one with carries",
+                "scenario \"ambiguous\" step 2 on seam \"web-server\": no declared control flow from \"server\" to \"web\" carrying \"Nope\"",
+                "scenario \"lost\" step 1 names unknown seam \"web-store\"",
+                "scenario \"empty\" has no steps",
+            ]
+        );
+        println!(
+            "checked 2 scenario fixtures, {} scenarios, {} problems",
+            good.scenarios.len() + bad.scenarios.len(),
+            said.len()
+        );
+    }
+
+    #[test]
+    fn a_step_resolves_to_its_one_flow() {
+        let good: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../schema/fixtures/maps/scenarios.yml"))
+                .unwrap();
+        let s = good.scenario("pin-an-issue").unwrap();
+        let carried: Vec<&str> = s
+            .steps
+            .iter()
+            .map(|step| good.flow_for(step).unwrap().carries.as_str())
+            .collect();
+        assert_eq!(
+            carried,
+            ["PinRequest", "rows", "WebEvent Changed", "Overview"]
+        );
     }
 
     /// The fixtures the TypeScript side reads too (plan-check "map fixtures").
