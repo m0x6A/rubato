@@ -26,6 +26,7 @@ oauth2 = { version = "5", default-features = false, features = ["reqwest", "rust
 octocrab = { version = "0.54", default-features = false, features = ["default-client", "rustls", "rustls-ring", "rustls-webpki-tokio", "timeout", "retry", "follow-redirect", "jwt-aws-lc-rs"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
 async-trait = "0.1"
+sha1 = "0.10"
 sha2 = "0.10"
 hmac = "0.12"
 rand = "0.9"

@@ -81,6 +81,9 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .badge.working { color: var(--ok); border-color: var(--ok); }
 .badge.idle { color: var(--muted); }
 .badge.ended { color: var(--quiet); }
+.badge.reviewed { color: var(--accent); }
+.badge.approved { color: var(--ok); border-color: var(--ok); }
+.badge.approval-stale { color: var(--warn); border-color: var(--warn); }
 table.mini { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.mini th, table.mini td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .findings { border: 1px solid var(--warn); border-radius: 6px; padding: 8px; background: color-mix(in srgb, var(--warn) 8%, var(--panel)); }

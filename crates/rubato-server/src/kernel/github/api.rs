@@ -76,6 +76,10 @@ pub const ISSUES_PER_PAGE: usize = 100;
 pub struct Comment {
     pub id: u64,
     pub author: String,
+    /// GitHub's `author_association`: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE, …
+    pub author_association: String,
+    /// The author is a Bot account (`user.type == "Bot"`).
+    pub author_is_bot: bool,
     pub body: String,
     pub created_at: DateTime<Utc>,
     pub url: String,
@@ -492,6 +496,13 @@ impl GitHubApi for Octo {
             .into_iter()
             .map(|c| Comment {
                 id: c.id.into_inner(),
+                author_association: c
+                    .author_association
+                    .as_ref()
+                    .and_then(|a| serde_json::to_value(a).ok())
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "NONE".to_owned()),
+                author_is_bot: c.user.r#type == "Bot",
                 author: c.user.login,
                 body: c.body.unwrap_or_default(),
                 created_at: c.created_at,

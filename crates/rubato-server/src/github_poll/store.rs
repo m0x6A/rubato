@@ -1,12 +1,15 @@
-//! Tables `pull_requests`, `decisions`, `issue_meta`, `open_issues`, `backlog_repos` and
-//! `uncovered_repos`.
+//! Tables `pull_requests`, `decisions`, `issue_meta`, `open_issues`, `backlog_repos`,
+//! `uncovered_repos` and `plan_signals`.
 
 use super::suggest::Placement;
 use crate::kernel::db::{parse_ts, ts};
 use crate::kernel::github::OpenIssues;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rubato_protocol::{BacklogRepo, DecisionRecord, IssueRef, OpenIssue, PullRequestState};
+use rubato_protocol::{
+    ApprovalRecord, BacklogRepo, DecisionRecord, IssueRef, OpenIssue, PullRequestState,
+    ReviewRecord,
+};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -228,4 +231,92 @@ pub async fn uncovered(db: &SqlitePool) -> Result<Vec<String>> {
             .map(|r| r.get("repo"))
             .collect(),
     )
+}
+
+// Table `plan_signals` (ADR 0027): `Review:` and `Approved:` comments from members.
+
+pub async fn upsert_signal(
+    db: &SqlitePool,
+    issue: &IssueRef,
+    comment_id: u64,
+    kind: &str,
+    record: &str,
+) -> Result<()> {
+    sqlx::query("INSERT INTO plan_signals (repo, number, comment_id, kind, record) VALUES (?, ?, ?, ?, ?) ON CONFLICT(repo, number, comment_id) DO UPDATE SET kind = excluded.kind, record = excluded.record")
+        .bind(&issue.repo).bind(issue.number as i64).bind(comment_id as i64).bind(kind).bind(record)
+        .execute(db).await?;
+    Ok(())
+}
+
+/// Drop the issue's signals whose comment was not seen in this read (deleted, or edited into
+/// something else).
+pub async fn drop_signals_except(db: &SqlitePool, issue: &IssueRef, kept: &[u64]) -> Result<()> {
+    let rows = sqlx::query("SELECT comment_id FROM plan_signals WHERE repo = ? AND number = ?")
+        .bind(&issue.repo)
+        .bind(issue.number as i64)
+        .fetch_all(db)
+        .await?;
+    for r in rows {
+        let id = r.get::<i64, _>("comment_id");
+        if !kept.contains(&(id as u64)) {
+            sqlx::query(
+                "DELETE FROM plan_signals WHERE repo = ? AND number = ? AND comment_id = ?",
+            )
+            .bind(&issue.repo)
+            .bind(issue.number as i64)
+            .bind(id)
+            .execute(db)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// The plan hash on the branch an approval names, when that is not the branch the plan is read
+/// from. `None` when that branch has no plan file.
+pub async fn set_target_sha(
+    db: &SqlitePool,
+    issue: &IssueRef,
+    comment_id: u64,
+    sha: Option<&str>,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE plan_signals SET target_sha = ? WHERE repo = ? AND number = ? AND comment_id = ?",
+    )
+    .bind(sha)
+    .bind(&issue.repo)
+    .bind(issue.number as i64)
+    .bind(comment_id as i64)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn all_reviews(db: &SqlitePool) -> Result<Vec<ReviewRecord>> {
+    let rows =
+        sqlx::query("SELECT record FROM plan_signals WHERE kind = 'review' ORDER BY comment_id")
+            .fetch_all(db)
+            .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| serde_json::from_str(&r.get::<String, _>("record")).ok())
+        .collect())
+}
+
+/// Every approval, with the plan hash of the branch it names when it names another one.
+pub async fn all_approvals(db: &SqlitePool) -> Result<Vec<(ApprovalRecord, Option<String>)>> {
+    let rows = sqlx::query(
+        "SELECT record, target_sha FROM plan_signals WHERE kind = 'approval' ORDER BY comment_id",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            Some((
+                serde_json::from_str(&r.get::<String, _>("record")).ok()?,
+                r.get::<Option<String>, _>("target_sha"),
+            ))
+        })
+        .collect())
 }

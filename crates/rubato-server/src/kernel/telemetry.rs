@@ -84,6 +84,7 @@ pub struct Metrics {
     pub rate_limit_limit: Gauge<u64>,
     pub plan_parse_failures: Counter<u64>,
     pub plan_unknown_id_count: Gauge<u64>,
+    pub plans_approval_stale: Gauge<u64>,
     pub seam_open_plans: Gauge<u64>,
     pub map_loaded: Gauge<u64>,
     /// Unix seconds of the last successful load. No unit: one would rename the Prometheus
@@ -126,6 +127,7 @@ impl Metrics {
             rate_limit_limit: m.u64_gauge(otel::metric::GITHUB_RATE_LIMIT_LIMIT).build(),
             plan_parse_failures: m.u64_counter(otel::metric::PLAN_PARSE_FAILURES).build(),
             plan_unknown_id_count: m.u64_gauge(otel::metric::PLAN_UNKNOWN_ID_COUNT).build(),
+            plans_approval_stale: m.u64_gauge(otel::metric::PLANS_APPROVAL_STALE).build(),
             seam_open_plans: m.u64_gauge(otel::metric::SEAM_OPEN_PLANS).build(),
             map_loaded: m.u64_gauge(otel::metric::MAP_LOADED).build(),
             map_loaded_at: m.u64_gauge(otel::metric::MAP_LOADED_AT).build(),

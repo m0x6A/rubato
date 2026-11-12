@@ -107,7 +107,7 @@ map_draft       the shared map draft and its pull request       map_draft_ops, m
 new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
 queue           issues queued on your own companions, in order  companion_queue
-github_poll     issue reads, open issues, placement, coverage   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos
+github_poll     issue reads, open issues, placement, coverage   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 ```
@@ -166,7 +166,7 @@ layout     MapLayout, Position; LAYOUT
 map        SystemMap, Scenario, MapResponse; MAP, MAP_RELOAD
 map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
 plan       Plan and its affected parts, O-rows, assumptions
-github     PullRequestState, DecisionRecord
+github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord, ApprovalState
 progress   derive_progress, Overview, IssueSummary, Backlog, Finding; OVERVIEW
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 web_link   WebEvent; WEB_WS

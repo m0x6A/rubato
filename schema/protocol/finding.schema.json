@@ -146,6 +146,31 @@
         "from",
         "to"
       ]
+    },
+    {
+      "description": "The plan was approved, then changed: the approval names an earlier version (ADR 0027).",
+      "type": "object",
+      "properties": {
+        "approved_sha": {
+          "type": "string"
+        },
+        "current_sha": {
+          "type": "string"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "approval_stale"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "approved_sha",
+        "current_sha"
+      ]
     }
   ],
   "$defs": {

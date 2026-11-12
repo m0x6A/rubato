@@ -27,7 +27,10 @@ pub mod session;
 pub mod web_link;
 
 pub use auth::Me;
-pub use github::{ChecksStatus, DecisionBody, DecisionRecord, PullRequestState};
+pub use github::{
+    ApprovalBody, ApprovalRecord, ApprovalState, ApprovalVersion, ChecksStatus, DecisionBody,
+    DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, trusted_author,
+};
 pub use hook::{HookEvent, HookEventKind};
 pub use ids::{IssueRef, MapRef, ParseIssueRefError};
 pub use issue_body::{PinSuggestion, map_line, parse_map_line};

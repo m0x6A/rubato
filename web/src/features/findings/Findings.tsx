@@ -13,6 +13,8 @@ export function findingText(f: Finding): string {
       return `${issueKey(f.issue)}: ${f.path} does not parse: ${f.error}`;
     case "map_version_mismatch":
       return `${issueKey(f.issue)} was launched with map ${f.launched_with}; the server holds ${f.current}`;
+    case "approval_stale":
+      return `${issueKey(f.issue)}: the plan changed after it was approved (approved ${f.approved_sha.slice(0, 7)}, now ${f.current_sha.slice(0, 7)})`;
     case "repo_not_covered":
       return `${f.repo} is not covered by the GitHub App installation; its branches, plans and pull requests cannot be read`;
   }

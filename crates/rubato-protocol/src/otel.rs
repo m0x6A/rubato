@@ -80,6 +80,9 @@ pub mod metric {
     /// recorded every poll tick: the time for the current state, 0 for every other. No unit,
     /// like `rubato.map.loaded_at`. "Map proposal age" is `time()` minus this, where it is not 0.
     pub const MAP_PROPOSAL_STATE_SINCE: &str = "rubato.map.proposal.state_since";
+    /// Issues whose newest approval names an earlier version of the plan (finding
+    /// `ApprovalStale`, ADR 0027), recorded every poll tick.
+    pub const PLANS_APPROVAL_STALE: &str = "rubato.plans.approval_stale";
     /// `Map:` lines read from the open-issues listing, by `rubato.outcome`: `pinned`,
     /// `already_pinned`, `unknown_id`, `kind_mismatch` once per line applied; `untrusted_author`
     /// per listing that holds a line from someone outside the team (ADR 0026).
@@ -165,6 +168,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::MAP_DRAFT_OPS,
         metric::MAP_PROPOSALS,
         metric::MAP_PROPOSAL_STATE_SINCE,
+        metric::PLANS_APPROVAL_STALE,
         metric::BACKLOG_MAP_LINES,
         metric::ISSUES_CREATED,
         metric::ISSUES_OPENING,

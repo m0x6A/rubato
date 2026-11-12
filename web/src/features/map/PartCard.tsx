@@ -1,6 +1,6 @@
 import { STATE_LABEL } from "../../shared/format.ts";
 import { type OnPin, useIssueDrop } from "./drop.ts";
-import { type DraftMarkLike, type GraphNode, issueCounts, sessionCounts } from "./graph.ts";
+import { type DraftMarkLike, type GraphNode, approvalCounts, issueCounts, sessionCounts } from "./graph.ts";
 
 interface Props {
   node: GraphNode;
@@ -29,6 +29,7 @@ export function PartCard({ node, selected, onPin, dim, draft }: Props) {
   const { over, handlers } = useIssueDrop<HTMLDivElement>({ kind: "node", id: node.id }, draft?.state === "added" ? undefined : onPin);
   const issues = issueCounts(node.issues);
   const sessions = sessionCounts(node.sessions);
+  const approvals = approvalCounts(node.issues);
   const classes = ["map-node", node.kind, node.paint ? `paint-${node.paint}` : "", selected ? "selected" : "", dim ? "dim" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes} data-testid={`node-${node.id}`} title={node.description} {...handlers}>
@@ -49,6 +50,12 @@ export function PartCard({ node, selected, onPin, dim, draft }: Props) {
           </span>
         ))}
         {node.paint && <span className={`badge ${node.paint === "new" ? "designing" : ""}`}>{node.paint} by a plan</span>}
+        {approvals.approved > 0 && <span className="badge approved">{approvals.approved} approved</span>}
+        {approvals.stale > 0 && (
+          <span className="badge approval-stale" title="the plan changed after it was approved">
+            {approvals.stale} approval{approvals.stale === 1 ? "" : "s"} stale
+          </span>
+        )}
       </div>
       {node.findings.length > 0 && <div className="warn">⚠ {node.findings.length} finding{node.findings.length === 1 ? "" : "s"}</div>}
       {over && <div className="drop-hint">Drop to pin here</div>}

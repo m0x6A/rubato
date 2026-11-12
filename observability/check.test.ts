@@ -57,6 +57,11 @@ test("a Map proposal age panel on a metric with a unit suffix is rejected", () =
   assert.deepEqual(check(rules, tests, withUnit).problems, ['the dashboard has no "Map proposal age" panel that queries rubato_map_proposal_state_since']);
 });
 
+test("a dashboard without the Approvals panel is rejected (#71, ADR 0027)", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Approvals")));
+  assert.deepEqual(r.problems, ['the dashboard has no "Approvals" panel that queries rubato_plans_approval_stale']);
+});
+
 test("a dashboard without the Queue depth panel is rejected", () => {
   const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Queue depth")));
   assert.deepEqual(r.problems, ['the dashboard has no "Queue depth" panel that queries rubato_queue_depth']);

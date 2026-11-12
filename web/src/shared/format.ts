@@ -1,5 +1,5 @@
 /** Formatting helpers every feature uses. Pure. */
-import type { IssueRef, ProgressState } from "../protocol.ts";
+import type { ApprovalState, IssueRef, ProgressState, ReviewRecord } from "../protocol.ts";
 
 export function issueKey(i: IssueRef): string {
   return `${i.repo}#${i.number}`;
@@ -34,4 +34,28 @@ export function relative(iso: string, now = Date.now()): string {
     return `${Math.round(secs / 3600)}h ago`;
   }
   return `${Math.round(secs / 86400)}d ago`;
+}
+
+/** The short label of an issue's approval (ADR 0027), as its badge shows it. */
+export function approvalLabel(a: ApprovalState): string {
+  switch (a.version) {
+    case "current":
+      return "approved";
+    case "earlier":
+      return "approved an earlier version";
+    case "not_named":
+      return "approved, version not named";
+    case "no_plan":
+      return a.record.branch ? `approved, no plan on ${a.record.branch}` : "approved, no plan to compare";
+  }
+}
+
+/** The badge class of an approval: green when it names the plan as it is now. */
+export function approvalClass(a: ApprovalState): string {
+  return a.version === "current" ? "approved" : "approval-stale";
+}
+
+/** One line for a review (ADR 0027): `reviewed (full, passed after fixes)`. */
+export function reviewLabel(r: ReviewRecord): string {
+  return `reviewed (${r.track}, ${r.outcome})`;
 }

@@ -13,6 +13,8 @@ pub struct PlanRow {
     pub path: String,
     pub plan: Option<Plan>,
     pub parse_error: Option<String>,
+    /// The approval hash of the file as read (ADR 0027).
+    pub approval_sha: Option<String>,
 }
 
 pub async fn upsert_plan(
@@ -22,9 +24,10 @@ pub async fn upsert_plan(
     path: &str,
     plan: Option<&Plan>,
     error: Option<&str>,
+    approval_sha: &str,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(repo, number) DO UPDATE SET branch = excluded.branch, path = excluded.path, plan = excluded.plan, parse_error = excluded.parse_error, fetched_at = excluded.fetched_at")
-        .bind(&issue.repo).bind(issue.number as i64).bind(branch).bind(path).bind(plan.map(serde_json::to_string).transpose()?).bind(error).bind(ts(Utc::now()))
+    sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, approval_sha, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(repo, number) DO UPDATE SET branch = excluded.branch, path = excluded.path, plan = excluded.plan, parse_error = excluded.parse_error, approval_sha = excluded.approval_sha, fetched_at = excluded.fetched_at")
+        .bind(&issue.repo).bind(issue.number as i64).bind(branch).bind(path).bind(plan.map(serde_json::to_string).transpose()?).bind(error).bind(approval_sha).bind(ts(Utc::now()))
         .execute(db).await?;
     Ok(())
 }
@@ -50,6 +53,7 @@ pub async fn all_plans(db: &SqlitePool) -> Result<Vec<PlanRow>> {
                 .get::<Option<String>, _>("plan")
                 .and_then(|s| serde_json::from_str(&s).ok()),
             parse_error: r.get("parse_error"),
+            approval_sha: r.get("approval_sha"),
         })
         .collect())
 }
