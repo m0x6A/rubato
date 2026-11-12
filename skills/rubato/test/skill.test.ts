@@ -94,6 +94,20 @@ describe("map.ts", () => {
     expect(text).toContain("  - control: server → web: WebEvent Changed");
   });
 
+  it("map.ts lists scenarios with their steps, which are not ids a plan may name", async () => {
+    const { dir, ws } = tempMapRepo();
+    writeFileSync(join(dir, "system-map.yml"), readFileSync(join(root, "schema/fixtures/maps/scenarios.yml"), "utf8"));
+    const s = await summarize(ws, dir);
+    expect(s.scenarios.map((x) => `${x.id}:${x.steps.length}`)).toEqual(["pin-an-issue:4", "read-back:1"]);
+    const text = render(s);
+    expect(text).toContain("## Scenarios (journeys over the flows above; not ids a plan may name)");
+    expect(text).toContain("- pin-an-issue: Pin an issue — A person drops an issue on a part and every browser sees it.");
+    expect(text).toContain("  3. control: server → web over web-server: WebEvent Changed — every browser is told something changed");
+    // A map without scenarios prints no section.
+    writeFileSync(join(dir, "system-map.yml"), readFileSync(join(root, "schema/fixtures/maps/flows.yml"), "utf8"));
+    expect(render(await summarize(ws, dir))).not.toContain("## Scenarios");
+  });
+
   it("refuses a map that fails the schema", async () => {
     const { dir, ws } = tempMapRepo();
     writeFileSync(join(dir, "system-map.yml"), "version: 1\nname: x\nnodes:\n  - id: a\n    kind: nonsense\n");
