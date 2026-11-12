@@ -232,11 +232,15 @@ async function main() {
       }
     }
   };
-  const final = await waitFor("all three issues Designed", 150_000, async () => {
+  // An issue is Designed as soon as its plan is pushed, which is before the session's last
+  // hooks. Wait for the sessions to finish too, or the checks below race the Stop hook.
+  const standinGlob = `${T}/repos/*-worktrees/**/.claude-standin.log`;
+  const finished = () => globSync(standinGlob).filter((f) => /^(DONE|ERROR)/m.test(readFileSync(f, "utf8"))).length;
+  const final = await waitFor("all three issues Designed and all three sessions finished", 150_000, async () => {
     const ov = await overview();
     record(ov);
     const done = issues.every((i) => ov.issues.find((s) => s.issue.repo === i.repo && s.issue.number === i.number)?.progress.state === "designed");
-    return done ? ov : null;
+    return done && finished() === issues.length ? ov : null;
   });
 
   // 7. Assertions.
@@ -267,7 +271,7 @@ async function main() {
   if (!collision || (collision.issues?.length ?? 0) !== 2) {
     problems.push(`expected a seam collision on auth-contract-pantry between acme/auth#1 and acme/pantry#1, got ${JSON.stringify(final.findings)}`);
   }
-  const standinLogs = globSync(`${T}/repos/*-worktrees/**/.claude-standin.log`);
+  const standinLogs = globSync(standinGlob);
   if (standinLogs.length !== 3) {
     problems.push(`expected 3 stand-in logs, found ${standinLogs.length}`);
   }
@@ -364,6 +368,17 @@ async function main() {
     console.log(`\n${problems.length} problem(s):`);
     for (const p of problems) {
       console.log(`  - ${p}`);
+    }
+    // What on-call needs to tell a hook that never ran from one that ran and was refused.
+    for (const f of standinLogs) {
+      const lines = readFileSync(f, "utf8").split("\n").filter((l) => /^(HOOK|DONE|ERROR)/.test(l));
+      console.log(`--- ${f}\n${lines.join("\n")}`);
+    }
+    for (const name of ["server", "companion"]) {
+      const p = `${T}/${name}.log`;
+      if (existsSync(p)) {
+        console.log(`--- ${name}.log (tail)\n${readFileSync(p, "utf8").split("\n").slice(-60).join("\n")}`);
+      }
     }
     process.exitCode = 1;
   } else {
