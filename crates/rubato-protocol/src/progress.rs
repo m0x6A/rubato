@@ -298,6 +298,9 @@ pub struct ConnectedRepo {
     pub sessions: u32,
     /// Live sessions in this repo with no issue.
     pub unattributed: u32,
+    /// Open pull requests from its own branches in the latest listing (ADR 0034).
+    #[serde(default)]
+    pub open_pulls: u32,
 }
 
 /// The whole picture in one payload: what the web view renders.
@@ -331,6 +334,9 @@ pub struct Overview {
     /// One row per repo the map names, plus repos of tracked work outside the map.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repos: Vec<ConnectedRepo>,
+    /// Open pull requests per map repo (ADR 0034). Never an input to progress.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pulls: Vec<crate::pulls::RepoPulls>,
     pub generated_at: DateTime<Utc>,
 }
 

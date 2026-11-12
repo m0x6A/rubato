@@ -10,8 +10,8 @@ use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
     ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
     DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, OpenIssue, Plan,
-    Progress, ProgressInputs, ProgressState, PullRequestState, ReviewRecord, SessionState,
-    SessionStatus, derive_progress, plan_fit,
+    Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls, ReviewRecord,
+    SessionState, SessionStatus, derive_progress, plan_fit,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -37,6 +37,8 @@ pub struct OverviewInputs {
     pub uncovered_repos: Vec<String>,
     /// Every stored position, rows for parts the map no longer has included.
     pub layout: MapLayout,
+    /// Open pull requests per listed map repo (ADR 0034), checks of tracked ones not filled in.
+    pub repo_pulls: Vec<RepoPulls>,
     /// Every queued issue, lanes of revoked companions included; the handler leaves those out.
     pub queue: Vec<QueuedIssue>,
 }
@@ -50,6 +52,8 @@ pub struct Built {
     pub layout: MapLayout,
     /// What Rubato sees of each repo.
     pub repos: Vec<ConnectedRepo>,
+    /// Open pull requests per map repo, checks of tracked ones from `pull_requests` (ADR 0034).
+    pub pulls: Vec<RepoPulls>,
 }
 
 fn seams_touched(plan: &Plan) -> BTreeSet<&str> {
@@ -331,7 +335,8 @@ pub fn build(
             .iter()
             .map(|repo| Finding::RepoNotCovered { repo: repo.clone() }),
     );
-    let repos = connected_repos(inputs, map, &out);
+    let pulls = pulls_with_checks(inputs);
+    let repos = connected_repos(inputs, map, &out, &pulls);
 
     // The backlog: listed open issues that are not tracked above, and one entry per repo the
     // map names, listed or not, so "not listed yet" is said and not shown as empty.
@@ -396,7 +401,31 @@ pub fn build(
         backlog,
         layout,
         repos,
+        pulls,
     }
+}
+
+/// The stored listings, with each tracked pull request's checks taken from `pull_requests`
+/// (ADR 0023 reads them every tick), so the two never disagree and nothing is copied.
+fn pulls_with_checks(inputs: &OverviewInputs) -> Vec<RepoPulls> {
+    let tracked: HashMap<(&str, u64), &PullRequestState> = inputs
+        .prs
+        .values()
+        .map(|p| ((p.repo.as_str(), p.number), p))
+        .collect();
+    inputs
+        .repo_pulls
+        .iter()
+        .cloned()
+        .map(|mut r| {
+            for p in &mut r.pulls {
+                if let Some(t) = tracked.get(&(p.repo.as_str(), p.number)) {
+                    p.checks = Some(t.checks);
+                }
+            }
+            r
+        })
+        .collect()
 }
 
 /// One row per repo the map names, then repos of tracked work outside the map. Repo names are
@@ -405,6 +434,7 @@ fn connected_repos(
     inputs: &OverviewInputs,
     map: Option<&LoadedMap>,
     issues: &[IssueSummary],
+    pulls: &[RepoPulls],
 ) -> Vec<ConnectedRepo> {
     let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
     let mut names: Vec<(String, bool)> = map
@@ -425,6 +455,11 @@ fn connected_repos(
     names
         .into_iter()
         .map(|(repo, in_map)| ConnectedRepo {
+            open_pulls: pulls
+                .iter()
+                .filter(|p| same(&p.repo, &repo))
+                .map(|p| p.pulls.len() as u32)
+                .sum(),
             covered: !inputs.uncovered_repos.iter().any(|u| same(u, &repo)),
             open_issues: inputs
                 .backlog
@@ -570,6 +605,7 @@ mod tests {
             uncovered_repos: vec![],
             layout: MapLayout::default(),
             queue: vec![],
+            repo_pulls: vec![],
         }
     }
 

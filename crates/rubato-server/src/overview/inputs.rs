@@ -22,5 +22,6 @@ pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
         uncovered_repos: github_poll::uncovered(&app.db).await?,
         layout: layout::all(&app.db).await?,
         queue: queue::all(&app.db).await?,
+        repo_pulls: github_poll::repo_pulls(&app.db).await?,
     })
 }

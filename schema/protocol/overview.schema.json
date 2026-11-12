@@ -51,6 +51,13 @@
     "map": {
       "$ref": "#/$defs/MapResponse"
     },
+    "pulls": {
+      "description": "Open pull requests per map repo (ADR 0034). Never an input to progress.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RepoPulls"
+      }
+    },
     "queue": {
       "description": "What each developer intends to run on their companions, lane by lane (ADR 0020).\nNever an input to progress.",
       "type": "array",
@@ -342,6 +349,13 @@
           "description": "Open issues in the latest listing.",
           "type": "integer",
           "format": "uint32",
+          "minimum": 0
+        },
+        "open_pulls": {
+          "description": "Open pull requests from its own branches in the latest listing (ADR 0034).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
           "minimum": 0
         },
         "plans": {
@@ -1390,6 +1404,83 @@
         "updated_at"
       ]
     },
+    "OpenPull": {
+      "description": "One open pull request from a branch of the repo itself.",
+      "type": "object",
+      "properties": {
+        "author": {
+          "description": "GitHub login of who opened it.",
+          "type": "string"
+        },
+        "base": {
+          "description": "The branch it merges into.",
+          "type": "string"
+        },
+        "branch": {
+          "description": "The head branch.",
+          "type": "string"
+        },
+        "checks": {
+          "description": "The folded check runs at `head_sha`; absent until they have been read.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChecksStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "head_sha": {
+          "type": "string"
+        },
+        "issue": {
+          "description": "The issue the branch names (`issue/<n>-…`, ADR 0006), if it names one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IssueRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "`owner/name`, in the map's spelling.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "title",
+        "author",
+        "branch",
+        "base",
+        "draft",
+        "head_sha",
+        "updated_at",
+        "url"
+      ]
+    },
     "PairingInfo": {
       "type": "object",
       "properties": {
@@ -1846,6 +1937,44 @@
         "queued_by",
         "queued_at",
         "position"
+      ]
+    },
+    "RepoPulls": {
+      "description": "One map repo's open pull requests and how fresh that listing is.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "Why the last listing failed, when it did; `pulls` are from the last good one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "listed_at": {
+          "description": "When the last listing succeeded; absent until one has.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "pulls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OpenPull"
+          }
+        },
+        "repo": {
+          "type": "string"
+        },
+        "truncated": {
+          "description": "The last listing hit its one page: there are more than `pulls` shows.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "repo"
       ]
     },
     "RepoRef": {

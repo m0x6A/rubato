@@ -22,6 +22,7 @@ pub mod pairing;
 pub mod pins;
 pub mod plan;
 pub mod progress;
+pub mod pulls;
 pub mod queue;
 pub mod schema;
 pub mod session;
@@ -66,6 +67,7 @@ pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,
     ProgressInputs, ProgressState, derive_progress,
 };
+pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use session::{
     Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
