@@ -3,22 +3,54 @@
 //! a stale or failed listing is never shown as "no issues".
 
 use super::store;
+use crate::kernel::github::OpenIssueInfo;
 use crate::kernel::state::App;
 use chrono::Utc;
 use opentelemetry::KeyValue;
-use rubato_protocol::SystemMap;
 use rubato_protocol::otel::attr;
+use rubato_protocol::{IssueRef, SystemMap};
+use std::collections::{HashMap, HashSet};
 
 /// At most this many open issues per repo: five pages, so five calls per repo per tick.
 pub const BACKLOG_MAX_PER_REPO: usize = 500;
 
+/// What this tick's listings say, for the per-issue reads (issue #49): the repos listed whole
+/// (not failed, not cut) and their open issues.
+#[derive(Debug, Default)]
+pub struct Listed {
+    fresh: HashSet<String>,
+    open: HashMap<IssueRef, OpenIssueInfo>,
+}
+
+impl Listed {
+    /// Whether every open issue of `repo` is in this tick's listing.
+    pub fn is_fresh(&self, repo: &str) -> bool {
+        self.fresh.contains(repo)
+    }
+
+    /// The issue as this tick listed it, if it is open.
+    pub fn open(&self, issue: &IssueRef) -> Option<&OpenIssueInfo> {
+        self.open.get(issue)
+    }
+}
+
 /// List each repo the map names and store the result. Never fails the poll: a repo that cannot
 /// be listed keeps its rows and gets its error recorded.
-pub async fn list_open_issues(app: &App, map: &SystemMap) {
+pub async fn list_open_issues(app: &App, map: &SystemMap) -> Listed {
     let repos: Vec<String> = map.repos_named().into_iter().map(str::to_owned).collect();
+    let mut listed = Listed::default();
     for repo in &repos {
         match app.github.open_issues(repo, BACKLOG_MAX_PER_REPO).await {
             Ok(listing) => {
+                if !listing.truncated {
+                    listed.fresh.insert(repo.clone());
+                }
+                listed.open.extend(
+                    listing
+                        .issues
+                        .iter()
+                        .map(|i| (IssueRef::new(repo.clone(), i.number), i.clone())),
+                );
                 if listing.truncated {
                     tracing::warn!(
                         rubato.repo = %repo,
@@ -42,6 +74,7 @@ pub async fn list_open_issues(app: &App, map: &SystemMap) {
         }
     }
     record_gauges(app, &repos).await;
+    listed
 }
 
 /// Both gauges on every tick, for every repo with a row: a gauge recorded only on change keeps

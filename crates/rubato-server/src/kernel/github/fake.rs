@@ -1,6 +1,8 @@
 //! In-memory GitHub for tests and for a server with no token. Records every call in order.
 
-use super::{Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, PullInfo};
+use super::{
+    BranchHead, Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, OpenPulls, PullInfo,
+};
 use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -17,6 +19,13 @@ pub struct FakeInner {
     pub pulls: HashMap<(String, String), PullInfo>,
     pub checks: HashMap<String, ChecksStatus>,
     pub rate: (u64, u64),
+    /// `Some(budget)`: `rate_limit` answers `budget` minus every call recorded so far, as if
+    /// each call counted against an hour's budget (issue #49).
+    pub budget: Option<u64>,
+    /// The open pull request listing fails with this text.
+    pub open_pulls_error: Option<String>,
+    /// Reading comments fails with this text.
+    pub comments_error: Option<String>,
     /// Open issues per repo, as a listing answers them.
     pub open: HashMap<String, Vec<OpenIssueInfo>>,
     /// Repos whose listing fails, with the error text.
@@ -76,19 +85,40 @@ impl GitHubApi for FakeGitHub {
             .map(|(_, sha)| sha.clone()))
     }
 
-    async fn branches_with_prefix(&self, repo: &str, prefix: &str) -> Result<Vec<String>> {
+    async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>> {
         let mut g = self.inner.lock().unwrap();
-        g.calls
-            .push(("branches_with_prefix", format!("{repo} {prefix}")));
+        g.calls.push(("branches", format!("{repo} {prefix}")));
         Ok(g.branches
             .get(repo)
             .map(|b| {
                 b.iter()
                     .filter(|(n, _)| n.starts_with(prefix))
-                    .map(|(n, _)| n.clone())
+                    .map(|(name, sha)| BranchHead {
+                        name: name.clone(),
+                        sha: sha.clone(),
+                    })
                     .collect()
             })
             .unwrap_or_default())
+    }
+
+    async fn open_pulls(&self, repo: &str) -> Result<OpenPulls> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("open_pulls", repo.to_owned()));
+        if let Some(e) = &g.open_pulls_error {
+            return Err(anyhow!("{e}"));
+        }
+        let mut pulls: Vec<(String, PullInfo)> = g
+            .pulls
+            .iter()
+            .filter(|((r, _), p)| r == repo && p.open)
+            .map(|((_, branch), p)| (branch.clone(), p.clone()))
+            .collect();
+        pulls.sort_by_key(|(_, p)| p.number);
+        Ok(OpenPulls {
+            pulls,
+            truncated: false,
+        })
     }
 
     async fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueInfo>> {
@@ -100,6 +130,9 @@ impl GitHubApi for FakeGitHub {
     async fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<Comment>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("issue_comments", format!("{repo}#{number}")));
+        if let Some(e) = &g.comments_error {
+            return Err(anyhow!("{e}"));
+        }
         Ok(g.comments
             .get(&(repo.to_owned(), number))
             .cloned()
@@ -122,6 +155,9 @@ impl GitHubApi for FakeGitHub {
     async fn rate_limit(&self) -> Result<(u64, u64)> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("rate_limit", String::new()));
+        if let Some(budget) = g.budget {
+            return Ok((budget.saturating_sub(g.calls.len() as u64), budget));
+        }
         Ok(g.rate)
     }
 

@@ -1180,6 +1180,14 @@ async fn poll_makes_the_same_github_calls_per_issue() {
             },
         );
         g.checks.insert("s31".into(), ChecksStatus::Green);
+        g.open.insert(
+            "m0x6A/rubato".into(),
+            vec![
+                open_issue(31, "ok"),
+                open_issue(32, "bad"),
+                open_issue(33, "none"),
+            ],
+        );
         g.comments.insert(
             ("m0x6A/rubato".into(), 33),
             vec![Comment {
@@ -1213,23 +1221,19 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .into_iter()
         .map(|(m, a)| format!("{m} {a}"))
         .collect();
-    // Recorded on main before the move (poller.rs:142-299), commit 88db1f8. Issue #48 adds one
-    // listing per map repo before the issue loop, on purpose; nothing else moved.
+    // Issue #49 (design 49-poll-cost S1–S4): branches and open pull requests once per repo,
+    // title and state from the open listing, the plan read when the head moves, comments on the
+    // full lane. Was 16 calls here (six per issue with an open pull request).
     let expected = [
         "open_issues m0x6A/rubato",
-        "issue m0x6A/rubato#31",
-        "branches_with_prefix m0x6A/rubato issue/31-",
+        "branches m0x6A/rubato issue/",
         "file m0x6A/rubato docs/plans/31.md issue/31-ok",
-        "pull_for_branch m0x6A/rubato issue/31-ok",
+        "open_pulls m0x6A/rubato",
         "checks m0x6A/rubato s31",
         "issue_comments m0x6A/rubato#31",
-        "issue m0x6A/rubato#32",
-        "branches_with_prefix m0x6A/rubato issue/32-",
         "file m0x6A/rubato docs/plans/32.md issue/32-bad",
         "pull_for_branch m0x6A/rubato issue/32-bad",
         "issue_comments m0x6A/rubato#32",
-        "issue m0x6A/rubato#33",
-        "branches_with_prefix m0x6A/rubato issue/33-",
         "issue_comments m0x6A/rubato#33",
         "rate_limit ",
     ];
@@ -1246,7 +1250,41 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         "parse failure recorded, not skipped: {:?}",
         ov.findings
     );
+    assert_eq!(
+        get(31).title.as_deref(),
+        Some("ok"),
+        "title from the listing"
+    );
     println!("checked {} GitHub calls over 3 issues", calls.len());
+
+    // A fast tick after a full one: the listings and the checks of the open pull request only.
+    // The merged pull request (#32) is final; no comments; the plan heads have not moved.
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    h.github.with(|g| g.calls.clear());
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    let fast: Vec<String> = h
+        .github
+        .calls()
+        .into_iter()
+        .map(|(m, a)| format!("{m} {a}"))
+        .collect();
+    assert_eq!(
+        fast,
+        [
+            "open_issues m0x6A/rubato",
+            "branches m0x6A/rubato issue/",
+            "open_pulls m0x6A/rubato",
+            "checks m0x6A/rubato s31",
+            "rate_limit ",
+        ],
+        "a fast tick"
+    );
+    let ov = h.overview("m0x6A").await;
+    let get = |n| ov.issues.iter().find(|i| i.issue.number == n).unwrap();
+    assert_eq!(get(31).progress.state, ProgressState::InReview);
+    assert_eq!(get(32).progress.state, ProgressState::Done);
+    println!("checked {} GitHub calls on a fast tick", fast.len());
 
     // As a GitHub App installation, and only then, one more call: the installation's repos,
     // after the listing and before the issue loop.
@@ -1263,6 +1301,8 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .collect();
     let mut as_installation: Vec<&str> = expected.to_vec();
     as_installation.insert(1, "installation_repos ");
+    // #32's pull request is stored as merged by now: final, not looked up again (S5).
+    as_installation.retain(|c| *c != "pull_for_branch m0x6A/rubato issue/32-bad");
     assert_eq!(
         calls, as_installation,
         "one coverage call, installation only"
@@ -2880,4 +2920,339 @@ async fn withdraw_closes_the_pr_and_reopens_the_draft() {
         )
         .await;
     assert_eq!(status, 201, "editable again");
+}
+
+// ----- issue #49: fewer GitHub calls per tracked issue ---------------------------------------
+
+const PLAN_49: &str = "---\nissue: m0x6A/rubato#1\n---\n## Affected parts\n| Node | Status | What changes | Seams |\n| --- | --- | --- | --- |\n| rubato-server | affected | x | server-github |\n## O-rows\n| Seam | Breaks like | Signal | Panel | Owner |\n| --- | --- | --- | --- | --- |\n| server-github | y | z | p | rubato-server |\n";
+
+fn open_pull(number: u64, sha: &str) -> PullInfo {
+    PullInfo {
+        number,
+        open: true,
+        draft: false,
+        head_sha: sha.into(),
+        merged_at: None,
+        updated_at: chrono::Utc::now(),
+        url: format!("pr{number}"),
+    }
+}
+
+impl Harness {
+    async fn pin_issue(&self, n: u64) {
+        let r = self
+            .http
+            .post(format!("{}{}", self.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: IssueRef::new("m0x6A/rubato", n),
+                target: MapRef::node("rubato-server"),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 201);
+    }
+
+    /// Issue `n` open, with branch `issue/<n>-x` at `s<n>`, a plan on it, and optionally an open
+    /// green pull request.
+    fn working_issue(&self, n: u64, with_pr: bool) {
+        self.github.with(|g| {
+            let branch = format!("issue/{n}-x");
+            let sha = format!("s{n}");
+            g.branches
+                .get_mut("m0x6A/rubato")
+                .unwrap()
+                .push((branch.clone(), sha.clone()));
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    format!("docs/plans/{n}.md"),
+                    branch.clone(),
+                ),
+                PLAN_49.replace("#1", &format!("#{n}")),
+            );
+            if with_pr {
+                g.pulls
+                    .insert(("m0x6A/rubato".into(), branch), open_pull(1000 + n, &sha));
+                g.checks.insert(sha, ChecksStatus::Green);
+            }
+            g.open
+                .entry("m0x6A/rubato".into())
+                .or_default()
+                .push(open_issue(n, &format!("issue {n}")));
+        });
+    }
+
+    async fn state_of(&self, n: u64) -> ProgressState {
+        let ov = self.overview("m0x6A").await;
+        ov.issues
+            .iter()
+            .find(|i| i.issue.number == n)
+            .unwrap()
+            .progress
+            .state
+    }
+}
+
+/// AC2: 30 tracked issues at the default tick for one hour stay above 10% of the budget.
+#[tokio::test]
+async fn thirty_tracked_issues_stay_inside_the_rate_limit_budget() {
+    let h = harness().await;
+    for n in 1..=30 {
+        h.working_issue(n, true);
+        h.pin_issue(n).await;
+    }
+    let budget = 5000;
+    h.github.with(|g| {
+        g.calls.clear();
+        g.budget = Some(budget);
+    });
+    let secs = rubato_protocol::Limits::default().github_poll_interval_secs;
+    let ticks = 3600 / secs;
+    let mut poller = tasks::Poller::default();
+    let mut clock = tasks::LaneClock::new(secs);
+    let mut full = 0;
+    for _ in 0..ticks {
+        let lane = clock.next_lane();
+        if lane == tasks::Lane::Full {
+            full += 1;
+        }
+        poller.tick(&h.app, lane).await.unwrap();
+    }
+    let spent = h.github.calls().len() as u64;
+    let (remaining, limit) = h.github.rate_limit().await.unwrap();
+    println!(
+        "checked {ticks} ticks ({full} full) over 30 issues: {spent} GitHub calls, {remaining} of {limit} left"
+    );
+    assert_eq!(full, 12, "a full tick every 300 s");
+    assert!(
+        remaining * 10 > limit,
+        "rate limit under 10% after an hour: {spent} calls"
+    );
+    assert_eq!(h.state_of(7).await, ProgressState::InReview);
+}
+
+/// S5, N2: a merge is seen on the next tick, even a fast one.
+#[tokio::test]
+async fn a_pull_request_that_leaves_the_open_listing_is_read_at_once() {
+    let h = harness().await;
+    h.working_issue(5, true);
+    h.pin_issue(5).await;
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert_eq!(h.state_of(5).await, ProgressState::InReview);
+    h.github.with(|g| {
+        let pr = g
+            .pulls
+            .get_mut(&("m0x6A/rubato".to_string(), "issue/5-x".to_string()))
+            .unwrap();
+        pr.open = false;
+        pr.merged_at = Some(chrono::Utc::now());
+        g.calls.clear();
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(h.call_args("pull_for_branch"), ["m0x6A/rubato issue/5-x"]);
+    assert!(h.call_args("checks").is_empty(), "no checks once merged");
+    assert_eq!(h.state_of(5).await, ProgressState::Done);
+    // Final now: no more look-ups, on either lane.
+    h.github.with(|g| g.calls.clear());
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert!(h.call_args("pull_for_branch").is_empty());
+    println!("checked {} calls after the merge", h.github.calls().len());
+}
+
+/// S6: a closed issue gets one last pass, then no calls of its own until it reopens.
+#[tokio::test]
+async fn a_closed_issue_is_settled_until_it_reopens() {
+    let h = harness().await;
+    h.working_issue(6, false);
+    h.pin_issue(6).await;
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    // Closed on GitHub: gone from the open listing.
+    h.github.with(|g| {
+        g.open.get_mut("m0x6A/rubato").unwrap().clear();
+        g.issues.insert(
+            ("m0x6A/rubato".into(), 6),
+            IssueInfo {
+                title: "issue 6".into(),
+                state: "closed".into(),
+                url: "u6".into(),
+            },
+        );
+        g.calls.clear();
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(h.call_args("issue"), ["m0x6A/rubato#6"]);
+    assert_eq!(
+        h.call_args("issue_comments"),
+        ["m0x6A/rubato#6"],
+        "the last pass reads the comments"
+    );
+    let calls_of_6 = |h: &Harness| {
+        h.github
+            .calls()
+            .into_iter()
+            .filter(|(_, a)| a.contains("#6") || a.contains("issue/6-"))
+            .count()
+    };
+    h.github.with(|g| g.calls.clear());
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(calls_of_6(&h), 0, "settled: {:?}", h.github.calls());
+    // Reopened: back in the listing, polled again.
+    h.github.with(|g| {
+        g.open
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push(open_issue(6, "issue 6"));
+        g.calls.clear();
+    });
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert_eq!(h.call_args("issue_comments"), ["m0x6A/rubato#6"]);
+    println!("checked a close and a reopen");
+}
+
+/// S3, N3: the plan file is read again only when the branch head moves.
+#[tokio::test]
+async fn the_plan_file_is_read_again_only_when_the_branch_moves() {
+    let h = harness().await;
+    h.working_issue(8, false);
+    h.pin_issue(8).await;
+    h.github.with(|g| g.calls.clear());
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert_eq!(h.call_args("file").len(), 1);
+    h.github.with(|g| g.calls.clear());
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert!(h.call_args("file").is_empty(), "head did not move");
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.iter_mut().find(|(n, _)| n == "issue/8-x").unwrap().1 = "s8b".into();
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(
+        h.call_args("file"),
+        ["m0x6A/rubato docs/plans/8.md issue/8-x"]
+    );
+    println!("checked 4 ticks of plan reads");
+}
+
+/// S5: a merge that deletes the head branch still reaches Done on the next tick.
+#[tokio::test]
+async fn a_merge_that_deletes_the_branch_is_done_on_the_next_tick() {
+    let h = harness().await;
+    h.working_issue(11, true);
+    h.pin_issue(11).await;
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert_eq!(h.state_of(11).await, ProgressState::InReview);
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .retain(|(n, _)| n != "issue/11-x");
+        let pr = g
+            .pulls
+            .get_mut(&("m0x6A/rubato".to_string(), "issue/11-x".to_string()))
+            .unwrap();
+        pr.open = false;
+        pr.merged_at = Some(chrono::Utc::now());
+        g.calls.clear();
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(h.call_args("pull_for_branch"), ["m0x6A/rubato issue/11-x"]);
+    assert_eq!(h.state_of(11).await, ProgressState::Done);
+    println!("checked a merge with the branch deleted");
+}
+
+/// S6: an issue closed while its pull request is open is not settled; the merge still lands.
+#[tokio::test]
+async fn a_closed_issue_with_an_open_pull_request_still_reaches_done() {
+    let h = harness().await;
+    h.working_issue(12, true);
+    h.pin_issue(12).await;
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    h.github.with(|g| {
+        g.open.get_mut("m0x6A/rubato").unwrap().clear();
+        g.issues.insert(
+            ("m0x6A/rubato".into(), 12),
+            IssueInfo {
+                title: "issue 12".into(),
+                state: "closed".into(),
+                url: "u12".into(),
+            },
+        );
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    h.github.with(|g| {
+        let pr = g
+            .pulls
+            .get_mut(&("m0x6A/rubato".to_string(), "issue/12-x".to_string()))
+            .unwrap();
+        pr.open = false;
+        pr.merged_at = Some(chrono::Utc::now());
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(h.state_of(12).await, ProgressState::Done);
+    println!("checked a close before the merge");
+}
+
+/// §9.1: a last pass that fails is retried on the next tick, not lost to the settled rule.
+#[tokio::test]
+async fn a_failed_last_pass_is_retried() {
+    let h = harness().await;
+    h.working_issue(13, false);
+    h.pin_issue(13).await;
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    h.github.with(|g| {
+        g.open.get_mut("m0x6A/rubato").unwrap().clear();
+        g.issues.insert(
+            ("m0x6A/rubato".into(), 13),
+            IssueInfo {
+                title: "issue 13".into(),
+                state: "closed".into(),
+                url: "u13".into(),
+            },
+        );
+        g.comments_error = Some("boom".into());
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    h.github.with(|g| {
+        g.comments_error = None;
+        g.calls.clear();
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(
+        h.call_args("issue_comments"),
+        ["m0x6A/rubato#13"],
+        "retried"
+    );
+    h.github.with(|g| g.calls.clear());
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert!(h.call_args("issue_comments").is_empty(), "settled after it");
+    println!("checked a failed last pass");
+}
+
+/// N5: a failed open-pull-request listing falls back to one look-up per issue.
+#[tokio::test]
+async fn poll_falls_back_when_the_pull_listing_fails() {
+    let h = harness().await;
+    h.working_issue(9, true);
+    h.pin_issue(9).await;
+    h.github.with(|g| {
+        g.open_pulls_error = Some("boom".into());
+        g.calls.clear();
+    });
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(h.call_args("open_pulls").len(), 1, "once per repo");
+    assert_eq!(h.call_args("pull_for_branch"), ["m0x6A/rubato issue/9-x"]);
+    assert_eq!(h.state_of(9).await, ProgressState::InReview);
+    println!("checked the fallback");
 }

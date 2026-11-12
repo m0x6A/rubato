@@ -5,6 +5,6 @@ mod fetch;
 mod parse;
 mod store;
 
-pub use fetch::fetch_and_store;
+pub use fetch::{fetch_and_store, plan_path};
 pub use parse::{PlanParseError, parse_plan};
 pub use store::{PlanRow, all_plans as all};

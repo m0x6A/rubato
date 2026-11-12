@@ -30,6 +30,16 @@ pub async fn all_prs(db: &SqlitePool) -> Result<HashMap<IssueRef, PullRequestSta
         .collect())
 }
 
+/// The stored pull request of one issue.
+pub async fn pr_for(db: &SqlitePool, issue: &IssueRef) -> Result<Option<PullRequestState>> {
+    let row = sqlx::query("SELECT pr FROM pull_requests WHERE repo = ? AND number = ?")
+        .bind(&issue.repo)
+        .bind(issue.number as i64)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.and_then(|r| serde_json::from_str(&r.get::<String, _>("pr")).ok()))
+}
+
 pub async fn upsert_decision(db: &SqlitePool, rec: &DecisionRecord) -> Result<()> {
     sqlx::query("INSERT INTO decisions (repo, number, comment_id, record) VALUES (?, ?, ?, ?) ON CONFLICT(repo, number, comment_id) DO UPDATE SET record = excluded.record")
         .bind(&rec.issue.repo).bind(rec.issue.number as i64).bind(rec.comment_id as i64).bind(serde_json::to_string(rec)?).execute(db).await?;
@@ -46,7 +56,7 @@ pub async fn all_decisions(db: &SqlitePool) -> Result<Vec<DecisionRecord>> {
         .collect())
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IssueMeta {
     pub title: Option<String>,
     pub url: Option<String>,
@@ -79,7 +89,18 @@ pub async fn all_issue_meta(db: &SqlitePool) -> Result<HashMap<IssueRef, IssueMe
 }
 
 pub async fn issue_meta(db: &SqlitePool, issue: &IssueRef) -> Result<Option<IssueMeta>> {
-    Ok(all_issue_meta(db).await?.remove(issue))
+    let row = sqlx::query(
+        "SELECT title, github_state, url FROM issue_meta WHERE repo = ? AND number = ?",
+    )
+    .bind(&issue.repo)
+    .bind(issue.number as i64)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|r| IssueMeta {
+        title: r.get("title"),
+        url: r.get("url"),
+        github_state: r.get("github_state"),
+    }))
 }
 
 /// Replace a repo's open issues with a fresh listing and mark the listing good, in one

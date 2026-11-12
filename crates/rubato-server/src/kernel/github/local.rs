@@ -2,7 +2,9 @@
 //! (`RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git,...`). Files and branches are real git;
 //! issues, comments and pull requests do not exist here.
 
-use super::{Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, PullInfo};
+use super::{
+    BranchHead, Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, OpenPulls, PullInfo,
+};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use rubato_protocol::ChecksStatus;
@@ -132,13 +134,13 @@ impl GitHubApi for LocalGit {
             .filter(|s| !s.is_empty()))
     }
 
-    async fn branches_with_prefix(&self, repo: &str, prefix: &str) -> Result<Vec<String>> {
+    async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>> {
         let out = self
             .git(
                 repo,
                 &[
                     "for-each-ref",
-                    "--format=%(refname:short)",
+                    "--format=%(refname:short) %(objectname)",
                     &format!("refs/heads/{prefix}*"),
                 ],
             )
@@ -146,9 +148,27 @@ impl GitHubApi for LocalGit {
             .unwrap_or_default();
         Ok(out
             .lines()
-            .map(|l| l.trim().to_owned())
-            .filter(|l| !l.is_empty())
+            .filter_map(|l| l.trim().split_once(' '))
+            .map(|(name, sha)| BranchHead {
+                name: name.to_owned(),
+                sha: sha.to_owned(),
+            })
             .collect())
+    }
+
+    async fn open_pulls(&self, repo: &str) -> Result<OpenPulls> {
+        let pulls = self
+            .pulls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((r, _), p)| r == repo && p.open)
+            .map(|((_, branch), p)| (branch.clone(), p.clone()))
+            .collect();
+        Ok(OpenPulls {
+            pulls,
+            truncated: false,
+        })
     }
 
     async fn issue(&self, _repo: &str, _number: u64) -> Result<Option<IssueInfo>> {
@@ -344,11 +364,15 @@ mod tests {
         git(&repo, &["commit", "-q", "-m", "plan"]);
         git(&repo, &["branch", "issue/4-x"]);
         let g = LocalGit::from_spec(&format!("a/r={}", repo.display())).unwrap();
+        let heads = g.branches("a/r", "issue/").await.unwrap();
         assert_eq!(
-            g.branches_with_prefix("a/r", "issue/4-").await.unwrap(),
-            vec!["issue/4-x".to_string()]
+            heads.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            ["issue/4-x"]
         );
-        assert!(g.branch_sha("a/r", "issue/4-x").await.unwrap().is_some());
+        assert_eq!(
+            Some(heads[0].sha.clone()),
+            g.branch_sha("a/r", "issue/4-x").await.unwrap()
+        );
         assert_eq!(g.branch_sha("a/r", "nope").await.unwrap(), None);
         assert!(
             g.file("a/r", "docs/plans/4.md", "issue/4-x")

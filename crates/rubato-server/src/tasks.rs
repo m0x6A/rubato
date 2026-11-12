@@ -9,9 +9,9 @@
 use crate::kernel::state::{App, LoadedMap};
 use crate::{companion_link, github_poll, launch, map, map_draft, overview, pins, plans, queue};
 use anyhow::{Result, anyhow};
-use rubato_protocol::IssueRef;
 use rubato_protocol::otel::event;
-use std::collections::{BTreeSet, HashMap};
+use rubato_protocol::{IssueRef, SessionStatus};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -20,80 +20,226 @@ use tokio::task::{Id, JoinSet};
 /// The map is refetched every this many seconds of poll intervals.
 const MAP_RELOAD_SECS: u64 = 300;
 
-/// One pass over every issue of interest.
-pub async fn poll_once(app: &App) -> Result<()> {
-    let Some(map) = app.map.read().await.clone() else {
-        tracing::warn!("no map loaded; skipping poll");
-        return Ok(());
-    };
-    let mut issues: BTreeSet<IssueRef> = pins::list(&app.db)
-        .await?
-        .into_iter()
-        .map(|p| p.issue)
-        .collect();
-    issues.extend(launch::launched_issues(&app.db).await?);
-    issues.extend(
-        companion_link::all_sessions(&app.db)
-            .await?
-            .into_iter()
-            .filter_map(|s| s.issue),
-    );
-    issues.extend(plans::all(&app.db).await?.into_iter().map(|p| p.issue));
+/// A full tick at least this often (design 49 S4): comments, closed issues in repos the map does
+/// not list, and the pull request look-up for a branch that has never had one.
+pub const FULL_LANE_SECS: u64 = 300;
 
-    // Before the per-issue reads: every open issue of the map's repos (one listing per repo),
-    // then, as an installation only, which repos it covers.
-    github_poll::list_open_issues(app, &map.map).await;
-    let mut repos: BTreeSet<String> = map
-        .map
-        .repos_named()
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    repos.extend(issues.iter().map(|i| i.repo.clone()));
-    github_poll::check_coverage(app, &repos).await;
-
-    for issue in &issues {
-        if let Err(e) = poll_issue(app, &map, issue).await {
-            tracing::warn!(issue = %issue, error = %e, "poll failed for issue");
-        }
-    }
-    // After the per-issue reads and before the rate-limit read: the map proposal, if any.
-    if map_draft::check_proposal(app).await {
-        // Merged: load the map again now, so the draft can empty without waiting for the next
-        // scheduled reload. A failed load keeps the old map and the draft stays.
-        if let Err(e) = map::reload(app).await {
-            tracing::error!(error = %e, "map reload after a merged proposal failed");
-        }
-        map_draft::clear_merged(app).await;
-    }
-    map_draft::record_gauges(app).await;
-    queue::record_depth(app).await;
-    github_poll::record_rate_limit(app).await;
-    overview::refresh_gauges(app, &map).await?;
-    app.notify("poll");
-    Ok(())
+/// What a tick reads (design 49 S4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lane {
+    /// Everything.
+    Full,
+    /// No comments, no first pull request look-ups, no reads of settled issues.
+    Fast,
 }
 
-/// Any error skips the rest of this issue; the caller logs it once.
-async fn poll_issue(app: &App, map: &LoadedMap, issue: &IssueRef) -> Result<()> {
-    github_poll::upsert_meta(app, issue).await?;
-    if let Some(branch) = github_poll::find_branch(app, issue).await? {
-        plans::fetch_and_store(app, map, issue, &branch).await?;
-        github_poll::poll_pr(app, issue, &branch).await?;
+impl Lane {
+    fn name(self) -> &'static str {
+        match self {
+            Lane::Full => "full",
+            Lane::Fast => "fast",
+        }
     }
-    github_poll::poll_decisions(app, issue).await
+}
+
+/// Which lane each tick of the loop takes: the first full, then full once `FULL_LANE_SECS` of
+/// intervals have passed since the last full one.
+pub struct LaneClock {
+    secs: u64,
+    since_full: Option<u64>,
+}
+
+impl LaneClock {
+    pub fn new(interval_secs: u64) -> Self {
+        Self {
+            secs: interval_secs,
+            since_full: None,
+        }
+    }
+
+    pub fn next_lane(&mut self) -> Lane {
+        match self.since_full {
+            Some(s) if s < FULL_LANE_SECS => {
+                self.since_full = Some(s + self.secs);
+                Lane::Fast
+            }
+            _ => {
+                self.since_full = Some(self.secs);
+                Lane::Full
+            }
+        }
+    }
+}
+
+/// The poll loop's memory between ticks, for the life of the process (design 49 D3): the issues
+/// already given a full pass, and the plan path and branch head last fetched per issue. Losing
+/// it costs one full pass.
+#[derive(Default)]
+pub struct Poller {
+    seen: HashSet<IssueRef>,
+    plan_heads: HashMap<IssueRef, (String, String)>,
+    /// Closed issues whose last full pass has not yet succeeded.
+    last_pass: HashSet<IssueRef>,
+}
+
+/// One full pass over every issue of interest, with nothing remembered from earlier ticks.
+pub async fn poll_once(app: &App) -> Result<()> {
+    Poller::default().tick(app, Lane::Full).await
+}
+
+impl Poller {
+    /// One tick over every issue of interest.
+    pub async fn tick(&mut self, app: &App, lane: Lane) -> Result<()> {
+        let Some(map) = app.map.read().await.clone() else {
+            tracing::warn!("no map loaded; skipping poll");
+            return Ok(());
+        };
+        let mut issues: BTreeSet<IssueRef> = pins::list(&app.db)
+            .await?
+            .into_iter()
+            .map(|p| p.issue)
+            .collect();
+        issues.extend(launch::launched_issues(&app.db).await?);
+        let sessions = companion_link::all_sessions(&app.db).await?;
+        let live: HashSet<IssueRef> = sessions
+            .iter()
+            .filter(|s| s.status != SessionStatus::Ended)
+            .filter_map(|s| s.issue.clone())
+            .collect();
+        issues.extend(sessions.into_iter().filter_map(|s| s.issue));
+        issues.extend(plans::all(&app.db).await?.into_iter().map(|p| p.issue));
+
+        // Before the per-issue reads: every open issue of the map's repos (one listing per
+        // repo), then, as an installation only, which repos it covers.
+        let listed = github_poll::list_open_issues(app, &map.map).await;
+        let mut repos: BTreeSet<String> = map
+            .map
+            .repos_named()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        repos.extend(issues.iter().map(|i| i.repo.clone()));
+        github_poll::check_coverage(app, &repos).await;
+
+        let mut view = github_poll::RepoView::default();
+        let (mut settled, mut failed) = (0usize, 0usize);
+        for issue in &issues {
+            let busy = live.contains(issue);
+            match self
+                .poll_issue(app, &map, issue, busy, &listed, &mut view, lane)
+                .await
+            {
+                Ok(true) => settled += 1,
+                Ok(false) => {}
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!(issue = %issue, error = %e, "poll failed for issue");
+                }
+            }
+        }
+        // Every tick: info on the full lane (every 300 s), debug on the fast one.
+        let (tracked, repos) = (issues.len(), view.repos());
+        if lane == Lane::Full {
+            tracing::info!(
+                lane = lane.name(),
+                tracked,
+                settled,
+                failed,
+                repos,
+                "poll tick"
+            );
+        } else {
+            tracing::debug!(
+                lane = lane.name(),
+                tracked,
+                settled,
+                failed,
+                repos,
+                "poll tick"
+            );
+        }
+        // After the per-issue reads and before the rate-limit read: the map proposal, if any.
+        if map_draft::check_proposal(app).await {
+            // Merged: load the map again now, so the draft can empty without waiting for the
+            // next scheduled reload. A failed load keeps the old map and the draft stays.
+            if let Err(e) = map::reload(app).await {
+                tracing::error!(error = %e, "map reload after a merged proposal failed");
+            }
+            map_draft::clear_merged(app).await;
+        }
+        map_draft::record_gauges(app).await;
+        queue::record_depth(app).await;
+        github_poll::record_rate_limit(app).await;
+        overview::refresh_gauges(app, &map).await?;
+        app.notify("poll");
+        Ok(())
+    }
+
+    /// Any error skips the rest of this issue; the caller logs it once. An issue not yet seen
+    /// gets a full pass whatever the lane, and is remembered only once a pass succeeds; so is
+    /// the last pass of a closed issue (design 49 §9.1). Returns whether the issue was settled.
+    #[allow(clippy::too_many_arguments)]
+    async fn poll_issue(
+        &mut self,
+        app: &App,
+        map: &LoadedMap,
+        issue: &IssueRef,
+        live_session: bool,
+        listed: &github_poll::Listed,
+        view: &mut github_poll::RepoView,
+        lane: Lane,
+    ) -> Result<bool> {
+        use github_poll::Standing;
+        let first = !self.seen.contains(issue);
+        let full = lane == Lane::Full || first;
+        let mut standing = github_poll::read_meta(app, issue, listed, full).await?;
+        if standing == Standing::Settled && self.last_pass.contains(issue) {
+            standing = Standing::JustClosed;
+        }
+        // Closed, but work is still in flight: keep reading its branch and pull request.
+        let busy = live_session || github_poll::has_open_pr(app, issue).await?;
+        if standing == Standing::Settled && !first && !busy {
+            tracing::debug!(rubato.issue = %issue, "settled: closed, not read");
+            return Ok(true);
+        }
+        if standing == Standing::JustClosed {
+            self.last_pass.insert(issue.clone());
+        }
+        let full = full || standing == Standing::JustClosed;
+        match view.branch(app, issue).await? {
+            Some(head) => {
+                let key = (plans::plan_path(map, issue, &head.name), head.sha.clone());
+                if self.plan_heads.get(issue) != Some(&key) {
+                    plans::fetch_and_store(app, map, issue, &head.name).await?;
+                    self.plan_heads.insert(issue.clone(), key);
+                }
+                github_poll::poll_pr(app, issue, &head.name, view, full).await?;
+            }
+            None => github_poll::poll_pr_of_gone_branch(app, issue).await?,
+        }
+        if full {
+            github_poll::poll_decisions(app, issue).await?;
+        }
+        self.seen.insert(issue.clone());
+        if self.last_pass.remove(issue) && !busy {
+            tracing::info!(rubato.issue = %issue, "issue closed; settled until it reopens");
+        }
+        Ok(false)
+    }
 }
 
 /// The poll loop. Counts `rubato.poll.ticks` once per tick, so `ServerPollSilent` sees it stop.
 pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) {
     let mut map_age = 0u64;
+    let mut poller = Poller::default();
+    let mut lanes = LaneClock::new(app.config.limits.github_poll_interval_secs.max(5));
     loop {
         if map_age == 0
             && let Err(e) = map::reload(&app).await
         {
             tracing::error!(error = %e, "map reload failed");
         }
-        if let Err(e) = poll_once(&app).await {
+        if let Err(e) = poller.tick(&app, lanes.next_lane()).await {
             tracing::error!(error = %e, "poll failed");
         }
         app.metrics.poll_ticks.add(1, &[]);
@@ -267,6 +413,21 @@ mod tests {
         let r = tokio::time::timeout(Duration::from_secs(1), sup).await;
         assert!(r.expect("Ok within 1 s").unwrap().is_ok());
         assert_eq!(exited(&events), 0);
+    }
+
+    /// Design 49 S4: the first tick is full, then a full tick once 300 s of intervals have
+    /// passed, whether or not the interval divides 300.
+    #[test]
+    fn the_full_lane_comes_by_elapsed_time() {
+        let full_ticks = |secs: u64, n: usize| -> Vec<usize> {
+            let mut c = LaneClock::new(secs);
+            (0..n).filter(|_| c.next_lane() == Lane::Full).collect()
+        };
+        assert_eq!(full_ticks(60, 11), [0, 5, 10]);
+        // 45 s: seven ticks (315 s) between full ones, never longer.
+        assert_eq!(full_ticks(45, 15), [0, 7, 14]);
+        assert_eq!(full_ticks(300, 3), [0, 1, 2]);
+        println!("checked 3 intervals");
     }
 
     #[tokio::test(flavor = "current_thread")]

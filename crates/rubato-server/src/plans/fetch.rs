@@ -17,15 +17,19 @@ pub fn slug_of(branch: &str, number: u64) -> String {
         .to_owned()
 }
 
+/// Where the plan of `issue` lives on `branch`, by the map's rule.
+pub fn plan_path(map: &LoadedMap, issue: &IssueRef, branch: &str) -> String {
+    map.map
+        .plan_path_for(&issue.repo, issue.number, &slug_of(branch, issue.number))
+}
+
 pub async fn fetch_and_store(
     app: &App,
     map: &LoadedMap,
     issue: &IssueRef,
     branch: &str,
 ) -> Result<()> {
-    let path = map
-        .map
-        .plan_path_for(&issue.repo, issue.number, &slug_of(branch, issue.number));
+    let path = plan_path(map, issue, branch);
     match app.github.file(&issue.repo, &path, branch).await? {
         Some(text) => match parse_plan(&text, &path) {
             Ok(mut plan) => {
