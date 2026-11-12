@@ -128,6 +128,17 @@ seams:
     flows:
       - { kind: data, from: skill-rubato, to: plan-file, carries: "plan Markdown: frontmatter, Affected parts, Flows, O-rows, Assumed, Tasks" }
 
+  - id: skill-github
+    from: skill-rubato
+    to: github
+    carries: "gh in the developer's session: Review: and Decision: comments posted; issue comments read for an approval"
+    owner: skill-rubato
+    guard: skill Vitest against a stub gh on PATH; the comment fixtures shared with rubato-protocol
+    description: "The planning session posts its review and decisions on the issue and waits there for a person's approval, with the developer's own gh."
+    flows:
+      - { kind: control, from: skill-rubato, to: github, carries: "Review: and Decision: comments, as the developer" }
+      - { kind: data, from: github, to: skill-rubato, carries: "issue comments: Approved:, Review:, Decision:, with author, association and edit time" }
+
   - id: server-plan-file
     from: rubato-server
     to: plan-file
