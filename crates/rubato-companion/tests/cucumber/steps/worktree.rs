@@ -76,7 +76,10 @@ async fn then_worktree(w: &mut RubatoWorld, branch: String, repo: String) {
 #[then(expr = "a tmux session exists for {string} branch {string} with a pane in that worktree")]
 async fn then_session(w: &mut RubatoWorld, repo: String, branch: String) {
     let name = session_name(&repo, &branch);
-    assert!(w.tmux().has_session(&name), "no tmux session {name}");
+    assert!(
+        w.tmux().has_session(&name).unwrap(),
+        "no tmux session {name}"
+    );
     let wt = worktree_of(w, &repo, &branch);
     let panes = w.tmux().panes().unwrap();
     assert!(

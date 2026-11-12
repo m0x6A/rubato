@@ -9,7 +9,7 @@ use anyhow::Result;
 use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
-use rubato_protocol::{CompanionMessage, Limits, StateSource};
+use rubato_protocol::{CompanionMessage, Limits};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, watch};
@@ -133,16 +133,6 @@ impl TeamPoll {
     }
 }
 
-/// The source as the protocol spells it on the wire (snake_case).
-fn source_name(source: StateSource) -> &'static str {
-    match source {
-        StateSource::Hook => "hook",
-        StateSource::TmuxIde => "tmux_ide",
-        StateSource::Launch => "launch",
-        StateSource::Scraped => "scraped",
-    }
-}
-
 /// `rubato.sessions.discovered` per source and `rubato.sessions.by_state` per status, each with
 /// this companion's id and each including its zeros.
 fn record_gauges(reg: &Registry, metrics: &Metrics) {
@@ -151,7 +141,7 @@ fn record_gauges(reg: &Registry, metrics: &Metrics) {
         metrics.sessions_discovered.record(
             n as u64,
             &[
-                KeyValue::new(attr::SESSION_SOURCE, source_name(source)),
+                KeyValue::new(attr::SESSION_SOURCE, source.name()),
                 KeyValue::new(attr::COMPANION_ID, companion.clone()),
             ],
         );
@@ -160,7 +150,7 @@ fn record_gauges(reg: &Registry, metrics: &Metrics) {
         metrics.sessions_by_state.record(
             n as u64,
             &[
-                KeyValue::new(attr::SESSION_STATE, format!("{status:?}").to_lowercase()),
+                KeyValue::new(attr::SESSION_STATE, status.name()),
                 KeyValue::new(attr::COMPANION_ID, companion.clone()),
             ],
         );
@@ -227,21 +217,6 @@ mod tests {
         assert_eq!(state(&by_state, "idle"), Some(1));
     }
 
-    #[test]
-    fn source_names_are_the_protocol_names() {
-        for source in [
-            StateSource::Hook,
-            StateSource::TmuxIde,
-            StateSource::Launch,
-            StateSource::Scraped,
-        ] {
-            assert_eq!(
-                serde_json::to_value(source).unwrap(),
-                serde_json::json!(source_name(source))
-            );
-        }
-    }
-
     /// A `tmux-ide` stand-in: a shell script with the given body.
     fn stand_in(dir: &std::path::Path, name: &str, body: &str) -> TmuxIde {
         let path = dir.join(name);
@@ -292,5 +267,38 @@ mod tests {
             2
         );
         assert_eq!(events.lock().unwrap().len(), 3);
+    }
+
+    /// The span's error status is what a trace search for failed polls finds (#41); the
+    /// OpenTelemetry layer maps `otel.status_code` to the exported status.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failing_team_poll_marks_its_span_as_an_error() {
+        let (spans, _g) = capture::spans();
+        let tmp = tempfile::tempdir().unwrap();
+        let broken = stand_in(tmp.path(), "broken", "echo no tmux-ide here >&2; exit 1");
+        let working = stand_in(tmp.path(), "working", r#"echo '{"projects":[]}'"#);
+        let mut poll = TeamPoll::default();
+
+        assert!(poll.poll(&broken).await.unwrap().is_none());
+        assert_eq!(poll.poll(&working).await.unwrap(), Some(Fleet::default()));
+
+        let spans = spans.lock().unwrap();
+        let polls: Vec<_> = spans
+            .iter()
+            .filter(|s| s.message == span::TEAM_POLL)
+            .collect();
+        assert_eq!(polls.len(), 2, "one span per poll: {spans:?}");
+        let failed = &polls[0].fields;
+        assert_eq!(
+            failed.get("otel.status_code").map(String::as_str),
+            Some("ERROR"),
+            "{failed:?}"
+        );
+        assert!(
+            failed["otel.status_description"].contains("no tmux-ide here"),
+            "{failed:?}"
+        );
+        let ok = &polls[1].fields;
+        assert!(!ok.contains_key("otel.status_code"), "{ok:?}");
     }
 }
