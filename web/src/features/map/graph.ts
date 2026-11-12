@@ -3,7 +3,7 @@
  * sessions; seams badged with open plans and collisions. Pure, so it is tested without a DOM.
  */
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
-import type { Finding, Flow, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Seam, SessionState, SessionStatus } from "../../protocol.ts";
+import type { Finding, Flow, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Scenario, Seam, SessionState, SessionStatus } from "../../protocol.ts";
 import { issueKey } from "../../shared/format.ts";
 
 export type Paint = PartStatus | null;
@@ -42,6 +42,8 @@ export interface DraftMarkLike {
 export interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Journeys over the declared flows, for the scenario lens (ADR 0024). */
+  scenarios: Scenario[];
 }
 
 const PAINT_RANK: Record<PartStatus, number> = { quiet: 1, affected: 2, new: 3 };
@@ -130,7 +132,7 @@ export function buildGraph(ov: Overview): Graph {
       }
     }
   }
-  return { nodes, edges };
+  return { nodes, edges, scenarios: ov.map.map.scenarios ?? [] };
 }
 
 export function countBy<T, K extends string>(items: T[], key: (t: T) => K): Partial<Record<K, number>> {

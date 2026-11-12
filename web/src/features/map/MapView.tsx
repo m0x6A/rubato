@@ -1,5 +1,6 @@
-import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Panel, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { caption, playerReducer, resolveScenario } from "./scenario.ts";
 import { mergeNodes } from "./nodes.ts";
 import type { IssueRef, MapLayout, MapRef, Plan } from "../../protocol.ts";
 import { issueKey } from "../../shared/format.ts";
@@ -14,7 +15,20 @@ import { SeamChip } from "./SeamChip.tsx";
 
 type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
 type MapFlowNode = Node<MapNodeData, "map">;
-type SeamEdgeData = { seam: GraphEdge; arrow: Arrow; /** This arrow carries the seam's chip: one chip per seam in every lens. */ chip: boolean; selected: boolean; onSelect: (id: string) => void; onPin: OnPin | undefined; draft: DraftMarkLike | undefined };
+type SeamEdgeData = {
+  seam: GraphEdge;
+  arrow: Arrow;
+  /** This arrow carries the seam's chip: one chip per seam in every lens. */
+  chip: boolean;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  onPin: OnPin | undefined;
+  draft: DraftMarkLike | undefined;
+  /** The scenario's current step runs along this arrow: a pulse moves on it (ADR 0024). */
+  pulse: boolean;
+  /** No moving pulse: it sits still in the middle of the arrow. */
+  still: boolean;
+};
 type SeamFlowEdge = Edge<SeamEdgeData, "seam">;
 
 function MapNodeCard({ data }: NodeProps<MapFlowNode>) {
@@ -47,6 +61,13 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
   return (
     <>
       <BaseEdge path={path} {...(markerEnd ? { markerEnd } : {})} {...(markerStart ? { markerStart } : {})} {...(data?.arrow.dashed ? { style: { strokeDasharray: "7 5" } } : {})} />
+      {data?.pulse && flow && (
+        // Data is a filled dot, control a ring: the kind reads without colour. It travels in the
+        // flow's own direction; with reduced motion it sits still on the arrow.
+        <circle className={`pulse ${flow.kind}`} data-testid={`pulse-${flow.id}`} r={6} {...(data.still ? { cx: labelX, cy: labelY } : {})}>
+          {!data.still && <animateMotion dur={`${PULSE_MS}ms`} repeatCount="indefinite" path={path} {...(flow.reversed ? { keyPoints: "1;0", keyTimes: "0;1", calcMode: "linear" } : {})} />}
+        </circle>
+      )}
       {data && (
         <EdgeLabelRenderer>
           {flow && (
@@ -98,10 +119,29 @@ interface Props {
 
 /** A burst of arrow-key moves, or the end of a drag, becomes one write after this pause. */
 const SAVE_AFTER_MS = 250;
+/** One trip of a scenario pulse along its arrow, and how long Play shows each step. */
+const PULSE_MS = 1200;
+const STEP_MS = 2400;
+
+/** Whether the person asked for less motion. jsdom and old browsers have no matchMedia. */
+function usePrefersReducedMotion(): boolean {
+  const query = typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  const [reduced, setReduced] = useState(query?.matches ?? false);
+  useEffect(() => {
+    if (!query) {
+      return;
+    }
+    const on = () => setReduced(query.matches);
+    query.addEventListener("change", on);
+    return () => query.removeEventListener("change", on);
+  }, [query]);
+  return reduced;
+}
 
 function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt }: Props) {
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }> | null>(null);
-  const { fitView, screenToFlowPosition } = useReactFlow();
+  const { fitView, screenToFlowPosition, getNode, getViewport, setCenter } = useReactFlow();
+  const canvasRef = useRef<HTMLDivElement>(null);
   const shape = graph.nodes.map((n) => n.id).join(",") + "|" + graph.edges.map((e) => `${e.from}>${e.to}`).join(",");
 
   useEffect(() => {
@@ -130,9 +170,61 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   // While a plan is shown, the switch waits: the arrows are the plan's.
   const lens: Lens = planView ? "plan" : chosenLens;
   const counts = useMemo(() => flowCounts(graph.edges), [graph]);
+  // The scenario lens (ADR 0024): one scenario, one step at a time.
+  const reducedMotion = usePrefersReducedMotion();
+  const [scenarioId, setScenarioId] = useState<string | null>(null);
+  const scenario = useMemo(() => {
+    const sc = graph.scenarios.find((s) => s.id === scenarioId) ?? graph.scenarios[0];
+    return sc ? resolveScenario(sc, graph.edges) : null;
+  }, [graph, scenarioId]);
+  const [player, dispatch] = useReducer(playerReducer, { step: 0, playing: false });
+  const total = scenario?.steps.length ?? 0;
+  useEffect(() => dispatch({ type: "reset", total }), [scenario?.id, total]);
+  useEffect(() => {
+    if (!player.playing || lens !== "scenario") {
+      return;
+    }
+    const t = setInterval(() => dispatch({ type: "tick", total }), STEP_MS);
+    return () => clearInterval(t);
+  }, [player.playing, lens, total]);
+  const step = lens === "scenario" ? (scenario?.steps[player.step] ?? null) : null;
   // What stays lit while something is selected: it, its neighbours and the seams between them.
-  // In the plan lens it is what the plan names.
-  const litNow = useMemo(() => (planView ? { nodes: planView.litParts, seams: planView.litSeams } : lit(graph.edges, selected)), [graph, selected, planView]);
+  // In the plan lens it is what the plan names; in the scenario lens, the current step.
+  const litNow = useMemo(
+    () => (planView ? { nodes: planView.litParts, seams: planView.litSeams } : step ? { nodes: new Set([step.from, step.to]), seams: new Set([step.seam]) } : lit(graph.edges, selected)),
+    [graph, selected, planView, step],
+  );
+  // A new step whose parts are off screen brings them into view: the same zoom if both fit,
+  // otherwise just enough to fit them. No animated pan under reduced motion.
+  useEffect(() => {
+    const el = canvasRef.current;
+    const a = step ? getNode(step.from) : undefined;
+    const b = step ? getNode(step.to) : undefined;
+    if (!el || !a || !b) {
+      return;
+    }
+    const boxes = [a, b].map((n) => ({ x: n.position.x, y: n.position.y, w: n.measured?.width ?? 0, h: n.measured?.height ?? 0 }));
+    const { x, y, zoom } = getViewport();
+    const width = el.clientWidth;
+    const height = el.clientHeight;
+    const margin = 24;
+    const visible = boxes.every((r) => r.x * zoom + x >= margin && r.y * zoom + y >= margin && (r.x + r.w) * zoom + x <= width - margin && (r.y + r.h) * zoom + y <= height - margin);
+    if (visible) {
+      return;
+    }
+    const minX = Math.min(...boxes.map((r) => r.x));
+    const minY = Math.min(...boxes.map((r) => r.y));
+    const maxX = Math.max(...boxes.map((r) => r.x + r.w));
+    const maxY = Math.max(...boxes.map((r) => r.y + r.h));
+    const duration = reducedMotion ? 0 : 300;
+    if ((maxX - minX) * zoom <= width - 2 * margin && (maxY - minY) * zoom <= height - 2 * margin) {
+      void setCenter((minX + maxX) / 2, (minY + maxY) / 2, { zoom, duration });
+    } else {
+      void fitView({ nodes: [{ id: a.id }, { id: b.id }], padding: 0.2, duration });
+    }
+    // Only when the step changes: a pan the person makes afterwards is theirs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step?.arrow, step?.index]);
   const selectedNode = selected?.kind === "node" ? selected.id : null;
   const selectedSeam = selected?.kind === "seam" ? selected.id : null;
 
@@ -234,6 +326,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               arrow.kind === "structure" ? "" : `flow ${arrow.kind}`,
               arrow.faint ? "faint" : "",
               arrow.moving ? "moving" : "",
+              step?.arrow === arrow.id ? "step-active" : "",
               arrow.reversed ? "reversed" : "",
               draftMarks?.has(e.id) ? `draft draft-${draftMarks.get(e.id)?.state}` : "",
               litNow !== null && !litNow.seams.has(e.id) ? "dim" : "",
@@ -241,44 +334,18 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               .filter(Boolean)
               .join(" "),
             ...(arrow.reversed ? { markerStart: marker } : { markerEnd: marker }),
-            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id) },
+            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id), pulse: step?.arrow === arrow.id, still: reducedMotion },
           };
         }),
       ),
-    [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks],
+    [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion],
   );
 
-  if (!positions) {
-    return <div className="empty">Laying out the map…</div>;
-  }
-  return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      edgeTypes={edgeTypes}
-      onNodesChange={onNodesChange}
-      nodesDraggable={Boolean(onMove)}
-      nodesConnectable={editing}
-      onConnect={(c) => onConnectParts?.(c.source, c.target)}
-      zoomOnDoubleClick={!editing}
-      onDoubleClick={(e) => {
-        // Only the empty canvas: a double-click on a part or a label is not a new part.
-        if (editing && onAddPartAt && e.target instanceof Element && e.target.classList.contains("react-flow__pane")) {
-          const at = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-          onAddPartAt({ x: Math.round(at.x), y: Math.round(at.y) });
-        }
-      }}
-      elementsSelectable
-      onNodeClick={(_e, n) => onSelect({ kind: "node", id: n.id })}
-      onEdgeClick={(_e, edge) => onSelect({ kind: "seam", id: edge.data?.seam.id ?? edge.id })}
-      onPaneClick={() => onSelect(null)}
-      proOptions={{ hideAttribution: true }}
-      minZoom={0.2}
-    >
-      <Background gap={24} />
-      <Controls showInteractive={false} />
-      <Panel position="top-left">
+  // The lens switch, the scenario player, the legend and the map actions sit in a band above the
+  // canvas, never over it: no part is hidden under them.
+  const band = (
+    <div className="map-band" data-testid="map-band">
+      <div className="map-band-row">
         <div className="lens" role="radiogroup" aria-label="What the arrows show">
           {LENSES.map((l) => (
             <button key={l.id} type="button" role="radio" aria-checked={lens === l.id} className={lens === l.id ? "active" : ""} onClick={() => setLens(l.id)} disabled={planView !== null} title={planView ? "Close the issue to choose what the arrows show" : undefined}>
@@ -286,7 +353,95 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               {l.id !== "structure" && ` (${counts[l.id]})`}
             </button>
           ))}
+          {graph.scenarios.length > 0 && (
+            <button type="button" role="radio" aria-checked={lens === "scenario"} className={lens === "scenario" ? "active" : ""} onClick={() => setLens("scenario")} disabled={planView !== null} title={planView ? "Close the issue to choose what the arrows show" : "Play a journey through the system, step by step"}>
+              Scenarios ({graph.scenarios.length})
+            </button>
+          )}
         </div>
+        {(onAutoArrange || onToggleEdit) && (
+          <div className="map-actions">
+            {onToggleEdit && (
+              <button type="button" className={editing ? "map-action active" : "map-action"} aria-pressed={editing} onClick={onToggleEdit} title="Change the map as one shared draft: add, change and remove parts and seams, then propose the draft as a pull request">
+                Edit map
+              </button>
+            )}
+            {onAutoArrange && (
+              <button type="button" className="map-action" onClick={onAutoArrange} disabled={Object.keys(stored?.positions ?? {}).length === 0} title="Remove every saved position, for the whole team, and lay the map out automatically">
+                Auto-arrange
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {lens === "scenario" && scenario && (
+        <div
+          className="scenario-player"
+          role="group"
+          aria-label="Scenario player"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight") {
+              dispatch({ type: "next", total });
+              e.preventDefault();
+            } else if (e.key === "ArrowLeft") {
+              dispatch({ type: "prev", total });
+              e.preventDefault();
+            }
+          }}
+        >
+          <div className="map-band-row">
+            <select aria-label="Scenario" value={scenario.id} onChange={(e) => setScenarioId(e.target.value)}>
+              {graph.scenarios.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <span className="scenario-controls">
+              <button type="button" aria-label="Previous step" onClick={() => dispatch({ type: "prev", total })} disabled={player.step === 0}>
+                ‹
+              </button>
+              <button type="button" aria-label={player.playing ? "Pause" : "Play"} onClick={() => dispatch({ type: player.playing ? "pause" : "play", total })} disabled={total === 0}>
+                {player.playing ? "❚❚" : "▶"}
+              </button>
+              <button type="button" aria-label="Next step" onClick={() => dispatch({ type: "next", total })} disabled={player.step >= total - 1}>
+                ›
+              </button>
+            </span>
+            <span className="scenario-count" aria-hidden="true">
+              {total ? `${player.step + 1}/${total}` : "0/0"}
+            </span>
+            <span className="scenario-key" data-testid="legend">
+              <svg width="12" height="12" aria-hidden="true">
+                <circle cx="6" cy="6" r="4.5" className="pulse data" />
+              </svg>{" "}
+              data moves{" "}
+              <svg width="12" height="12" aria-hidden="true">
+                <circle cx="6" cy="6" r="4" className="pulse control" />
+              </svg>{" "}
+              control: one side tells the other to act
+            </span>
+            <details className="scenario-steps">
+              <summary>Steps</summary>
+              <ol aria-label="Steps">
+                {scenario.steps.map((s, i) => (
+                  <li key={s.index}>
+                    <button type="button" aria-current={i === player.step ? "step" : undefined} className={i === player.step ? "current" : ""} onClick={() => dispatch({ type: "goto", total, step: i })}>
+                      <span className={`flow-kind ${s.kind}`}>{s.kind}</span> {s.from} → {s.to}: {s.carries}
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          </div>
+          <p className="scenario-caption" data-testid="scenario-caption" aria-live="polite">
+            {caption(scenario, player.step)}
+          </p>
+          {scenario.unplaced > 0 && <p className="scenario-note">{scenario.unplaced} of its steps cannot be drawn: the map no longer declares their flow.</p>}
+        </div>
+      )}
+      {lens !== "scenario" && (
         <p className="legend" data-testid="legend">
           {lens === "plan" && plan && planView && (
             <>
@@ -313,20 +468,47 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
             </>
           )}
         </p>
-      </Panel>
-      {(onAutoArrange || onToggleEdit) && (
-        <Panel position="top-right" className="map-actions">
-          {onToggleEdit && (
-            <button type="button" className={editing ? "map-action active" : "map-action"} aria-pressed={editing} onClick={onToggleEdit} title="Change the map as one shared draft: add, change and remove parts and seams, then propose the draft as a pull request">
-              Edit map
-            </button>
-          )}
-          {onAutoArrange && <button type="button" className="map-action" onClick={onAutoArrange} disabled={Object.keys(stored?.positions ?? {}).length === 0} title="Remove every saved position, for the whole team, and lay the map out automatically">
-            Auto-arrange
-          </button>}
-        </Panel>
       )}
-    </ReactFlow>
+    </div>
+  );
+
+  return (
+    <div className="map-frame">
+      {band}
+      <div className="map-canvas" ref={canvasRef}>
+        {!positions ? (
+          <div className="empty">Laying out the map…</div>
+        ) : (
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onNodesChange={onNodesChange}
+            nodesDraggable={Boolean(onMove)}
+            nodesConnectable={editing}
+            onConnect={(c) => onConnectParts?.(c.source, c.target)}
+            zoomOnDoubleClick={!editing}
+            onDoubleClick={(e) => {
+              // Only the empty canvas: a double-click on a part or a label is not a new part.
+              if (editing && onAddPartAt && e.target instanceof Element && e.target.classList.contains("react-flow__pane")) {
+                const at = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+                onAddPartAt({ x: Math.round(at.x), y: Math.round(at.y) });
+              }
+            }}
+            elementsSelectable
+            onNodeClick={(_e, n) => onSelect({ kind: "node", id: n.id })}
+            onEdgeClick={(_e, edge) => onSelect({ kind: "seam", id: edge.data?.seam.id ?? edge.id })}
+            onPaneClick={() => onSelect(null)}
+            proOptions={{ hideAttribution: true }}
+            minZoom={0.2}
+          >
+            <Background gap={24} />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        )}
+      </div>
+    </div>
   );
 }
 
