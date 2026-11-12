@@ -145,5 +145,5 @@ async fn then_no_worktree(w: &mut RubatoWorld, branch: String, repo: String) {
 
 #[then(expr = "no tmux session exists for {string} branch {string}")]
 async fn then_no_session(w: &mut RubatoWorld, repo: String, branch: String) {
-    assert!(!w.tmux().has_session(&session_name(&repo, &branch)));
+    assert!(!w.tmux().has_session(&session_name(&repo, &branch)).unwrap());
 }

@@ -2,7 +2,8 @@
 //! a session is live for the issue → unlock → log `launch started` → decide and act in
 //! `spawn_blocking` → record a started session → log → send `Launch` → send `CapHit` when the
 //! refusal was the attempt limit (`rubato.cap.hit`; an event, not a log line) → send `Sessions`
-//! → wake reconcile. The lock is never held while git, tmux-ide or tmux run.
+//! → wake reconcile. The lock is never held while git, tmux-ide or tmux run. Commands arrive on
+//! the launch task's channel (plan 40), not in the dispatch loop, so hooks keep flowing.
 
 use super::launcher::Launcher;
 use crate::sessions::Registry;
@@ -12,6 +13,21 @@ use rubato_protocol::{
 };
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
+
+/// The launch task (plan 40 S1): one command at a time, off the dispatch loop, so hooks are
+/// applied while a launch runs. Essential: ends only when the runtime drops the sender.
+pub async fn run(
+    mut commands: mpsc::UnboundedReceiver<LaunchCommand>,
+    launcher: Arc<Launcher>,
+    registry: Arc<Mutex<Registry>>,
+    out: mpsc::UnboundedSender<CompanionMessage>,
+    poll_tx: mpsc::UnboundedSender<()>,
+) -> anyhow::Result<()> {
+    while let Some(cmd) = commands.recv().await {
+        on_command(&cmd, &launcher, &registry, &out, &poll_tx).await;
+    }
+    Ok(())
+}
 
 pub async fn on_command(
     cmd: &LaunchCommand,
@@ -112,6 +128,10 @@ mod tests {
     }
 
     fn launcher(dir: &Path, tmux_ide_command: &Path) -> Arc<Launcher> {
+        launcher_with(dir, tmux_ide_command, Duration::from_secs(30))
+    }
+
+    fn launcher_with(dir: &Path, tmux_ide_command: &Path, timeout: Duration) -> Arc<Launcher> {
         let tmux = Tmux::new("tmux", None);
         let command = tmux_ide_command.to_string_lossy().into_owned();
         Arc::new(Launcher {
@@ -136,7 +156,7 @@ mod tests {
                 port: 0,
                 token: String::new(),
             },
-            tmux_ide: TmuxIde::new(command, tmux.clone()),
+            tmux_ide: TmuxIde::new(command, tmux.clone()).with_timeout(timeout),
             tmux,
         })
     }
@@ -225,6 +245,28 @@ mod tests {
         let started = at("launch started").expect("a `launch started` line with the launch id");
         let result = at(rubato_protocol::otel::span::LAUNCH).expect("the rubato.launch line");
         assert!(started < result, "`launch started` comes before the result");
+    }
+
+    /// Plan 40 S4: the stand-in sleeps 1 s before answering; a 300 ms deadline makes the version
+    /// check time out, and the launch is `Failed`, not `missing_dependency`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_version_check_that_times_out_is_failed() {
+        let (_events, _g) = capture::start();
+        let dir = tempfile::tempdir().unwrap();
+        let (script, _marker) = slow_tmux_ide(dir.path());
+        let launcher = launcher_with(dir.path(), &script, Duration::from_millis(300));
+        let registry = Mutex::new(Registry::new(Uuid::nil(), USER));
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        let (poll_tx, _poll_rx) = mpsc::unbounded_channel();
+
+        on_command(&command(), &launcher, &registry, &out_tx, &poll_tx).await;
+
+        match out_rx.try_recv() {
+            Ok(CompanionMessage::Launch(LaunchResult::Failed { error, .. })) => {
+                assert!(error.contains("timed out after 300ms"), "{error}");
+            }
+            other => panic!("expected a failed launch first, got {other:?}"),
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
