@@ -96,7 +96,7 @@ unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, task supervision);
 (config, telemetry, db connection, `AppState`, signer, `http::internal`, GitHub port); slices:
 
 ```text
-auth            GitHub login, team record, CurrentUser          users, web_sessions
+auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
 pairing         device-code pairing, the caller's pairings      pairing_codes, pairings
 companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
 pins            pin an issue to a node or seam, Map: lines      pins, map_line_pins
@@ -106,6 +106,7 @@ map             load, validate, cache and serve the map         map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
 new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
+approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
 github_poll     issue reads, open issues, placement, coverage   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals
 overview        derived progress, findings, gauges              (none)
@@ -154,6 +155,7 @@ Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; 
 modules, each with the types and `routes` its seam uses (every type re-exported at the root):
 
 ```text
+approve    ApproveRequest, ApproveResponse, reasons; PLAN_APPROVE
 auth       Me; ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
 session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApproveRequest",
+  "description": "Approve the plan of `issue` as it is now. `sha` is the plan's approval hash the person saw\n(`IssueSummary.plan_sha`); a changed plan is refused, not approved.",
+  "type": "object",
+  "properties": {
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "sha": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "issue",
+    "sha"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

@@ -134,6 +134,26 @@ pub struct OpenPulls {
     pub truncated: bool,
 }
 
+/// A comment posted as a person through their user-to-server token (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostedComment {
+    pub id: u64,
+    pub url: String,
+}
+
+/// How a post as a person failed. `Unknown` means it may have been posted (a timeout, a
+/// dropped connection): the caller must not post again and finds it in the comments instead.
+#[derive(Debug, thiserror::Error)]
+pub enum PostError {
+    #[error("GitHub refused the comment: {status}")]
+    Refused { status: u16 },
+    #[error("the comment may have been posted: {0}")]
+    Unknown(String),
+}
+
+/// The timeout of a write as a person. With retries off, the longest a post can take.
+pub const USER_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// One page of open pull requests per repo per tick (issue #49).
 pub const PULLS_PER_PAGE: usize = 100;
 
@@ -222,6 +242,17 @@ pub trait GitHubApi: Send + Sync {
     }
     /// Open an issue: its number and page. Sent once, with no retry: an issue POST is not
     /// idempotent. A 403 clears [`GitHubApi::can_create_issues`] until the next refresh.
+    /// Post an issue comment as the person whose user-to-server token this is (ADR 0030). Sent
+    /// once, retries off, [`USER_WRITE_TIMEOUT`].
+    async fn comment_as(
+        &self,
+        _token: &str,
+        _repo: &str,
+        _number: u64,
+        _body: &str,
+    ) -> std::result::Result<PostedComment, PostError> {
+        Err(PostError::Refused { status: 501 })
+    }
     async fn create_issue(&self, _repo: &str, _title: &str, _body: &str) -> Result<(u64, String)> {
         Err(anyhow::anyhow!(
             "this GitHub connection cannot create issues"
@@ -284,6 +315,8 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
 
 pub struct Octo {
     client: octocrab::Octocrab,
+    /// The REST root, for clients made per call (a person's token, ADR 0030).
+    base: Option<String>,
     /// Acting as a GitHub App installation, not with a personal token.
     installation: bool,
     /// As an installation only: the App itself (a JWT), to read the installation's permissions,
@@ -319,6 +352,7 @@ impl Octo {
         }
         Ok(Self {
             client: b.build()?,
+            base: base_uri.map(str::to_owned),
             installation: false,
             as_app: None,
             issues_write: Default::default(),
@@ -333,6 +367,7 @@ impl Octo {
         let no_retry = app_client_with(app, base_uri, READ_TIMEOUT, false)?.installation(id)?;
         Ok(Self {
             client: crab.installation(id)?,
+            base: base_uri.map(str::to_owned),
             installation: true,
             as_app: Some(AsApp {
                 app: crab,
@@ -342,6 +377,21 @@ impl Octo {
             issues_write: Default::default(),
         })
     }
+}
+
+/// A client acting as a person, with their user-to-server token: retries off and
+/// [`USER_WRITE_TIMEOUT`], since its only use is a write that must not be sent twice (ADR 0030).
+fn user_client(token: &str, base_uri: Option<&str>) -> Result<octocrab::Octocrab> {
+    use octocrab::service::middleware::retry::RetryConfig;
+    let mut b = octocrab::Octocrab::builder()
+        .add_retry_config(RetryConfig::None)
+        .set_connect_timeout(Some(CONNECT_TIMEOUT))
+        .set_read_timeout(Some(USER_WRITE_TIMEOUT))
+        .personal_token(token.to_owned());
+    if let Some(uri) = base_uri {
+        b = b.base_uri(uri)?;
+    }
+    Ok(b.build()?)
 }
 
 /// A client authenticated as the App itself (a JWT), for `GET /app` and minting tokens.
@@ -787,6 +837,30 @@ impl GitHubApi for Octo {
             );
         }
         Ok(write)
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, token, body), err, fields(rubato.github.endpoint = "create_comment"))]
+    async fn comment_as(
+        &self,
+        token: &str,
+        repo: &str,
+        number: u64,
+        body: &str,
+    ) -> std::result::Result<PostedComment, PostError> {
+        count_call("create_comment", 1);
+        let (o, r) = split_repo(repo).map_err(|_| PostError::Refused { status: 400 })?;
+        let crab = user_client(token, self.base.as_deref())
+            .map_err(|e| PostError::Unknown(format!("{e:#}")))?;
+        match crab.issues(o, r).create_comment(number, body).await {
+            Ok(c) => Ok(PostedComment {
+                id: c.id.into_inner(),
+                url: c.html_url.to_string(),
+            }),
+            Err(octocrab::Error::GitHub { source, .. }) => Err(PostError::Refused {
+                status: source.status_code.as_u16(),
+            }),
+            Err(e) => Err(PostError::Unknown(e.to_string())),
+        }
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self, body), err, fields(rubato.github.endpoint = "create_issue"))]

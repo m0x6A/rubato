@@ -100,3 +100,48 @@ fn tampered_snapshot_is_detected() {
         "a tampered snapshot must not compare equal"
     );
 }
+
+/// ADR 0030 and 0004: a person's GitHub token never leaves the server. No wire type has a
+/// property named like a token, except the companion's pairing token (ADR 0011). Fails on
+/// purpose for `{"github_token": ...}`.
+#[test]
+fn no_wire_type_carries_a_token() {
+    fn names(v: &serde_json::Value, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                if let Some(serde_json::Value::Object(props)) = m.get("properties") {
+                    out.extend(props.keys().cloned());
+                }
+                m.values().for_each(|x| names(x, out));
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| names(x, out)),
+            _ => {}
+        }
+    }
+    let leaks = |schema: &serde_json::Value, allowed: &[&str]| {
+        let mut n = Vec::new();
+        names(schema, &mut n);
+        n.into_iter()
+            .filter(|p| p.to_ascii_lowercase().contains("token") && !allowed.contains(&p.as_str()))
+            .collect::<Vec<_>>()
+    };
+    let all = rubato_protocol::schema::all();
+    let mut checked = 0;
+    for (name, schema) in &all {
+        let schema = serde_json::to_value(schema).unwrap();
+        let allowed: &[&str] = if *name == "pair_poll_response" {
+            &["token"]
+        } else {
+            &[]
+        };
+        assert_eq!(leaks(&schema, allowed), Vec::<String>::new(), "{name}");
+        checked += 1;
+    }
+    let bad = serde_json::json!({"properties": {"github_token": {"type": "string"}}});
+    assert_eq!(
+        leaks(&bad, &[]),
+        ["github_token"],
+        "the check fails on purpose"
+    );
+    println!("checked {checked} schemas for token properties");
+}

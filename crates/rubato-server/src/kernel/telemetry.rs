@@ -109,6 +109,7 @@ pub struct Metrics {
     pub issues_created: Counter<u64>,
     pub issues_opening: Gauge<u64>,
     pub plans_not_fitting: Gauge<u64>,
+    pub plans_approvals_opening: Gauge<u64>,
 }
 
 impl Metrics {
@@ -149,6 +150,7 @@ impl Metrics {
             issues_created: m.u64_counter(otel::metric::ISSUES_CREATED).build(),
             issues_opening: m.u64_gauge(otel::metric::ISSUES_OPENING).build(),
             plans_not_fitting: m.u64_gauge(otel::metric::PLANS_NOT_FITTING).build(),
+            plans_approvals_opening: m.u64_gauge(otel::metric::PLANS_APPROVALS_OPENING).build(),
         }
     }
 }

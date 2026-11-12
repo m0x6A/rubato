@@ -51,6 +51,13 @@
         }
       ]
     },
+    "plan_sha": {
+      "description": "The plan's approval hash as Rubato read it (ADR 0027): what *Accept plan* approves and\nwhat `Approved: plan <sha>` names.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "progress": {
       "$ref": "#/$defs/Progress"
     },

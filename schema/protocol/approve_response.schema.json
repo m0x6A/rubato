@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApproveResponse",
+  "type": "object",
+  "properties": {
+    "body": {
+      "description": "The comment body that was posted.",
+      "type": "string"
+    },
+    "comment_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "state": {
+      "$ref": "#/$defs/ApproveState"
+    }
+  },
+  "required": [
+    "state",
+    "body"
+  ],
+  "$defs": {
+    "ApproveState": {
+      "description": "Where the approval is.",
+      "oneOf": [
+        {
+          "description": "GitHub answered: the comment exists.",
+          "type": "string",
+          "const": "posted"
+        },
+        {
+          "description": "Sent, and GitHub did not answer: the next comments pass finds it (at most 5 minutes).",
+          "type": "string",
+          "const": "opening"
+        }
+      ]
+    }
+  }
+}

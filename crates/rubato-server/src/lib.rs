@@ -9,6 +9,7 @@ pub mod app;
 pub mod kernel;
 pub mod tasks;
 
+pub mod approve;
 pub mod auth;
 pub mod companion_link;
 pub mod github_poll;

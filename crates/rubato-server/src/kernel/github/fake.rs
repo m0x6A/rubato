@@ -47,6 +47,11 @@ pub struct FakeInner {
     /// that timed out does.
     pub issue_times_out: bool,
     next_issue: u64,
+    /// `comment_as` answers with this status and posts nothing (ADR 0030).
+    pub comment_refused: Option<u16>,
+    /// `comment_as` posts the comment and then fails, as a call that timed out does.
+    pub comment_times_out: bool,
+    next_comment: u64,
     /// Every call in order, as (method, args); the guard for the poll order (design D4).
     pub calls: Vec<(&'static str, String)>,
 }
@@ -287,6 +292,46 @@ impl GitHubApi for FakeGitHub {
             g.calls.push(("installation", String::new()));
         }
         Ok(g.writes && g.issues_write)
+    }
+
+    /// A token `tok-<login>` acts as `<login>`, a member; the comment lands in `comments`, so
+    /// the next comments pass reads it.
+    async fn comment_as(
+        &self,
+        token: &str,
+        repo: &str,
+        number: u64,
+        body: &str,
+    ) -> std::result::Result<super::PostedComment, super::PostError> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls
+            .push(("comment_as", format!("{repo}#{number} {body}")));
+        if let Some(status) = g.comment_refused {
+            return Err(super::PostError::Refused { status });
+        }
+        let Some(login) = token.strip_prefix("tok-") else {
+            return Err(super::PostError::Refused { status: 401 });
+        };
+        g.next_comment += 1;
+        let id = 9_000_000 + g.next_comment;
+        let url = format!("https://github.com/{repo}/issues/{number}#issuecomment-{id}");
+        let comment = Comment {
+            id,
+            author: login.to_owned(),
+            author_association: "MEMBER".into(),
+            author_is_bot: false,
+            body: body.to_owned(),
+            created_at: chrono::Utc::now(),
+            url: url.clone(),
+        };
+        g.comments
+            .entry((repo.to_owned(), number))
+            .or_default()
+            .push(comment);
+        if g.comment_times_out {
+            return Err(super::PostError::Unknown("timed out".into()));
+        }
+        Ok(super::PostedComment { id, url })
     }
 
     async fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<(u64, String)> {

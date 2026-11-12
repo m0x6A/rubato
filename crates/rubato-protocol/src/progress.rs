@@ -176,6 +176,10 @@ pub struct IssueSummary {
     /// Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fit: Option<PlanFit>,
+    /// The plan's approval hash as Rubato read it (ADR 0027): what *Accept plan* approves and
+    /// what `Approved: plan <sha>` names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_sha: Option<String>,
     /// Sum over this issue's sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_usd: Option<f64>,
