@@ -2,13 +2,13 @@
 //! repo's rows replaced on success and kept on failure, with the time and the error recorded so
 //! a stale or failed listing is never shown as "no issues".
 
-use super::store;
+use super::{store, suggest};
 use crate::kernel::github::OpenIssueInfo;
 use crate::kernel::state::App;
 use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
-use rubato_protocol::{IssueRef, SystemMap};
+use rubato_protocol::{IssueRef, MapRef, SystemMap};
 use std::collections::{HashMap, HashSet};
 
 /// At most this many open issues per repo: five pages, so five calls per repo per tick.
@@ -20,9 +20,24 @@ pub const BACKLOG_MAX_PER_REPO: usize = 500;
 pub struct Listed {
     fresh: HashSet<String>,
     open: HashMap<IssueRef, OpenIssueInfo>,
+    map_lines: Vec<MapLine>,
+}
+
+/// A `Map:` line from a trusted author, for the pins slice to apply (ADR 0026).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapLine {
+    pub issue: IssueRef,
+    pub target: MapRef,
+    /// Login of the issue's author, who placed it.
+    pub author: String,
 }
 
 impl Listed {
+    /// This tick's `Map:` lines from trusted authors, in listing order.
+    pub fn map_lines(&self) -> &[MapLine] {
+        &self.map_lines
+    }
+
     /// Whether every open issue of `repo` is in this tick's listing.
     pub fn is_fresh(&self, repo: &str) -> bool {
         self.fresh.contains(repo)
@@ -39,11 +54,38 @@ impl Listed {
 pub async fn list_open_issues(app: &App, map: &SystemMap) -> Listed {
     let repos: Vec<String> = map.repos_named().into_iter().map(str::to_owned).collect();
     let mut listed = Listed::default();
+    let mut counts = Counts::default();
     for repo in &repos {
         match app.github.open_issues(repo, BACKLOG_MAX_PER_REPO).await {
             Ok(listing) => {
                 if !listing.truncated {
                     listed.fresh.insert(repo.clone());
+                }
+                let mut placements = HashMap::new();
+                for i in &listing.issues {
+                    let p = suggest::place(map, i);
+                    counts.listed += 1;
+                    if let Some(target) = &p.pin {
+                        counts.map_lines += 1;
+                        listed.map_lines.push(MapLine {
+                            issue: IssueRef::new(repo.clone(), i.number),
+                            target: target.clone(),
+                            author: i.author.clone(),
+                        });
+                    } else if p.untrusted_line.is_some() {
+                        // Counted per listing, not once: the line stays untrusted every tick.
+                        counts.untrusted += 1;
+                        app.metrics
+                            .backlog_map_lines
+                            .add(1, &[KeyValue::new(attr::OUTCOME, "untrusted_author")]);
+                    }
+                    if p.pin.is_none() && p.suggestion.is_none() {
+                        counts.none += 1;
+                    }
+                    if p.suggestion.is_some() {
+                        counts.suggested += 1;
+                    }
+                    placements.insert(i.number, p);
                 }
                 listed.open.extend(
                     listing
@@ -59,7 +101,8 @@ pub async fn list_open_issues(app: &App, map: &SystemMap) -> Listed {
                     );
                 }
                 if let Err(e) =
-                    store::replace_open_issues(&app.db, repo, &listing, Utc::now()).await
+                    store::replace_open_issues(&app.db, repo, &listing, &placements, Utc::now())
+                        .await
                 {
                     tracing::error!(rubato.repo = %repo, error = %e, "storing open issues failed");
                 }
@@ -73,8 +116,27 @@ pub async fn list_open_issues(app: &App, map: &SystemMap) -> Listed {
             }
         }
     }
+    // One line per tick: how many listed issues placed themselves, were placed by someone
+    // outside the team, got a suggestion, or neither.
+    tracing::info!(
+        listed = counts.listed,
+        map_lines = counts.map_lines,
+        untrusted = counts.untrusted,
+        suggested = counts.suggested,
+        none = counts.none,
+        "backlog placement"
+    );
     record_gauges(app, &repos).await;
     listed
+}
+
+#[derive(Debug, Default)]
+struct Counts {
+    listed: usize,
+    map_lines: usize,
+    untrusted: usize,
+    suggested: usize,
+    none: usize,
 }
 
 /// Both gauges on every tick, for every repo with a row: a gauge recorded only on change keeps
@@ -126,6 +188,7 @@ mod tests {
             url: format!("https://github.com/o/r/issues/{n}"),
             labels: vec!["bug".into()],
             updated_at: Utc::now(),
+            ..OpenIssueInfo::default()
         }
     }
 

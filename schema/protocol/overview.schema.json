@@ -889,6 +889,28 @@
             "type": "string"
           }
         },
+        "map_line": {
+          "description": "The place its body's `Map:` line names, when its author is not trusted to place it\n(ADR 0026); a trusted line pins the issue and it leaves this list.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MapRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "suggestion": {
+          "description": "Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PinSuggestion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "title": {
           "type": "string"
         },
@@ -957,6 +979,33 @@
         "affected",
         "new",
         "quiet"
+      ]
+    },
+    "PinSuggestion": {
+      "description": "Where Rubato suggests an unpinned issue belongs, and why. A person confirms it with one\nclick through the pin route; nothing is pinned by a suggestion.",
+      "type": "object",
+      "properties": {
+        "score": {
+          "description": "0–100. Only suggestions at or above the server's threshold are sent.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "target": {
+          "$ref": "#/$defs/MapRef"
+        },
+        "why": {
+          "description": "What matched, in words a person can check: `id web-server in the body`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "target",
+        "score"
       ]
     },
     "Plan": {

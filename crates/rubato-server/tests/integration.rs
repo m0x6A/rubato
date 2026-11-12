@@ -1466,6 +1466,7 @@ fn open_issue(n: u64, title: &str) -> rubato_server::kernel::github::OpenIssueIn
         url: format!("https://github.com/m0x6A/rubato/issues/{n}"),
         labels: vec!["enhancement".into()],
         updated_at: chrono::Utc::now(),
+        ..Default::default()
     }
 }
 
@@ -1529,6 +1530,94 @@ async fn open_issues_reach_the_overview_until_they_are_pinned() {
     assert_eq!(ov.backlog.repos[0].error.as_deref(), Some("rate limited"));
     assert!(ov.backlog.repos[0].listed_at.is_some());
     assert_eq!(ov.backlog.issues.len(), 1);
+}
+
+/// ADR 0026, issue #71 PR 3: a member's `Map:` line pins its issue without a drag, a
+/// non-member's only suggests, and an issue without a line gets a scored suggestion. The bodies
+/// come with the listing: the GitHub calls are the same as for issues without bodies.
+#[tokio::test]
+async fn map_lines_place_member_issues_and_suggest_for_the_rest() {
+    let with_body = |n: u64, title: &str, body: &str, association: &str| {
+        rubato_server::kernel::github::OpenIssueInfo {
+            body: body.into(),
+            author_association: association.into(),
+            author: "voice-tool".into(),
+            ..open_issue(n, title)
+        }
+    };
+    let plain = harness().await;
+    plain.github.with(|g| {
+        g.open.insert(
+            "m0x6A/rubato".into(),
+            vec![
+                open_issue(71, "Voice: plan lens"),
+                open_issue(72, "Voice: stranger"),
+                open_issue(73, "rubato-server is slow"),
+            ],
+        );
+    });
+    tasks::poll_once(&plain.app).await.unwrap();
+
+    let h = harness().await;
+    h.github.with(|g| {
+        g.open.insert(
+            "m0x6A/rubato".into(),
+            vec![
+                with_body(
+                    71,
+                    "Voice: plan lens",
+                    "## Summary\nx\n\nMap: seam web-server\n",
+                    "MEMBER",
+                ),
+                with_body(72, "Voice: stranger", "Map: node web\n", "NONE"),
+                open_issue(73, "rubato-server is slow"),
+            ],
+        );
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(
+        h.github.calls(),
+        plain.github.calls(),
+        "placement costs no GitHub call"
+    );
+
+    let ov = h.overview("m0x6A").await;
+    let tracked: Vec<u64> = ov.issues.iter().map(|i| i.issue.number).collect();
+    assert_eq!(tracked, [71], "the member's line pinned #71");
+    assert_eq!(ov.issues[0].progress.state, ProgressState::Planned);
+    let backlog: Vec<u64> = ov.backlog.issues.iter().map(|i| i.issue.number).collect();
+    assert_eq!(backlog, [72, 73]);
+    let stranger = &ov.backlog.issues[0];
+    assert_eq!(stranger.map_line, Some(MapRef::node("web")));
+    assert_eq!(
+        stranger.suggestion.as_ref().map(|s| s.target.clone()),
+        Some(MapRef::node("web"))
+    );
+    let scored = &ov.backlog.issues[1];
+    assert_eq!(scored.map_line, None);
+    assert_eq!(
+        scored
+            .suggestion
+            .as_ref()
+            .map(|s| (s.target.clone(), s.score)),
+        Some((MapRef::node("rubato-server"), 100))
+    );
+
+    // Unpinned by a person: the next tick does not pin it again.
+    let r = h
+        .http
+        .delete(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 71),
+            target: MapRef::seam("web-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert!(ov.issues.is_empty(), "the unpin sticks");
 }
 
 #[tokio::test]

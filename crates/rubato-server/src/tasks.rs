@@ -112,6 +112,18 @@ impl Poller {
         // Before the per-issue reads: every open issue of the map's repos (one listing per
         // repo), then, as an installation only, which repos it covers.
         let listed = github_poll::list_open_issues(app, &map.map).await;
+        // `Map:` lines of trusted authors pin their issues (ADR 0026). No GitHub call: the
+        // bodies came with the listing. A newly pinned issue is read from the next tick on.
+        let lines: Vec<pins::Line> = listed
+            .map_lines()
+            .iter()
+            .map(|l| pins::Line {
+                issue: l.issue.clone(),
+                target: l.target.clone(),
+                author: l.author.clone(),
+            })
+            .collect();
+        pins::apply_map_lines(app, &map.map, &map.version, &lines).await;
         let mut repos: BTreeSet<String> = map
             .map
             .repos_named()

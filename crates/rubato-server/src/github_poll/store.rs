@@ -1,6 +1,7 @@
 //! Tables `pull_requests`, `decisions`, `issue_meta`, `open_issues`, `backlog_repos` and
 //! `uncovered_repos`.
 
+use super::suggest::Placement;
 use crate::kernel::db::{parse_ts, ts};
 use crate::kernel::github::OpenIssues;
 use anyhow::Result;
@@ -109,6 +110,7 @@ pub async fn replace_open_issues(
     db: &SqlitePool,
     repo: &str,
     listing: &OpenIssues,
+    placements: &HashMap<u64, Placement>,
     now: DateTime<Utc>,
 ) -> Result<()> {
     let mut tx = db.begin().await?;
@@ -117,8 +119,17 @@ pub async fn replace_open_issues(
         .execute(&mut *tx)
         .await?;
     for i in &listing.issues {
-        sqlx::query("INSERT OR REPLACE INTO open_issues (repo, number, title, url, labels, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(repo).bind(i.number as i64).bind(&i.title).bind(&i.url).bind(serde_json::to_string(&i.labels)?).bind(ts(i.updated_at)).execute(&mut *tx).await?;
+        let p = placements.get(&i.number);
+        let line = p
+            .and_then(|p| p.untrusted_line.as_ref())
+            .map(serde_json::to_string)
+            .transpose()?;
+        let suggestion = p
+            .and_then(|p| p.suggestion.as_ref())
+            .map(serde_json::to_string)
+            .transpose()?;
+        sqlx::query("INSERT OR REPLACE INTO open_issues (repo, number, title, url, labels, updated_at, map_line, suggestion) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(repo).bind(i.number as i64).bind(&i.title).bind(&i.url).bind(serde_json::to_string(&i.labels)?).bind(ts(i.updated_at)).bind(line).bind(suggestion).execute(&mut *tx).await?;
     }
     sqlx::query("INSERT INTO backlog_repos (repo, listed_at, truncated, error) VALUES (?, ?, ?, NULL) ON CONFLICT(repo) DO UPDATE SET listed_at = excluded.listed_at, truncated = excluded.truncated, error = NULL")
         .bind(repo).bind(ts(now)).bind(listing.truncated).execute(&mut *tx).await?;
@@ -151,7 +162,7 @@ pub async fn forget_repo(db: &SqlitePool, repo: &str) -> Result<()> {
 /// Every listed open issue and every repo's listing state.
 pub async fn backlog(db: &SqlitePool) -> Result<(Vec<OpenIssue>, Vec<BacklogRepo>)> {
     let issues = sqlx::query(
-        "SELECT repo, number, title, url, labels, updated_at FROM open_issues ORDER BY repo, number",
+        "SELECT repo, number, title, url, labels, updated_at, map_line, suggestion FROM open_issues ORDER BY repo, number",
     )
     .fetch_all(db)
     .await?
@@ -162,6 +173,12 @@ pub async fn backlog(db: &SqlitePool) -> Result<(Vec<OpenIssue>, Vec<BacklogRepo
         url: r.get("url"),
         labels: serde_json::from_str(&r.get::<String, _>("labels")).unwrap_or_default(),
         updated_at: parse_ts(&r.get::<String, _>("updated_at")),
+        map_line: r
+            .get::<Option<String>, _>("map_line")
+            .and_then(|j| serde_json::from_str(&j).ok()),
+        suggestion: r
+            .get::<Option<String>, _>("suggestion")
+            .and_then(|j| serde_json::from_str(&j).ok()),
     })
     .collect();
     let repos =

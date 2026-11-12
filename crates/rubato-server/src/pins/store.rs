@@ -54,3 +54,43 @@ pub async fn list_pins(db: &SqlitePool) -> Result<Vec<IssuePin>> {
         })
         .collect())
 }
+
+/// Whether the issue is pinned to anything.
+pub async fn is_pinned(db: &SqlitePool, issue: &IssueRef) -> Result<bool> {
+    Ok(
+        sqlx::query("SELECT 1 FROM pins WHERE repo = ? AND number = ? LIMIT 1")
+            .bind(&issue.repo)
+            .bind(issue.number as i64)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
+}
+
+/// Whether a `Map:` line for this (issue, target) has been applied before (ADR 0026).
+pub async fn map_line_applied(db: &SqlitePool, issue: &IssueRef, target: &MapRef) -> Result<bool> {
+    let (kind, t) = map_ref_parts(target);
+    Ok(sqlx::query(
+        "SELECT 1 FROM map_line_pins WHERE repo = ? AND number = ? AND kind = ? AND target = ?",
+    )
+    .bind(&issue.repo)
+    .bind(issue.number as i64)
+    .bind(kind)
+    .bind(t)
+    .fetch_optional(db)
+    .await?
+    .is_some())
+}
+
+/// Record that a `Map:` line for this (issue, target) is applied, so it is not applied again.
+pub async fn record_map_line(
+    db: &SqlitePool,
+    issue: &IssueRef,
+    target: &MapRef,
+    outcome: &str,
+) -> Result<()> {
+    let (kind, t) = map_ref_parts(target);
+    sqlx::query("INSERT OR IGNORE INTO map_line_pins (repo, number, kind, target, outcome, applied_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(&issue.repo).bind(issue.number as i64).bind(kind).bind(t).bind(outcome).bind(ts(chrono::Utc::now())).execute(db).await?;
+    Ok(())
+}

@@ -481,6 +481,8 @@ mod tests {
             url: String::new(),
             labels: vec![],
             updated_at: now(),
+            map_line: None,
+            suggestion: None,
         }
     }
 

@@ -7,8 +7,9 @@ mod fake;
 mod local;
 
 pub use api::{
-    BranchHead, Comment, GitHubApi, ISSUES_PER_PAGE, IssueInfo, Octo, OpenIssueInfo, OpenIssues,
-    OpenPulls, PULLS_PER_PAGE, PullInfo, READ_TIMEOUT, issues_from_page, summarize_check_runs,
+    BODY_EXCERPT_BYTES, BranchHead, Comment, GitHubApi, ISSUES_PER_PAGE, IssueInfo, Octo,
+    OpenIssueInfo, OpenIssues, OpenPulls, PULLS_PER_PAGE, PullInfo, READ_TIMEOUT, issues_from_page,
+    summarize_check_runs,
 };
 pub use app::{AppCheckError, check_app};
 pub use fake::{FakeGitHub, FakeInner};

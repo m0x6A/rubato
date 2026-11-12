@@ -819,9 +819,33 @@ repos?: BacklogRepo[]
 export interface OpenIssue {
 issue: IssueRef
 labels?: string[]
+/**
+ * The place its body's `Map:` line names, when its author is not trusted to place it
+ * (ADR 0026); a trusted line pins the issue and it leaves this list.
+ */
+map_line?: (MapRef | null)
+/**
+ * Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.
+ */
+suggestion?: (PinSuggestion | null)
 title: string
 updated_at: string
 url: string
+}
+/**
+ * Where Rubato suggests an unpinned issue belongs, and why. A person confirms it with one
+ * click through the pin route; nothing is pinned by a suggestion.
+ */
+export interface PinSuggestion {
+/**
+ * 0–100. Only suggestions at or above the server's threshold are sent.
+ */
+score: number
+target: MapRef
+/**
+ * What matched, in words a person can check: `id web-server in the body`.
+ */
+why?: string[]
 }
 /**
  * How fresh one repo's listing is. The trust check for the backlog.

@@ -8,6 +8,7 @@ pub mod auth;
 pub mod github;
 pub mod hook;
 pub mod ids;
+pub mod issue_body;
 pub mod launch;
 pub mod layout;
 pub mod limits;
@@ -28,6 +29,7 @@ pub use auth::Me;
 pub use github::{ChecksStatus, DecisionBody, DecisionRecord, PullRequestState};
 pub use hook::{HookEvent, HookEventKind};
 pub use ids::{IssueRef, MapRef, ParseIssueRefError};
+pub use issue_body::{PinSuggestion, map_line, parse_map_line};
 pub use launch::{
     CapHit, CapKind, LaunchCommand, LaunchRequest, LaunchResponse, LaunchResult, RefusalReason,
 };
