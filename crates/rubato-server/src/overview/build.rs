@@ -3,14 +3,15 @@
 
 use crate::github_poll::IssueMeta;
 use crate::kernel::state::LoadedMap;
-use crate::plans::PlanRow;
+use crate::plans::{PlanRow, approval_names};
 use chrono::{DateTime, Utc};
 use rubato_protocol::QueuedIssue;
 use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
-    Backlog, BacklogRepo, CapKind, DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary,
-    Limits, MapRef, OpenIssue, Plan, Progress, ProgressInputs, ProgressState, PullRequestState,
-    SessionState, SessionStatus, derive_progress,
+    ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, DecisionRecord,
+    Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, OpenIssue, Plan, Progress,
+    ProgressInputs, ProgressState, PullRequestState, ReviewRecord, SessionState, SessionStatus,
+    derive_progress,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -20,6 +21,11 @@ pub struct OverviewInputs {
     pub plans: Vec<PlanRow>,
     pub prs: HashMap<IssueRef, PullRequestState>,
     pub decisions: Vec<DecisionRecord>,
+    /// `Review:` comments from members (ADR 0027).
+    pub reviews: Vec<ReviewRecord>,
+    /// `Approved:` comments from members, each with the plan hash of the branch it names when
+    /// that is not the branch the plan is read from.
+    pub approvals: Vec<(ApprovalRecord, Option<String>)>,
     pub launched: HashSet<IssueRef>,
     /// The live cap hit per issue, by kind.
     pub cap_hits: HashMap<IssueRef, CapKind>,
@@ -61,6 +67,40 @@ fn cap_hit_blocks(kind: Option<CapKind>, sessions: &[SessionState]) -> bool {
         Some(CapKind::Attempts) => sessions.iter().all(|s| s.status == SessionStatus::Ended),
         None => false,
     }
+}
+
+/// The newest approval of an issue and whether it names the plan as it is now (ADR 0027). An
+/// approval that names a branch other than the one the plan is read from is compared with the
+/// plan on that branch (`target_sha`, read on the full lane); otherwise with the plan as read.
+pub fn approval_state(
+    approvals: &[&(ApprovalRecord, Option<String>)],
+    plan: Option<&PlanRow>,
+) -> Option<ApprovalState> {
+    let (record, target_sha) = approvals
+        .iter()
+        .max_by_key(|(a, _)| (a.created_at, a.comment_id))?;
+    let elsewhere = record
+        .branch
+        .as_deref()
+        .is_some_and(|b| plan.is_none_or(|p| p.branch != b));
+    let current_sha = if elsewhere {
+        target_sha.clone()
+    } else {
+        plan.and_then(|p| p.approval_sha.clone())
+    };
+    let version = match (&record.sha, &current_sha) {
+        (None, _) => ApprovalVersion::NotNamed,
+        (Some(_), None) => ApprovalVersion::NoPlan,
+        (Some(approved), Some(current)) if approval_names(approved, current) => {
+            ApprovalVersion::Current
+        }
+        (Some(_), Some(_)) => ApprovalVersion::Earlier,
+    };
+    Some(ApprovalState {
+        record: record.clone(),
+        version,
+        current_sha,
+    })
 }
 
 pub fn build(
@@ -158,6 +198,28 @@ pub fn build(
                 }
             }
         }
+        let review = inputs
+            .reviews
+            .iter()
+            .filter(|r| &r.issue == issue)
+            .max_by_key(|r| (r.created_at, r.comment_id))
+            .cloned();
+        let approvals: Vec<_> = inputs
+            .approvals
+            .iter()
+            .filter(|(a, _)| &a.issue == issue)
+            .collect();
+        let approval = approval_state(&approvals, plan_row);
+        if let Some(a) = &approval
+            && a.version == ApprovalVersion::Earlier
+            && let (Some(approved), Some(current)) = (&a.record.sha, &a.current_sha)
+        {
+            findings.push(Finding::ApprovalStale {
+                issue: issue.clone(),
+                approved_sha: approved.clone(),
+                current_sha: current.clone(),
+            });
+        }
         let meta = inputs.meta.get(issue);
         let spend: Option<f64> = {
             let v: Vec<f64> = sessions.iter().filter_map(|s| s.spend_usd).collect();
@@ -192,6 +254,8 @@ pub fn build(
                 .filter(|d| &d.issue == issue)
                 .cloned()
                 .collect(),
+            review,
+            approval,
             spend_usd: spend,
         });
     }
@@ -364,6 +428,7 @@ mod tests {
                 flows: vec![],
             }),
             parse_error: None,
+            approval_sha: Some("f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9".into()),
         }
     }
 
@@ -392,6 +457,8 @@ mod tests {
             plans: vec![],
             prs: HashMap::new(),
             decisions: vec![],
+            reviews: vec![],
+            approvals: vec![],
             launched: HashSet::new(),
             cap_hits: HashMap::new(),
             meta: HashMap::new(),
@@ -700,5 +767,132 @@ mod tests {
         let built = build(&inputs, None, &Limits::default(), now());
         assert!(built.issues.is_empty());
         assert_eq!(built.unpinned_sessions.len(), 1);
+    }
+
+    const CURRENT: &str = "f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9";
+    const EARLIER: &str = "c438e006b75b48508ae0d204788e73e11005a6d3";
+
+    fn approval(
+        issue: &IssueRef,
+        id: u64,
+        sha: Option<&str>,
+        branch: Option<&str>,
+    ) -> ApprovalRecord {
+        ApprovalRecord {
+            issue: issue.clone(),
+            comment_id: id,
+            author: "m0x6A".into(),
+            sha: sha.map(str::to_owned),
+            branch: branch.map(str::to_owned),
+            note: None,
+            created_at: now() + chrono::Duration::seconds(id as i64),
+            url: "u".into(),
+        }
+    }
+
+    fn approval_of(inputs: &OverviewInputs, issue: &IssueRef) -> (ApprovalVersion, Vec<Finding>) {
+        let built = build(inputs, None, &Limits::default(), now());
+        let one = built.issues.iter().find(|i| &i.issue == issue).unwrap();
+        let stale = built
+            .findings
+            .iter()
+            .filter(|f| matches!(f, Finding::ApprovalStale { .. }))
+            .cloned()
+            .collect();
+        (one.approval.as_ref().unwrap().version, stale)
+    }
+
+    #[test]
+    fn an_approval_of_the_plan_as_read_is_current() {
+        let a = IssueRef::new("o/r", 71);
+        let mut inputs = empty();
+        inputs.plans = vec![plan(&a, "companion-server", "rubato-companion")];
+        inputs.approvals = vec![(approval(&a, 1, Some(&CURRENT[..7]), None), None)];
+        assert_eq!(approval_of(&inputs, &a), (ApprovalVersion::Current, vec![]));
+    }
+
+    #[test]
+    fn an_approval_of_an_earlier_version_is_stale_and_a_finding() {
+        let a = IssueRef::new("o/r", 71);
+        let mut inputs = empty();
+        inputs.plans = vec![plan(&a, "companion-server", "rubato-companion")];
+        inputs.approvals = vec![(approval(&a, 1, Some(EARLIER), None), None)];
+        let (version, stale) = approval_of(&inputs, &a);
+        assert_eq!(version, ApprovalVersion::Earlier);
+        assert_eq!(
+            stale,
+            vec![Finding::ApprovalStale {
+                issue: a.clone(),
+                approved_sha: EARLIER.into(),
+                current_sha: CURRENT.into(),
+            }]
+        );
+        // A newer approval of the current version wins.
+        inputs
+            .approvals
+            .push((approval(&a, 2, Some(CURRENT), None), None));
+        assert_eq!(approval_of(&inputs, &a), (ApprovalVersion::Current, vec![]));
+    }
+
+    /// Two `issue/71-*` branches: the plan is read from the first, the approval names the
+    /// other. It is compared with the plan on the branch it names, not the one read.
+    #[test]
+    fn an_approval_on_another_branch_is_compared_with_that_branch() {
+        let a = IssueRef::new("o/r", 71);
+        let mut inputs = empty();
+        let mut row = plan(&a, "companion-server", "rubato-companion");
+        row.branch = "issue/71-create-issue".into();
+        row.approval_sha = Some(EARLIER.into());
+        inputs.plans = vec![row];
+        inputs.approvals = vec![(
+            approval(&a, 1, Some(CURRENT), Some("issue/71-plan")),
+            Some(CURRENT.into()),
+        )];
+        assert_eq!(approval_of(&inputs, &a), (ApprovalVersion::Current, vec![]));
+        // That branch moved on since: stale against it, whatever the branch read says.
+        inputs.approvals[0].1 = Some(EARLIER.into());
+        inputs.plans[0].approval_sha = Some(CURRENT.into());
+        assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::Earlier);
+        // That branch has no plan file.
+        inputs.approvals[0].1 = None;
+        assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::NoPlan);
+        // Naming the branch the plan is read from compares with the plan as read.
+        inputs.approvals[0].0.branch = Some("issue/71-create-issue".into());
+        assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::Current);
+    }
+
+    #[test]
+    fn an_approval_without_a_sha_names_no_version() {
+        let a = IssueRef::new("o/r", 71);
+        let mut inputs = empty();
+        inputs.plans = vec![plan(&a, "companion-server", "rubato-companion")];
+        inputs.approvals = vec![(approval(&a, 1, None, None), None)];
+        assert_eq!(
+            approval_of(&inputs, &a),
+            (ApprovalVersion::NotNamed, vec![])
+        );
+    }
+
+    #[test]
+    fn the_newest_review_is_shown() {
+        let a = IssueRef::new("o/r", 71);
+        let mut inputs = empty();
+        inputs.plans = vec![plan(&a, "companion-server", "rubato-companion")];
+        let review = |id: u64, outcome: &str| ReviewRecord {
+            issue: a.clone(),
+            comment_id: id,
+            author: "m0x6A".into(),
+            track: "full".into(),
+            outcome: outcome.into(),
+            plan_sha: None,
+            left_open: None,
+            created_at: now() + chrono::Duration::seconds(id as i64),
+            url: "u".into(),
+        };
+        inputs.reviews = vec![review(2, "passed after fixes"), review(1, "2 blockers")];
+        let built = build(&inputs, None, &Limits::default(), now());
+        let one = built.issues.iter().find(|i| i.issue == a).unwrap();
+        assert_eq!(one.review.as_ref().unwrap().outcome, "passed after fixes");
+        assert!(one.approval.is_none());
     }
 }

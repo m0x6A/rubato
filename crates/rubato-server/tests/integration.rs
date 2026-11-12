@@ -349,6 +349,8 @@ async fn protocol_fixtures_replay_derives_progress() {
             vec![Comment {
                 id: 7,
                 author: "m0x6A".into(),
+                author_association: "OWNER".into(),
+                author_is_bot: false,
                 body: "Decision: Keep chrono\n\n## Context\nx\n\n## Chosen\nchrono\n\n## Why\nfine"
                     .into(),
                 created_at: chrono::Utc::now(),
@@ -501,6 +503,241 @@ async fn findings_show_unknown_ids_and_seam_collisions() {
         ov.issues
             .iter()
             .all(|i| i.progress.state == ProgressState::Designed)
+    );
+}
+
+fn comment(id: u64, author: &str, association: &str, bot: bool, body: &str) -> Comment {
+    Comment {
+        id,
+        author: author.into(),
+        author_association: association.into(),
+        author_is_bot: bot,
+        body: body.into(),
+        created_at: chrono::Utc::now() + chrono::Duration::seconds(id as i64),
+        url: format!("c{id}"),
+    }
+}
+
+const PLAN_71: &str = "---\nissue: m0x6A/rubato#71\n---\n## Affected parts\n| Node | Status | What changes | Seams |\n| --- | --- | --- | --- |\n| rubato-server | affected | x | server-github |\n## O-rows\n| Seam | Breaks like | Signal | Panel | Owner |\n| --- | --- | --- | --- | --- |\n| server-github | y | z | p | rubato-server |\n## Tasks\n- [ ] T1\n";
+
+/// One plan on `issue/71-plan`, pinned, then the comments given; one poll.
+async fn issue_71_with(comments: Vec<Comment>) -> (Harness, rubato_protocol::IssueSummary) {
+    let h = harness().await;
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push(("issue/71-plan".into(), "s71".into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/71.md".into(),
+                "issue/71-plan".into(),
+            ),
+            PLAN_71.to_owned(),
+        );
+        g.comments.insert(("m0x6A/rubato".into(), 71), comments);
+    });
+    h.http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 71),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov
+        .issues
+        .into_iter()
+        .find(|i| i.issue.number == 71)
+        .expect("issue 71 in the overview");
+    (h, one)
+}
+
+/// ADR 0027: `Review:` and `Approved:` count only from members. The repo is public, so a
+/// stranger's comment and a Bot's must not show a badge.
+#[tokio::test]
+async fn reviews_and_approvals_count_only_from_members() {
+    let sha = rubato_server::plans::approval_hash(PLAN_71);
+    let approve = format!("Approved: plan {}", &sha[..10]);
+    let (_h, one) = issue_71_with(vec![
+        comment(1, "stranger", "NONE", false, "Review: full — passed"),
+        comment(2, "helper[bot]", "NONE", true, &approve),
+        comment(3, "drive-by", "CONTRIBUTOR", false, &approve),
+        comment(4, "rubato-app[bot]", "MEMBER", true, &approve),
+        comment(
+            5,
+            "m0x6A",
+            "OWNER",
+            false,
+            "Decision: Keep it\n\n## Chosen\nyes",
+        ),
+    ])
+    .await;
+    assert!(one.review.is_none(), "{:?}", one.review);
+    assert!(one.approval.is_none(), "{:?}", one.approval);
+    assert_eq!(one.decisions.len(), 1, "Decision: parsing is unchanged");
+
+    let (_h, one) = issue_71_with(vec![
+        comment(
+            1,
+            "m0x6A",
+            "OWNER",
+            false,
+            "Review: full — passed after fixes",
+        ),
+        comment(2, "teammate", "MEMBER", false, &approve),
+    ])
+    .await;
+    let review = one.review.expect("a member's review");
+    assert_eq!(
+        (review.track.as_str(), review.outcome.as_str()),
+        ("full", "passed after fixes")
+    );
+    let approval = one.approval.expect("a member's approval");
+    assert_eq!(approval.record.author, "teammate");
+    assert_eq!(approval.version, rubato_protocol::ApprovalVersion::Current);
+    assert_eq!(approval.current_sha.as_deref(), Some(sha.as_str()));
+}
+
+/// Ticking a task keeps the approval current; editing the spec makes it stale, a finding.
+#[tokio::test]
+async fn editing_the_plan_makes_an_approval_stale() {
+    let sha = rubato_server::plans::approval_hash(PLAN_71);
+    let (h, one) = issue_71_with(vec![comment(
+        1,
+        "m0x6A",
+        "OWNER",
+        false,
+        &format!("Approved: plan {sha}"),
+    )])
+    .await;
+    assert_eq!(
+        one.approval.unwrap().version,
+        rubato_protocol::ApprovalVersion::Current
+    );
+    let file = (
+        "m0x6A/rubato".to_string(),
+        "docs/plans/71.md".to_string(),
+        "issue/71-plan".to_string(),
+    );
+    // Tick the task (a new head, so the plan is read again).
+    h.github.with(|g| {
+        g.files
+            .insert(file.clone(), PLAN_71.replace("- [ ] T1", "- [x] T1"));
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .iter_mut()
+            .filter(|(n, _)| n == "issue/71-plan")
+            .for_each(|b| b.1 = "s71-ticked".into());
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    assert_eq!(
+        one.approval.as_ref().unwrap().version,
+        rubato_protocol::ApprovalVersion::Current,
+        "ticking a task keeps the approval current"
+    );
+    // Change the spec.
+    h.github.with(|g| {
+        g.files
+            .insert(file.clone(), PLAN_71.replace("| x |", "| reworded |"));
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .iter_mut()
+            .filter(|(n, _)| n == "issue/71-plan")
+            .for_each(|b| b.1 = "s71-edited".into());
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    assert_eq!(
+        one.approval.as_ref().unwrap().version,
+        rubato_protocol::ApprovalVersion::Earlier
+    );
+    assert!(
+        ov.findings.iter().any(|f| matches!(f, Finding::ApprovalStale { issue, approved_sha, .. } if issue.number == 71 && approved_sha == &sha)),
+        "{:?}",
+        ov.findings
+    );
+}
+
+/// Two `issue/71-*` branches: the plan is read from the first one listed, the approval names
+/// the other. Rubato reads the plan on the branch the approval names (one file read on the full
+/// lane) and compares with that.
+#[tokio::test]
+async fn an_approval_on_another_branch_is_compared_with_that_branch() {
+    let sha = rubato_server::plans::approval_hash(PLAN_71);
+    let h = harness().await;
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.push(("issue/71-create-issue".into(), "s71c".into()));
+        b.push(("issue/71-plan".into(), "s71".into()));
+        for (branch, text) in [
+            (
+                "issue/71-create-issue",
+                PLAN_71.replace("| x |", "| later work |"),
+            ),
+            ("issue/71-plan", PLAN_71.to_owned()),
+        ] {
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    "docs/plans/71.md".into(),
+                    branch.into(),
+                ),
+                text,
+            );
+        }
+        g.comments.insert(
+            ("m0x6A/rubato".into(), 71),
+            vec![comment(
+                1,
+                "m0x6A",
+                "OWNER",
+                false,
+                &format!("Approved: plan {sha} on issue/71-plan"),
+            )],
+        );
+    });
+    h.http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 71),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    assert_eq!(
+        one.plan.as_ref().and_then(|p| p.git_ref.as_deref()),
+        Some("issue/71-create-issue"),
+        "the plan is read from the first branch"
+    );
+    let approval = one.approval.as_ref().unwrap();
+    assert_eq!(approval.version, rubato_protocol::ApprovalVersion::Current);
+    assert!(
+        !ov.findings
+            .iter()
+            .any(|f| matches!(f, Finding::ApprovalStale { .. })),
+        "{:?}",
+        ov.findings
+    );
+    let calls = h.github.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|(n, a)| *n == "file" && a.contains("issue/71-plan")),
+        "the named branch's plan is read: {calls:?}"
     );
 }
 
@@ -1326,6 +1563,8 @@ async fn poll_makes_the_same_github_calls_per_issue() {
             vec![Comment {
                 id: 9,
                 author: "m0x6A".into(),
+                author_association: "OWNER".into(),
+                author_is_bot: false,
                 body: "Decision: No branch yet\n\n## Context\nx\n\n## Chosen\ny\n\n## Why\nz"
                     .into(),
                 created_at: chrono::Utc::now(),

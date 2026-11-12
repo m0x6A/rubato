@@ -108,6 +108,11 @@ issue: IssueRef
 kind: "flow_off_seam"
 seam: string
 to: string
+} | {
+approved_sha: string
+current_sha: string
+issue: IssueRef
+kind: "approval_stale"
 })
 /**
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
@@ -123,6 +128,10 @@ kind: "node"
 id: string
 kind: "seam"
 })
+/**
+ * How an approval relates to the plan Rubato holds now.
+ */
+export type ApprovalVersion = ("current" | "earlier" | "not_named" | "no_plan")
 export type PartStatus = ("affected" | "new" | "quiet")
 export type AssumptionScope = ("node" | "seam")
 export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
@@ -495,12 +504,21 @@ target: MapRef
  * Everything the map view needs about one issue.
  */
 export interface IssueSummary {
+/**
+ * The newest approval a member posted, and whether it is of the plan as it is now. A
+ * badge, not a progress state.
+ */
+approval?: (ApprovalState | null)
 decisions?: DecisionRecord[]
 issue: IssueRef
 pins: MapRef[]
 plan?: (Plan | null)
 progress: Progress
 pull_request?: (PullRequestState | null)
+/**
+ * The newest design review a member posted (ADR 0027).
+ */
+review?: (ReviewRecord | null)
 sessions?: SessionState[]
 /**
  * Sum over this issue's sessions.
@@ -508,6 +526,38 @@ sessions?: SessionState[]
 spend_usd?: (number | null)
 title?: (string | null)
 url?: (string | null)
+}
+/**
+ * The newest counted approval of an issue's plan, and whether it is of the current version.
+ */
+export interface ApprovalState {
+/**
+ * The hash of the plan compared with, when there is one.
+ */
+current_sha?: (string | null)
+record: ApprovalRecord
+version: ApprovalVersion
+}
+/**
+ * A person's approval of a plan, first line `Approved: plan <sha>` or
+ * `Approved: plan <sha> on <branch>` (ADR 0027). Only a trusted author's approval counts.
+ */
+export interface ApprovalRecord {
+author: string
+/**
+ * The branch the approval names; else the branch Rubato reads the plan from.
+ */
+branch?: (string | null)
+comment_id: number
+created_at: string
+issue: IssueRef
+note?: (string | null)
+/**
+ * The plan hash approved (checkboxes cleared, git blob sha). Absent when the comment names
+ * none: the approval then shows as "version not named".
+ */
+sha?: (string | null)
+url: string
 }
 export interface Plan {
 affected_parts: AffectedPart[]
@@ -614,6 +664,30 @@ number: number
 open: boolean
 repo: string
 updated_at: string
+url: string
+}
+/**
+ * A design review posted as an issue comment, first line `Review: <track> — <outcome>`
+ * (ADR 0027). Only a trusted author's review is kept.
+ */
+export interface ReviewRecord {
+author: string
+comment_id: number
+created_at: string
+issue: IssueRef
+left_open?: (string | null)
+/**
+ * The rest of the first line, e.g. `passed after fixes`.
+ */
+outcome: string
+/**
+ * The plan version the review read, when its `Plan` section names one.
+ */
+plan_sha?: (string | null)
+/**
+ * `trivial`, `small` or `full`, as written.
+ */
+track: string
 url: string
 }
 /**

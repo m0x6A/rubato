@@ -2,7 +2,7 @@
 //!
 //! The derivation is pure so the server, its tests and the fixtures agree on it.
 
-use crate::github::DecisionRecord;
+use crate::github::{ApprovalState, DecisionRecord, ReviewRecord};
 use crate::github::{ChecksStatus, PullRequestState};
 use crate::ids::{IssueRef, MapRef};
 use crate::layout::MapLayout;
@@ -164,6 +164,13 @@ pub struct IssueSummary {
     pub pull_request: Option<PullRequestState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decisions: Vec<DecisionRecord>,
+    /// The newest design review a member posted (ADR 0027).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<ReviewRecord>,
+    /// The newest approval a member posted, and whether it is of the plan as it is now. A
+    /// badge, not a progress state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalState>,
     /// Sum over this issue's sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_usd: Option<f64>,
@@ -236,6 +243,12 @@ pub enum Finding {
         seam: String,
         from: String,
         to: String,
+    },
+    /// The plan was approved, then changed: the approval names an earlier version (ADR 0027).
+    ApprovalStale {
+        issue: IssueRef,
+        approved_sha: String,
+        current_sha: String,
     },
 }
 

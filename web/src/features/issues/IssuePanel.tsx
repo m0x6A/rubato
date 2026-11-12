@@ -5,6 +5,7 @@ import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from ".
 import { setIssueDrag } from "../../shared/dnd.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
 import { Backlog } from "./Backlog.tsx";
+import { PlanSignals, SignalBadges } from "./PlanSignals.tsx";
 
 interface Props {
   overview: Overview;
@@ -156,6 +157,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             </span>
           </p>
         )}
+        {(selected.plan || selected.review || selected.approval) && <PlanSignals issue={selected} />}
         {(selected.decisions ?? []).length > 0 && (
           <>
             <h3 style={{ marginTop: 12 }}>Decisions</h3>
@@ -201,6 +203,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
               </span>
               <span className="row-end">
                 <span className={`badge ${i.progress.state}`}>{STATE_LABEL[i.progress.state]}</span>
+                <SignalBadges issue={i} />
                 <PinMenu map={overview.map.map} issue={i.issue} pinned={i.pins} onPin={onPin} />
                 {onQueue && <QueueMenu issue={i.issue} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />}
               </span>

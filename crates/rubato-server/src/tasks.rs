@@ -206,7 +206,7 @@ impl Poller {
             self.last_pass.insert(issue.clone());
         }
         let full = full || standing == Standing::JustClosed;
-        match view.branch(app, issue).await? {
+        let read_from = match view.branch(app, issue).await? {
             Some(head) => {
                 let key = (plans::plan_path(map, issue, &head.name), head.sha.clone());
                 if self.plan_heads.get(issue) != Some(&key) {
@@ -214,11 +214,24 @@ impl Poller {
                     self.plan_heads.insert(issue.clone(), key);
                 }
                 github_poll::poll_pr(app, issue, &head.name, view, full).await?;
+                Some(head.name)
             }
-            None => github_poll::poll_pr_of_gone_branch(app, issue).await?,
-        }
+            None => {
+                github_poll::poll_pr_of_gone_branch(app, issue).await?;
+                None
+            }
+        };
         if full {
-            github_poll::poll_decisions(app, issue).await?;
+            let read = github_poll::poll_comments(app, issue).await?;
+            // An approval that names another branch is compared with the plan there: one file
+            // read on the full lane (ADR 0027). The branch the plan is read from needs none.
+            if let Some(a) = read.newest_approval
+                && let Some(branch) = a.branch.as_deref()
+                && read_from.as_deref() != Some(branch)
+            {
+                let sha = plans::hash_on_branch(app, map, issue, branch).await?;
+                github_poll::set_target_sha(&app.db, issue, a.comment_id, sha.as_deref()).await?;
+            }
         }
         self.seen.insert(issue.clone());
         if self.last_pass.remove(issue) && !busy {

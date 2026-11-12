@@ -121,7 +121,7 @@ export function buildGraph(ov: Overview): Graph {
       }
     } else if (f.kind === "flow_off_seam") {
       edgeById.get(f.seam)?.findings.push(f);
-    } else if (f.kind === "unknown_ids" || f.kind === "plan_parse_error" || f.kind === "map_version_mismatch") {
+    } else if (f.kind === "unknown_ids" || f.kind === "plan_parse_error" || f.kind === "map_version_mismatch" || f.kind === "approval_stale") {
       const issue = ov.issues.find((i) => issueKey(i.issue) === issueKey(f.issue));
       for (const pin of issue?.pins ?? []) {
         if (pin.kind === "node") {
@@ -148,6 +148,15 @@ export function sessionCounts(sessions: SessionState[]): Partial<Record<SessionS
 
 export function issueCounts(issues: IssueSummary[]): Partial<Record<ProgressState, number>> {
   return countBy(issues, (i) => i.progress.state);
+}
+
+/** How many of a part's issues have a plan approved as it is now, and how many an approval of
+ * an earlier version (ADR 0027). */
+export function approvalCounts(issues: IssueSummary[]): { approved: number; stale: number } {
+  return {
+    approved: issues.filter((i) => i.approval?.version === "current").length,
+    stale: issues.filter((i) => i.approval?.version === "earlier").length,
+  };
 }
 
 export const NODE_WIDTH = 220;

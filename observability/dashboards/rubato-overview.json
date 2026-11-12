@@ -1063,6 +1063,72 @@
         "graphMode": "none",
         "textMode": "value_and_name"
       }
+    },
+    {
+      "id": 70,
+      "type": "row",
+      "title": "Plans, reviews and approvals",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 71,
+      "title": "Approvals",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 59
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Issues whose newest approval names an earlier version of the plan (finding 'ApprovalStale', ADR 0027): the plan changed after a team member commented 'Approved: plan <sha>'. Ticking task checkboxes does not count as a change. The overview names each issue with both shas; ask its owner to re-approve or revert. Reviews and approvals are read from comments by OWNER, MEMBER or COLLABORATOR authors on the full poll lane (every 300 s); one that is ignored logs 'approval ignored' or 'review ignored' with the reason (a Bot, or the author's association). Not 0 for longer than a review takes is a question for a person, not a fault.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_plans_approval_stale)",
+          "legendFormat": "stale approvals"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
     }
   ]
 }

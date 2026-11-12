@@ -1,4 +1,5 @@
-//! Gauges from the derived picture: issues by state, open plans per seam, unknown plan ids.
+//! Gauges from the derived picture: issues by state, open plans per seam, unknown plan ids,
+//! approvals of an earlier plan version.
 
 use super::build;
 use super::inputs::build_overview_inputs;
@@ -40,5 +41,11 @@ pub async fn refresh_gauges(app: &App, map: &LoadedMap) -> Result<()> {
     app.metrics
         .plan_unknown_id_count
         .record(unknown as u64, &[]);
+    let stale = built
+        .findings
+        .iter()
+        .filter(|f| matches!(f, rubato_protocol::Finding::ApprovalStale { .. }))
+        .count();
+    app.metrics.plans_approval_stale.record(stale as u64, &[]);
     Ok(())
 }
