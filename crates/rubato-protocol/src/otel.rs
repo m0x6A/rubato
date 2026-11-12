@@ -121,6 +121,10 @@ pub mod event {
     pub const SESSION_STALE: &str = "rubato.session.stale";
     pub const CAP_HIT: &str = "rubato.cap.hit";
     pub const PLAN_CHECK: &str = "rubato.plan.check";
+    /// A planning session waiting for a person's approval (skill `plan.ts wait`, ADR 0035).
+    pub const PLAN_WAIT: &str = "rubato.plan.wait";
+    /// A plan's pinned ADRs recorded as accepted by an approval (skill `adrs.ts accept`).
+    pub const ADRS_ACCEPT: &str = "rubato.adrs.accept";
     /// An essential background task returned while shutdown was not requested.
     pub const TASK_EXITED: &str = "rubato.task.exited";
 }
@@ -196,6 +200,8 @@ pub fn all_names() -> Vec<&'static str> {
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,
+        event::PLAN_WAIT,
+        event::ADRS_ACCEPT,
         event::TASK_EXITED,
     ]
 }

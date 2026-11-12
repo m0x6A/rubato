@@ -133,6 +133,37 @@ approval yourself, even with the person's `gh`. Rubato counts it only from a tea
 writing it for them defeats the record. A plan with a `seam` question open waits for the answer
 and the approval. A `node` assumption does not wait.
 
+**Wait for it yourself** (ADR 0035). Right after asking, push the plan and start the wait in the
+background (in Claude Code: a background command, or Monitor on its output), and keep doing what
+does not need the approval:
+
+```
+node --experimental-strip-types scripts/plan.ts wait docs/plans/<n>.md
+```
+
+It prints one `rubato.plan.wait` line per event (`started`, then `review`, `decision`,
+`approved_earlier`, `untrusted`, `edited`, `poll_failed`) and ends with `approved` (exit 0) or
+`exited` with a reason: `not_pushed` or `local_edit` (push the plan, exit 4), `does_not_fit`
+(fix it, exit 5), `gh_failed` (check `gh auth status`, exit 6), `plan_changed` (the plan changed
+on the branch; ask for a new approval, exit 7). It counts only what Rubato counts: the newest
+approval from a team member, never edited, naming the sha of the plan as pushed, with the plan
+fitting the map.
+
+**The approval accepts the plan's ADRs.** A plan that proposes ADRs lists them under
+`## ADRs proposed` (`ADR | File | Blob`); fill the Blob column with `plan.ts adrs-pin` before
+asking, so the approval covers their text. On `approved`, in the map repo's checkout on the plan
+branch:
+
+```
+node --experimental-strip-types scripts/adrs.ts accept --comment <the approval's url>
+```
+
+It reads the comment again from GitHub, checks everything again, and moves each pinned ADR still
+at its blob to `accepted`, naming the approver, the date, the comment and `(self)` when the
+approver runs this session. Commit that change on the plan branch with the comment's link and
+push. An ADR changed after it was pinned is refused (`adr_changed`): update the plan, pin again,
+ask again. Outside the map repo it writes nothing and prints what the approval would accept.
+
 ## 7. Record decisions
 
 A decision made during the work is an issue comment, from `decision-template.md`:

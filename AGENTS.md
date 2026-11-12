@@ -282,7 +282,7 @@ Files
 Every decision that touches a seam, a dependency, a data format or a non-goal is an ADR in `docs/decisions/`, one file each, numbered, from `0000-template.md`. Rules:
 
 - **Status moves, text does not.** `proposed → accepted → superseded by NNNN` or `rejected`. Never edit an accepted ADR's decision; write a new one that supersedes it.
-- **Who decided, human or agent.** Every ADR names its decider. An agent may draft and mark *proposed*; only a human moves it to *accepted*. This is the audit trail Chopin's decision log gives inside a plan, kept across plans.
+- **Who decided, human or agent.** Every ADR names its decider. An agent may draft and mark *proposed*; only a human accepts it, by editing it or by approving the plan that pins it (ADR 0035): a team member's `Approved:` comment naming the plan accepts the ADRs the plan lists with their blob shas, and the agent records that acceptance with a link to the comment (`adrs.ts accept`). This is the audit trail Chopin's decision log gives inside a plan, kept across plans.
 - **Agents read them before planning.** The `rubato` skill loads accepted ADRs the same way it loads the map. A plan that contradicts an accepted ADR is a plan check failure unless it proposes a superseding ADR.
 - **Inside-a-node assumptions are not ADRs.** They stay in the plan's "Assumed, not yet approved" section. The line is the seam.
 - The list below is the seed; each item becomes `000N-<slug>.md` with status *accepted* in the first PR.

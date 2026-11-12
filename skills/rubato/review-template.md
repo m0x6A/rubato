@@ -3,6 +3,8 @@ Review: <trivial|small|full> — <passed|passed after fixes|blocked>
 ## Plan
 `<plan path>` on `<branch>`, sha `<plan sha>` (from `plan.ts sha`). Design: `<design path, or none>`.
 
+ADRs this approval accepts: <NNNN@blob, from the plan's ADRs proposed table, or none>.
+
 ## Spec check
 - **Does:** ok | gap (what is missing)
 - **We'll know it works:** ok | gap
