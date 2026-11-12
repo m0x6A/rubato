@@ -8,7 +8,7 @@ use crate::kernel::state::App;
 use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
-use rubato_protocol::{IssueRef, MapRef, SystemMap};
+use rubato_protocol::{IssueRef, MapRef, SystemMap, parse_request_line};
 use std::collections::{HashMap, HashSet};
 
 /// At most this many open issues per repo: five pages, so five calls per repo per tick.
@@ -46,6 +46,25 @@ impl Listed {
     /// The issue as this tick listed it, if it is open.
     pub fn open(&self, issue: &IssueRef) -> Option<&OpenIssueInfo> {
         self.open.get(issue)
+    }
+
+    /// The repos listed whole this tick.
+    pub fn fresh_repos(&self) -> &HashSet<String> {
+        &self.fresh
+    }
+
+    /// Listed issues whose body carries a `Rubato-Request:` line (ADR 0025), as
+    /// (issue, page, request id): how a create GitHub did not confirm is found.
+    pub fn requests(&self) -> Vec<(IssueRef, String, String)> {
+        let mut v: Vec<_> = self
+            .open
+            .iter()
+            .filter_map(|(issue, i)| {
+                parse_request_line(&i.body).map(|id| (issue.clone(), i.url.clone(), id))
+            })
+            .collect();
+        v.sort();
+        v
     }
 }
 

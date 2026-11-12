@@ -40,6 +40,13 @@ pub struct FakeInner {
     /// `create_pull` creates the pull request and then fails, as a call that timed out does.
     pub pull_times_out: bool,
     next_pull: u64,
+    /// The installation's Issues permission is `write` (ADR 0025). Creating issues also needs
+    /// `writes`.
+    pub issues_write: bool,
+    /// `create_issue` creates the issue (it shows in the listing) and then fails, as a call
+    /// that timed out does.
+    pub issue_times_out: bool,
+    next_issue: u64,
     /// Every call in order, as (method, args); the guard for the poll order (design D4).
     pub calls: Vec<(&'static str, String)>,
 }
@@ -260,6 +267,57 @@ impl GitHubApi for FakeGitHub {
             }
         }
         Ok(())
+    }
+
+    fn can_create_issues(&self) -> bool {
+        let g = self.inner.lock().unwrap();
+        g.writes && g.issues_write
+    }
+
+    async fn refresh_issue_permission(&self) -> Result<bool> {
+        let mut g = self.inner.lock().unwrap();
+        // Only an installation reads its permissions, as the port does.
+        if g.installation.is_some() {
+            g.calls.push(("installation", String::new()));
+        }
+        Ok(g.writes && g.issues_write)
+    }
+
+    async fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<(u64, String)> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("create_issue", format!("{repo} {title}")));
+        if !(g.writes && g.issues_write) {
+            return Err(anyhow!("this GitHub connection cannot create issues"));
+        }
+        if let Some((failing, why)) = g.fail_write.clone()
+            && failing == "create_issue"
+        {
+            if why.contains("403") {
+                g.issues_write = false;
+            }
+            return Err(anyhow!("{why}"));
+        }
+        g.next_issue += 1;
+        let number = 500 + g.next_issue;
+        let url = format!("https://github.com/{repo}/issues/{number}");
+        g.open
+            .entry(repo.to_owned())
+            .or_default()
+            .push(OpenIssueInfo {
+                number,
+                title: title.to_owned(),
+                url: url.clone(),
+                labels: vec![],
+                updated_at: chrono::Utc::now(),
+                body: body.to_owned(),
+                author: "rubato[bot]".into(),
+                author_association: "NONE".into(),
+            });
+        if g.issue_times_out {
+            g.issue_times_out = false;
+            return Err(anyhow!("operation timed out"));
+        }
+        Ok((number, url))
     }
 
     async fn delete_ref(&self, repo: &str, branch: &str) -> Result<()> {

@@ -48,6 +48,28 @@ test("a team member logs in through the App and sees what the installation lists
   await expect(page.getByTestId("node-rubato-server")).toBeVisible();
 });
 
+test("a member creates an issue from a part, as the App, and it is pinned there (ADR 0025)", async ({ page }) => {
+  await logInAs(page, "member");
+  // The server read the installation's permissions as the App on its first full pass.
+  await expect.poll(async () => (await (await page.request.get("/api/overview")).json()).can_create_issues, { timeout: 15_000 }).toBe(true);
+  await page.reload();
+  await page.getByTestId("node-rubato-server").click();
+  await page.getByTestId("inspector").getByTestId("new-issue-here").click();
+  const form = page.getByTestId("new-issue");
+  await form.getByLabel("Title").fill("Created through the App");
+  await form.getByLabel("Summary").fill("An issue written in Rubato.");
+  await form.getByLabel("What the change does").fill("Exists");
+  await form.getByLabel("How we'll know it works").fill("The stand-in got one POST");
+  await form.getByLabel("What it must not break").fill("Nothing");
+  await form.getByRole("button", { name: "Create in m0x6A/rubato" }).click();
+  const detail = page.getByTestId("issue-detail");
+  await expect(detail).toContainText("m0x6A/rubato#950");
+  await expect(detail).toContainText("node rubato-server");
+
+  const calls = (await (await fetch(`${github}/_standin/calls`)).json()) as Record<string, number>;
+  expect(calls["/app/installations/34"]).toBeGreaterThan(0);
+});
+
 test("an account with no access to the installation is refused and gets no session", async ({ page }) => {
   const callback = await logInAs(page, "outsider");
   expect(callback.status()).toBe(403);

@@ -93,6 +93,12 @@ pub(crate) mod tests {
                 get(|| async { Json(json!({"id": 12, "client_id": "Iv1.app"})) }),
             )
             .route(
+                "/app/installations/34",
+                get(|| async {
+                    Json(json!({"id": 34, "permissions": {"issues": "write", "contents": "write"}}))
+                }),
+            )
+            .route(
                 "/app/installations/34/access_tokens",
                 post(|| async { Json(json!({"token": "t", "permissions": {}})) }),
             )

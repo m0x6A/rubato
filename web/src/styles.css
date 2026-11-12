@@ -103,6 +103,10 @@ button.link:hover { text-decoration: underline; }
 .backlog-row { border-style: dashed; cursor: grab; }
 .backlog-row .labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .backlog-row .suggestion { display: block; margin-top: 4px; font-size: 0.9em; }
+.new-issue form { display: flex; flex-direction: column; gap: 8px; }
+.new-issue label { display: flex; flex-direction: column; gap: 2px; }
+.new-issue textarea, .new-issue input, .new-issue select { width: 100%; box-sizing: border-box; font: inherit; }
+.new-issue-start { margin: 8px 0; }
 .repo-status { font-size: 12px; gap: 2px; }
 .repo-status li.warn { font-size: 12px; }
 /* "Pin to…": the keyboard twin of the drag */

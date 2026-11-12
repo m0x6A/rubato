@@ -6,5 +6,5 @@ mod map_lines;
 mod store;
 
 pub use handlers::{add_pin, remove_pin};
-pub use map_lines::{Line, Refusal, apply_map_lines, check_target};
+pub use map_lines::{Line, Refusal, apply_map_lines, check_target, pin_created};
 pub use store::list_pins as list;

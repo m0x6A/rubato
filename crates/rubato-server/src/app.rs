@@ -6,13 +6,15 @@
 
 use crate::kernel::state::App;
 use crate::{
-    auth, companion_link, launch, layout, map, map_draft, overview, pairing, pins, queue, web_link,
+    auth, companion_link, launch, layout, map, map_draft, new_issue, overview, pairing, pins,
+    queue, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
 use rubato_protocol::auth::routes as auth_routes;
+use rubato_protocol::issue_new::routes as issue_routes;
 use rubato_protocol::launch::routes as launch_routes;
 use rubato_protocol::layout::routes as layout_routes;
 use rubato_protocol::map::routes as map_routes;
@@ -52,6 +54,7 @@ pub fn router(app: App) -> Router {
             post(pins::add_pin).delete(pins::remove_pin),
         )
         .route(launch_routes::LAUNCH, post(launch::launch))
+        .route(issue_routes::ISSUES, post(new_issue::create))
         .route(
             layout_routes::LAYOUT,
             put(layout::put_layout).delete(layout::clear_layout),

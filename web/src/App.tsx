@@ -6,6 +6,7 @@ import { Findings } from "./features/findings/index.ts";
 import { IssuePanel } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe } from "./features/live/index.ts";
+import { NewIssueForm } from "./features/new_issue/index.ts";
 import { Inspector, MapView, PlanInspector, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
 import { queueApi } from "./features/queue/index.ts";
@@ -25,6 +26,8 @@ export function App() {
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [selectedIssue, setSelectedIssue] = useState<IssueRef | null>(null);
   const [selection, setSelection] = useState<MapRef | null>(null);
+  // "New issue here…": the part or seam a new issue is being written for (ADR 0025).
+  const [newIssueAt, setNewIssueAt] = useState<MapRef | null>(null);
   const [tab, setTab] = useState<Tab>("issues");
   // Edit mode: the draft panel shows, parts connect, a double-click on the canvas asks for a part.
   const [editing, setEditing] = useState(false);
@@ -346,7 +349,28 @@ export function App() {
           {overview && <Findings findings={overview.findings} />}
           {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} />}
           {/* The map explains what is selected; an open issue takes the panel instead. */}
-          {overview && tab === "issues" && selection && !selected && (
+          {overview && tab === "issues" && !newIssueAt && !selected && overview.map.map.nodes[0] && (
+            <p className="new-issue-start">
+              <button type="button" data-testid="new-issue-start" onClick={() => setNewIssueAt(selection ?? { kind: "node", id: overview.map.map.nodes[0]?.id ?? "" })}>
+                New issue…
+              </button>
+            </p>
+          )}
+          {overview && tab === "issues" && newIssueAt && (
+            <NewIssueForm
+              key={`${newIssueAt.kind}:${newIssueAt.id}`}
+              overview={overview}
+              target={newIssueAt}
+              onCancel={() => setNewIssueAt(null)}
+              onNotice={(text) => setNotice(text)}
+              onCreated={(issue) => {
+                setNewIssueAt(null);
+                setSelectedIssue(issue);
+                void refresh();
+              }}
+            />
+          )}
+          {overview && tab === "issues" && selection && !selected && !newIssueAt && (
             <Inspector
               overview={shown ?? overview}
               selection={selection}
@@ -355,6 +379,7 @@ export function App() {
                 setTab("issues");
                 setSelectedIssue(issue);
               }}
+              onNewIssue={setNewIssueAt}
             />
           )}
           {overview && tab === "issues" && (

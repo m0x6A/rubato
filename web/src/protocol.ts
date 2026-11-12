@@ -150,6 +150,10 @@ error: string
 outcome: "failed"
 })
 /**
+ * Where a creation stands.
+ */
+export type CreationState = (("created" | "failed") | "opening")
+/**
  * An operation in the draft, with who made it and when.
  */
 export type DraftOp = ({
@@ -246,6 +250,8 @@ MapLayout?: MapLayout
 MapRef?: MapRef
 MapResponse?: MapResponse
 Me?: Me
+NewIssueRequest?: NewIssueRequest
+NewIssueResponse?: NewIssueResponse
 Overview?: Overview
 PairApproveRequest?: PairApproveRequest
 PairPollRequest?: PairPollRequest
@@ -781,10 +787,69 @@ avatar_url?: (string | null)
 login: string
 }
 /**
+ * `POST /api/issues`. Each list item is one line of its section.
+ */
+export interface NewIssueRequest {
+context?: (string | null)
+/**
+ * "What the change does", at least one line.
+ */
+does: string[]
+/**
+ * "How we'll know it works", at least one line; written as checkboxes.
+ */
+know: string[]
+/**
+ * "What it must not break", at least one line.
+ */
+must_not_break: string[]
+open_questions?: string[]
+/**
+ * `owner/name`, a repo the map names.
+ */
+repo: string
+/**
+ * Made by the form once per draft; a second submit with the same id creates nothing more.
+ */
+request_id: string
+summary: string
+/**
+ * A reference into the system map: a node or a seam. Ids come from `system-map.yml` (ADR 0007).
+ */
+target: ({
+id: string
+kind: "node"
+} | {
+id: string
+kind: "seam"
+})
+title: string
+}
+/**
+ * The answer to `POST /api/issues`.
+ */
+export interface NewIssueResponse {
+/**
+ * Set once created.
+ */
+issue?: (IssueRef | null)
+/**
+ * What to tell the person, for `opening` and `failed`.
+ */
+message?: (string | null)
+state: CreationState
+url?: (string | null)
+}
+/**
  * The whole picture in one payload: what the web view renders.
  */
 export interface Overview {
 backlog?: Backlog
+/**
+ * Whether "New issue here…" can create an issue: the GitHub App's installation has
+ * Issues: write, or the server runs on the local stand-in (ADR 0025).
+ */
+can_create_issues?: boolean
 companions: PairingInfo[]
 draft?: MapDraft
 findings: Finding[]

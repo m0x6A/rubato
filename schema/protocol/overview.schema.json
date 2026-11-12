@@ -9,6 +9,11 @@
       "$ref": "#/$defs/Backlog",
       "default": {}
     },
+    "can_create_issues": {
+      "description": "Whether \"New issue here…\" can create an issue: the GitHub App's installation has\nIssues: write, or the server runs on the local stand-in (ADR 0025).",
+      "type": "boolean",
+      "default": false
+    },
     "companions": {
       "type": "array",
       "items": {

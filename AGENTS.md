@@ -104,6 +104,7 @@ launch          start a session through your own companion      launches, cap_hi
 layout          where each part sits on the shared map          map_layout
 map             load, validate, cache and serve the map         map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
+new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
 queue           issues queued on your own companions, in order  companion_queue
 github_poll     issue reads, open issues, placement, coverage   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos
@@ -144,6 +145,7 @@ queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DE
 launch      start a session through your own companion           POST /api/launch
 drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
 findings    what the map and the plans disagree about            (none)
+new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->
@@ -158,6 +160,7 @@ session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
 hook       HookEvent
 pins       IssuePin, PinRequest; PINS
 issue_body the Map: line (parse_map_line, map_line), PinSuggestion
+issue_new  NewIssueRequest, NewIssueResponse, render_issue, the Rubato-Request: line; ISSUES
 launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
 layout     MapLayout, Position; LAYOUT
 map        SystemMap, MapResponse; MAP, MAP_RELOAD

@@ -105,6 +105,8 @@ pub struct Metrics {
     /// Unix seconds; no unit, like `map_loaded_at`.
     pub map_proposal_state_since: Gauge<u64>,
     pub backlog_map_lines: Counter<u64>,
+    pub issues_created: Counter<u64>,
+    pub issues_opening: Gauge<u64>,
 }
 
 impl Metrics {
@@ -141,6 +143,8 @@ impl Metrics {
             map_proposals: m.u64_counter(otel::metric::MAP_PROPOSALS).build(),
             map_proposal_state_since: m.u64_gauge(otel::metric::MAP_PROPOSAL_STATE_SINCE).build(),
             backlog_map_lines: m.u64_counter(otel::metric::BACKLOG_MAP_LINES).build(),
+            issues_created: m.u64_counter(otel::metric::ISSUES_CREATED).build(),
+            issues_opening: m.u64_gauge(otel::metric::ISSUES_OPENING).build(),
         }
     }
 }
