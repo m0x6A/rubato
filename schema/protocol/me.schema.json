@@ -9,6 +9,18 @@
         "null"
       ]
     },
+    "can_act_on_github": {
+      "description": "Rubato can post as this person, so *Accept plan* works (ADR 0030).",
+      "type": "boolean",
+      "default": false
+    },
+    "cannot_act_reason": {
+      "description": "Why not, when it cannot: `no_token_key`, `oauth_only`, `tokens_do_not_expire` or\n`log_in_again`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "login": {
       "type": "string"
     }

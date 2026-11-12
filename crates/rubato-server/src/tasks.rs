@@ -8,7 +8,8 @@
 
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
-    companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins, plans, queue,
+    approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins,
+    plans, queue,
 };
 use anyhow::{Result, anyhow};
 use rubato_protocol::otel::event;
@@ -186,6 +187,14 @@ impl Poller {
         let discovered = self
             .discover(app, &map, &issues, &listed, &mut view, &approved)
             .await;
+        // After the comments pass: approvals posted from Rubato that GitHub did not confirm,
+        // and the tokens of people with no session that still counts (ADR 0030).
+        if lane == Lane::Full {
+            approve::reconcile(app).await;
+            if let Err(e) = auth::sweep_tokens(app).await {
+                tracing::error!(error = %format!("{e:#}"), "sweeping user tokens failed");
+            }
+        }
         // Every tick: info on the full lane (every 300 s), debug on the fast one.
         let (tracked, repos) = (issues.len(), view.repos());
         if lane == Lane::Full {

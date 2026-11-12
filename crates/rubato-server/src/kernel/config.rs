@@ -56,6 +56,32 @@ fn github_app(
     }
 }
 
+/// The key user-to-server tokens are encrypted with (`RUBATO_TOKEN_KEY`, 64 hex characters,
+/// ADR 0030). Never printed.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TokenKey(pub [u8; 32]);
+
+impl std::fmt::Debug for TokenKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TokenKey(..)")
+    }
+}
+
+impl TokenKey {
+    pub fn from_hex(text: &str) -> Result<Self> {
+        let t = text.trim();
+        anyhow::ensure!(
+            t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()),
+            "RUBATO_TOKEN_KEY must be 64 hex characters (32 bytes)"
+        );
+        let mut key = [0u8; 32];
+        for (i, b) in key.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&t[2 * i..2 * i + 2], 16)?;
+        }
+        Ok(Self(key))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind: SocketAddr,
@@ -64,6 +90,9 @@ pub struct Config {
     pub database_url: String,
     pub github_client_id: Option<String>,
     pub github_client_secret: Option<String>,
+    /// Encrypts the user-to-server tokens Rubato keeps to act as a person (ADR 0030). Unset:
+    /// no token is kept and nobody can accept a plan from Rubato.
+    pub token_key: Option<TokenKey>,
     /// Token the server itself uses to read repos, plans, PRs and comments.
     pub github_token: Option<String>,
     /// The GitHub App the server acts as. When set it replaces `github_token`, and a session
@@ -135,6 +164,9 @@ impl Config {
                 .unwrap_or_else(|| "sqlite://rubato.db?mode=rwc".into()),
             github_client_id: env("GITHUB_CLIENT_ID"),
             github_client_secret: env("GITHUB_CLIENT_SECRET"),
+            token_key: env("RUBATO_TOKEN_KEY")
+                .map(|k| TokenKey::from_hex(&k))
+                .transpose()?,
             github_token: env("RUBATO_GITHUB_TOKEN"),
             github_app: github_app(
                 env("RUBATO_GITHUB_APP_ID"),
@@ -190,6 +222,7 @@ impl Config {
             database_url,
             github_client_id: None,
             github_client_secret: None,
+            token_key: None,
             github_token: None,
             github_app: None,
             github_api_url: None,

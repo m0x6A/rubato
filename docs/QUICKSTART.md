@@ -64,6 +64,10 @@ export GITHUB_CLIENT_SECRET=...
 export RUBATO_GITHUB_APP_ID=...
 export RUBATO_GITHUB_APP_PRIVATE_KEY_FILE=/path/to/the-app.private-key.pem
 export RUBATO_GITHUB_APP_INSTALLATION_ID=...   # from step 3
+# Optional: lets people accept a plan from Rubato, posted as themselves (ADR 0030). Keep it
+# secret and stable: rotating it makes every stored token unreadable (everyone logs in again).
+# The App must have "Expire user authorization tokens" on (the default).
+export RUBATO_TOKEN_KEY="$(openssl rand -hex 32)"
 export RUBATO_MAP_REPO=m0x6A/rubato
 export RUBATO_MAP_PATH=docs/design/rubato-map.yml
 export RUBATO_MAP_REF=main

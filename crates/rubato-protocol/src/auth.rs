@@ -8,6 +8,13 @@ pub struct Me {
     pub login: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
+    /// Rubato can post as this person, so *Accept plan* works (ADR 0030).
+    #[serde(default)]
+    pub can_act_on_github: bool,
+    /// Why not, when it cannot: `no_token_key`, `oauth_only`, `tokens_do_not_expire` or
+    /// `log_in_again`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cannot_act_reason: Option<String>,
 }
 
 /// Route paths for login (`/auth/*` is outside `/api`).

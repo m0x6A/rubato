@@ -4241,3 +4241,400 @@ async fn an_approval_of_a_plan_that_does_not_fit_does_not_count() {
         rubato_protocol::Finding::ApprovedWithoutFit { issue } if issue.number == 71
     )));
 }
+
+// ---- Issue #80: accept a plan in Rubato, as the person (ADR 0030) ----
+
+const TOKEN_KEY: &str = "0707070707070707070707070707070707070707070707070707070707070707";
+
+/// A harness that keeps tokens: an App (the fake port still answers) with a token key.
+async fn accepting_harness() -> Harness {
+    harness_with(|c| {
+        c.github_app = Some(rubato_server::kernel::config::GitHubApp {
+            app_id: 1,
+            private_key: "unused".into(),
+            installation_id: 34,
+        });
+        c.token_key = Some(rubato_server::kernel::config::TokenKey::from_hex(TOKEN_KEY).unwrap());
+        c.github_client_id = Some("Iv1.test".into());
+        c.github_client_secret = Some("secret".into());
+    })
+    .await
+}
+
+async fn give_token(h: &Harness, login: &str, expires_in_secs: i64) {
+    let kept = rubato_server::auth::keep_token(
+        &h.app,
+        login,
+        &rubato_server::auth::Granted {
+            access: format!("tok-{login}"),
+            expires_in: Some(chrono::Duration::seconds(expires_in_secs)),
+            refresh: Some(format!("ghr-{login}-1")),
+            refresh_expires_in: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(kept, None);
+}
+
+/// Plan #71 (fits) on `issue/71-plan`, pinned, polled once. Returns its approval hash.
+async fn fitting_plan_71(h: &Harness, text: &str) -> String {
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push(("issue/71-plan".into(), "s71".into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/71.md".into(),
+                "issue/71-plan".into(),
+            ),
+            text.to_owned(),
+        );
+    });
+    h.pin_issue(71).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    rubato_server::plans::approval_hash(text)
+}
+
+async fn accept(h: &Harness, as_user: &str, sha: &str) -> (u16, serde_json::Value) {
+    let r = h
+        .http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::approve::routes::PLAN_APPROVE
+        ))
+        .header("x-rubato-dev-user", as_user)
+        .json(&rubato_protocol::ApproveRequest {
+            issue: IssueRef::new("m0x6A/rubato", 71),
+            sha: sha.to_owned(),
+        })
+        .send()
+        .await
+        .unwrap();
+    (r.status().as_u16(), r.json().await.unwrap_or_default())
+}
+
+fn posts(h: &Harness) -> usize {
+    h.github
+        .calls()
+        .iter()
+        .filter(|(k, _)| *k == "comment_as")
+        .count()
+}
+
+#[tokio::test]
+async fn accept_is_refused_and_posts_nothing_unless_it_should() {
+    let h = accepting_harness().await;
+    let mut checked = 0;
+    // No plan yet.
+    let (status, body) = accept(&h, "teammate", "abc1234").await;
+    assert_eq!((status, body["reason"].as_str()), (409, Some("no_plan")));
+    checked += 1;
+
+    let sha = fitting_plan_71(&h, PLAN_71).await;
+    // A sha the person did not see now.
+    let (status, body) = accept(&h, "teammate", "0123456789abcdef").await;
+    assert_eq!(
+        (status, body["reason"].as_str()),
+        (409, Some("plan_changed"))
+    );
+    assert_eq!(body["current_sha"].as_str(), Some(sha.as_str()));
+    checked += 1;
+    // No token for this person.
+    let (status, body) = accept(&h, "teammate", &sha).await;
+    assert_eq!(
+        (status, body["reason"].as_str()),
+        (409, Some("needs_github_authorization"))
+    );
+    checked += 1;
+
+    // A plan that does not fit.
+    let h2 = accepting_harness().await;
+    give_token(&h2, "teammate", 8 * 3600).await;
+    let unfit = PLAN_71.replace("| server-github | y | z | p | rubato-server |\n", "");
+    let sha2 = fitting_plan_71(&h2, &unfit).await;
+    let (status, body) = accept(&h2, "teammate", &sha2).await;
+    assert_eq!(
+        (status, body["reason"].as_str()),
+        (409, Some("plan_does_not_fit"))
+    );
+    assert_eq!(body["reasons"][0]["kind"].as_str(), Some("missing_o_row"));
+    checked += 1;
+
+    assert_eq!(posts(&h) + posts(&h2), 0, "a refusal posts nothing");
+    println!("checked {checked} refusals");
+}
+
+#[tokio::test]
+async fn accept_posts_once_as_the_person_and_counts_on_the_next_poll() {
+    let h = accepting_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let sha = fitting_plan_71(&h, PLAN_71).await;
+
+    // Two at once, then a third: one comment.
+    let (a, b) = tokio::join!(accept(&h, "teammate", &sha), accept(&h, "teammate", &sha));
+    let (c, _) = accept(&h, "teammate", &sha).await;
+    assert!(
+        [a.0, b.0, c].iter().all(|s| *s == 200 || *s == 202),
+        "{a:?} {b:?} {c}"
+    );
+    assert_eq!(posts(&h), 1, "one intent, one comment");
+    assert_eq!(
+        a.1["body"]
+            .as_str()
+            .map(|s| s.lines().next().unwrap().to_owned()),
+        Some(format!("Approved: plan {sha} on issue/71-plan"))
+    );
+
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("teammate").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    let approval = one
+        .approval
+        .as_ref()
+        .expect("the posted comment is read back");
+    assert_eq!(
+        approval.record.author, "teammate",
+        "authored by the person, not the App"
+    );
+    assert_eq!(approval.version, rubato_protocol::ApprovalVersion::Current);
+
+    // Another person approving the same plan is their own approval.
+    give_token(&h, "other", 8 * 3600).await;
+    let (s, _) = accept(&h, "other", &sha).await;
+    assert_eq!(s, 200);
+    assert_eq!(posts(&h), 2);
+}
+
+#[tokio::test]
+async fn a_timed_out_accept_is_found_and_a_refused_one_can_be_pressed_again() {
+    let h = accepting_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let sha = fitting_plan_71(&h, PLAN_71).await;
+
+    h.github.with(|g| g.comment_times_out = true);
+    let (s, body) = accept(&h, "teammate", &sha).await;
+    assert_eq!((s, body["state"].as_str()), (202, Some("opening")));
+    let (s, _) = accept(&h, "teammate", &sha).await;
+    assert_eq!(s, 202, "a retry finds the opening row and does not post");
+    assert_eq!(posts(&h), 1);
+    tasks::poll_once(&h.app).await.unwrap(); // reads the comment, then reconciles
+    let (s, body) = accept(&h, "teammate", &sha).await;
+    assert_eq!((s, body["state"].as_str()), (200, Some("posted")));
+    assert!(
+        body["comment_url"]
+            .as_str()
+            .is_some_and(|u| u.contains("issuecomment"))
+    );
+
+    let h = accepting_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let sha = fitting_plan_71(&h, PLAN_71).await;
+    h.github.with(|g| g.comment_refused = Some(403));
+    let (s, body) = accept(&h, "teammate", &sha).await;
+    assert_eq!(
+        (s, body["reason"].as_str(), body["status"].as_u64()),
+        (502, Some("github_refused"), Some(403))
+    );
+    h.github.with(|g| g.comment_refused = None);
+    let (s, _) = accept(&h, "teammate", &sha).await;
+    assert_eq!(s, 200, "a definite refusal leaves no row behind");
+    assert_eq!(posts(&h), 2);
+}
+
+#[tokio::test]
+async fn me_says_whether_rubato_can_act_as_you() {
+    let plain = harness().await;
+    let me: rubato_protocol::Me = plain
+        .http
+        .get(format!(
+            "{}{}",
+            plain.url,
+            rubato_protocol::auth::routes::ME
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!me.can_act_on_github);
+    assert_eq!(me.cannot_act_reason.as_deref(), Some("oauth_only"));
+
+    let h = accepting_harness().await;
+    let me = |h: &Harness| {
+        let req = h
+            .http
+            .get(format!("{}{}", h.url, rubato_protocol::auth::routes::ME))
+            .header("x-rubato-dev-user", "teammate");
+        async move {
+            req.send()
+                .await
+                .unwrap()
+                .json::<rubato_protocol::Me>()
+                .await
+                .unwrap()
+        }
+    };
+    let before = me(&h).await;
+    assert_eq!(
+        (
+            before.can_act_on_github,
+            before.cannot_act_reason.as_deref()
+        ),
+        (false, Some("log_in_again"))
+    );
+    give_token(&h, "teammate", 8 * 3600).await;
+    assert!(me(&h).await.can_act_on_github);
+}
+
+/// A stand-in for github.com's token endpoint, `/user` and `/user/installations`: counts
+/// refreshes, answers `bad_refresh_token` for a refresh token it has already rotated.
+async fn token_stub() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    use axum::routing::{get, post};
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let log = seen.clone();
+    let router = axum::Router::new()
+        .route(
+            "/login/oauth/access_token",
+            post(move |body: String| {
+                let log = log.clone();
+                async move {
+                    let mut l = log.lock().unwrap();
+                    l.push(body.clone());
+                    let n = l.len();
+                    // A refresh token is good once (App refresh tokens rotate).
+                    let reused = body.contains("grant_type=refresh_token")
+                        && l[..n - 1].iter().any(|b| b == &body);
+                    if reused || body.contains("refresh_token=ghr-revoked") {
+                        return axum::Json(serde_json::json!({"error": "bad_refresh_token"}));
+                    }
+                    axum::Json(serde_json::json!({
+                        "access_token": format!("tok-teammate-{n}"),
+                        "expires_in": 28800,
+                        "refresh_token": format!("ghr-teammate-{}", n + 1),
+                        "refresh_token_expires_in": 15897600,
+                        "token_type": "bearer"
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/user",
+            get(|| async { axum::Json(serde_json::json!({"login": "teammate", "id": 7})) }),
+        )
+        .route(
+            "/user/installations",
+            get(|| async { axum::Json(serde_json::json!({"installations": [{"id": 34}]})) }),
+        );
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{addr}"), seen)
+}
+
+#[tokio::test]
+async fn login_keeps_the_token_and_refresh_is_single_flight_with_compare_and_delete() {
+    let (stub, seen) = token_stub().await;
+    let h = harness_with(|c| {
+        c.github_app = Some(rubato_server::kernel::config::GitHubApp {
+            app_id: 1,
+            private_key: "unused".into(),
+            installation_id: 34,
+        });
+        c.token_key = Some(rubato_server::kernel::config::TokenKey::from_hex(TOKEN_KEY).unwrap());
+        c.github_client_id = Some("Iv1.test".into());
+        c.github_client_secret = Some("secret".into());
+        c.github_web_url = Some(stub.clone());
+        c.github_api_url = Some(stub.clone());
+        c.dev_user = None;
+    })
+    .await;
+
+    // The callback: the token from the exchange is kept, as an App with expiring tokens.
+    let no_redirects = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let r = no_redirects
+        .get(format!("{}/auth/github/callback?code=c1&state=s1", h.url))
+        .header("cookie", "rubato_oauth_state=s1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 303, "{:?}", r.text().await);
+    assert!(
+        rubato_server::auth::can_act(&h.app, "teammate")
+            .await
+            .is_ok()
+    );
+
+    // The sweep keeps a token while a session counts, and drops it after.
+    assert_eq!(rubato_server::auth::sweep_tokens(&h.app).await.unwrap(), 0);
+    sqlx::query("DELETE FROM web_sessions")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rubato_server::auth::sweep_tokens(&h.app).await.unwrap(), 1);
+    assert!(
+        rubato_server::auth::can_act(&h.app, "teammate")
+            .await
+            .is_err()
+    );
+
+    // Near expiry, two at once: one refresh call; both get the new token.
+    let kept = rubato_server::auth::keep_token(
+        &h.app,
+        "teammate",
+        &rubato_server::auth::Granted {
+            access: "tok-old".into(),
+            expires_in: Some(chrono::Duration::seconds(60)),
+            refresh: Some("ghr-teammate-a".into()),
+            refresh_expires_in: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(kept, None);
+    let before = seen.lock().unwrap().len();
+    let (a, b) = tokio::join!(
+        rubato_server::auth::access_token(&h.app, "teammate"),
+        rubato_server::auth::access_token(&h.app, "teammate")
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a, b);
+    assert_ne!(a, "tok-old");
+    assert_eq!(
+        seen.lock().unwrap().len() - before,
+        1,
+        "single-flight: one refresh"
+    );
+
+    // A rejected refresh token drops the row; the person is asked to log in again.
+    rubato_server::auth::keep_token(
+        &h.app,
+        "teammate",
+        &rubato_server::auth::Granted {
+            access: "tok-old".into(),
+            expires_in: Some(chrono::Duration::seconds(60)),
+            refresh: Some("ghr-revoked".into()),
+            refresh_expires_in: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        rubato_server::auth::access_token(&h.app, "teammate").await,
+        Err(rubato_server::auth::TokenError::Rejected)
+    ));
+    assert!(
+        rubato_server::auth::can_act(&h.app, "teammate")
+            .await
+            .is_err()
+    );
+}

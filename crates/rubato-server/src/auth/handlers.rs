@@ -112,6 +112,7 @@ pub async fn callback(
     }
     let http = match oauth2::reqwest::ClientBuilder::new()
         .redirect(oauth2::reqwest::redirect::Policy::none())
+        .timeout(super::tokens::TOKEN_ENDPOINT_TIMEOUT)
         .build()
     {
         Ok(c) => c,
@@ -206,6 +207,22 @@ pub async fn callback(
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
+    // ADR 0030: keep the user-to-server token, so Rubato can post an approval as this person.
+    let granted = super::tokens::Granted {
+        access: token.access_token().secret().clone(),
+        expires_in: token
+            .expires_in()
+            .and_then(|d| chrono::Duration::from_std(d).ok()),
+        refresh: token.refresh_token().map(|r| r.secret().clone()),
+        refresh_expires_in: None,
+    };
+    match super::tokens::keep(&app, &user.login, &granted).await {
+        Ok(None) => tracing::info!(login = %user.login, "user token kept"),
+        Ok(Some(why)) => tracing::info!(login = %user.login, why, "no user token kept"),
+        Err(e) => {
+            tracing::error!(login = %user.login, error = %format!("{e:#}"), "keeping the user token failed")
+        }
+    }
     let id = match store::create_web_session(&app.db, &user.login, team_checked_at).await {
         Ok(id) => id,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -236,7 +253,14 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
     if let Some(v) = cookie_value(&headers, COOKIE)
         && let Some(id) = app.signer.verify(&v)
     {
-        let _ = store::delete_web_session(&app.db, &id).await;
+        if let Ok(Some((login, _))) = store::web_session(&app.db, &id).await {
+            let _ = store::delete_web_session(&app.db, &id).await;
+            if let Err(e) = super::tokens::after_logout(&app.db, &login).await {
+                tracing::error!(login, error = %format!("{e:#}"), "dropping the user token at logout failed");
+            }
+        } else {
+            let _ = store::delete_web_session(&app.db, &id).await;
+        }
     }
     let mut res = StatusCode::NO_CONTENT.into_response();
     res.headers_mut().append(
@@ -246,9 +270,12 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
     res
 }
 
-pub async fn me(super::CurrentUser(login): super::CurrentUser) -> Json<Me> {
+pub async fn me(State(app): State<App>, super::CurrentUser(login): super::CurrentUser) -> Json<Me> {
+    let can = super::tokens::can_act(&app, &login).await;
     Json(Me {
         login,
         avatar_url: None,
+        can_act_on_github: can.is_ok(),
+        cannot_act_reason: can.err().map(str::to_owned),
     })
 }

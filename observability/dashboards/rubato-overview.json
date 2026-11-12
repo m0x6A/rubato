@@ -1167,6 +1167,11 @@
           "refId": "B",
           "expr": "max(rubato_plans_not_fitting)",
           "legendFormat": "plans not fitting"
+        },
+        {
+          "refId": "C",
+          "expr": "max(rubato_plans_approvals_opening)",
+          "legendFormat": "approvals opening > 2 min"
         }
       ],
       "fieldConfig": {

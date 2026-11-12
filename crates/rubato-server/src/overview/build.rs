@@ -279,6 +279,7 @@ pub fn build(
             review,
             approval,
             fit,
+            plan_sha: plan_row.and_then(|p| p.approval_sha.clone()),
             spend_usd: spend,
         });
     }

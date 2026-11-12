@@ -98,6 +98,9 @@ pub mod metric {
     pub const GITHUB_CALLS: &str = "rubato.github.calls";
     /// Tracked issues whose plan does not fit the map (ADR 0029), recorded every poll tick.
     pub const PLANS_NOT_FITTING: &str = "rubato.plans.not_fitting";
+    /// Approvals Rubato posted as a person that GitHub has not confirmed for two minutes
+    /// (ADR 0030), recorded every full poll tick.
+    pub const PLANS_APPROVALS_OPENING: &str = "rubato.plans.approvals_opening";
 }
 
 /// Span names.
@@ -109,6 +112,8 @@ pub mod span {
     pub const GITHUB_CALL: &str = "rubato.github.call";
     pub const WS_FANOUT: &str = "rubato.ws.fanout";
     pub const HANDOFF: &str = "rubato.handoff";
+    /// An approval posted from Rubato as the person (ADR 0030).
+    pub const PLAN_APPROVE: &str = "rubato.plan.approve";
 }
 
 /// Event (log record) names.
@@ -179,6 +184,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::ISSUES_OPENING,
         metric::GITHUB_CALLS,
         metric::PLANS_NOT_FITTING,
+        metric::PLANS_APPROVALS_OPENING,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
@@ -186,6 +192,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::GITHUB_CALL,
         span::WS_FANOUT,
         span::HANDOFF,
+        span::PLAN_APPROVE,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,
