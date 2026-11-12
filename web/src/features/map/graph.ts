@@ -16,6 +16,10 @@ export interface GraphNode {
   sessions: SessionState[];
   paint: Paint;
   findings: Finding[];
+  /** Issues with no pin whose open plan names this part (issue #80): planned here. */
+  planned: IssueSummary[];
+  /** Data models open plans introduce or change on this part (ADR 0031). */
+  models: number;
 }
 
 export interface GraphEdge {
@@ -69,6 +73,8 @@ export function buildGraph(ov: Overview): Graph {
     sessions: [],
     paint: null,
     findings: [],
+    planned: [],
+    models: 0,
   }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const edges: GraphEdge[] = seams.map((s) => ({
@@ -96,10 +102,21 @@ export function buildGraph(ov: Overview): Graph {
     if (!plan || !isOpen(issue.progress.state)) {
       continue;
     }
+    for (const m of plan.data_models ?? []) {
+      const node = byId.get(m.part);
+      if (node) {
+        node.models += 1;
+      }
+    }
     for (const part of plan.affected_parts) {
       const node = byId.get(part.node);
       if (node) {
         node.paint = strongerPaint(node.paint, part.status);
+        // Not pinned anywhere: the plan says where it belongs, and its sessions show there.
+        if (issue.pins.length === 0 && part.status !== "quiet") {
+          node.planned.push(issue);
+          node.sessions.push(...(issue.sessions ?? []));
+        }
       }
       for (const seam of part.seams ?? []) {
         const e = edgeById.get(seam);

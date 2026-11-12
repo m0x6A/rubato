@@ -147,6 +147,8 @@ launch      start a session through your own companion           POST /api/launc
 drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
 findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
+plans       proposed and open plans, where they fit, Accept plan  POST /api/plans/approve
+repos       connected repos, sessions not tied to an issue       (none)
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->

@@ -32,6 +32,14 @@ g add -A && g commit -q -m "map"
 g switch -q -c issue/901-lens
 cp e2e/fixtures/901.md "$SEED/docs/plans/901.md"
 g add -A && g commit -q -m "plan for #901"
+# Issue #80: plans of voice-note issues nobody pinned, found by their branch (ADR 0032).
+for n in 914 915; do
+  g switch -q main
+  g switch -q -c "issue/$n-voice"
+  mkdir -p "$SEED/docs/plans"
+  cp "e2e/fixtures/$n.md" "$SEED/docs/plans/$n.md"
+  g add -A && g commit -q -m "plan for #$n"
+done
 g switch -q main
 git clone -q --bare "$SEED" "$TMP/rubato.git"
 
