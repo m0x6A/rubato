@@ -64,7 +64,7 @@ describe("MapView", () => {
     expect(live).toHaveTextContent("Step 7 of 11: rubato-server → web, data:");
     expect(within(steps).getAllByRole("button")[6]).toHaveAttribute("aria-current", "step");
     // Data and control look different without colour: the legend says dot and ring.
-    expect(view.getByTestId("legend")).toHaveTextContent("A filled dot is data moving; a ring is control");
+    expect(view.getByTestId("legend")).toHaveTextContent("data moves control: one side tells the other to act");
     // Another scenario starts at its first step.
     fireEvent.change(within(player).getByRole("combobox", { name: "Scenario" }), { target: { value: "plan-comes-back" } });
     expect(live).toHaveTextContent("Step 1 of 7: system-map → skill-rubato, data:");

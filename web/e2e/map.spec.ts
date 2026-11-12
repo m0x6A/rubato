@@ -233,6 +233,20 @@ test("the data flow lens shows rubato-map.yml's flows with arrowheads", async ({
   await expect(page.getByTestId("node-web")).not.toHaveClass(/dim/);
 });
 
+/** Each part's card lies inside the map canvas and does not touch the band of controls above it. */
+async function expectClear(page: Page, parts: string[]): Promise<void> {
+  await expect(async () => {
+    const band = (await page.getByTestId("map-band").boundingBox())!;
+    const canvas = (await page.locator(".map-canvas").boundingBox())!;
+    for (const id of parts) {
+      const box = (await page.getByTestId(`node-${id}`).boundingBox())!;
+      const overlaps = box.x < band.x + band.width && box.x + box.width > band.x && box.y < band.y + band.height && box.y + box.height > band.y;
+      expect(overlaps, `${id} is under the controls`).toBe(false);
+      expect(box.x >= canvas.x && box.y >= canvas.y && box.x + box.width <= canvas.x + canvas.width && box.y + box.height <= canvas.y + canvas.height, `${id} is inside the canvas`).toBe(true);
+    }
+  }).toPass({ timeout: 3000 });
+}
+
 for (const motion of ["no-preference", "reduce"] as const) {
   test(`play "start a session on an issue" step by step (motion: ${motion})`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: motion });
@@ -255,6 +269,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
     await expect(page.getByTestId("node-rubato-companion")).toHaveClass(/dim/);
     // Moving, or still under reduced motion.
     await expect(pulse.locator("animateMotion")).toHaveCount(motion === "reduce" ? 0 : 1);
+    await expectClear(page, ["web", "rubato-server"]);
 
     // Step 2: the launch goes to the companion; the lit parts follow the step.
     await player.getByRole("button", { name: "Next step" }).click();
@@ -272,6 +287,22 @@ for (const motion of ["no-preference", "reduce"] as const) {
     if (process.env["RUBATO_E2E_SHOTS"] && motion === "no-preference") {
       await page.setViewportSize({ width: 1600, height: 1000 });
       await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/scenario-step.png` });
+    }
+
+    // Nothing covers the step: its two parts are inside the canvas and clear of the band of
+    // controls above it, at every step, even zoomed in so far that the map has to pan.
+    const steps = parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")).scenarios[0].steps as { from: string; to: string }[];
+    const zoomIn = page.locator(".react-flow__controls-zoomin");
+    for (let i = 0; i < 4; i++) {
+      await zoomIn.click();
+    }
+    await player.getByRole("button", { name: "Previous step" }).click();
+    for (let i = 3; i < steps.length; i++) {
+      await expect(caption).toHaveText(new RegExp(`^Step ${i + 1} of 11:`));
+      await expectClear(page, [steps[i]!.from, steps[i]!.to]);
+      if (i < steps.length - 1) {
+        await player.getByRole("button", { name: "Next step" }).click();
+      }
     }
 
     // Back to the structure lens: no pulse, nothing dimmed.
