@@ -78,6 +78,14 @@ See the O-rows.
 | --- | --- | --- | --- |
 | | affected | | |
 
+## Data models
+
+<!-- Every table, wire type, schema, event or file this change introduces, changes or removes, on the part that owns it (ADR 0031). Kind: table | type | schema | event | file. Change: new | changed | removed. Crosses: the seam it travels over, if any. Write "None." instead of the table if there are none. -->
+
+| Model | Kind | Part | Change | Crosses | Note |
+| --- | --- | --- | --- | --- | --- |
+| | | | | | |
+
 ## Data flow
 
 <!-- Mermaid: the data crossing each seam in the table above. -->

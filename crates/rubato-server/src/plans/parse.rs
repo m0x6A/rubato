@@ -3,7 +3,8 @@
 //! shared contract (seam `server-plan-file`).
 
 use rubato_protocol::{
-    AffectedPart, Assumption, AssumptionScope, FlowKind, IssueRef, ORow, PartStatus, Plan, PlanFlow,
+    AffectedPart, Assumption, AssumptionScope, DataModel, DataModelKind, FlowKind, IssueRef,
+    ModelChange, ORow, PartStatus, Plan, PlanFlow,
 };
 use thiserror::Error;
 
@@ -27,6 +28,10 @@ pub enum PlanParseError {
     NoSeparator(&'static str),
     #[error("flows: kind must be data or control, got {0:?}")]
     BadFlowKind(String),
+    #[error("data models: kind must be table, type, schema, event or file, got {0:?}")]
+    BadModelKind(String),
+    #[error("data models: change must be new, changed or removed, got {0:?}")]
+    BadModelChange(String),
 }
 
 struct Frontmatter<'a> {
@@ -262,6 +267,7 @@ pub fn parse_plan(text: &str, path: &str) -> Result<Plan, PlanParseError> {
         o_rows: vec![],
         assumed: vec![],
         flows: vec![],
+        data_models: vec![],
     };
 
     let parts = table_after_heading(fm.body, "affected parts", "affected parts")?
@@ -359,6 +365,41 @@ pub fn parse_plan(text: &str, path: &str) -> Result<Plan, PlanParseError> {
             });
         }
     }
+    if let Some(t) = table_after_heading(fm.body, "data models", "data models")? {
+        let model = require(&t, "data models", "model", &["model"])?;
+        let kind = require(&t, "data models", "kind", &["kind"])?;
+        let part = require(&t, "data models", "part", &["part"])?;
+        let change = require(&t, "data models", "change", &["change"])?;
+        let crosses = column(&t.headers, &["crosses"]);
+        let note = column(&t.headers, &["note"]);
+        for row in &t.rows {
+            let k = match first_word(&cell(row, kind)).as_str() {
+                "table" => DataModelKind::Table,
+                "type" => DataModelKind::Type,
+                "schema" => DataModelKind::Schema,
+                "event" => DataModelKind::Event,
+                "file" => DataModelKind::File,
+                other => return Err(PlanParseError::BadModelKind(other.to_owned())),
+            };
+            let c = match first_word(&cell(row, change)).as_str() {
+                "new" => ModelChange::New,
+                "changed" => ModelChange::Changed,
+                "removed" => ModelChange::Removed,
+                other => return Err(PlanParseError::BadModelChange(other.to_owned())),
+            };
+            plan.data_models.push(DataModel {
+                // Names keep their underscores; only the code ticks go.
+                model: cell(row, model).replace('`', "").trim().to_owned(),
+                kind: k,
+                part: clean_id(&cell(row, part)),
+                change: c,
+                crosses: opt_cell(row, crosses)
+                    .map(|s| clean_id(&s))
+                    .filter(|s| !s.is_empty() && s != "—" && s != "-"),
+                note: opt_cell(row, note),
+            });
+        }
+    }
     Ok(plan)
 }
 
@@ -382,6 +423,50 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan, expected);
+    }
+
+    #[test]
+    fn data_models_fixture_matches_typescript() {
+        let read = |name: &str| {
+            let p = format!("schema/fixtures/plans/{name}");
+            parse_plan(&std::fs::read_to_string(root().join(&p)).unwrap(), &p).unwrap()
+        };
+        let plan = read("data-models.md");
+        let expected: Plan = serde_json::from_str(
+            &std::fs::read_to_string(root().join("schema/fixtures/plans/data-models.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(plan, expected);
+        assert!(plan.models_off_part().is_empty());
+        assert!(plan.models_off_seam().is_empty());
+
+        // "None." and a plan without the section both parse to no models.
+        assert!(read("data-models-none.md").data_models.is_empty());
+        assert!(read("valid.md").data_models.is_empty());
+
+        // The two that must fail, each for its own reason.
+        let names = |ms: Vec<&rubato_protocol::DataModel>| {
+            ms.iter().map(|m| m.model.clone()).collect::<Vec<_>>()
+        };
+        let off_part = read("model-off-part.md");
+        assert_eq!(names(off_part.models_off_part()), ["user_tokens"]);
+        assert!(off_part.models_off_seam().is_empty());
+        let off_seam = read("model-off-seam.md");
+        assert!(off_seam.models_off_part().is_empty());
+        assert_eq!(names(off_seam.models_off_seam()), ["HookEvent"]);
+
+        let path = "schema/fixtures/plans/data-models.md";
+        let text = std::fs::read_to_string(root().join(path)).unwrap();
+        assert_eq!(
+            parse_plan(&text.replace("| table |", "| blob |"), path),
+            Err(PlanParseError::BadModelKind("blob".into()))
+        );
+        assert_eq!(
+            parse_plan(&text.replace("| new |", "| added |"), path),
+            Err(PlanParseError::BadModelChange("added".into()))
+        );
+        println!("checked 5 plan fixtures, 5 data models");
     }
 
     #[test]

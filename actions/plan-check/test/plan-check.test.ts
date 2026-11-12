@@ -107,6 +107,18 @@ describe("parsePlan", () => {
     expect(() => parsePlan(readFileSync(resolve(root, path), "utf8").replace("| data |", "| magic |"), path)).toThrow(/kind must be data or control, got "magic"/);
   });
 
+  it("data models fixture matches Rust (ADR 0031)", () => {
+    // `plans::parse::tests::data_models_fixture_matches_typescript` reads the same files.
+    const path = "schema/fixtures/plans/data-models.md";
+    const text = readFileSync(resolve(root, path), "utf8");
+    const plan = parsePlan(text, path);
+    expect(plan).toEqual(JSON.parse(readFileSync(resolve(fixtures, "data-models.json"), "utf8")));
+    const none = "schema/fixtures/plans/data-models-none.md";
+    expect(parsePlan(readFileSync(resolve(root, none), "utf8"), none).data_models).toBeUndefined();
+    expect(() => parsePlan(text.replace("| table |", "| blob |"), path)).toThrow(/kind must be table, type, schema, event or file, got "blob"/);
+    expect(() => parsePlan(text.replace("| new |", "| added |"), path)).toThrow(/change must be new, changed or removed, got "added"/);
+  });
+
   it("parses the v0 plan's numbered headings and backticked ids", () => {
     const path = "docs/plans/v0.md";
     const plan = parsePlan(readFileSync(resolve(root, path), "utf8"), path);
@@ -171,6 +183,30 @@ describe("check", () => {
     expect(logLine(withFlows)["flows_off_seam"]).toEqual([]);
   });
 
+  it("checks data models and reports how many (ADR 0031)", () => {
+    const r = checkPlanFile(resolve(fixtures, "data-models.md"), map, schemaDir);
+    expect(r, JSON.stringify(logLine(r))).toMatchObject({ ok: true, dataModelsChecked: 3 });
+    expect(logLine(r)["data_models"]).toBe(3);
+    const none = checkPlanFile(resolve(fixtures, "data-models-none.md"), map, schemaDir);
+    expect(none.ok).toBe(true);
+    expect(logLine(none)["data_models"]).toBe(0);
+  });
+
+  it("fails on purpose: a data model on a part the plan does not name", () => {
+    const r = checkPlanFile(resolve(fixtures, "model-off-part.md"), map, schemaDir);
+    expect(r.ok).toBe(false);
+    expect(r.unknownIds).toEqual([]);
+    expect(r.modelsOffPart).toEqual(["user_tokens on rubato-server"]);
+    expect(logLine(r)["models_off_part"]).toEqual(["user_tokens on rubato-server"]);
+  });
+
+  it("fails on purpose: a data model crossing a seam the plan does not touch", () => {
+    const r = checkPlanFile(resolve(fixtures, "model-off-seam.md"), map, schemaDir);
+    expect(r.ok).toBe(false);
+    expect(r.modelsOffPart).toEqual([]);
+    expect(r.modelsOffSeam).toEqual(["HookEvent over companion-server"]);
+  });
+
   it("fails on purpose: unknown node", () => {
     const r = checkPlanFile(resolve(fixtures, "unknown-node.md"), map, schemaDir);
     expect(r.ok).toBe(false);
@@ -191,7 +227,7 @@ describe("check", () => {
   });
 
   it("passes every plan in this repo (dogfood)", () => {
-    for (const f of ["docs/plans/v0.md", "docs/plans/1.md"]) {
+    for (const f of ["docs/plans/v0.md", "docs/plans/1.md", "docs/plans/80.md"]) {
       const r = checkPlanFile(resolve(root, f), map, schemaDir);
       expect(r, JSON.stringify(logLine(r))).toMatchObject({ ok: true });
     }

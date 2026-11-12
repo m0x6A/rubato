@@ -73,12 +73,14 @@ export function main(argv: string[]): number {
   let failed = 0;
   let ids = 0;
   let flows = 0;
+  let models = 0;
   let legacy = 0;
   let legacyPlans = 0;
   for (const f of files) {
     const r = checkPlanFile(f, map, args.schemaDir);
     ids += r.idsChecked;
     flows += r.flowsChecked;
+    models += r.dataModelsChecked;
     legacy += r.legacyKeys.length;
     legacyPlans += r.legacyKeys.length > 0 ? 1 : 0;
     if (!r.ok) {
@@ -86,7 +88,7 @@ export function main(argv: string[]): number {
     }
     console.log(JSON.stringify(logLine(r)));
   }
-  console.log(`plan-check: checked ${files.length} plan(s), ${ids} id(s) and ${flows} flow(s) against ${map.nodes.length} nodes and ${(map.seams ?? []).length} seams in ${args.map}; ${legacy} legacy front-matter key(s) in ${legacyPlans} plan(s), not failed; ${failed} failed`);
+  console.log(`plan-check: checked ${files.length} plan(s), ${ids} id(s), ${flows} flow(s) and ${models} data model(s) against ${map.nodes.length} nodes and ${(map.seams ?? []).length} seams in ${args.map}; ${legacy} legacy front-matter key(s) in ${legacyPlans} plan(s), not failed; ${failed} failed`);
   return failed === 0 ? 0 : 1;
 }
 

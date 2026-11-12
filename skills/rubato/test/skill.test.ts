@@ -140,9 +140,10 @@ describe("plan.ts", () => {
 
     // The skeleton has an empty row; a filled plan passes.
     const file = join(a, pathA);
+    const oRowHead = "| Seam | Breaks like | Signal | Panel | Owner |\n| --- | --- | --- | --- | --- |\n";
     const filled = readFileSync(file, "utf8")
       .replace("| | affected | | |", "| rubato-companion | affected | forwards a field | companion-server |")
-      .replace("| | | | | |", "| companion-server | server drops it | counter `rubato.events.dropped` | Companions | rubato-server |");
+      .replace(`${oRowHead}| | | | | |`, `${oRowHead}| companion-server | server drops it | counter \`rubato.events.dropped\` | Companions | rubato-server |`);
     writeFileSync(file, filled);
     const r = await check(ws, a); // path derived from the issue branch
     expect(r.ok, JSON.stringify(r.line)).toBe(true);
@@ -185,6 +186,9 @@ describe("plan.ts", () => {
     expect(headings.slice(0, 4)).toEqual([...SPEC_HEADINGS]);
     // The spec headings come before the tables the check reads.
     expect(headings.indexOf("Affected parts")).toBeGreaterThan(3);
+    // ADR 0031: the Data models table follows Affected parts, and an unfilled one parses to none.
+    expect(headings[headings.indexOf("Affected parts") + 1]).toBe("Data models");
+    expect(text).toContain("| Model | Kind | Part | Change | Crosses | Note |");
   });
 
   it("refuses to overwrite an existing plan", async () => {

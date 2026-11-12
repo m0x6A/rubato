@@ -134,6 +134,8 @@ kind: "seam"
 export type ApprovalVersion = ("current" | "earlier" | "not_named" | "no_plan")
 export type PartStatus = ("affected" | "new" | "quiet")
 export type AssumptionScope = ("node" | "seam")
+export type ModelChange = ("new" | "changed" | "removed")
+export type DataModelKind = ("table" | "type" | "schema" | "event" | "file")
 export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
 export type ChecksStatus = (("green" | "red" | "pending") | "none")
 /**
@@ -570,6 +572,11 @@ affected_parts: AffectedPart[]
 assumed?: Assumption[]
 attempt_limit?: (number | null)
 /**
+ * The tables, types, schemas, events and files the change introduces, changes or removes,
+ * from its `## Data models` table (ADR 0031). Optional; empty when absent or "None."
+ */
+data_models?: DataModel[]
+/**
  * What the plan will send across seams, from its `## Flows` table (ADR 0021). Optional.
  */
 flows?: PlanFlow[]
@@ -613,6 +620,27 @@ chosen: string
 decision: string
 id: string
 scope: AssumptionScope
+}
+/**
+ * One row of the plan's Data models table (ADR 0031): a model on the part that owns it, and the
+ * seam it travels over, if any.
+ */
+export interface DataModel {
+change: ModelChange
+/**
+ * Seam id the model crosses. Must be touched in Affected parts.
+ */
+crosses?: (string | null)
+kind: DataModelKind
+/**
+ * The model's name or names, as written, backticks removed.
+ */
+model: string
+note?: (string | null)
+/**
+ * Node id of the part that owns the model. Must be in Affected parts.
+ */
+part: string
 }
 /**
  * One row of the plan's Flows table: something the change sends from one part to another over

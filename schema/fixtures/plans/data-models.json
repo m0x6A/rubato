@@ -1,0 +1,24 @@
+{
+  "issue": { "repo": "m0x6A/rubato", "number": 80 },
+  "title": "Fixture plan with a Data models table",
+  "path": "schema/fixtures/plans/data-models.md",
+  "affected_parts": [
+    { "node": "rubato-protocol", "status": "affected", "change": "one more type", "seams": ["web-server"] },
+    { "node": "rubato-server", "status": "affected", "change": "one more table", "seams": ["web-server"] },
+    { "node": "web", "status": "affected", "change": "shows it", "seams": ["web-server"] }
+  ],
+  "o_rows": [
+    {
+      "seam": "web-server",
+      "breaks_like": "the type is missing",
+      "signal": "counter `rubato.web.rejected`",
+      "panel": "Web writes rejected",
+      "owner": "rubato-server"
+    }
+  ],
+  "data_models": [
+    { "model": "user_tokens", "kind": "table", "part": "rubato-server", "change": "new", "note": "encrypted, owned by `auth`" },
+    { "model": "PlanFit, FitReason", "kind": "type", "part": "rubato-protocol", "change": "new", "crosses": "web-server", "note": "per issue" },
+    { "model": "Plan.old_field", "kind": "type", "part": "rubato-protocol", "change": "removed" }
+  ]
+}
