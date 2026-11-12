@@ -204,7 +204,9 @@ pub mod capture {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex, Once};
     use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
     use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
 
     #[derive(Debug, Clone)]
     pub struct Captured {
@@ -218,6 +220,8 @@ pub mod capture {
     thread_local! {
         /// Where this thread's events go while a guard lives.
         static SINK: RefCell<Option<Events>> = const { RefCell::new(None) };
+        /// Where this thread's spans go while a span guard lives.
+        static SPAN_SINK: RefCell<Option<Events>> = const { RefCell::new(None) };
     }
 
     struct Layer;
@@ -253,7 +257,10 @@ pub mod capture {
         }
     }
 
-    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
+    impl<S> tracing_subscriber::Layer<S> for Layer
+    where
+        S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    {
         fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
             let Some(sink) = SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
                 return;
@@ -266,6 +273,48 @@ pub mod capture {
             event.record(&mut Visitor(&mut c));
             sink.lock().unwrap().push(c);
         }
+
+        fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+            let Some(sink) = SPAN_SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
+                return;
+            };
+            let mut c = Captured {
+                level: *attrs.metadata().level(),
+                message: attrs.metadata().name().to_owned(),
+                fields: BTreeMap::new(),
+            };
+            attrs.record(&mut Visitor(&mut c));
+            let index = {
+                let mut spans = sink.lock().unwrap();
+                spans.push(c);
+                spans.len() - 1
+            };
+            if let Some(span) = ctx.span(id) {
+                span.extensions_mut().insert(SpanSlot(sink, index));
+            }
+        }
+
+        fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
+            let Some(span) = ctx.span(id) else { return };
+            let ext = span.extensions();
+            if let Some(SpanSlot(sink, index)) = ext.get::<SpanSlot>() {
+                values.record(&mut Visitor(&mut sink.lock().unwrap()[*index]));
+            }
+        }
+    }
+
+    /// Where a captured span's later `record` calls land: its sink and its index there.
+    struct SpanSlot(Events, usize);
+
+    fn install() {
+        static GLOBAL: Once = Once::new();
+        GLOBAL.call_once(|| {
+            tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Layer))
+                .expect("the capture subscriber is the only global subscriber in unit tests");
+            // A callsite first reached while the subscriber was being installed may have
+            // cached "nobody listens"; ask again now that it is in place.
+            tracing::callsite::rebuild_interest_cache();
+        });
     }
 
     /// Capture this thread's events until the guard drops. Use from a plain test or a
@@ -277,16 +326,29 @@ pub mod capture {
     /// other test threads a line could be cached as "nobody listens" (seen in CI on
     /// `refusals_are_counted_by_route_and_reason`).
     pub fn start() -> (Events, Guard) {
-        static GLOBAL: Once = Once::new();
-        GLOBAL.call_once(|| {
-            tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Layer))
-                .expect("the capture subscriber is the only global subscriber in unit tests");
-            // A callsite first reached while the subscriber was being installed may have
-            // cached "nobody listens"; ask again now that it is in place.
-            tracing::callsite::rebuild_interest_cache();
-        });
+        install();
         let events: Events = Arc::default();
         let before = SINK.with(|s| s.borrow_mut().replace(events.clone()));
         (events, Guard(before))
+    }
+
+    /// Capture the spans opened on this thread until the guard drops: one `Captured` per span,
+    /// its name in `message`, its fields as opened plus every later `record` (from any thread).
+    /// Kept apart from `start` so tests that count events see no spans.
+    pub fn spans() -> (Events, SpanGuard) {
+        install();
+        let spans: Events = Arc::default();
+        let before = SPAN_SINK.with(|s| s.borrow_mut().replace(spans.clone()));
+        (spans, SpanGuard(before))
+    }
+
+    /// Stops the span capture on this thread when dropped.
+    pub struct SpanGuard(Option<Events>);
+
+    impl Drop for SpanGuard {
+        fn drop(&mut self) {
+            let before = self.0.take();
+            let _ = SPAN_SINK.try_with(|s| *s.borrow_mut() = before);
+        }
     }
 }
