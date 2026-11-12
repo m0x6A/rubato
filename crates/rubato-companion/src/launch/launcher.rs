@@ -6,9 +6,9 @@ use super::apply::LiveSession;
 use super::script::launcher_script;
 use crate::hooks::{HOOKS_TEMPLATE, render_hooks};
 use crate::kernel::config::{HookEndpoint, Workspace, write_private};
-use crate::kernel::gitx;
 use crate::kernel::tmux::{Tmux, session_name};
 use crate::kernel::tmux_ide::{TmuxIde, version_at_least};
+use crate::kernel::{gitx, proc};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rubato_protocol::{LaunchCommand, LaunchResult, RefusalReason};
@@ -101,6 +101,17 @@ impl Launcher {
                     None,
                 );
             }
+            // A hung tmux-ide is not a missing one (plan 40 S4, A2).
+            Err(e) if proc::is_timeout(&e) => {
+                return (
+                    LaunchResult::Failed {
+                        command_id: cmd.id,
+                        error: format!("tmux-ide version check: {e:#}"),
+                        at: Utc::now(),
+                    },
+                    None,
+                );
+            }
             Err(e) => {
                 return (
                     refused(
@@ -139,7 +150,8 @@ impl Launcher {
             .workspace
             .repo(&cmd.issue.repo)
             .with_context(|| format!("{} is not in workspace.yml repos", cmd.issue.repo))?;
-        gitx::fetch(&repo.local).context("git fetch")?;
+        gitx::fetch(&repo.local, self.workspace.companion.command_timeout())
+            .context("git fetch")?;
         let worktree = match gitx::worktrees(&repo.local)?
             .into_iter()
             .find(|(_, b)| b.as_deref() == Some(cmd.branch.as_str()))
@@ -165,7 +177,7 @@ impl Launcher {
             launcher_script(&self.workspace, cmd, &worktree, &hooks_path, &prompt_path),
         )?;
         let name = session_name(&cmd.issue.repo, &cmd.branch);
-        if self.tmux.has_session(&name) {
+        if self.tmux.has_session(&name)? {
             anyhow::bail!("tmux session {name} already exists");
         }
         let pane_id = self

@@ -1,16 +1,20 @@
 //! git as a CLI: worktrees, branches, origin. Identity comes from the branch (ADR 0006).
 
-use anyhow::{Context, Result, bail};
+use crate::kernel::proc;
+use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
+/// A local git call, bounded by [`proc::LOCAL_TIMEOUT`].
 pub fn git(cwd: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(args)
-        .output()
-        .with_context(|| format!("running git {}", args.join(" ")))?;
+    git_within(cwd, args, proc::LOCAL_TIMEOUT)
+}
+
+pub fn git_within(cwd: &Path, args: &[&str], timeout: Duration) -> Result<String> {
+    let mut c = Command::new("git");
+    c.arg("-C").arg(cwd).args(args).current_dir(cwd);
+    let out = proc::output(c, &format!("git {}", args.join(" ")), timeout)?;
     if !out.status.success() {
         bail!(
             "git {} in {} failed: {}",
@@ -83,8 +87,9 @@ pub fn worktrees(repo: &Path) -> Result<Vec<(PathBuf, Option<String>)>> {
     Ok(list)
 }
 
-pub fn fetch(repo: &Path) -> Result<()> {
-    git(repo, &["fetch", "--quiet", "origin"]).map(|_| ())
+/// Network: bounded by `companion.command_timeout_secs` (plan 40 S3).
+pub fn fetch(repo: &Path, timeout: Duration) -> Result<()> {
+    git_within(repo, &["fetch", "--quiet", "origin"], timeout).map(|_| ())
 }
 
 #[cfg(test)]
