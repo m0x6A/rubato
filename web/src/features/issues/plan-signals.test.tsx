@@ -60,6 +60,16 @@ describe("review and approval on the issue (ADR 0027)", () => {
     expect(within(row).queryByText("approved")).toBeNull();
   });
 
+  it("says an approval of a plan that does not fit is not counted (ADR 0029)", () => {
+    show({ approval: approval("does_not_fit") }, true);
+    const line = screen.getByTestId("plan-approval");
+    expect(line).toHaveTextContent("approved — doesn't fit, not counted");
+    expect(line).toHaveTextContent("the plan does not fit the map");
+    expect(within(line).getByText("approved — doesn't fit, not counted")).toHaveClass("approval-stale");
+    expect(findingText({ kind: "approved_without_fit", issue: ref })).toContain("does not count");
+    expect(findingText({ kind: "unattributed_session", companion: "00000000-0000-0000-0000-000000000000", branch: "main", repo: "m0x6A/rubato" })).toBe("a session in m0x6A/rubato on branch main is not tied to an issue; name its branch issue/<n>-…");
+  });
+
   it("explains the finding", () => {
     expect(findingText({ kind: "approval_stale", issue: ref, approved_sha: "c438e006b75b", current_sha: "f3c5e84f2bf8" })).toBe("m0x6A/rubato#71: the plan changed after it was approved (approved c438e00, now f3c5e84)");
   });

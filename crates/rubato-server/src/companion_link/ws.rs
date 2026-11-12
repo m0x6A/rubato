@@ -238,7 +238,11 @@ async fn on_envelope(
                 tracing::info!(rubato.session_id = %h.session_id, rubato.hook_event = ?h.hook_event_name, "hook");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
-            CompanionMessage::Sessions { sessions } => {
+            CompanionMessage::Sessions { mut sessions } => {
+                if let Some(map) = app.map.read().await.as_ref() {
+                    let named: Vec<&str> = map.map.repos_named().into_iter().collect();
+                    canonicalise_repos(&mut sessions, &named);
+                }
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
@@ -287,6 +291,28 @@ async fn on_envelope(
 /// `rubato.sessions.by_state` for one companion's snapshot: every status, zero included. A
 /// gauge keeps its last value, so without the zero a session that stops working would leave
 /// `working` at 1 and `SessionWorkingNoHooks` would page on every finished turn.
+/// A remote may spell a repo differently from the map (`M0x6A/Rubato`). Each session's repo,
+/// and the repo of its issue, take the map's spelling when they match it without case, so the
+/// session joins the pinned issue and no stored row changes spelling (design 80 §5).
+pub fn canonicalise_repos(sessions: &mut [SessionState], named: &[&str]) {
+    for s in sessions {
+        let Some(repo) = s.repo.clone() else { continue };
+        let Some(canonical) = named
+            .iter()
+            .find(|n| n.eq_ignore_ascii_case(&repo) && **n != repo)
+        else {
+            continue;
+        };
+        tracing::info!(from = %repo, to = %canonical, "repo canonicalised");
+        s.repo = Some((*canonical).to_owned());
+        if let Some(issue) = &mut s.issue
+            && issue.repo.eq_ignore_ascii_case(canonical)
+        {
+            issue.repo = (*canonical).to_owned();
+        }
+    }
+}
+
 fn record_sessions_by_state(metrics: &Metrics, companion_id: Uuid, sessions: &[SessionState]) {
     for status in SessionStatus::ALL {
         let n = sessions.iter().filter(|s| s.status == status).count();
@@ -342,8 +368,27 @@ async fn settle_queue(
 mod tests {
     use super::*;
     use crate::kernel::telemetry::{capture, metric_reader};
-    use rubato_protocol::StateSource;
     use rubato_protocol::otel::metric;
+    use rubato_protocol::{IssueRef, StateSource};
+
+    #[test]
+    fn a_remote_spelled_differently_takes_the_maps_spelling() {
+        let mut s = session(Uuid::nil(), SessionStatus::Working);
+        s.repo = Some("M0x6A/Rubato".into());
+        s.issue = Some(IssueRef::new("M0x6A/Rubato", 5));
+        let mut other = session(Uuid::nil(), SessionStatus::Working);
+        other.repo = Some("someone/else".into());
+        other.issue = None;
+        let mut all = vec![s, other];
+        canonicalise_repos(&mut all, &["m0x6A/rubato"]);
+        assert_eq!(all[0].repo.as_deref(), Some("m0x6A/rubato"));
+        assert_eq!(all[0].issue, Some(IssueRef::new("m0x6A/rubato", 5)));
+        assert_eq!(
+            all[1].repo.as_deref(),
+            Some("someone/else"),
+            "not in the map: unchanged"
+        );
+    }
 
     fn session(companion_id: Uuid, status: SessionStatus) -> SessionState {
         SessionState {

@@ -47,6 +47,8 @@ export function approvalLabel(a: ApprovalState): string {
       return "approved, version not named";
     case "no_plan":
       return a.record.branch ? `approved, no plan on ${a.record.branch}` : "approved, no plan to compare";
+    case "does_not_fit":
+      return "approved — doesn't fit, not counted";
   }
 }
 

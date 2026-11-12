@@ -58,6 +58,13 @@
         "$ref": "#/$defs/QueuedIssue"
       }
     },
+    "repos": {
+      "description": "One row per repo the map names, plus repos of tracked work outside the map.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConnectedRepo"
+      }
+    },
     "unpinned_sessions": {
       "description": "Sessions not attached to any issue (branch outside the convention).",
       "type": "array",
@@ -199,6 +206,11 @@
           "description": "No plan file to compare with on that branch.",
           "type": "string",
           "const": "no_plan"
+        },
+        {
+          "description": "The approval names the plan as it is now, but the plan does not fit the map, so the\napproval does not count (ADR 0029, finding `ApprovedWithoutFit`).",
+          "type": "string",
+          "const": "does_not_fit"
         }
       ]
     },
@@ -313,6 +325,56 @@
           "type": "string",
           "const": "none"
         }
+      ]
+    },
+    "ConnectedRepo": {
+      "description": "One repo the map names, and what Rubato sees of it: whether the App covers it, and its open\nissues, plans and sessions. A repo outside the map with tracked work appears with\n`in_map: false`.",
+      "type": "object",
+      "properties": {
+        "covered": {
+          "description": "The App installation covers it (ADR 0022). False also when coverage is not known yet.",
+          "type": "boolean"
+        },
+        "in_map": {
+          "type": "boolean"
+        },
+        "open_issues": {
+          "description": "Open issues in the latest listing.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "plans": {
+          "description": "Tracked issues with a plan file.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "`owner/name`, in the map's spelling.",
+          "type": "string"
+        },
+        "sessions": {
+          "description": "Live sessions tied to an issue of this repo.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "unattributed": {
+          "description": "Live sessions in this repo with no issue.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "repo",
+        "in_map",
+        "covered",
+        "open_issues",
+        "plans",
+        "sessions",
+        "unattributed"
       ]
     },
     "DataModel": {
@@ -728,6 +790,179 @@
             "approved_sha",
             "current_sha"
           ]
+        },
+        {
+          "description": "An approval names the current plan, but the plan does not fit the map, so it does not\ncount (ADR 0029).",
+          "type": "object",
+          "properties": {
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "approved_without_fit"
+            }
+          },
+          "required": [
+            "kind",
+            "issue"
+          ]
+        },
+        {
+          "description": "A live session Rubato cannot tie to an issue: its branch is not `issue/<n>-…`, or its\nrepo is unknown.",
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "companion": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unattributed_session"
+            },
+            "repo": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "companion"
+          ]
+        }
+      ]
+    },
+    "FitReason": {
+      "description": "Why a plan does not fit the map (ADR 0029). Each one alone makes `PlanFit::fits` false.",
+      "oneOf": [
+        {
+          "description": "The plan file does not parse.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "parse_error"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ]
+        },
+        {
+          "description": "Node or seam ids the map does not declare.",
+          "type": "object",
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknown_ids"
+            }
+          },
+          "required": [
+            "kind",
+            "ids"
+          ]
+        },
+        {
+          "description": "A flow's seam does not join the flow's two parts.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "flow_off_seam"
+            },
+            "seam": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "from",
+            "to",
+            "seam"
+          ]
+        },
+        {
+          "description": "A seam in Affected parts with no O-row.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "missing_o_row"
+            },
+            "seam": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "seam"
+          ]
+        },
+        {
+          "description": "A data model on a part that is not a row of Affected parts (ADR 0031).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "model_off_part"
+            },
+            "model": {
+              "type": "string"
+            },
+            "part": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "model",
+            "part"
+          ]
+        },
+        {
+          "description": "A data model crossing a seam no row of Affected parts touches (ADR 0031).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "model_off_seam"
+            },
+            "model": {
+              "type": "string"
+            },
+            "seam": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "model",
+            "seam"
+          ]
         }
       ]
     },
@@ -804,6 +1039,17 @@
           "items": {
             "$ref": "#/$defs/DecisionRecord"
           }
+        },
+        "fit": {
+          "description": "Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanFit"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "issue": {
           "$ref": "#/$defs/IssueRef"
@@ -1291,6 +1537,24 @@
         "issue",
         "path",
         "affected_parts"
+      ]
+    },
+    "PlanFit": {
+      "description": "Where a plan fits the map, and whether it does (ADR 0029). An approval counts only while\n`fits` is true.",
+      "type": "object",
+      "properties": {
+        "fits": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FitReason"
+          }
+        }
+      },
+      "required": [
+        "fits"
       ]
     },
     "PlanFlow": {

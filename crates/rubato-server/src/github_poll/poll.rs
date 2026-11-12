@@ -97,6 +97,15 @@ pub async fn read_meta(
     })
 }
 
+/// Which of several branches of one issue a caller already knows to prefer (ADR 0032).
+#[derive(Debug, Clone, Default)]
+pub struct BranchPrefs {
+    /// The branch the newest `Approved:` names.
+    pub approved: Option<String>,
+    /// The branch the stored plan was read from.
+    pub stored: Option<String>,
+}
+
 /// The listings of one tick, per repo, made on first use and shared by that repo's issues. A
 /// failed listing is kept too, so it is not retried within the tick.
 #[derive(Default)]
@@ -112,8 +121,17 @@ impl RepoView {
         self.branches.len().max(self.pulls.len())
     }
 
-    /// The branch `issue/<n>-<slug>` for this issue, with its head, if one exists.
-    pub async fn branch(&mut self, app: &App, issue: &IssueRef) -> Result<Option<BranchHead>> {
+    /// The branch `issue/<n>-<slug>` the plan is read from, with its head, if one exists. With
+    /// several (a stack), in order (ADR 0032): the branch the newest `Approved:` names; the
+    /// branch whose open pull request merges into a branch outside `issue/` (the bottom of the
+    /// stack, into the default branch); the branch the stored plan was read from; the first by
+    /// name.
+    pub async fn branch(
+        &mut self,
+        app: &App,
+        issue: &IssueRef,
+        prefer: &BranchPrefs,
+    ) -> Result<Option<BranchHead>> {
         if !self.branches.contains_key(&issue.repo) {
             let listed = app
                 .github
@@ -122,13 +140,48 @@ impl RepoView {
                 .map_err(|e| format!("{e:#}"));
             self.branches.insert(issue.repo.clone(), listed);
         }
-        match &self.branches[&issue.repo] {
-            Ok(heads) => Ok(heads
+        let candidates: Vec<BranchHead> = match &self.branches[&issue.repo] {
+            Ok(heads) => heads
                 .iter()
-                .find(|b| IssueRef::number_from_branch(&b.name) == Some(issue.number))
-                .cloned()),
-            Err(e) => Err(anyhow!("branch listing failed: {e}")),
+                .filter(|b| IssueRef::number_from_branch(&b.name) == Some(issue.number))
+                .cloned()
+                .collect(),
+            Err(e) => return Err(anyhow!("branch listing failed: {e}")),
+        };
+        if candidates.len() <= 1 {
+            return Ok(candidates.into_iter().next());
         }
+        let named = |name: Option<&str>| {
+            name.and_then(|n| candidates.iter().find(|b| b.name == n).cloned())
+        };
+        if let Some(b) = named(prefer.approved.as_deref()) {
+            return Ok(Some(b));
+        }
+        for b in &candidates {
+            if let Some(Some(pr)) = self.open_pull(app, &issue.repo, &b.name).await
+                && pr
+                    .base
+                    .as_deref()
+                    .is_some_and(|base| !base.starts_with("issue/"))
+            {
+                return Ok(Some(b.clone()));
+            }
+        }
+        Ok(named(prefer.stored.as_deref()).or_else(|| candidates.into_iter().next()))
+    }
+
+    /// The `issue/` branches of every listed repo, read on first use (one listing per repo per
+    /// tick, shared with [`Self::branch`]).
+    pub async fn heads(&mut self, app: &App, repo: &str) -> Vec<BranchHead> {
+        if !self.branches.contains_key(repo) {
+            let listed = app
+                .github
+                .branches(repo, "issue/")
+                .await
+                .map_err(|e| format!("{e:#}"));
+            self.branches.insert(repo.to_owned(), listed);
+        }
+        self.branches[repo].clone().unwrap_or_default()
     }
 
     /// `Some(pr)` when the open listing has a pull request from `branch`, `Some(None)` when the

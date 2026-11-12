@@ -93,6 +93,11 @@ pub mod metric {
     pub const ISSUES_CREATED: &str = "rubato.issues.created";
     /// Creations sent and not yet confirmed, recorded every poll tick.
     pub const ISSUES_OPENING: &str = "rubato.issues.opening";
+    /// GitHub REST calls made, one per page, by `rubato.github.endpoint` (ADR 0032). The
+    /// budget is checked against this, not against the rate-limit gauge alone.
+    pub const GITHUB_CALLS: &str = "rubato.github.calls";
+    /// Tracked issues whose plan does not fit the map (ADR 0029), recorded every poll tick.
+    pub const PLANS_NOT_FITTING: &str = "rubato.plans.not_fitting";
 }
 
 /// Span names.
@@ -172,6 +177,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::BACKLOG_MAP_LINES,
         metric::ISSUES_CREATED,
         metric::ISSUES_OPENING,
+        metric::GITHUB_CALLS,
+        metric::PLANS_NOT_FITTING,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

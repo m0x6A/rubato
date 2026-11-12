@@ -269,3 +269,231 @@ mod tests {
         );
     }
 }
+
+/// Why a plan does not fit the map (ADR 0029). Each one alone makes `PlanFit::fits` false.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FitReason {
+    /// The plan file does not parse.
+    ParseError { message: String },
+    /// Node or seam ids the map does not declare.
+    UnknownIds { ids: Vec<String> },
+    /// A flow's seam does not join the flow's two parts.
+    FlowOffSeam {
+        from: String,
+        to: String,
+        seam: String,
+    },
+    /// A seam in Affected parts with no O-row.
+    MissingORow { seam: String },
+    /// A data model on a part that is not a row of Affected parts (ADR 0031).
+    ModelOffPart { model: String, part: String },
+    /// A data model crossing a seam no row of Affected parts touches (ADR 0031).
+    ModelOffSeam { model: String, seam: String },
+}
+
+/// Where a plan fits the map, and whether it does (ADR 0029). An approval counts only while
+/// `fits` is true.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanFit {
+    pub fits: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<FitReason>,
+}
+
+/// The fit of a plan as read, or of a plan file that did not parse (ADR 0029). Pure: the server
+/// and the web read the same answer. `None` when there is neither a plan nor a parse error.
+pub fn plan_fit(
+    plan: Option<&Plan>,
+    parse_error: Option<&str>,
+    map: &crate::map::SystemMap,
+) -> Option<PlanFit> {
+    let mut reasons = Vec::new();
+    match (plan, parse_error) {
+        (_, Some(message)) => reasons.push(FitReason::ParseError {
+            message: message.to_owned(),
+        }),
+        (Some(plan), None) => {
+            let unknown = plan.unknown_ids(map);
+            if !unknown.is_empty() {
+                reasons.push(FitReason::UnknownIds {
+                    ids: unknown.into_iter().map(str::to_owned).collect(),
+                });
+            }
+            reasons.extend(
+                plan.flows_off_seam(map)
+                    .into_iter()
+                    .map(|f| FitReason::FlowOffSeam {
+                        from: f.from.clone(),
+                        to: f.to.clone(),
+                        seam: f.seam.clone(),
+                    }),
+            );
+            reasons.extend(
+                plan.seams_without_o_row()
+                    .into_iter()
+                    .map(|s| FitReason::MissingORow { seam: s.to_owned() }),
+            );
+            reasons.extend(
+                plan.models_off_part()
+                    .into_iter()
+                    .map(|m| FitReason::ModelOffPart {
+                        model: m.model.clone(),
+                        part: m.part.clone(),
+                    }),
+            );
+            reasons.extend(
+                plan.models_off_seam()
+                    .into_iter()
+                    .map(|m| FitReason::ModelOffSeam {
+                        model: m.model.clone(),
+                        seam: m.crosses.clone().unwrap_or_default(),
+                    }),
+            );
+        }
+        (None, None) => return None,
+    }
+    Some(PlanFit {
+        fits: reasons.is_empty(),
+        reasons,
+    })
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::*;
+    use crate::map::SystemMap;
+
+    fn map() -> SystemMap {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        serde_yaml_ng::from_str(
+            &std::fs::read_to_string(root.join("docs/design/rubato-map.yml")).unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn plan() -> Plan {
+        Plan {
+            issue: IssueRef::new("m0x6A/rubato", 80),
+            title: None,
+            path: "docs/plans/80.md".into(),
+            git_ref: None,
+            spend_cap_usd: None,
+            attempt_limit: None,
+            affected_parts: vec![
+                AffectedPart {
+                    node: "rubato-server".into(),
+                    status: PartStatus::Affected,
+                    change: "x".into(),
+                    seams: vec!["web-server".into()],
+                },
+                AffectedPart {
+                    node: "web".into(),
+                    status: PartStatus::Affected,
+                    change: "y".into(),
+                    seams: vec!["web-server".into()],
+                },
+            ],
+            o_rows: vec![ORow {
+                seam: "web-server".into(),
+                breaks_like: None,
+                signal: "s".into(),
+                panel: "p".into(),
+                owner: "rubato-server".into(),
+            }],
+            assumed: vec![],
+            flows: vec![PlanFlow {
+                from: "rubato-server".into(),
+                to: "web".into(),
+                seam: "web-server".into(),
+                kind: FlowKind::Data,
+                carries: "c".into(),
+            }],
+            data_models: vec![DataModel {
+                model: "user_tokens".into(),
+                kind: DataModelKind::Table,
+                part: "rubato-server".into(),
+                change: ModelChange::New,
+                crosses: Some("web-server".into()),
+                note: None,
+            }],
+        }
+    }
+
+    fn reasons(p: &Plan) -> Vec<FitReason> {
+        plan_fit(Some(p), None, &map()).unwrap().reasons
+    }
+
+    #[test]
+    fn a_plan_that_names_the_map_fits() {
+        let fit = plan_fit(Some(&plan()), None, &map()).unwrap();
+        assert!(fit.fits, "{:?}", fit.reasons);
+        assert_eq!(plan_fit(None, None, &map()), None);
+    }
+
+    #[test]
+    fn each_reason_on_its_own() {
+        let mut checked = 0;
+        let fit = plan_fit(Some(&plan()), Some("bad table"), &map()).unwrap();
+        assert!(!fit.fits);
+        assert_eq!(
+            fit.reasons,
+            [FitReason::ParseError {
+                message: "bad table".into()
+            }]
+        );
+        checked += 1;
+
+        let mut p = plan();
+        p.affected_parts[1].node = "web-nowhere".into();
+        assert!(
+            matches!(&reasons(&p)[0], FitReason::UnknownIds { ids } if ids == &["web-nowhere"])
+        );
+        checked += 1;
+
+        let mut p = plan();
+        p.flows[0].to = "github".into();
+        assert_eq!(
+            reasons(&p),
+            [FitReason::FlowOffSeam {
+                from: "rubato-server".into(),
+                to: "github".into(),
+                seam: "web-server".into()
+            }]
+        );
+        checked += 1;
+
+        let mut p = plan();
+        p.o_rows.clear();
+        assert_eq!(
+            reasons(&p),
+            [FitReason::MissingORow {
+                seam: "web-server".into()
+            }]
+        );
+        checked += 1;
+
+        let mut p = plan();
+        p.data_models[0].part = "rubato-companion".into();
+        assert_eq!(
+            reasons(&p),
+            [FitReason::ModelOffPart {
+                model: "user_tokens".into(),
+                part: "rubato-companion".into()
+            }]
+        );
+        checked += 1;
+
+        let mut p = plan();
+        p.data_models[0].crosses = Some("server-github".into());
+        assert_eq!(
+            reasons(&p),
+            [FitReason::ModelOffSeam {
+                model: "user_tokens".into(),
+                seam: "server-github".into()
+            }]
+        );
+        checked += 1;
+        println!("checked {checked} fit reasons");
+    }
+}

@@ -94,8 +94,8 @@ impl GitHubApi for FakeGitHub {
 
     async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>> {
         let mut g = self.inner.lock().unwrap();
-        g.calls.push(("branches", format!("{repo} {prefix}")));
-        Ok(g.branches
+        let heads: Vec<BranchHead> = g
+            .branches
             .get(repo)
             .map(|b| {
                 b.iter()
@@ -106,7 +106,12 @@ impl GitHubApi for FakeGitHub {
                     })
                     .collect()
             })
-            .unwrap_or_default())
+            .unwrap_or_default();
+        // One call per page of 100 matching refs, as `git/matching-refs` pages (ADR 0032).
+        for _ in 0..heads.len().div_ceil(100).max(1) {
+            g.calls.push(("branches", format!("{repo} {prefix}")));
+        }
+        Ok(heads)
     }
 
     async fn open_pulls(&self, repo: &str) -> Result<OpenPulls> {
@@ -249,6 +254,7 @@ impl GitHubApi for FakeGitHub {
                 merged_at: None,
                 updated_at: chrono::Utc::now(),
                 url: url.clone(),
+                base: None,
             },
         );
         if g.pull_times_out {

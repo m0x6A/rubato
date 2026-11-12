@@ -383,6 +383,7 @@ async fn protocol_fixtures_replay_derives_progress() {
                 merged_at: None,
                 updated_at: chrono::Utc::now(),
                 url: "pr".into(),
+                base: None,
             },
         );
         g.checks.insert("sha-1".into(), ChecksStatus::Green);
@@ -1535,6 +1536,7 @@ async fn poll_makes_the_same_github_calls_per_issue() {
                 merged_at: None,
                 updated_at: chrono::Utc::now(),
                 url: "pr41".into(),
+                base: None,
             },
         );
         g.pulls.insert(
@@ -1547,6 +1549,7 @@ async fn poll_makes_the_same_github_calls_per_issue() {
                 merged_at: Some(chrono::Utc::now()),
                 updated_at: chrono::Utc::now(),
                 url: "pr42".into(),
+                base: None,
             },
         );
         g.checks.insert("s31".into(), ChecksStatus::Green);
@@ -3448,6 +3451,7 @@ fn open_pull(number: u64, sha: &str) -> PullInfo {
         merged_at: None,
         updated_at: chrono::Utc::now(),
         url: format!("pr{number}"),
+        base: None,
     }
 }
 
@@ -3992,4 +3996,248 @@ async fn a_create_unseen_for_ten_minutes_fails() {
     let (status, r) = h.create_issue(&req).await;
     assert_eq!((status, r.state), (409, CreationState::Failed));
     assert_eq!(h.creates(), 1);
+}
+
+// ---- Issue #80: plans discovered by branch, the fit gate, the plan branch of a stack ----
+
+/// ADR 0032: an open issue nobody pinned, launched or worked on, with a plan on its `issue/`
+/// branch, is found and tracked; the discovery tick reads only the plan file for it, and the
+/// issue stays in Not pinned.
+#[tokio::test]
+async fn an_untracked_plan_branch_is_discovered_and_stays_not_pinned() {
+    let h = harness().await;
+    h.working_issue(90, false);
+    h.github.with(|g| g.calls.clear());
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    let for_90: Vec<_> = h
+        .github
+        .calls()
+        .into_iter()
+        .filter(|(_, args)| args.contains("#90") || args.contains("90.md"))
+        .collect();
+    assert_eq!(
+        for_90,
+        [(
+            "file",
+            "m0x6A/rubato docs/plans/90.md issue/90-x".to_owned()
+        )],
+        "discovery reads the plan file and nothing else for an untracked issue"
+    );
+
+    let ov = h.overview("m0x6A").await;
+    let one = ov
+        .issues
+        .iter()
+        .find(|i| i.issue.number == 90)
+        .expect("a discovered plan makes the issue tracked");
+    assert!(one.plan.is_some());
+    assert!(one.fit.as_ref().is_some_and(|f| f.fits), "{:?}", one.fit);
+    assert!(
+        ov.backlog.issues.iter().any(|i| i.issue.number == 90),
+        "tracked only by its plan, it is still not pinned"
+    );
+    let repo = ov
+        .repos
+        .iter()
+        .find(|r| r.repo == "m0x6A/rubato")
+        .expect("the map's repo");
+    assert!(
+        repo.in_map && repo.plans >= 1 && repo.open_issues >= 1,
+        "{repo:?}"
+    );
+
+    // From the next tick on it is an ordinary tracked issue.
+    h.github.with(|g| g.calls.clear());
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert!(
+        h.github
+            .calls()
+            .iter()
+            .any(|(k, a)| *k == "issue_comments" && a == "m0x6A/rubato#90")
+    );
+}
+
+/// ADR 0032's budget, in numbers: `issue/` refs are paged by 100 (the fake counts pages), an
+/// unchanged head is not read again, and a branch without a plan file costs one read per head.
+#[tokio::test]
+async fn discovery_stays_inside_its_budget() {
+    let h = harness().await;
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        for n in 1000..1250 {
+            b.push((format!("issue/{n}-old"), format!("o{n}")));
+        }
+        b.push(("issue/91-x".into(), "s91".into()));
+        g.open
+            .entry("m0x6A/rubato".into())
+            .or_default()
+            .push(open_issue(91, "no plan yet"));
+    });
+    let mut refs = 0;
+    h.github.with(|g| refs = g.branches["m0x6A/rubato"].len());
+    let pages = refs.div_ceil(100);
+    assert!(pages >= 3, "{refs} refs");
+    let mut poller = tasks::Poller::default();
+    let mut checked = 0;
+    for tick in 0..3 {
+        h.github.with(|g| g.calls.clear());
+        poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+        let calls = h.github.calls();
+        let listings = calls.iter().filter(|(k, _)| *k == "branches").count();
+        assert_eq!(listings, pages, "tick {tick}: one listing, {pages} pages");
+        let reads_91 = calls
+            .iter()
+            .filter(|(k, a)| *k == "file" && a.contains("91.md"))
+            .count();
+        assert_eq!(
+            reads_91,
+            usize::from(tick == 0),
+            "tick {tick}: one read per head"
+        );
+        assert!(
+            !calls.iter().any(|(k, a)| a.contains("#91") && *k != "file"),
+            "tick {tick}: no pull request, comment or checks call for an untracked issue"
+        );
+        checked += listings + reads_91;
+    }
+    // A new head is read once more.
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.iter_mut().find(|(n, _)| n == "issue/91-x").unwrap().1 = "s91b".into();
+        g.calls.clear();
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(
+        h.github
+            .calls()
+            .iter()
+            .filter(|(k, a)| *k == "file" && a.contains("91.md"))
+            .count(),
+        1
+    );
+    println!("checked {checked} calls over 3 ticks against the ADR 0032 budget");
+}
+
+/// ADR 0032: in a stack of `issue/92-*` branches the plan is read from the bottom one, whose
+/// pull request merges into a branch outside `issue/`; an approval that names a branch wins.
+#[tokio::test]
+async fn a_stack_reads_the_plan_from_the_bottom_then_from_the_approved_branch() {
+    let h = harness().await;
+    let plan = |title: &str| {
+        PLAN_49.replace("#1", "#92").replace(
+            "---\n## Affected",
+            &format!("title: {title}\n---\n## Affected"),
+        )
+    };
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.push(("issue/92-a-top".into(), "top".into()));
+        b.push(("issue/92-z-bottom".into(), "bottom".into()));
+        for (branch, title) in [("issue/92-a-top", "top"), ("issue/92-z-bottom", "bottom")] {
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    "docs/plans/92.md".into(),
+                    branch.into(),
+                ),
+                plan(title),
+            );
+        }
+        let mut top = open_pull(1, "top");
+        top.base = Some("issue/92-z-bottom".into());
+        let mut bottom = open_pull(2, "bottom");
+        bottom.base = Some("main".into());
+        g.pulls
+            .insert(("m0x6A/rubato".into(), "issue/92-a-top".into()), top);
+        g.pulls
+            .insert(("m0x6A/rubato".into(), "issue/92-z-bottom".into()), bottom);
+    });
+    h.pin_issue(92).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let read_from = |ov: &Overview| {
+        ov.issues
+            .iter()
+            .find(|i| i.issue.number == 92)
+            .and_then(|i| i.plan.as_ref())
+            .and_then(|p| p.git_ref.clone())
+    };
+    assert_eq!(
+        read_from(&h.overview("m0x6A").await).as_deref(),
+        Some("issue/92-z-bottom"),
+        "first by name would be the top of the stack"
+    );
+
+    h.github.with(|g| {
+        g.comments.insert(
+            ("m0x6A/rubato".into(), 92),
+            vec![comment(
+                1,
+                "m0x6A",
+                "OWNER",
+                false,
+                "Approved: plan 0123456789 on issue/92-a-top",
+            )],
+        );
+    });
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap(); // reads the comment
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap(); // reads the plan there
+    assert_eq!(
+        read_from(&h.overview("m0x6A").await).as_deref(),
+        Some("issue/92-a-top")
+    );
+}
+
+/// ADR 0029: an approval of the current plan counts only while the plan fits the map.
+#[tokio::test]
+async fn an_approval_of_a_plan_that_does_not_fit_does_not_count() {
+    // A seam in Affected parts with no O-row.
+    let unfit = PLAN_71.replace("| server-github | y | z | p | rubato-server |\n", "");
+    let sha = rubato_server::plans::approval_hash(&unfit);
+    let h = harness().await;
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push(("issue/71-plan".into(), "s71".into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/71.md".into(),
+                "issue/71-plan".into(),
+            ),
+            unfit.clone(),
+        );
+        g.comments.insert(
+            ("m0x6A/rubato".into(), 71),
+            vec![comment(
+                1,
+                "teammate",
+                "MEMBER",
+                false,
+                &format!("Approved: plan {}", &sha[..10]),
+            )],
+        );
+    });
+    h.pin_issue(71).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    let fit = one.fit.as_ref().expect("a fit for a plan");
+    assert!(!fit.fits);
+    assert_eq!(
+        fit.reasons,
+        [rubato_protocol::FitReason::MissingORow {
+            seam: "server-github".into()
+        }]
+    );
+    assert_eq!(
+        one.approval.as_ref().map(|a| a.version),
+        Some(rubato_protocol::ApprovalVersion::DoesNotFit)
+    );
+    assert!(ov.findings.iter().any(|f| matches!(
+        f,
+        rubato_protocol::Finding::ApprovedWithoutFit { issue } if issue.number == 71
+    )));
 }

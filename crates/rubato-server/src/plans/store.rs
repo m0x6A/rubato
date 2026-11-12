@@ -41,6 +41,18 @@ pub async fn delete_plan(db: &SqlitePool, issue: &IssueRef) -> Result<()> {
     Ok(())
 }
 
+/// Whether a plan row (parsed or not) exists for the issue.
+pub async fn has_plan(db: &SqlitePool, issue: &IssueRef) -> Result<bool> {
+    Ok(
+        sqlx::query("SELECT 1 FROM plans WHERE repo = ? AND number = ?")
+            .bind(&issue.repo)
+            .bind(issue.number as i64)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
+}
+
 pub async fn all_plans(db: &SqlitePool) -> Result<Vec<PlanRow>> {
     let rows = sqlx::query("SELECT * FROM plans").fetch_all(db).await?;
     Ok(rows

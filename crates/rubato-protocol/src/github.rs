@@ -182,6 +182,9 @@ pub enum ApprovalVersion {
     NotNamed,
     /// No plan file to compare with on that branch.
     NoPlan,
+    /// The approval names the plan as it is now, but the plan does not fit the map, so the
+    /// approval does not count (ADR 0029, finding `ApprovedWithoutFit`).
+    DoesNotFit,
 }
 
 /// The newest counted approval of an issue's plan, and whether it is of the current version.

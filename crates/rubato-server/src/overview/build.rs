@@ -8,10 +8,10 @@ use chrono::{DateTime, Utc};
 use rubato_protocol::QueuedIssue;
 use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
-    ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, DecisionRecord,
-    Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, OpenIssue, Plan, Progress,
-    ProgressInputs, ProgressState, PullRequestState, ReviewRecord, SessionState, SessionStatus,
-    derive_progress,
+    ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
+    DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, OpenIssue, Plan,
+    Progress, ProgressInputs, ProgressState, PullRequestState, ReviewRecord, SessionState,
+    SessionStatus, derive_progress, plan_fit,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -48,6 +48,8 @@ pub struct Built {
     pub backlog: Backlog,
     /// Stored positions of the parts the map has now.
     pub layout: MapLayout,
+    /// What Rubato sees of each repo.
+    pub repos: Vec<ConnectedRepo>,
 }
 
 fn seams_touched(plan: &Plan) -> BTreeSet<&str> {
@@ -72,9 +74,13 @@ fn cap_hit_blocks(kind: Option<CapKind>, sessions: &[SessionState]) -> bool {
 /// The newest approval of an issue and whether it names the plan as it is now (ADR 0027). An
 /// approval that names a branch other than the one the plan is read from is compared with the
 /// plan on that branch (`target_sha`, read on the full lane); otherwise with the plan as read.
+///
+/// An approval of the current plan counts only while the plan fits the map (ADR 0029): with
+/// `fits == Some(false)` its version is `DoesNotFit`.
 pub fn approval_state(
     approvals: &[&(ApprovalRecord, Option<String>)],
     plan: Option<&PlanRow>,
+    fits: Option<bool>,
 ) -> Option<ApprovalState> {
     let (record, target_sha) = approvals
         .iter()
@@ -92,7 +98,11 @@ pub fn approval_state(
         (None, _) => ApprovalVersion::NotNamed,
         (Some(_), None) => ApprovalVersion::NoPlan,
         (Some(approved), Some(current)) if approval_names(approved, current) => {
-            ApprovalVersion::Current
+            if fits == Some(false) {
+                ApprovalVersion::DoesNotFit
+            } else {
+                ApprovalVersion::Current
+            }
         }
         (Some(_), Some(_)) => ApprovalVersion::Earlier,
     };
@@ -209,7 +219,19 @@ pub fn build(
             .iter()
             .filter(|(a, _)| &a.issue == issue)
             .collect();
-        let approval = approval_state(&approvals, plan_row);
+        let fit = match (plan_row, map) {
+            (Some(row), Some(m)) => plan_fit(plan.as_ref(), row.parse_error.as_deref(), &m.map),
+            _ => None,
+        };
+        let approval = approval_state(&approvals, plan_row, fit.as_ref().map(|f| f.fits));
+        if approval
+            .as_ref()
+            .is_some_and(|a| a.version == ApprovalVersion::DoesNotFit)
+        {
+            findings.push(Finding::ApprovedWithoutFit {
+                issue: issue.clone(),
+            });
+        }
         if let Some(a) = &approval
             && a.version == ApprovalVersion::Earlier
             && let (Some(approved), Some(current)) = (&a.record.sha, &a.current_sha)
@@ -256,6 +278,7 @@ pub fn build(
                 .collect(),
             review,
             approval,
+            fit,
             spend_usd: spend,
         });
     }
@@ -292,18 +315,39 @@ pub fn build(
         .collect();
     findings.extend(
         inputs
+            .sessions
+            .iter()
+            .filter(|s| s.issue.is_none() && s.status != SessionStatus::Ended)
+            .map(|s| Finding::UnattributedSession {
+                companion: s.companion_id,
+                branch: s.branch.clone(),
+                repo: s.repo.clone(),
+            }),
+    );
+    findings.extend(
+        inputs
             .uncovered_repos
             .iter()
             .map(|repo| Finding::RepoNotCovered { repo: repo.clone() }),
     );
+    let repos = connected_repos(inputs, map, &out);
 
     // The backlog: listed open issues that are not tracked above, and one entry per repo the
     // map names, listed or not, so "not listed yet" is said and not shown as empty.
+    // An issue tracked only because its branch carries a plan is still not pinned: it stays
+    // here until a person or a `Map:` line places it (ADR 0032).
+    let placed_or_worked: BTreeSet<&IssueRef> = inputs
+        .pins
+        .iter()
+        .map(|p| &p.issue)
+        .chain(inputs.launched.iter())
+        .chain(inputs.sessions.iter().filter_map(|s| s.issue.as_ref()))
+        .collect();
     let (listed, listings) = &inputs.backlog;
     let backlog = Backlog {
         issues: listed
             .iter()
-            .filter(|i| !issues.contains(&i.issue))
+            .filter(|i| !placed_or_worked.contains(&i.issue))
             .cloned()
             .collect(),
         repos: match map {
@@ -350,7 +394,63 @@ pub fn build(
         unpinned_sessions,
         backlog,
         layout,
+        repos,
     }
+}
+
+/// One row per repo the map names, then repos of tracked work outside the map. Repo names are
+/// compared without case: a remote may spell a repo differently from the map.
+fn connected_repos(
+    inputs: &OverviewInputs,
+    map: Option<&LoadedMap>,
+    issues: &[IssueSummary],
+) -> Vec<ConnectedRepo> {
+    let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+    let mut names: Vec<(String, bool)> = map
+        .map(|m| {
+            m.map
+                .repos_named()
+                .into_iter()
+                .map(|r| (r.to_owned(), true))
+                .collect()
+        })
+        .unwrap_or_default();
+    for repo in issues.iter().map(|i| i.issue.repo.as_str()) {
+        if !names.iter().any(|(n, _)| same(n, repo)) {
+            names.push((repo.to_owned(), false));
+        }
+    }
+    let live = |s: &&SessionState| s.status != SessionStatus::Ended;
+    names
+        .into_iter()
+        .map(|(repo, in_map)| ConnectedRepo {
+            covered: !inputs.uncovered_repos.iter().any(|u| same(u, &repo)),
+            open_issues: inputs
+                .backlog
+                .0
+                .iter()
+                .filter(|i| same(&i.issue.repo, &repo))
+                .count() as u32,
+            plans: issues
+                .iter()
+                .filter(|i| same(&i.issue.repo, &repo) && i.plan.is_some())
+                .count() as u32,
+            sessions: inputs
+                .sessions
+                .iter()
+                .filter(live)
+                .filter(|s| s.issue.as_ref().is_some_and(|i| same(&i.repo, &repo)))
+                .count() as u32,
+            unattributed: inputs
+                .sessions
+                .iter()
+                .filter(live)
+                .filter(|s| s.issue.is_none() && s.repo.as_deref().is_some_and(|r| same(r, &repo)))
+                .count() as u32,
+            in_map,
+            repo,
+        })
+        .collect()
 }
 
 /// Counts for the `rubato.issues.by_state` and `rubato.seam.open_plans` gauges.
@@ -469,6 +569,46 @@ mod tests {
             layout: MapLayout::default(),
             queue: vec![],
         }
+    }
+
+    #[test]
+    fn sessions_without_an_issue_are_findings_and_repos_count_them() {
+        let a = IssueRef::new("m0x6A/rubato", 1);
+        let mut inputs = empty();
+        inputs.plans = vec![plan(&a, "web-server", "web")];
+        let mut loose = session(&a, SessionStatus::Working, StateSource::Hook);
+        loose.issue = None;
+        loose.branch = Some("main".into());
+        let mut ended = loose.clone();
+        ended.status = SessionStatus::Ended;
+        inputs.sessions = vec![
+            session(&a, SessionStatus::Working, StateSource::Hook),
+            loose,
+            ended,
+        ];
+        inputs.uncovered_repos = vec!["other/repo".into()];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let unattributed: Vec<_> = built
+            .findings
+            .iter()
+            .filter(|f| matches!(f, Finding::UnattributedSession { branch, .. } if branch.as_deref() == Some("main")))
+            .collect();
+        assert_eq!(unattributed.len(), 1, "an ended session is not a finding");
+        let repo = built
+            .repos
+            .iter()
+            .find(|r| r.repo.eq_ignore_ascii_case("m0x6A/rubato"))
+            .expect("the map's repo");
+        assert_eq!(
+            (
+                repo.in_map,
+                repo.covered,
+                repo.plans,
+                repo.sessions,
+                repo.unattributed
+            ),
+            (true, true, 1, 1, 1)
+        );
     }
 
     #[test]

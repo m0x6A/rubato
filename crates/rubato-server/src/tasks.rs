@@ -82,6 +82,9 @@ pub struct Poller {
     plan_heads: HashMap<IssueRef, (String, String)>,
     /// Closed issues whose last full pass has not yet succeeded.
     last_pass: HashSet<IssueRef>,
+    /// Untracked open issues with an `issue/` branch: the plan path and head last looked at
+    /// (ADR 0032). A head is read once; a head without a plan file costs nothing after that.
+    discovered: HashMap<IssueRef, (String, String)>,
 }
 
 /// One full pass over every issue of interest, with nothing remembered from earlier ticks.
@@ -155,11 +158,21 @@ impl Poller {
         }
 
         let mut view = github_poll::RepoView::default();
+        let approved = github_poll::approved_branches(&app.db).await?;
+        let stored: HashMap<IssueRef, String> = plans::all(&app.db)
+            .await?
+            .into_iter()
+            .map(|p| (p.issue, p.branch))
+            .collect();
         let (mut settled, mut failed) = (0usize, 0usize);
         for issue in &issues {
             let busy = live.contains(issue);
+            let prefer = github_poll::BranchPrefs {
+                approved: approved.get(issue).cloned(),
+                stored: stored.get(issue).cloned(),
+            };
             match self
-                .poll_issue(app, &map, issue, busy, &listed, &mut view, lane)
+                .poll_issue(app, &map, issue, busy, &listed, &mut view, lane, &prefer)
                 .await
             {
                 Ok(true) => settled += 1,
@@ -170,6 +183,9 @@ impl Poller {
                 }
             }
         }
+        let discovered = self
+            .discover(app, &map, &issues, &listed, &mut view, &approved)
+            .await;
         // Every tick: info on the full lane (every 300 s), debug on the fast one.
         let (tracked, repos) = (issues.len(), view.repos());
         if lane == Lane::Full {
@@ -179,6 +195,7 @@ impl Poller {
                 settled,
                 failed,
                 repos,
+                discovered,
                 "poll tick"
             );
         } else {
@@ -221,6 +238,7 @@ impl Poller {
         listed: &github_poll::Listed,
         view: &mut github_poll::RepoView,
         lane: Lane,
+        prefer: &github_poll::BranchPrefs,
     ) -> Result<bool> {
         use github_poll::Standing;
         let first = !self.seen.contains(issue);
@@ -239,7 +257,7 @@ impl Poller {
             self.last_pass.insert(issue.clone());
         }
         let full = full || standing == Standing::JustClosed;
-        let read_from = match view.branch(app, issue).await? {
+        let read_from = match view.branch(app, issue, prefer).await? {
             Some(head) => {
                 let key = (plans::plan_path(map, issue, &head.name), head.sha.clone());
                 if self.plan_heads.get(issue) != Some(&key) {
@@ -271,6 +289,69 @@ impl Poller {
             tracing::info!(rubato.issue = %issue, "issue closed; settled until it reopens");
         }
         Ok(false)
+    }
+
+    /// Plans of open issues nobody tracks yet (ADR 0032). For every repo the map names, its
+    /// `issue/` refs (one listing per repo per tick, shared with the tracked issues); for each
+    /// open listed issue that is not tracked and has a ref, the plan file is read once per head.
+    /// A plan found makes the issue tracked from the next tick on (`plans::all`). No pull
+    /// request, comment or checks call is made for an untracked issue. Returns how many plans
+    /// were found this tick.
+    async fn discover(
+        &mut self,
+        app: &App,
+        map: &LoadedMap,
+        tracked: &BTreeSet<IssueRef>,
+        listed: &github_poll::Listed,
+        view: &mut github_poll::RepoView,
+        approved: &HashMap<IssueRef, String>,
+    ) -> usize {
+        let mut untracked: Vec<&IssueRef> = listed
+            .open_issues()
+            .filter(|i| !tracked.contains(*i))
+            .collect();
+        untracked.sort();
+        let mut found = 0;
+        for repo in map.map.repos_named() {
+            let heads = view.heads(app, repo).await;
+            for issue in untracked.iter().filter(|i| i.repo == repo) {
+                if !heads
+                    .iter()
+                    .any(|b| IssueRef::number_from_branch(&b.name) == Some(issue.number))
+                {
+                    continue;
+                }
+                let prefer = github_poll::BranchPrefs {
+                    approved: approved.get(*issue).cloned(),
+                    stored: None,
+                };
+                let head = match view.branch(app, issue, &prefer).await {
+                    Ok(Some(h)) => h,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        tracing::warn!(rubato.issue = %issue, error = %e, "plan discovery failed");
+                        continue;
+                    }
+                };
+                let key = (plans::plan_path(map, issue, &head.name), head.sha.clone());
+                if self.discovered.get(*issue) == Some(&key) {
+                    continue;
+                }
+                match plans::fetch_and_store(app, map, issue, &head.name).await {
+                    Ok(()) => {
+                        self.discovered.insert((*issue).clone(), key);
+                        if plans::has_plan(&app.db, issue).await.unwrap_or(false) {
+                            found += 1;
+                            tracing::info!(rubato.issue = %issue, branch = %head.name, "plan discovered");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(rubato.issue = %issue, error = %e, "plan discovery failed");
+                    }
+                }
+            }
+        }
+        found
     }
 }
 

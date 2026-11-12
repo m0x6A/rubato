@@ -334,6 +334,7 @@ impl GitHubApi for LocalGit {
                 merged_at: None,
                 updated_at: chrono::Utc::now(),
                 url: url.clone(),
+                base: None,
             },
         );
         Ok((number, url))

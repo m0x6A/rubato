@@ -48,6 +48,11 @@ impl Listed {
         self.open.get(issue)
     }
 
+    /// Every open issue this tick listed.
+    pub fn open_issues(&self) -> impl Iterator<Item = &IssueRef> {
+        self.open.keys()
+    }
+
     /// The repos listed whole this tick.
     pub fn fresh_repos(&self) -> &HashSet<String> {
         &self.fresh

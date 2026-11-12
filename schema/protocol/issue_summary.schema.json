@@ -21,6 +21,17 @@
         "$ref": "#/$defs/DecisionRecord"
       }
     },
+    "fit": {
+      "description": "Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlanFit"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "issue": {
       "$ref": "#/$defs/IssueRef"
     },
@@ -222,6 +233,11 @@
           "description": "No plan file to compare with on that branch.",
           "type": "string",
           "const": "no_plan"
+        },
+        {
+          "description": "The approval names the plan as it is now, but the plan does not fit the map, so the\napproval does not count (ADR 0029, finding `ApprovedWithoutFit`).",
+          "type": "string",
+          "const": "does_not_fit"
         }
       ]
     },
@@ -392,6 +408,132 @@
         "title",
         "created_at",
         "url"
+      ]
+    },
+    "FitReason": {
+      "description": "Why a plan does not fit the map (ADR 0029). Each one alone makes `PlanFit::fits` false.",
+      "oneOf": [
+        {
+          "description": "The plan file does not parse.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "parse_error"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ]
+        },
+        {
+          "description": "Node or seam ids the map does not declare.",
+          "type": "object",
+          "properties": {
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknown_ids"
+            }
+          },
+          "required": [
+            "kind",
+            "ids"
+          ]
+        },
+        {
+          "description": "A flow's seam does not join the flow's two parts.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "flow_off_seam"
+            },
+            "seam": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "from",
+            "to",
+            "seam"
+          ]
+        },
+        {
+          "description": "A seam in Affected parts with no O-row.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "missing_o_row"
+            },
+            "seam": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "seam"
+          ]
+        },
+        {
+          "description": "A data model on a part that is not a row of Affected parts (ADR 0031).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "model_off_part"
+            },
+            "model": {
+              "type": "string"
+            },
+            "part": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "model",
+            "part"
+          ]
+        },
+        {
+          "description": "A data model crossing a seam no row of Affected parts touches (ADR 0031).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "model_off_seam"
+            },
+            "model": {
+              "type": "string"
+            },
+            "seam": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "model",
+            "seam"
+          ]
+        }
       ]
     },
     "FlowKind": {
@@ -583,6 +725,24 @@
         "issue",
         "path",
         "affected_parts"
+      ]
+    },
+    "PlanFit": {
+      "description": "Where a plan fits the map, and whether it does (ADR 0029). An approval counts only while\n`fits` is true.",
+      "type": "object",
+      "properties": {
+        "fits": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FitReason"
+          }
+        }
+      },
+      "required": [
+        "fits"
       ]
     },
     "PlanFlow": {
