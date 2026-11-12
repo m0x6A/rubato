@@ -349,6 +349,8 @@ async fn protocol_fixtures_replay_derives_progress() {
             vec![Comment {
                 id: 7,
                 author: "m0x6A".into(),
+                author_association: "OWNER".into(),
+                author_is_bot: false,
                 body: "Decision: Keep chrono\n\n## Context\nx\n\n## Chosen\nchrono\n\n## Why\nfine"
                     .into(),
                 created_at: chrono::Utc::now(),
@@ -501,6 +503,241 @@ async fn findings_show_unknown_ids_and_seam_collisions() {
         ov.issues
             .iter()
             .all(|i| i.progress.state == ProgressState::Designed)
+    );
+}
+
+fn comment(id: u64, author: &str, association: &str, bot: bool, body: &str) -> Comment {
+    Comment {
+        id,
+        author: author.into(),
+        author_association: association.into(),
+        author_is_bot: bot,
+        body: body.into(),
+        created_at: chrono::Utc::now() + chrono::Duration::seconds(id as i64),
+        url: format!("c{id}"),
+    }
+}
+
+const PLAN_71: &str = "---\nissue: m0x6A/rubato#71\n---\n## Affected parts\n| Node | Status | What changes | Seams |\n| --- | --- | --- | --- |\n| rubato-server | affected | x | server-github |\n## O-rows\n| Seam | Breaks like | Signal | Panel | Owner |\n| --- | --- | --- | --- | --- |\n| server-github | y | z | p | rubato-server |\n## Tasks\n- [ ] T1\n";
+
+/// One plan on `issue/71-plan`, pinned, then the comments given; one poll.
+async fn issue_71_with(comments: Vec<Comment>) -> (Harness, rubato_protocol::IssueSummary) {
+    let h = harness().await;
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push(("issue/71-plan".into(), "s71".into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/71.md".into(),
+                "issue/71-plan".into(),
+            ),
+            PLAN_71.to_owned(),
+        );
+        g.comments.insert(("m0x6A/rubato".into(), 71), comments);
+    });
+    h.http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 71),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov
+        .issues
+        .into_iter()
+        .find(|i| i.issue.number == 71)
+        .expect("issue 71 in the overview");
+    (h, one)
+}
+
+/// ADR 0027: `Review:` and `Approved:` count only from members. The repo is public, so a
+/// stranger's comment and a Bot's must not show a badge.
+#[tokio::test]
+async fn reviews_and_approvals_count_only_from_members() {
+    let sha = rubato_server::plans::approval_hash(PLAN_71);
+    let approve = format!("Approved: plan {}", &sha[..10]);
+    let (_h, one) = issue_71_with(vec![
+        comment(1, "stranger", "NONE", false, "Review: full — passed"),
+        comment(2, "helper[bot]", "NONE", true, &approve),
+        comment(3, "drive-by", "CONTRIBUTOR", false, &approve),
+        comment(4, "rubato-app[bot]", "MEMBER", true, &approve),
+        comment(
+            5,
+            "m0x6A",
+            "OWNER",
+            false,
+            "Decision: Keep it\n\n## Chosen\nyes",
+        ),
+    ])
+    .await;
+    assert!(one.review.is_none(), "{:?}", one.review);
+    assert!(one.approval.is_none(), "{:?}", one.approval);
+    assert_eq!(one.decisions.len(), 1, "Decision: parsing is unchanged");
+
+    let (_h, one) = issue_71_with(vec![
+        comment(
+            1,
+            "m0x6A",
+            "OWNER",
+            false,
+            "Review: full — passed after fixes",
+        ),
+        comment(2, "teammate", "MEMBER", false, &approve),
+    ])
+    .await;
+    let review = one.review.expect("a member's review");
+    assert_eq!(
+        (review.track.as_str(), review.outcome.as_str()),
+        ("full", "passed after fixes")
+    );
+    let approval = one.approval.expect("a member's approval");
+    assert_eq!(approval.record.author, "teammate");
+    assert_eq!(approval.version, rubato_protocol::ApprovalVersion::Current);
+    assert_eq!(approval.current_sha.as_deref(), Some(sha.as_str()));
+}
+
+/// Ticking a task keeps the approval current; editing the spec makes it stale, a finding.
+#[tokio::test]
+async fn editing_the_plan_makes_an_approval_stale() {
+    let sha = rubato_server::plans::approval_hash(PLAN_71);
+    let (h, one) = issue_71_with(vec![comment(
+        1,
+        "m0x6A",
+        "OWNER",
+        false,
+        &format!("Approved: plan {sha}"),
+    )])
+    .await;
+    assert_eq!(
+        one.approval.unwrap().version,
+        rubato_protocol::ApprovalVersion::Current
+    );
+    let file = (
+        "m0x6A/rubato".to_string(),
+        "docs/plans/71.md".to_string(),
+        "issue/71-plan".to_string(),
+    );
+    // Tick the task (a new head, so the plan is read again).
+    h.github.with(|g| {
+        g.files
+            .insert(file.clone(), PLAN_71.replace("- [ ] T1", "- [x] T1"));
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .iter_mut()
+            .filter(|(n, _)| n == "issue/71-plan")
+            .for_each(|b| b.1 = "s71-ticked".into());
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    assert_eq!(
+        one.approval.as_ref().unwrap().version,
+        rubato_protocol::ApprovalVersion::Current,
+        "ticking a task keeps the approval current"
+    );
+    // Change the spec.
+    h.github.with(|g| {
+        g.files
+            .insert(file.clone(), PLAN_71.replace("| x |", "| reworded |"));
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .iter_mut()
+            .filter(|(n, _)| n == "issue/71-plan")
+            .for_each(|b| b.1 = "s71-edited".into());
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    assert_eq!(
+        one.approval.as_ref().unwrap().version,
+        rubato_protocol::ApprovalVersion::Earlier
+    );
+    assert!(
+        ov.findings.iter().any(|f| matches!(f, Finding::ApprovalStale { issue, approved_sha, .. } if issue.number == 71 && approved_sha == &sha)),
+        "{:?}",
+        ov.findings
+    );
+}
+
+/// Two `issue/71-*` branches: the plan is read from the first one listed, the approval names
+/// the other. Rubato reads the plan on the branch the approval names (one file read on the full
+/// lane) and compares with that.
+#[tokio::test]
+async fn an_approval_on_another_branch_is_compared_with_that_branch() {
+    let sha = rubato_server::plans::approval_hash(PLAN_71);
+    let h = harness().await;
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.push(("issue/71-create-issue".into(), "s71c".into()));
+        b.push(("issue/71-plan".into(), "s71".into()));
+        for (branch, text) in [
+            (
+                "issue/71-create-issue",
+                PLAN_71.replace("| x |", "| later work |"),
+            ),
+            ("issue/71-plan", PLAN_71.to_owned()),
+        ] {
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    "docs/plans/71.md".into(),
+                    branch.into(),
+                ),
+                text,
+            );
+        }
+        g.comments.insert(
+            ("m0x6A/rubato".into(), 71),
+            vec![comment(
+                1,
+                "m0x6A",
+                "OWNER",
+                false,
+                &format!("Approved: plan {sha} on issue/71-plan"),
+            )],
+        );
+    });
+    h.http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 71),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    assert_eq!(
+        one.plan.as_ref().and_then(|p| p.git_ref.as_deref()),
+        Some("issue/71-create-issue"),
+        "the plan is read from the first branch"
+    );
+    let approval = one.approval.as_ref().unwrap();
+    assert_eq!(approval.version, rubato_protocol::ApprovalVersion::Current);
+    assert!(
+        !ov.findings
+            .iter()
+            .any(|f| matches!(f, Finding::ApprovalStale { .. })),
+        "{:?}",
+        ov.findings
+    );
+    let calls = h.github.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|(n, a)| *n == "file" && a.contains("issue/71-plan")),
+        "the named branch's plan is read: {calls:?}"
     );
 }
 
@@ -1326,6 +1563,8 @@ async fn poll_makes_the_same_github_calls_per_issue() {
             vec![Comment {
                 id: 9,
                 author: "m0x6A".into(),
+                author_association: "OWNER".into(),
+                author_is_bot: false,
                 body: "Decision: No branch yet\n\n## Context\nx\n\n## Chosen\ny\n\n## Why\nz"
                     .into(),
                 created_at: chrono::Utc::now(),
@@ -1419,8 +1658,9 @@ async fn poll_makes_the_same_github_calls_per_issue() {
     assert_eq!(get(32).progress.state, ProgressState::Done);
     println!("checked {} GitHub calls on a fast tick", fast.len());
 
-    // As a GitHub App installation, and only then, one more call: the installation's repos,
-    // after the listing and before the issue loop.
+    // As a GitHub App installation, and only then, two more calls on a full tick: the
+    // installation's repos, and its permissions (Issues: write, ADR 0025), after the listing and
+    // before the issue loop.
     h.github.with(|g| {
         g.installation = Some(vec!["m0x6A/rubato".into()]);
         g.calls.clear();
@@ -1434,11 +1674,12 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .collect();
     let mut as_installation: Vec<&str> = expected.to_vec();
     as_installation.insert(1, "installation_repos ");
+    as_installation.insert(2, "installation ");
     // #32's pull request is stored as merged by now: final, not looked up again (S5).
     as_installation.retain(|c| *c != "pull_for_branch m0x6A/rubato issue/32-bad");
     assert_eq!(
         calls, as_installation,
-        "one coverage call, installation only"
+        "one coverage call and one permission read, installation only"
     );
     println!("checked {} GitHub calls as an installation", calls.len());
 }
@@ -1466,6 +1707,7 @@ fn open_issue(n: u64, title: &str) -> rubato_server::kernel::github::OpenIssueIn
         url: format!("https://github.com/m0x6A/rubato/issues/{n}"),
         labels: vec!["enhancement".into()],
         updated_at: chrono::Utc::now(),
+        ..Default::default()
     }
 }
 
@@ -1529,6 +1771,94 @@ async fn open_issues_reach_the_overview_until_they_are_pinned() {
     assert_eq!(ov.backlog.repos[0].error.as_deref(), Some("rate limited"));
     assert!(ov.backlog.repos[0].listed_at.is_some());
     assert_eq!(ov.backlog.issues.len(), 1);
+}
+
+/// ADR 0026, issue #71 PR 3: a member's `Map:` line pins its issue without a drag, a
+/// non-member's only suggests, and an issue without a line gets a scored suggestion. The bodies
+/// come with the listing: the GitHub calls are the same as for issues without bodies.
+#[tokio::test]
+async fn map_lines_place_member_issues_and_suggest_for_the_rest() {
+    let with_body = |n: u64, title: &str, body: &str, association: &str| {
+        rubato_server::kernel::github::OpenIssueInfo {
+            body: body.into(),
+            author_association: association.into(),
+            author: "voice-tool".into(),
+            ..open_issue(n, title)
+        }
+    };
+    let plain = harness().await;
+    plain.github.with(|g| {
+        g.open.insert(
+            "m0x6A/rubato".into(),
+            vec![
+                open_issue(71, "Voice: plan lens"),
+                open_issue(72, "Voice: stranger"),
+                open_issue(73, "rubato-server is slow"),
+            ],
+        );
+    });
+    tasks::poll_once(&plain.app).await.unwrap();
+
+    let h = harness().await;
+    h.github.with(|g| {
+        g.open.insert(
+            "m0x6A/rubato".into(),
+            vec![
+                with_body(
+                    71,
+                    "Voice: plan lens",
+                    "## Summary\nx\n\nMap: seam web-server\n",
+                    "MEMBER",
+                ),
+                with_body(72, "Voice: stranger", "Map: node web\n", "NONE"),
+                open_issue(73, "rubato-server is slow"),
+            ],
+        );
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(
+        h.github.calls(),
+        plain.github.calls(),
+        "placement costs no GitHub call"
+    );
+
+    let ov = h.overview("m0x6A").await;
+    let tracked: Vec<u64> = ov.issues.iter().map(|i| i.issue.number).collect();
+    assert_eq!(tracked, [71], "the member's line pinned #71");
+    assert_eq!(ov.issues[0].progress.state, ProgressState::Planned);
+    let backlog: Vec<u64> = ov.backlog.issues.iter().map(|i| i.issue.number).collect();
+    assert_eq!(backlog, [72, 73]);
+    let stranger = &ov.backlog.issues[0];
+    assert_eq!(stranger.map_line, Some(MapRef::node("web")));
+    assert_eq!(
+        stranger.suggestion.as_ref().map(|s| s.target.clone()),
+        Some(MapRef::node("web"))
+    );
+    let scored = &ov.backlog.issues[1];
+    assert_eq!(scored.map_line, None);
+    assert_eq!(
+        scored
+            .suggestion
+            .as_ref()
+            .map(|s| (s.target.clone(), s.score)),
+        Some((MapRef::node("rubato-server"), 100))
+    );
+
+    // Unpinned by a person: the next tick does not pin it again.
+    let r = h
+        .http
+        .delete(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 71),
+            target: MapRef::seam("web-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert!(ov.issues.is_empty(), "the unpin sticks");
 }
 
 #[tokio::test]
@@ -2125,12 +2455,23 @@ async fn draft_ops_build_a_preview() {
     assert!(h.draft().await.preview.is_none());
 
     // Add a part, describe it, join it to the server with a seam, give the seam a flow and a
-    // description, then remove an existing seam. Two people, one draft.
+    // description, then change an existing seam. Two people, one draft. (Every merged seam is a
+    // step of a scenario, so removing one is refused below; ADR 0024.)
     let mut described = draft_node("billing");
     described["description"] = "Invoices and payments.".into();
     let mut seam = draft_seam("server-billing", "rubato-server", "billing", "billing");
     seam["description"] = "The server asks billing what an issue cost.".into();
     seam["flows"] = serde_json::json!([{ "kind": "data", "from": "billing", "to": "rubato-server", "carries": "cost per issue" }]);
+    let mut plan_seam = serde_json::to_value(
+        h.overview("m0x6A")
+            .await
+            .map
+            .map
+            .seam("skill-plan-file")
+            .unwrap(),
+    )
+    .unwrap();
+    plan_seam["description"] = "The skill writes the plan.".into();
     let steps = [
         (
             "m0x6A",
@@ -2150,8 +2491,8 @@ async fn draft_ops_build_a_preview() {
         ("alice", "update_seam", serde_json::json!({ "seam": seam })),
         (
             "m0x6A",
-            "remove_seam",
-            serde_json::json!({ "id": "skill-plan-file" }),
+            "update_seam",
+            serde_json::json!({ "seam": plan_seam }),
         ),
     ];
     for (user, op, body) in &steps {
@@ -2185,12 +2526,27 @@ async fn draft_ops_build_a_preview() {
         s.description.as_deref(),
         Some("The server asks billing what an issue cost.")
     );
-    assert!(preview.seam("skill-plan-file").is_none());
+    assert_eq!(
+        preview
+            .seam("skill-plan-file")
+            .unwrap()
+            .description
+            .as_deref(),
+        Some("The skill writes the plan.")
+    );
     assert_eq!(preview.validate(), Ok(()));
     // The merged map is untouched: the draft is an overlay.
     let ov = h.overview("m0x6A").await;
     assert!(ov.map.map.node("billing").is_none());
-    assert!(ov.map.map.seam("skill-plan-file").is_some());
+    assert_ne!(
+        ov.map
+            .map
+            .seam("skill-plan-file")
+            .unwrap()
+            .description
+            .as_deref(),
+        Some("The skill writes the plan.")
+    );
 
     // An invalid operation says why and stores nothing; so does one that conflicts with an
     // earlier operation of the draft.
@@ -2209,6 +2565,11 @@ async fn draft_ops_build_a_preview() {
             "remove_node",
             serde_json::json!({ "id": "billing" }),
             "still an end of server-billing",
+        ),
+        (
+            "remove_seam",
+            serde_json::json!({ "id": "skill-plan-file" }),
+            "scenario \"plan-comes-back\" step 2 names unknown seam \"skill-plan-file\"",
         ),
     ];
     for (op, body, word) in &refused {
@@ -2295,12 +2656,31 @@ async fn draft_remove_with_pins_is_409() {
     assert_eq!(status, 409, "{text}");
     assert!(text.contains("m0x6A/rubato#7"), "{text}");
     assert!(h.draft().await.ops.is_empty());
-    // A seam nobody pinned can go.
+    // A seam nobody pinned but a scenario steps over cannot go either; the answer names the
+    // scenario (ADR 0024).
     let (status, text) = h
         .draft_op(
             "m0x6A",
             "remove_seam",
             serde_json::json!({ "id": "skill-plan-file" }),
+        )
+        .await;
+    assert_eq!(status, 422, "{text}");
+    assert!(text.contains("scenario \"plan-comes-back\""), "{text}");
+    // A seam nobody pinned and no scenario uses can go.
+    let (status, text) = h
+        .draft_op(
+            "m0x6A",
+            "add_seam",
+            serde_json::json!({ "seam": draft_seam("web-plan-check", "web", "plan-check", "web") }),
+        )
+        .await;
+    assert_eq!(status, 201, "{text}");
+    let (status, text) = h
+        .draft_op(
+            "m0x6A",
+            "remove_seam",
+            serde_json::json!({ "id": "web-plan-check" }),
         )
         .await;
     assert_eq!(status, 201, "{text}");
@@ -3388,4 +3768,228 @@ async fn poll_falls_back_when_the_pull_listing_fails() {
     assert_eq!(h.call_args("pull_for_branch"), ["m0x6A/rubato issue/9-x"]);
     assert_eq!(h.state_of(9).await, ProgressState::InReview);
     println!("checked the fallback");
+}
+
+// ----- issue #71, PR 4: issues created from Rubato (ADR 0025) --------------------------------
+
+fn new_issue(request_id: &str, target: MapRef) -> rubato_protocol::NewIssueRequest {
+    rubato_protocol::NewIssueRequest {
+        request_id: request_id.into(),
+        repo: "m0x6A/rubato".into(),
+        target,
+        title: "Poll less".into(),
+        summary: "The poll costs too many calls.".into(),
+        does: vec!["Lists branches once per repo.".into()],
+        know: vec!["The call-order test asserts fewer calls.".into()],
+        must_not_break: vec!["Progress latency.".into()],
+        context: None,
+        open_questions: vec![],
+    }
+}
+
+impl Harness {
+    async fn create_issue(
+        &self,
+        req: &rubato_protocol::NewIssueRequest,
+    ) -> (u16, rubato_protocol::NewIssueResponse) {
+        let r = self
+            .http
+            .post(format!(
+                "{}{}",
+                self.url,
+                rubato_protocol::issue_new::routes::ISSUES
+            ))
+            .json(req)
+            .send()
+            .await
+            .unwrap();
+        let status = r.status().as_u16();
+        let text = r.text().await.unwrap();
+        let body = serde_json::from_str(&text).unwrap_or(rubato_protocol::NewIssueResponse {
+            state: rubato_protocol::CreationState::Failed,
+            issue: None,
+            url: None,
+            message: Some(text),
+        });
+        (status, body)
+    }
+
+    fn creates(&self) -> usize {
+        self.call_args("create_issue").len()
+    }
+
+    fn can_create(&self, yes: bool) {
+        self.github.with(|g| {
+            g.writes = true;
+            g.issues_write = yes;
+        });
+    }
+}
+
+#[tokio::test]
+async fn an_issue_created_from_a_part_is_pinned_there_once() {
+    use rubato_protocol::CreationState;
+    let h = harness().await;
+    h.can_create(true);
+    let ov = h.overview("m0x6A").await;
+    assert!(ov.can_create_issues);
+    let req = new_issue("r-1", MapRef::node("rubato-server"));
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!(status, 201, "{r:?}");
+    assert_eq!(r.state, CreationState::Created);
+    let issue = r.issue.clone().unwrap();
+    // The body GitHub got: the pattern, the creator in backticks, the two lines.
+    let body = h.github.inner.lock().unwrap().open["m0x6A/rubato"]
+        .iter()
+        .find(|i| i.number == issue.number)
+        .unwrap()
+        .body
+        .clone();
+    assert!(body.starts_with("## Summary\n"), "{body}");
+    assert!(body.contains("Opened in Rubato by `m0x6A`."), "{body}");
+    assert!(
+        body.ends_with("Rubato-Request: r-1\nMap: node rubato-server\n"),
+        "{body}"
+    );
+    let ov = h.overview("m0x6A").await;
+    let s = ov
+        .issues
+        .iter()
+        .find(|i| i.issue == issue)
+        .expect("tracked");
+    assert_eq!(s.progress.state, ProgressState::Planned);
+
+    // The same request again: the same answer, no second issue.
+    let (status, again) = h.create_issue(&req).await;
+    assert_eq!(status, 200);
+    assert_eq!(again.issue, Some(issue.clone()));
+    assert_eq!(h.creates(), 1, "one POST for one request id");
+
+    // A person unpins it; the next tick does not pin it again from its Map: line.
+    let r = h
+        .http
+        .delete(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: issue.clone(),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert!(
+        ov.issues.iter().all(|i| i.issue != issue),
+        "the unpin sticks"
+    );
+}
+
+/// The gate: without Issues: write nothing is sent. Remove the `can_create_issues` check in the
+/// handler and this fails on the `create_issue` call count.
+#[tokio::test]
+async fn creation_is_refused_without_the_permission_and_for_unknown_targets() {
+    let h = harness().await;
+    let (status, r) = h
+        .create_issue(&new_issue("r-1", MapRef::node("rubato-server")))
+        .await;
+    assert_eq!(status, 409, "a port that cannot write: {r:?}");
+    h.can_create(false);
+    let (status, r) = h
+        .create_issue(&new_issue("r-2", MapRef::node("rubato-server")))
+        .await;
+    assert_eq!(status, 409, "{r:?}");
+    assert!(r.message.unwrap().contains("Issues: write"));
+    assert!(!h.overview("m0x6A").await.can_create_issues);
+    h.can_create(true);
+    let (status, _) = h
+        .create_issue(&new_issue("r-3", MapRef::node("billing")))
+        .await;
+    assert_eq!(status, 422);
+    let (status, _) = h
+        .create_issue(&new_issue("r-4", MapRef::seam("rubato-server")))
+        .await;
+    assert_eq!(status, 422, "a node id as a seam");
+    let mut no_know = new_issue("r-5", MapRef::node("web"));
+    no_know.know.clear();
+    let (status, r) = h.create_issue(&no_know).await;
+    assert_eq!(status, 422);
+    assert!(r.message.unwrap().contains("How we'll know it works"));
+    assert_eq!(h.creates(), 0, "nothing was sent");
+    println!("checked 6 refusals");
+}
+
+#[tokio::test]
+async fn a_403_fails_the_request_and_clears_the_capability() {
+    use rubato_protocol::CreationState;
+    let h = harness().await;
+    h.can_create(true);
+    h.github.with(|g| {
+        g.fail_write = Some((
+            "create_issue",
+            "403 Resource not accessible by integration".into(),
+        ))
+    });
+    let (status, r) = h.create_issue(&new_issue("r-1", MapRef::node("web"))).await;
+    assert_eq!(status, 502, "{r:?}");
+    assert_eq!(r.state, CreationState::Failed);
+    assert!(!h.overview("m0x6A").await.can_create_issues);
+    let (status, _) = h.create_issue(&new_issue("r-2", MapRef::node("web"))).await;
+    assert_eq!(status, 409, "refused until the next permission read");
+    assert_eq!(h.creates(), 1);
+}
+
+/// A create that does not answer: the row stays opening, a resubmit sends nothing, and the next
+/// listing finds the issue by its `Rubato-Request:` line and pins it.
+#[tokio::test]
+async fn a_create_that_timed_out_is_found_by_its_request_line() {
+    use rubato_protocol::CreationState;
+    let h = harness().await;
+    h.can_create(true);
+    h.github.with(|g| g.issue_times_out = true);
+    let req = new_issue("r-1", MapRef::seam("web-server"));
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!(status, 202, "{r:?}");
+    assert_eq!(r.state, CreationState::Opening);
+    assert!(r.message.unwrap().contains("may exist"));
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!(status, 202);
+    assert!(r.message.unwrap().starts_with("Still opening"));
+    assert_eq!(h.creates(), 1, "a resubmit while opening sends nothing");
+
+    tasks::poll_once(&h.app).await.unwrap();
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!(status, 200);
+    assert_eq!(r.state, CreationState::Created);
+    let issue = r.issue.unwrap();
+    let ov = h.overview("m0x6A").await;
+    assert!(
+        ov.issues.iter().any(|i| i.issue == issue),
+        "found and pinned"
+    );
+    assert_eq!(h.creates(), 1);
+}
+
+#[tokio::test]
+async fn a_create_unseen_for_ten_minutes_fails() {
+    use rubato_protocol::CreationState;
+    let h = harness().await;
+    h.can_create(true);
+    // GitHub answers with an error and creates nothing.
+    h.github
+        .with(|g| g.fail_write = Some(("create_issue", "connection reset".into())));
+    let req = new_issue("r-1", MapRef::node("web"));
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!((status, r.state), (202, CreationState::Opening));
+    // Within ten minutes the listing does not give up on it.
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(h.create_issue(&req).await.1.state, CreationState::Opening);
+    sqlx::query("UPDATE issue_creations SET created_at = '2026-01-01T00:00:00+00:00'")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let (status, r) = h.create_issue(&req).await;
+    assert_eq!((status, r.state), (409, CreationState::Failed));
+    assert_eq!(h.creates(), 1);
 }

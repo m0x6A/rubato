@@ -1,5 +1,6 @@
 //! Per-issue reads of GitHub: issue metadata, the issue branch, its PR and checks, `Decision:`
-//! comments (ADR 0014); and the rate limit. `tasks::Poller` calls these in order (design §9.1).
+//! comments (ADR 0014), `Review:` and `Approved:` comments from members (ADR 0027); and the rate
+//! limit. `tasks::Poller` calls these in order (design §9.1).
 //!
 //! Issue #49 (ADR 0023, proposed): branches and open pull requests are listed once per repo per
 //! tick through a [`RepoView`]; title and state come from the open-issues listing when the issue
@@ -10,7 +11,10 @@ use super::store::{self, IssueMeta};
 use crate::kernel::github::{BranchHead, OpenPulls, PullInfo};
 use crate::kernel::state::App;
 use anyhow::{Result, anyhow};
-use rubato_protocol::{ChecksStatus, DecisionRecord, IssueRef, PullRequestState};
+use rubato_protocol::{
+    ApprovalRecord, ChecksStatus, DecisionRecord, IssueRef, PullRequestState, ReviewRecord,
+    trusted_author,
+};
 use std::collections::HashMap;
 
 /// Where an issue stands after its metadata step this tick.
@@ -233,8 +237,98 @@ async fn store_pr(app: &App, issue: &IssueRef, branch: &str, pr: Option<PullInfo
     Ok(())
 }
 
-pub async fn poll_decisions(app: &App, issue: &IssueRef) -> Result<()> {
+/// What one read of an issue's comments found besides decisions: the newest counted approval,
+/// so the caller can compare it with the plan on the branch it names.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommentsRead {
+    pub newest_approval: Option<ApprovalRecord>,
+}
+
+/// One pass over an issue's comments (one call, on the full lane): `Decision:` comments as
+/// before (ADR 0014), and `Review:` and `Approved:` comments from members (ADR 0027). A review
+/// or approval from a Bot or from someone who is not OWNER, MEMBER or COLLABORATOR is ignored
+/// and logged. Signals whose comment is gone are dropped.
+pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> {
+    let mut read = CommentsRead::default();
+    let mut kept: Vec<u64> = Vec::new();
     for c in app.github.issue_comments(&issue.repo, issue.number).await? {
+        let review = ReviewRecord::parse_body(&c.body);
+        let approval = ApprovalRecord::parse_body(&c.body);
+        if (review.is_some() || approval.is_some())
+            && !trusted_author(&c.author_association, c.author_is_bot)
+        {
+            let kind = if review.is_some() {
+                "review"
+            } else {
+                "approval"
+            };
+            let reason = if c.author_is_bot {
+                "bot".to_owned()
+            } else {
+                format!("association {}", c.author_association)
+            };
+            tracing::info!(
+                rubato.issue = %issue,
+                comment_id = c.id,
+                author = %c.author,
+                kind,
+                reason = %reason,
+                "{kind} ignored"
+            );
+            continue;
+        }
+        if let Some(r) = review {
+            let rec = ReviewRecord {
+                issue: issue.clone(),
+                comment_id: c.id,
+                author: c.author.clone(),
+                track: r.track,
+                outcome: r.outcome,
+                plan_sha: r.plan_sha,
+                left_open: r.left_open,
+                created_at: c.created_at,
+                url: c.url.clone(),
+            };
+            store::upsert_signal(
+                &app.db,
+                issue,
+                c.id,
+                "review",
+                &serde_json::to_string(&rec)?,
+            )
+            .await?;
+            kept.push(c.id);
+            continue;
+        }
+        if let Some(a) = approval {
+            let rec = ApprovalRecord {
+                issue: issue.clone(),
+                comment_id: c.id,
+                author: c.author.clone(),
+                sha: a.sha,
+                branch: a.branch,
+                note: a.note,
+                created_at: c.created_at,
+                url: c.url.clone(),
+            };
+            store::upsert_signal(
+                &app.db,
+                issue,
+                c.id,
+                "approval",
+                &serde_json::to_string(&rec)?,
+            )
+            .await?;
+            kept.push(c.id);
+            if read
+                .newest_approval
+                .as_ref()
+                .is_none_or(|n| (n.created_at, n.comment_id) < (rec.created_at, rec.comment_id))
+            {
+                read.newest_approval = Some(rec);
+            }
+            continue;
+        }
         if let Some(body) = DecisionRecord::parse_body(&c.body) {
             store::upsert_decision(
                 &app.db,
@@ -254,7 +348,8 @@ pub async fn poll_decisions(app: &App, issue: &IssueRef) -> Result<()> {
             .await?;
         }
     }
-    Ok(())
+    store::drop_signals_except(&app.db, issue, &kept).await?;
+    Ok(read)
 }
 
 pub async fn record_rate_limit(app: &App) {

@@ -9,6 +9,11 @@
       "$ref": "#/$defs/Backlog",
       "default": {}
     },
+    "can_create_issues": {
+      "description": "Whether \"New issue here…\" can create an issue: the GitHub App's installation has\nIssues: write, or the server runs on the local stand-in (ADR 0025).",
+      "type": "boolean",
+      "default": false
+    },
     "companions": {
       "type": "array",
       "items": {
@@ -96,6 +101,105 @@
         "node",
         "status",
         "change"
+      ]
+    },
+    "ApprovalRecord": {
+      "description": "A person's approval of a plan, first line `Approved: plan <sha>` or\n`Approved: plan <sha> on <branch>` (ADR 0027). Only a trusted author's approval counts.",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "branch": {
+          "description": "The branch the approval names; else the branch Rubato reads the plan from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comment_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha": {
+          "description": "The plan hash approved (checkboxes cleared, git blob sha). Absent when the comment names\nnone: the approval then shows as \"version not named\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "comment_id",
+        "author",
+        "created_at",
+        "url"
+      ]
+    },
+    "ApprovalState": {
+      "description": "The newest counted approval of an issue's plan, and whether it is of the current version.",
+      "type": "object",
+      "properties": {
+        "current_sha": {
+          "description": "The hash of the plan compared with, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record": {
+          "$ref": "#/$defs/ApprovalRecord"
+        },
+        "version": {
+          "$ref": "#/$defs/ApprovalVersion"
+        }
+      },
+      "required": [
+        "record",
+        "version"
+      ]
+    },
+    "ApprovalVersion": {
+      "description": "How an approval relates to the plan Rubato holds now.",
+      "oneOf": [
+        {
+          "description": "The approved hash is the plan's hash now.",
+          "type": "string",
+          "const": "current"
+        },
+        {
+          "description": "The plan changed after the approval (finding `ApprovalStale`).",
+          "type": "string",
+          "const": "earlier"
+        },
+        {
+          "description": "The comment names no hash.",
+          "type": "string",
+          "const": "not_named"
+        },
+        {
+          "description": "No plan file to compare with on that branch.",
+          "type": "string",
+          "const": "no_plan"
+        }
       ]
     },
     "Assumption": {
@@ -550,6 +654,31 @@
             "from",
             "to"
           ]
+        },
+        {
+          "description": "The plan was approved, then changed: the approval names an earlier version (ADR 0027).",
+          "type": "object",
+          "properties": {
+            "approved_sha": {
+              "type": "string"
+            },
+            "current_sha": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "approval_stale"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "approved_sha",
+            "current_sha"
+          ]
         }
       ]
     },
@@ -610,6 +739,17 @@
       "description": "Everything the map view needs about one issue.",
       "type": "object",
       "properties": {
+        "approval": {
+          "description": "The newest approval a member posted, and whether it is of the plan as it is now. A\nbadge, not a progress state.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "decisions": {
           "type": "array",
           "items": {
@@ -642,6 +782,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/PullRequestState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review": {
+          "description": "The newest design review a member posted (ADR 0027).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewRecord"
             },
             {
               "type": "null"
@@ -889,6 +1040,28 @@
             "type": "string"
           }
         },
+        "map_line": {
+          "description": "The place its body's `Map:` line names, when its author is not trusted to place it\n(ADR 0026); a trusted line pins the issue and it leaves this list.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MapRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "suggestion": {
+          "description": "Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PinSuggestion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "title": {
           "type": "string"
         },
@@ -957,6 +1130,33 @@
         "affected",
         "new",
         "quiet"
+      ]
+    },
+    "PinSuggestion": {
+      "description": "Where Rubato suggests an unpinned issue belongs, and why. A person confirms it with one\nclick through the pin route; nothing is pinned by a suggestion.",
+      "type": "object",
+      "properties": {
+        "score": {
+          "description": "0–100. Only suggestions at or above the server's threshold are sent.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "target": {
+          "$ref": "#/$defs/MapRef"
+        },
+        "why": {
+          "description": "What matched, in words a person can check: `id web-server in the body`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "target",
+        "score"
       ]
     },
     "Plan": {
@@ -1333,6 +1533,129 @@
         "name"
       ]
     },
+    "ReviewRecord": {
+      "description": "A design review posted as an issue comment, first line `Review: <track> — <outcome>`\n(ADR 0027). Only a trusted author's review is kept.",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "comment_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "left_open": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "description": "The rest of the first line, e.g. `passed after fixes`.",
+          "type": "string"
+        },
+        "plan_sha": {
+          "description": "The plan version the review read, when its `Plan` section names one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "track": {
+          "description": "`trivial`, `small` or `full`, as written.",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "comment_id",
+        "author",
+        "track",
+        "outcome",
+        "created_at",
+        "url"
+      ]
+    },
+    "Scenario": {
+      "description": "A named journey: what crosses which seam, in order, when someone uses the system (ADR 0024).\nIts id shares the namespace of node and seam ids but is not one a pin or plan may name.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "description": "Short title shown in the scenario picker.",
+          "type": "string"
+        },
+        "steps": {
+          "description": "In order. Steps need not be contiguous: a journey may jump to another part.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScenarioStep"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "steps"
+      ]
+    },
+    "ScenarioStep": {
+      "description": "One step: a flow declared on `seam`, picked by its kind and direction, and by `carries` when\nthe seam declares more than one flow with that kind and direction.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "description": "Must equal the flow's `carries`; required only to tell two such flows apart.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FlowKind"
+        },
+        "says": {
+          "description": "What happens at this step, in words, for the caption.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seam": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seam",
+        "from",
+        "to",
+        "kind"
+      ]
+    },
     "Seam": {
       "description": "A seam between two nodes. The owner side is woken when it breaks.",
       "type": "object",
@@ -1544,6 +1867,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/RepoRef"
+          }
+        },
+        "scenarios": {
+          "description": "Named journeys through the system, as ordered steps over declared flows (ADR 0024).\nOptional; a map without scenarios is still version 1.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Scenario"
           }
         },
         "seams": {

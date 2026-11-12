@@ -8,6 +8,8 @@ pub mod auth;
 pub mod github;
 pub mod hook;
 pub mod ids;
+pub mod issue_body;
+pub mod issue_new;
 pub mod launch;
 pub mod layout;
 pub mod limits;
@@ -25,15 +27,26 @@ pub mod session;
 pub mod web_link;
 
 pub use auth::Me;
-pub use github::{ChecksStatus, DecisionBody, DecisionRecord, PullRequestState};
+pub use github::{
+    ApprovalBody, ApprovalRecord, ApprovalState, ApprovalVersion, ChecksStatus, DecisionBody,
+    DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, trusted_author,
+};
 pub use hook::{HookEvent, HookEventKind};
 pub use ids::{IssueRef, MapRef, ParseIssueRefError};
+pub use issue_body::{PinSuggestion, map_line, parse_map_line};
+pub use issue_new::{
+    CreationState, NewIssueRequest, NewIssueResponse, parse_request_line, render_issue,
+    request_line,
+};
 pub use launch::{
     CapHit, CapKind, LaunchCommand, LaunchRequest, LaunchResponse, LaunchResult, RefusalReason,
 };
 pub use layout::{MapLayout, Position};
 pub use limits::Limits;
-pub use map::{Flow, FlowKind, MapNode, MapResponse, NodeKind, RepoRef, Seam, SystemMap};
+pub use map::{
+    Flow, FlowKind, MapNode, MapResponse, NodeKind, RepoRef, Scenario, ScenarioStep, Seam,
+    SystemMap,
+};
 pub use map_draft::{DraftOp, DraftOpRequest, MapDraft, MapOp, Proposal, ProposalState};
 pub use message::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,

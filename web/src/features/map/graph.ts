@@ -3,7 +3,7 @@
  * sessions; seams badged with open plans and collisions. Pure, so it is tested without a DOM.
  */
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
-import type { Finding, Flow, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Seam, SessionState, SessionStatus } from "../../protocol.ts";
+import type { Finding, Flow, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Scenario, Seam, SessionState, SessionStatus } from "../../protocol.ts";
 import { issueKey } from "../../shared/format.ts";
 
 export type Paint = PartStatus | null;
@@ -42,6 +42,8 @@ export interface DraftMarkLike {
 export interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Journeys over the declared flows, for the scenario lens (ADR 0024). */
+  scenarios: Scenario[];
 }
 
 const PAINT_RANK: Record<PartStatus, number> = { quiet: 1, affected: 2, new: 3 };
@@ -121,7 +123,7 @@ export function buildGraph(ov: Overview): Graph {
       }
     } else if (f.kind === "flow_off_seam") {
       edgeById.get(f.seam)?.findings.push(f);
-    } else if (f.kind === "unknown_ids" || f.kind === "plan_parse_error" || f.kind === "map_version_mismatch") {
+    } else if (f.kind === "unknown_ids" || f.kind === "plan_parse_error" || f.kind === "map_version_mismatch" || f.kind === "approval_stale") {
       const issue = ov.issues.find((i) => issueKey(i.issue) === issueKey(f.issue));
       for (const pin of issue?.pins ?? []) {
         if (pin.kind === "node") {
@@ -130,7 +132,7 @@ export function buildGraph(ov: Overview): Graph {
       }
     }
   }
-  return { nodes, edges };
+  return { nodes, edges, scenarios: ov.map.map.scenarios ?? [] };
 }
 
 export function countBy<T, K extends string>(items: T[], key: (t: T) => K): Partial<Record<K, number>> {
@@ -148,6 +150,15 @@ export function sessionCounts(sessions: SessionState[]): Partial<Record<SessionS
 
 export function issueCounts(issues: IssueSummary[]): Partial<Record<ProgressState, number>> {
   return countBy(issues, (i) => i.progress.state);
+}
+
+/** How many of a part's issues have a plan approved as it is now, and how many an approval of
+ * an earlier version (ADR 0027). */
+export function approvalCounts(issues: IssueSummary[]): { approved: number; stale: number } {
+  return {
+    approved: issues.filter((i) => i.approval?.version === "current").length,
+    stale: issues.filter((i) => i.approval?.version === "earlier").length,
+  };
 }
 
 export const NODE_WIDTH = 220;

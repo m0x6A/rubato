@@ -7,7 +7,9 @@
 //! `github_poll` and `plans` name no other slice.
 
 use crate::kernel::state::{App, LoadedMap};
-use crate::{companion_link, github_poll, launch, map, map_draft, overview, pins, plans, queue};
+use crate::{
+    companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins, plans, queue,
+};
 use anyhow::{Result, anyhow};
 use rubato_protocol::otel::event;
 use rubato_protocol::{IssueRef, SessionStatus};
@@ -112,6 +114,29 @@ impl Poller {
         // Before the per-issue reads: every open issue of the map's repos (one listing per
         // repo), then, as an installation only, which repos it covers.
         let listed = github_poll::list_open_issues(app, &map.map).await;
+        // Creations GitHub did not confirm, found by their `Rubato-Request:` line (ADR 0025).
+        let found: Vec<new_issue::Found> = listed
+            .requests()
+            .into_iter()
+            .map(|(issue, url, request_id)| new_issue::Found {
+                issue,
+                url,
+                request_id,
+            })
+            .collect();
+        new_issue::reconcile(app, &found, listed.fresh_repos()).await;
+        // `Map:` lines of trusted authors pin their issues (ADR 0026). No GitHub call: the
+        // bodies came with the listing. A newly pinned issue is read from the next tick on.
+        let lines: Vec<pins::Line> = listed
+            .map_lines()
+            .iter()
+            .map(|l| pins::Line {
+                issue: l.issue.clone(),
+                target: l.target.clone(),
+                author: l.author.clone(),
+            })
+            .collect();
+        pins::apply_map_lines(app, &map.map, &map.version, &lines).await;
         let mut repos: BTreeSet<String> = map
             .map
             .repos_named()
@@ -120,6 +145,14 @@ impl Poller {
             .collect();
         repos.extend(issues.iter().map(|i| i.repo.clone()));
         github_poll::check_coverage(app, &repos).await;
+        // As an installation, on the full lane: whether Issues: write is granted (ADR 0025), so a
+        // re-approved installation is noticed within five minutes and no restart.
+        if lane == Lane::Full
+            && app.github.is_installation()
+            && let Err(e) = app.github.refresh_issue_permission().await
+        {
+            tracing::warn!(error = %format!("{e:#}"), "reading the installation's permissions failed");
+        }
 
         let mut view = github_poll::RepoView::default();
         let (mut settled, mut failed) = (0usize, 0usize);
@@ -206,7 +239,7 @@ impl Poller {
             self.last_pass.insert(issue.clone());
         }
         let full = full || standing == Standing::JustClosed;
-        match view.branch(app, issue).await? {
+        let read_from = match view.branch(app, issue).await? {
             Some(head) => {
                 let key = (plans::plan_path(map, issue, &head.name), head.sha.clone());
                 if self.plan_heads.get(issue) != Some(&key) {
@@ -214,11 +247,24 @@ impl Poller {
                     self.plan_heads.insert(issue.clone(), key);
                 }
                 github_poll::poll_pr(app, issue, &head.name, view, full).await?;
+                Some(head.name)
             }
-            None => github_poll::poll_pr_of_gone_branch(app, issue).await?,
-        }
+            None => {
+                github_poll::poll_pr_of_gone_branch(app, issue).await?;
+                None
+            }
+        };
         if full {
-            github_poll::poll_decisions(app, issue).await?;
+            let read = github_poll::poll_comments(app, issue).await?;
+            // An approval that names another branch is compared with the plan there: one file
+            // read on the full lane (ADR 0027). The branch the plan is read from needs none.
+            if let Some(a) = read.newest_approval
+                && let Some(branch) = a.branch.as_deref()
+                && read_from.as_deref() != Some(branch)
+            {
+                let sha = plans::hash_on_branch(app, map, issue, branch).await?;
+                github_poll::set_target_sha(&app.db, issue, a.comment_id, sha.as_deref()).await?;
+            }
         }
         self.seen.insert(issue.clone());
         if self.last_pass.remove(issue) && !busy {

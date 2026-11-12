@@ -10,9 +10,10 @@
 import type { Flow, FlowKind } from "../../protocol.ts";
 
 /** `plan` is not offered by the switch: it is on while an issue with a plan is selected. */
-export type Lens = "structure" | FlowKind | "plan";
+/** `scenario` shows every flow, both kinds, while one step of a scenario pulses (ADR 0024). */
+export type Lens = "structure" | FlowKind | "plan" | "scenario";
 
-export const LENSES: { id: Exclude<Lens, "plan">; label: string }[] = [
+export const LENSES: { id: Exclude<Lens, "plan" | "scenario">; label: string }[] = [
   { id: "structure", label: "Structure" },
   { id: "data", label: "Data flow" },
   { id: "control", label: "Control flow" },
@@ -53,7 +54,8 @@ export function arrowsFor(seam: SeamLike, lens: Lens): Arrow[] {
     return [plain];
   }
   // The plan lens shows everything the plan sends, both kinds at once.
-  const flows = (seam.flows ?? []).filter((f) => lens === "plan" || f.kind === lens);
+  // The plan and scenario lenses show every flow, both kinds at once.
+  const flows = (seam.flows ?? []).filter((f) => lens === "plan" || lens === "scenario" || f.kind === lens);
   if (flows.length === 0) {
     return [{ ...plain, faint: true }];
   }

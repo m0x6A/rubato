@@ -12,6 +12,8 @@ pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
         plans: plans::all(&app.db).await?,
         prs: github_poll::all_prs(&app.db).await?,
         decisions: github_poll::all_decisions(&app.db).await?,
+        reviews: github_poll::all_reviews(&app.db).await?,
+        approvals: github_poll::all_approvals(&app.db).await?,
         launched: launch::launched_issues(&app.db).await?,
         cap_hits: launch::issues_with_live_cap_hit(&app.db).await?,
         meta: github_poll::all_issue_meta(&app.db).await?,

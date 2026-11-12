@@ -2,9 +2,10 @@
 //!
 //! The derivation is pure so the server, its tests and the fixtures agree on it.
 
-use crate::github::DecisionRecord;
+use crate::github::{ApprovalState, DecisionRecord, ReviewRecord};
 use crate::github::{ChecksStatus, PullRequestState};
 use crate::ids::{IssueRef, MapRef};
+use crate::issue_body::PinSuggestion;
 use crate::layout::MapLayout;
 use crate::map::MapResponse;
 use crate::map_draft::MapDraft;
@@ -164,6 +165,13 @@ pub struct IssueSummary {
     pub pull_request: Option<PullRequestState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decisions: Vec<DecisionRecord>,
+    /// The newest design review a member posted (ADR 0027).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<ReviewRecord>,
+    /// The newest approval a member posted, and whether it is of the plan as it is now. A
+    /// badge, not a progress state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalState>,
     /// Sum over this issue's sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_usd: Option<f64>,
@@ -179,6 +187,13 @@ pub struct OpenIssue {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
     pub updated_at: DateTime<Utc>,
+    /// The place its body's `Map:` line names, when its author is not trusted to place it
+    /// (ADR 0026); a trusted line pins the issue and it leaves this list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_line: Option<MapRef>,
+    /// Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<PinSuggestion>,
 }
 
 /// How fresh one repo's listing is. The trust check for the backlog.
@@ -237,6 +252,12 @@ pub enum Finding {
         from: String,
         to: String,
     },
+    /// The plan was approved, then changed: the approval names an earlier version (ADR 0027).
+    ApprovalStale {
+        issue: IssueRef,
+        approved_sha: String,
+        current_sha: String,
+    },
 }
 
 /// The whole picture in one payload: what the web view renders.
@@ -263,6 +284,10 @@ pub struct Overview {
     /// The shared draft of the map and its proposal (ADR 0018). Never an input to progress.
     #[serde(default)]
     pub draft: MapDraft,
+    /// Whether "New issue here…" can create an issue: the GitHub App's installation has
+    /// Issues: write, or the server runs on the local stand-in (ADR 0025).
+    #[serde(default)]
+    pub can_create_issues: bool,
     pub generated_at: DateTime<Utc>,
 }
 

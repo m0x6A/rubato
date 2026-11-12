@@ -4,6 +4,17 @@
   "description": "Everything the map view needs about one issue.",
   "type": "object",
   "properties": {
+    "approval": {
+      "description": "The newest approval a member posted, and whether it is of the plan as it is now. A\nbadge, not a progress state.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ApprovalState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "decisions": {
       "type": "array",
       "items": {
@@ -36,6 +47,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/PullRequestState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "review": {
+      "description": "The newest design review a member posted (ADR 0027).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReviewRecord"
         },
         {
           "type": "null"
@@ -102,6 +124,105 @@
         "node",
         "status",
         "change"
+      ]
+    },
+    "ApprovalRecord": {
+      "description": "A person's approval of a plan, first line `Approved: plan <sha>` or\n`Approved: plan <sha> on <branch>` (ADR 0027). Only a trusted author's approval counts.",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "branch": {
+          "description": "The branch the approval names; else the branch Rubato reads the plan from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comment_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha": {
+          "description": "The plan hash approved (checkboxes cleared, git blob sha). Absent when the comment names\nnone: the approval then shows as \"version not named\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "comment_id",
+        "author",
+        "created_at",
+        "url"
+      ]
+    },
+    "ApprovalState": {
+      "description": "The newest counted approval of an issue's plan, and whether it is of the current version.",
+      "type": "object",
+      "properties": {
+        "current_sha": {
+          "description": "The hash of the plan compared with, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record": {
+          "$ref": "#/$defs/ApprovalRecord"
+        },
+        "version": {
+          "$ref": "#/$defs/ApprovalVersion"
+        }
+      },
+      "required": [
+        "record",
+        "version"
+      ]
+    },
+    "ApprovalVersion": {
+      "description": "How an approval relates to the plan Rubato holds now.",
+      "oneOf": [
+        {
+          "description": "The approved hash is the plan's hash now.",
+          "type": "string",
+          "const": "current"
+        },
+        {
+          "description": "The plan changed after the approval (finding `ApprovalStale`).",
+          "type": "string",
+          "const": "earlier"
+        },
+        {
+          "description": "The comment names no hash.",
+          "type": "string",
+          "const": "not_named"
+        },
+        {
+          "description": "No plan file to compare with on that branch.",
+          "type": "string",
+          "const": "no_plan"
+        }
       ]
     },
     "Assumption": {
@@ -564,6 +685,60 @@
         "draft",
         "checks",
         "updated_at",
+        "url"
+      ]
+    },
+    "ReviewRecord": {
+      "description": "A design review posted as an issue comment, first line `Review: <track> — <outcome>`\n(ADR 0027). Only a trusted author's review is kept.",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "comment_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "left_open": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "description": "The rest of the first line, e.g. `passed after fixes`.",
+          "type": "string"
+        },
+        "plan_sha": {
+          "description": "The plan version the review read, when its `Plan` section names one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "track": {
+          "description": "`trivial`, `small` or `full`, as written.",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "comment_id",
+        "author",
+        "track",
+        "outcome",
+        "created_at",
         "url"
       ]
     },

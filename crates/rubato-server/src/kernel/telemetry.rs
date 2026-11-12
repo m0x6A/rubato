@@ -84,6 +84,7 @@ pub struct Metrics {
     pub rate_limit_limit: Gauge<u64>,
     pub plan_parse_failures: Counter<u64>,
     pub plan_unknown_id_count: Gauge<u64>,
+    pub plans_approval_stale: Gauge<u64>,
     pub seam_open_plans: Gauge<u64>,
     pub map_loaded: Gauge<u64>,
     /// Unix seconds of the last successful load. No unit: one would rename the Prometheus
@@ -104,6 +105,9 @@ pub struct Metrics {
     pub map_proposals: Counter<u64>,
     /// Unix seconds; no unit, like `map_loaded_at`.
     pub map_proposal_state_since: Gauge<u64>,
+    pub backlog_map_lines: Counter<u64>,
+    pub issues_created: Counter<u64>,
+    pub issues_opening: Gauge<u64>,
 }
 
 impl Metrics {
@@ -123,6 +127,7 @@ impl Metrics {
             rate_limit_limit: m.u64_gauge(otel::metric::GITHUB_RATE_LIMIT_LIMIT).build(),
             plan_parse_failures: m.u64_counter(otel::metric::PLAN_PARSE_FAILURES).build(),
             plan_unknown_id_count: m.u64_gauge(otel::metric::PLAN_UNKNOWN_ID_COUNT).build(),
+            plans_approval_stale: m.u64_gauge(otel::metric::PLANS_APPROVAL_STALE).build(),
             seam_open_plans: m.u64_gauge(otel::metric::SEAM_OPEN_PLANS).build(),
             map_loaded: m.u64_gauge(otel::metric::MAP_LOADED).build(),
             map_loaded_at: m.u64_gauge(otel::metric::MAP_LOADED_AT).build(),
@@ -139,6 +144,9 @@ impl Metrics {
             map_draft_ops: m.u64_gauge(otel::metric::MAP_DRAFT_OPS).build(),
             map_proposals: m.u64_counter(otel::metric::MAP_PROPOSALS).build(),
             map_proposal_state_since: m.u64_gauge(otel::metric::MAP_PROPOSAL_STATE_SINCE).build(),
+            backlog_map_lines: m.u64_counter(otel::metric::BACKLOG_MAP_LINES).build(),
+            issues_created: m.u64_counter(otel::metric::ISSUES_CREATED).build(),
+            issues_opening: m.u64_gauge(otel::metric::ISSUES_OPENING).build(),
         }
     }
 }

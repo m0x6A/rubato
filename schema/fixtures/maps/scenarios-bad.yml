@@ -1,0 +1,51 @@
+# Must fail on both sides, with the same problems in the same order: a scenario id that is a node
+# id, a step with no declared flow, a step that matches two flows, a step whose `carries` matches
+# none, a step on an unknown seam, and a scenario with no steps.
+version: 1
+name: scenarios-bad
+nodes:
+  - id: web
+    kind: context
+  - id: server
+    kind: context
+  - id: store
+    kind: external
+seams:
+  - id: web-server
+    from: web
+    to: server
+    owner: server
+    flows:
+      - kind: data
+        from: server
+        to: web
+        carries: Overview
+      - kind: control
+        from: server
+        to: web
+        carries: WebEvent Changed
+      - kind: control
+        from: server
+        to: web
+        carries: Reload
+scenarios:
+  - id: web
+    name: Same id as a node
+    steps:
+      - {seam: web-server, from: server, to: web, kind: data}
+  - id: off-flow
+    name: Control the wrong way
+    steps:
+      - {seam: web-server, from: web, to: server, kind: control}
+  - id: ambiguous
+    name: Which control flow
+    steps:
+      - {seam: web-server, from: server, to: web, kind: control}
+      - {seam: web-server, from: server, to: web, kind: control, carries: Nope}
+  - id: lost
+    name: Over a seam nobody declared
+    steps:
+      - {seam: web-store, from: web, to: store, kind: data}
+  - id: empty
+    name: Nothing happens
+    steps: []

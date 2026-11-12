@@ -16,7 +16,7 @@ fn valid_id(id: &str) -> bool {
 /// The map with `op` applied, or why it cannot be applied. Nothing is changed on refusal.
 pub fn apply(map: &SystemMap, op: &MapOp) -> Result<SystemMap, String> {
     let mut next = map.clone();
-    let taken = |id: &str| map.ids().contains(id);
+    let taken = |id: &str| map.ids().contains(id) || map.scenario(id).is_some();
     match op {
         MapOp::AddNode { node } => {
             if !valid_id(&node.id) {
@@ -211,6 +211,49 @@ mod tests {
             assert!(why.contains(word), "{op:?}: {why}");
         }
         println!("checked {} refused operations", cases.len());
+    }
+
+    #[test]
+    fn a_draft_cannot_pull_a_seam_or_flow_out_from_under_a_scenario() {
+        let map: SystemMap = serde_yaml_ng::from_str(include_str!(
+            "../../../../schema/fixtures/maps/scenarios.yml"
+        ))
+        .unwrap();
+        // Removing a seam a scenario steps over: refused, naming the scenario.
+        let e = apply(
+            &map,
+            &MapOp::RemoveSeam {
+                id: "server-store".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("scenario \"pin-an-issue\" step 2 names unknown seam \"server-store\""),
+            "{e}"
+        );
+        // Dropping the flow a step uses: refused the same way.
+        let mut fewer = map.seam("web-server").unwrap().clone();
+        fewer.flows.retain(|f| f.carries != "PinRequest");
+        let e = apply(&map, &MapOp::UpdateSeam { seam: fewer }).unwrap_err();
+        assert!(e.contains("scenario \"pin-an-issue\" step 1"), "{e}");
+        // A scenario id is taken: a part cannot reuse it.
+        let e = apply(
+            &map,
+            &MapOp::AddNode {
+                node: node("pin-an-issue"),
+            },
+        )
+        .unwrap_err();
+        assert!(e.contains("already exists"), "{e}");
+        // Ops that leave the scenarios alone still apply, and keep them.
+        let next = apply(
+            &map,
+            &MapOp::AddNode {
+                node: node("billing"),
+            },
+        )
+        .unwrap();
+        assert_eq!(next.scenarios, map.scenarios);
     }
 
     #[test]

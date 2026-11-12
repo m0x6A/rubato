@@ -32,7 +32,13 @@ is installed on.
      `http://127.0.0.1:8080`). Callback URL: that URL plus `/auth/github/callback`.
    - Webhook: off. Rubato polls.
    - Repository permissions: *Contents: read and write*, *Pull requests: read and write*,
-     *Issues: read*, *Checks: read*, *Metadata: read*. Nothing else.
+     *Issues: read and write*, *Checks: read*, *Metadata: read*. Nothing else. Issues: write
+     is for "New issue here…" (ADR 0025); without it Rubato still runs and the form says why
+     it cannot create.
+   - An App registered before #71 has *Issues: read*. Change it to *read and write*; GitHub
+     then asks the installation's owner to approve the new permission. Rubato reads the
+     installation's permissions on every full poll pass (every five minutes), so no restart is
+     needed.
    - Where it can be installed: only on this account. One installation covers one account,
      so all the team's repositories sit under it.
 2. On the App's page: note the **App ID** and the **Client ID**, generate a **client secret**,
@@ -174,6 +180,31 @@ What happens next, and what to watch:
   session and the issue is **Blocked**.
 - Open a PR from the branch: **In review** when checks are green, **Done** when merged. The
   plan check in CI fails a plan that names an unknown id or lacks an O-row.
+
+### Placing issues from other tools
+
+A tool that opens issues for you (the voice-note flow, a script) can place each issue on the map
+by ending its body with one line (ADR 0026):
+
+```text
+Map: node <id>
+Map: seam <id>
+```
+
+The id must be a node or seam id of the map; `GET /api/map` lists them. The rules:
+
+- The line holds nothing else, starts with `Map:` exactly, and is not inside a code fence. When
+  there are several, the last one counts.
+- It places the issue only when its author is on the team: GitHub's `author_association` is
+  `OWNER`, `MEMBER` or `COLLABORATOR`. The repository is public, so a line from anyone else is
+  shown in *Not pinned* as a suggestion that a person confirms with **Pin here**.
+- It pins an issue that is not pinned yet, once. When someone unpins the issue, the same line
+  does not pin it again; change the line or pin it by hand.
+- An id the map does not have leaves the issue in *Not pinned*; the "Map lines" panel counts it
+  as `unknown_id`.
+
+Issues without the line get a suggested place too, from ids, paths and words of the map that
+appear in their title and body.
 
 ## 8. If it does not move
 

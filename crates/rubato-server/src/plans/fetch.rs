@@ -1,6 +1,7 @@
 //! Fetch the plan file on an issue branch (ADR 0005, 0009) and store what it says. A parse
 //! failure is recorded, counted and does not stop the caller; a missing file deletes the plan.
 
+use super::hash::approval_hash;
 use super::parse::parse_plan;
 use super::store;
 use crate::kernel::state::{App, LoadedMap};
@@ -34,7 +35,8 @@ pub async fn fetch_and_store(
         Some(text) => match parse_plan(&text, &path) {
             Ok(mut plan) => {
                 plan.git_ref = Some(branch.to_owned());
-                store::upsert_plan(&app.db, issue, branch, &path, Some(&plan), None).await?;
+                let sha = approval_hash(&text);
+                store::upsert_plan(&app.db, issue, branch, &path, Some(&plan), None, &sha).await?;
             }
             Err(e) => {
                 app.metrics.plan_parse_failures.add(
@@ -44,13 +46,39 @@ pub async fn fetch_and_store(
                         KeyValue::new(attr::REPO, issue.repo.clone()),
                     ],
                 );
-                store::upsert_plan(&app.db, issue, branch, &path, None, Some(&e.to_string()))
-                    .await?;
+                let sha = approval_hash(&text);
+                store::upsert_plan(
+                    &app.db,
+                    issue,
+                    branch,
+                    &path,
+                    None,
+                    Some(&e.to_string()),
+                    &sha,
+                )
+                .await?;
             }
         },
         None => store::delete_plan(&app.db, issue).await?,
     }
     Ok(())
+}
+
+/// The approval hash of the plan on `branch`, which is not the branch the plan is read from:
+/// one file read, for an approval that names that branch (ADR 0027). `None` when that branch
+/// has no plan file. Nothing is stored here.
+pub async fn hash_on_branch(
+    app: &App,
+    map: &LoadedMap,
+    issue: &IssueRef,
+    branch: &str,
+) -> Result<Option<String>> {
+    let path = plan_path(map, issue, branch);
+    Ok(app
+        .github
+        .file(&issue.repo, &path, branch)
+        .await?
+        .map(|text| approval_hash(&text)))
 }
 
 #[cfg(test)]
