@@ -28,43 +28,34 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
         anyhow::Ok((sha, yaml))
     }
     .await;
-    let (version, yaml) = match fetched {
-        Ok(v) => v,
+    // `stored_at` is set when the map comes from the database copy: that copy keeps the time it
+    // was fetched, and this reload has already counted its one failure (the fetch).
+    let (version, yaml, stored_at) = match fetched {
+        Ok((version, yaml)) => (version, yaml, None),
         Err(e) => {
             app.metrics.map_load_failures.add(1, &[]);
             if let Some(m) = app.map.read().await.clone() {
                 tracing::warn!(error = %e, "map fetch failed; keeping cached version {}", m.version);
                 return Ok(m);
             }
-            if let Some((version, yaml, _)) = store::load_map(&app.db).await? {
-                tracing::warn!(error = %e, "map fetch failed; using the database copy {version}");
-                (version, yaml)
+            if let Some((version, yaml, loaded_at)) = store::load_map(&app.db).await? {
+                tracing::warn!(error = %e, %loaded_at, "map fetch failed; using the database copy {version}");
+                (version, yaml, Some(loaded_at))
             } else {
                 return Err(e);
             }
         }
     };
-    let map: SystemMap = serde_yaml_ng::from_str(&yaml)
-        .context("system-map.yml does not parse")
-        .inspect_err(|_| app.metrics.map_load_failures.add(1, &[]))?;
-    if let Err(errors) = map.validate() {
-        app.metrics.map_load_failures.add(1, &[]);
-        anyhow::bail!(
-            "system map invalid: {}",
-            errors
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("; ")
-        );
-    }
+    let map = parse(app, &yaml, stored_at.is_none())?;
     let loaded = LoadedMap {
         map,
         version: version.clone(),
-        loaded_at: Utc::now(),
+        loaded_at: stored_at.unwrap_or_else(Utc::now),
         yaml: yaml.clone(),
     };
-    store::store_map(&app.db, &version, &yaml, loaded.loaded_at).await?;
+    if stored_at.is_none() {
+        store::store_map(&app.db, &version, &yaml, loaded.loaded_at).await?;
+    }
     *app.map.write().await = Some(loaded.clone());
     app.metrics
         .map_loaded
@@ -80,20 +71,7 @@ async fn load_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> 
         .await
         .with_context(|| format!("reading {}", file.display()))
         .inspect_err(|_| app.metrics.map_load_failures.add(1, &[]))?;
-    let map: SystemMap = serde_yaml_ng::from_str(&yaml)
-        .context("system-map.yml does not parse")
-        .inspect_err(|_| app.metrics.map_load_failures.add(1, &[]))?;
-    if let Err(errors) = map.validate() {
-        app.metrics.map_load_failures.add(1, &[]);
-        anyhow::bail!(
-            "system map invalid: {}",
-            errors
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("; ")
-        );
-    }
+    let map = parse(app, &yaml, true)?;
     use sha2::Digest;
     let digest = sha2::Sha256::digest(yaml.as_bytes());
     let version = format!(
@@ -118,6 +96,31 @@ async fn load_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> 
     record_loaded_at(app, loaded.loaded_at);
     tracing::info!(version = %version, file = %file.display(), "map loaded from file");
     Ok(loaded)
+}
+
+/// Parse and validate a map. `count` is false when the reload has already counted its failure,
+/// so one reload adds at most one to `rubato.map.load_failures`.
+fn parse(app: &App, yaml: &str, count: bool) -> Result<SystemMap> {
+    let failed = || {
+        if count {
+            app.metrics.map_load_failures.add(1, &[]);
+        }
+    };
+    let map: SystemMap = serde_yaml_ng::from_str(yaml)
+        .context("system-map.yml does not parse")
+        .inspect_err(|_| failed())?;
+    if let Err(errors) = map.validate() {
+        failed();
+        anyhow::bail!(
+            "system map invalid: {}",
+            errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+    Ok(map)
 }
 
 /// Load the map from the database at startup so the server answers before the first fetch.
@@ -272,5 +275,51 @@ mod tests {
             only(&reader, metric::MAP_LOADED_AT).value,
             u64::try_from(loaded.loaded_at.timestamp()).unwrap()
         );
+    }
+
+    /// A server with no map in memory over `db`, and a GitHub with no branches, so every fetch
+    /// fails and `reload` falls back to the database copy.
+    async fn failing_github_over(db: &std::path::Path) -> (App, metric_reader::Reader) {
+        let cfg = Config::for_tests(format!("sqlite://{}?mode=rwc", db.display()), "m0x6A");
+        app(cfg, Arc::new(FakeGitHub::new())).await
+    }
+
+    #[tokio::test]
+    async fn the_database_fallback_keeps_the_stored_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, reader) = failing_github_over(&tmp.path().join("t.db")).await;
+        let stored_at = Utc::now() - chrono::Duration::hours(3);
+        store::store_map(&a.db, "sha-old", MAP, stored_at)
+            .await
+            .unwrap();
+
+        // The map in use and the gauge carry the stored time, not the time of this reload, and
+        // the failed fetch is counted once.
+        let loaded = reload(&a).await.unwrap();
+        assert_eq!(loaded.version, "sha-old");
+        assert_eq!(loaded.loaded_at.timestamp(), stored_at.timestamp());
+        let at = u64::try_from(stored_at.timestamp()).unwrap();
+        assert_eq!(only(&reader, metric::MAP_LOADED_AT).value, at);
+        assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
+        // The stored row keeps its time.
+        let (_, _, row_at) = store::load_map(&a.db).await.unwrap().unwrap();
+        assert_eq!(row_at.timestamp(), stored_at.timestamp());
+    }
+
+    #[tokio::test]
+    async fn a_broken_database_copy_counts_one_failure_per_reload() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, reader) = failing_github_over(&tmp.path().join("t.db")).await;
+        store::store_map(&a.db, "sha-bad", "nodes: [unclosed", Utc::now())
+            .await
+            .unwrap();
+
+        // One reload, one failure: the fetch is counted, the unparsable copy behind it is not
+        // counted again.
+        let e = reload(&a).await.unwrap_err();
+        assert!(format!("{e:#}").contains("does not parse"), "{e:#}");
+        assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
+        assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
+        assert!(a.map.read().await.is_none());
     }
 }
