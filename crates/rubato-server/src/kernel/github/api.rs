@@ -66,14 +66,34 @@ pub struct PullInfo {
     pub url: String,
 }
 
+/// A branch and the commit it points at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchHead {
+    pub name: String,
+    pub sha: String,
+}
+
+/// A repo's open pull requests whose head branch is in the repo itself (forks left out), as
+/// (head branch, pull request). `truncated` when the listing hit [`PULLS_PER_PAGE`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OpenPulls {
+    pub pulls: Vec<(String, PullInfo)>,
+    pub truncated: bool,
+}
+
+/// One page of open pull requests per repo per tick (issue #49).
+pub const PULLS_PER_PAGE: usize = 100;
+
 #[async_trait]
 pub trait GitHubApi: Send + Sync {
     /// File content at a ref, or None when absent.
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>>;
     /// Commit sha a branch points at.
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>>;
-    /// Branch names starting with `prefix`.
-    async fn branches_with_prefix(&self, repo: &str, prefix: &str) -> Result<Vec<String>>;
+    /// Branches starting with `prefix`, with their head commits.
+    async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>>;
+    /// The repo's open pull requests from its own branches (issue #49).
+    async fn open_pulls(&self, repo: &str) -> Result<OpenPulls>;
     async fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueInfo>>;
     async fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<Comment>>;
     /// The newest PR whose head is `branch`.
@@ -283,7 +303,7 @@ impl GitHubApi for Octo {
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "branches"))]
-    async fn branches_with_prefix(&self, repo: &str, prefix: &str) -> Result<Vec<String>> {
+    async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>> {
         let (o, r) = split_repo(repo)?;
         let page = self
             .client
@@ -295,9 +315,52 @@ impl GitHubApi for Octo {
         let all = self.client.all_pages(page).await?;
         Ok(all
             .into_iter()
-            .map(|b| b.name)
-            .filter(|n| n.starts_with(prefix))
+            .filter(|b| b.name.starts_with(prefix))
+            .map(|b| BranchHead {
+                name: b.name,
+                sha: b.commit.sha,
+            })
             .collect())
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pulls"))]
+    async fn open_pulls(&self, repo: &str) -> Result<OpenPulls> {
+        let (o, r) = split_repo(repo)?;
+        let page = self
+            .client
+            .pulls(o, r)
+            .list()
+            .state(octocrab::params::State::Open)
+            .per_page(PULLS_PER_PAGE as u8)
+            .send()
+            .await?;
+        let truncated = page.items.len() >= PULLS_PER_PAGE;
+        // Same rule as `pull_for_branch` (`head=owner:branch`): the head label names this owner.
+        // GitHub logins are case-insensitive, and the map may spell the owner differently.
+        let pulls =
+            page.items
+                .into_iter()
+                .filter(|p| {
+                    p.head.label.as_deref().is_some_and(|l| {
+                        l.eq_ignore_ascii_case(&format!("{o}:{}", p.head.ref_field))
+                    })
+                })
+                .map(|p| {
+                    (
+                        p.head.ref_field.clone(),
+                        PullInfo {
+                            number: p.number,
+                            open: true,
+                            draft: p.draft.unwrap_or(false),
+                            head_sha: p.head.sha,
+                            merged_at: p.merged_at,
+                            updated_at: p.updated_at.unwrap_or_else(Utc::now),
+                            url: p.html_url.map(|u| u.to_string()).unwrap_or_default(),
+                        },
+                    )
+                })
+                .collect();
+        Ok(OpenPulls { pulls, truncated })
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "issue"))]
