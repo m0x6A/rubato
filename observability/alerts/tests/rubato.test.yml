@@ -53,7 +53,7 @@ tests:
               summary: "A session on companion c1 reports working but no hook has arrived"
               panel: Hooks/min vs working sessions
 
-  # A turn ends and the hooks stop with it: both binaries record working = 0 (every status is
+  # A turn ends and the hooks stop with it: the server records working = 0 (every status is
   # recorded on each snapshot), so the alert clears instead of paging on every finished turn.
   - interval: 1m
     input_series:
@@ -61,7 +61,7 @@ tests:
         values: "1x5 0x10"
       - series: 'rubato_sessions_by_state{rubato_companion_id="c1", rubato_session_state="idle"}'
         values: "0x5 1x10"
-      - series: 'rubato_hook_forwarded_total{rubato_companion_id="c1", rubato_hook_event="PreToolUse", rubato_session_id="s1"}'
+      - series: 'rubato_hook_forwarded_total{rubato_companion_id="c1", rubato_hook_event="PreToolUse"}'
         values: "5x16"
     alert_rule_test:
       - eval_time: 5m

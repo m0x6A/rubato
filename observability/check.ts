@@ -38,7 +38,7 @@ function opt(argv: string[], name: string, fallback: string): string {
 
 export function check(rulesText: string, testsText: string, dashboardText: string): { problems: string[]; rules: number; tests: number; panels: number } {
   const problems: string[] = [];
-  const rules = parseYaml(rulesText) as { groups: { rules: { alert: string; annotations?: { panel?: string } }[] }[] };
+  const rules = parseYaml(rulesText) as { groups: { rules: { alert: string; expr?: string; annotations?: { panel?: string } }[] }[] };
   const tests = parseYaml(testsText) as { tests: { alert_rule_test: { alertname: string; exp_alerts: unknown[] }[] }[] };
   const dashboard = JSON.parse(dashboardText) as { panels: (Panel & { panels?: Panel[] })[] };
   const panels: Panel[] = dashboard.panels.flatMap((p) => [p, ...(p.panels ?? [])]);
@@ -82,8 +82,25 @@ export function check(rulesText: string, testsText: string, dashboardText: strin
       }
     }
   }
-  // Server and companion both export rubato.sessions.by_state with the companion id, so a sum
-  // would count each working session twice.
+  // #43: rubato.hook.forwarded carries no session id (one series per session grew for the life
+  // of the companion); the rubato.hook.forward span has it. A query that splits or filters the
+  // counter by it shows nothing.
+  const bySession = (e: string) => /\brubato_hook_forwarded_total\b/.test(e) && /\brubato_session_id\b/.test(e);
+  for (const a of alerts) {
+    if (bySession(a.expr ?? "")) {
+      problems.push(`alert ${a.alert} queries rubato_hook_forwarded_total by rubato_session_id, which it does not carry: ${a.expr}`);
+    }
+  }
+  for (const p of panels) {
+    for (const t of p.targets ?? []) {
+      if (bySession(t.expr ?? "")) {
+        problems.push(`panel ${JSON.stringify(p.title)} queries rubato_hook_forwarded_total by rubato_session_id, which it does not carry: ${t.expr}`);
+      }
+    }
+  }
+  // rubato.sessions.by_state is the server's alone since #43 (from each companion snapshot). The
+  // panel keeps max by so it stays right while a companion built before #43, which exported its
+  // own copy with the same labels, is still running.
   const working = exprs("Hooks/min vs working sessions").filter((e) => e.includes("rubato_sessions_by_state"));
   if (working.length === 0 || !working.every((e) => /^max by \(rubato_companion_id\) \(rubato_sessions_by_state\b/.test(e))) {
     problems.push(`panel "Hooks/min vs working sessions" must take max by (rubato_companion_id) of rubato_sessions_by_state`);

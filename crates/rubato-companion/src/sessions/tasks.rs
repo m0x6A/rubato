@@ -133,8 +133,9 @@ impl TeamPoll {
     }
 }
 
-/// `rubato.sessions.discovered` per source and `rubato.sessions.by_state` per status, each with
-/// this companion's id and each including its zeros.
+/// `rubato.sessions.discovered` per source, with this companion's id and including its zeros.
+/// `rubato.sessions.by_state` is the server's, recorded from each snapshot this companion sends
+/// (#43), so a sum over it counts each session once.
 fn record_gauges(reg: &Registry, metrics: &Metrics) {
     let companion = reg.companion_id.to_string();
     for (source, n) in reg.counts_by_source() {
@@ -142,15 +143,6 @@ fn record_gauges(reg: &Registry, metrics: &Metrics) {
             n as u64,
             &[
                 KeyValue::new(attr::SESSION_SOURCE, source.name()),
-                KeyValue::new(attr::COMPANION_ID, companion.clone()),
-            ],
-        );
-    }
-    for (status, n) in reg.counts() {
-        metrics.sessions_by_state.record(
-            n as u64,
-            &[
-                KeyValue::new(attr::SESSION_STATE, status.name()),
                 KeyValue::new(attr::COMPANION_ID, companion.clone()),
             ],
         );
@@ -181,25 +173,15 @@ mod tests {
         reg.apply_hook(&hook("PreToolUse"));
         record_gauges(&reg, &metrics);
 
-        let by_state = reader.points(metric::SESSIONS_BY_STATE);
-        assert_eq!(by_state.len(), 5, "one point per status: {by_state:?}");
         let discovered = reader.points(metric::SESSIONS_DISCOVERED);
         assert_eq!(discovered.len(), 4, "one point per source: {discovered:?}");
-        for p in by_state.iter().chain(&discovered) {
+        for p in &discovered {
             assert_eq!(
                 p.attrs.get(attr::COMPANION_ID),
                 Some(&id.to_string()),
                 "{p:?}"
             );
         }
-        let state = |points: &[metric_reader::Point], s: &str| {
-            points
-                .iter()
-                .find(|p| p.attrs.get(attr::SESSION_STATE).map(String::as_str) == Some(s))
-                .map(|p| p.value)
-        };
-        assert_eq!(state(&by_state, "working"), Some(1));
-        assert_eq!(state(&by_state, "idle"), Some(0));
         let sources: std::collections::BTreeMap<&str, u64> = discovered
             .iter()
             .map(|p| (p.attrs[attr::SESSION_SOURCE].as_str(), p.value))
@@ -209,12 +191,17 @@ mod tests {
             [("hook", 1), ("launch", 0), ("scraped", 0), ("tmux_ide", 0)].into()
         );
 
-        // The turn ends: working goes back to 0 instead of keeping its last value.
+        // The session moves on: `discovered` follows, and `by_state` is never recorded here.
+        // It is the server's, from each snapshot (#43); recording it on both sides made every
+        // sum count each session twice.
         reg.apply_hook(&hook("Stop"));
         record_gauges(&reg, &metrics);
+        assert_eq!(reader.points(metric::SESSIONS_DISCOVERED).len(), 4);
         let by_state = reader.points(metric::SESSIONS_BY_STATE);
-        assert_eq!(state(&by_state, "working"), Some(0));
-        assert_eq!(state(&by_state, "idle"), Some(1));
+        assert!(
+            by_state.is_empty(),
+            "the server owns this gauge: {by_state:?}"
+        );
     }
 
     /// A `tmux-ide` stand-in: a shell script with the given body.

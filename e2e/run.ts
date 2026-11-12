@@ -328,8 +328,12 @@ async function main() {
       "rubato.map.draft.ops",
       "rubato.map.proposal.state_since",
     ],
-    "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered", "rubato.sessions.by_state"],
+    "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered"],
   };
+  // Issue #43: names that must not show up. Sessions by state is the server's alone (a copy from
+  // the companion made every sum count each session twice), and no companion metric carries the
+  // session id (one series per session; it is on the rubato.hook.forward span).
+  const forbiddenInMetrics: Record<string, string[]> = { "rubato-companion": ["rubato.sessions.by_state", "rubato.session_id"] };
   // The attribute keys the alerts and panels group by, in each binary's metrics bodies, and the
   // span names in the companion's traces bodies. (The companion id is also on the heartbeat, so
   // its place on the other metrics is proved by the companion's in-memory metric tests.)
@@ -350,6 +354,11 @@ async function main() {
   await waitFor("OTLP metrics and traces from both binaries", 30_000, async () => missing().length === 0 && (otlp.posts.get("/v1/traces") ?? 0) > 0).catch((e) =>
     problems.push(`${String(e)}; not seen: ${missing().join(", ") || "none"}`),
   );
+  for (const [service, names] of Object.entries(forbiddenInMetrics)) {
+    const seen = names.filter((n) => otlp.metrics.get(service)?.has(n));
+    log(`otlp ${service}: checked ${names.length} name(s) that must not appear in metrics, saw ${seen.length}`);
+    for (const n of seen) problems.push(`${service} exported ${n} in its metrics (#43)`);
+  }
   for (const { what, expected, seen } of expectations) {
     for (const [service, names] of Object.entries(expected)) {
       log(`otlp ${service}: saw ${names.filter((n) => seen.get(service)?.has(n)).length}/${names.length} ${what}`);

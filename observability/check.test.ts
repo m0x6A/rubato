@@ -82,6 +82,22 @@ test("a working-sessions line that sums over both binaries is rejected", () => {
   assert.deepEqual(check(rules, tests, withExprs("Hooks/min vs working sessions", [hooks])).problems, [problem]);
 });
 
+test("a panel or rule that splits hooks forwarded by session is rejected", () => {
+  // The counter carries no session id since #43; such a query would show one empty line.
+  const bySession = "sum by (rubato_session_id) (rate(rubato_hook_forwarded_total[1m]) * 60)";
+  assert.deepEqual(check(rules, tests, withExprs("Hooks/min vs working sessions", [bySession])).problems.filter((p) => p.includes("rubato_session_id")), [
+    `panel "Hooks/min vs working sessions" queries rubato_hook_forwarded_total by rubato_session_id, which it does not carry: ${bySession}`,
+  ]);
+  const rule = rules.replace(
+    "sum by (rubato_companion_id) (rate(rubato_hook_forwarded_total[2m])) == 0",
+    'sum by (rubato_companion_id) (rate(rubato_hook_forwarded_total{rubato_session_id!=""}[2m])) == 0',
+  );
+  assert.notEqual(rule, rules, "the committed rule changed shape; update this test");
+  assert.deepEqual(check(rule, tests, dashboard).problems, [
+    'alert SessionWorkingNoHooks queries rubato_hook_forwarded_total by rubato_session_id, which it does not carry: sum by (rubato_companion_id) (rubato_sessions_by_state{rubato_session_state="working"}) > 0\nand\nsum by (rubato_companion_id) (rate(rubato_hook_forwarded_total{rubato_session_id!=""}[2m])) == 0\n',
+  ]);
+});
+
 test("a Map age panel on a metric with a unit suffix is rejected", () => {
   const withUnit = changed((panels) =>
     panels.map((p) => (p.title === "Map age" ? { ...p, targets: [{ expr: "time() - max(rubato_map_loaded_at_seconds)" }] } : p)),
