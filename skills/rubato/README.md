@@ -12,11 +12,13 @@ paths.
 | Capability | File | What it does |
 | --- | --- | --- |
 | map | `scripts/map.ts` | prints the system map: every node and seam id a plan may use |
-| plan | `scripts/plan.ts` | creates and checks the plan file at the agreed path (ADR 0005, 0009) |
+| plan | `scripts/plan.ts`, `scripts/lib/plan-sha.ts` | creates and checks the plan file at the agreed path (ADR 0005, 0009, 0027); prints the sha an approval names |
+| review | `review-template.md`, `review-checklist.md` | the design-review step and its `Review:` comment (ADR 0027, 0028) |
 | adrs | `scripts/adrs.ts` | lists accepted ADRs so a plan does not contradict one |
 | hooks | `scripts/hooks.ts`, `hooks.json` | renders the hooks file for a companion endpoint (ADR 0013) |
 | install | `scripts/install.ts` | copies the skill, the vendored plan check and the schemas into a repo |
 
 `scripts/lib/` is the shared kernel (git, workspace config, vendoring). The files the
-skill ships as is (`SKILL.md`, `prompt.md`, `decision-template.md`, `workspace.example.yml`)
+skill ships as is (`SKILL.md`, `prompt.md`, `decision-template.md`, `review-template.md`,
+`review-checklist.md`, `workspace.example.yml`)
 must stay byte-identical across refactors; connected repos receive them on install.

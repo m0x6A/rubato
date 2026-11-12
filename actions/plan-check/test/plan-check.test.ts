@@ -109,6 +109,17 @@ describe("check", () => {
     expect(line["rubato.plan.unknown_ids"]).toEqual([]);
   });
 
+  it("counts legacy front-matter keys and still passes (ADR 0027)", () => {
+    const r = checkPlanFile(resolve(fixtures, "legacy-keys.md"), map, schemaDir);
+    expect(r.ok).toBe(true);
+    expect(r.legacyKeys).toEqual(["review", "approval"]);
+    expect(logLine(r)["legacy_keys"]).toBe(2);
+    expect(logLine(r)["legacy_key_names"]).toEqual(["review", "approval"]);
+    const clean = checkPlanFile(resolve(fixtures, "valid.md"), map, schemaDir);
+    expect(clean.legacyKeys).toEqual([]);
+    expect(logLine(clean)["legacy_keys"]).toBe(0);
+  });
+
   it("a flow off its seam fails", () => {
     const r = checkPlanFile(resolve(fixtures, "flow-off-seam.md"), map, schemaDir);
     expect(r.ok).toBe(false);
