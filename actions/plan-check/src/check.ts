@@ -5,7 +5,7 @@
  */
 import { readFileSync } from "node:fs";
 import { mapIds, seamJoins, type SystemMap } from "./map.ts";
-import { legacyKeys, parsePlan, PlanParseError, type Plan, type PlanFlow } from "./parse-plan.ts";
+import { legacyKeys, parsePlan, PlanParseError, type DataModel, type Plan, type PlanFlow } from "./parse-plan.ts";
 import { validator } from "./schema.ts";
 
 export interface PlanCheckResult {
@@ -20,6 +20,12 @@ export interface PlanCheckResult {
   flowsChecked: number;
   /** Flows whose seam does not join their two parts, as `from → to over seam`. */
   flowsOffSeam: string[];
+  /** Rows of the plan's Data models table that were checked (ADR 0031). */
+  dataModelsChecked: number;
+  /** Models whose part is not a row of Affected parts, as `model on part`. */
+  modelsOffPart: string[];
+  /** Models crossing a seam no row of Affected parts touches, as `model over seam`. */
+  modelsOffSeam: string[];
   /** Front-matter keys ADR 0027 moved to issue comments (review, approval, track, status). Reported, never failed. */
   legacyKeys: string[];
   ok: boolean;
@@ -31,6 +37,18 @@ export function flowsOffSeam(plan: Plan, map: SystemMap): PlanFlow[] {
     const seam = (map.seams ?? []).find((s) => s.id === f.seam);
     return seam !== undefined && !seamJoins(seam, f.from, f.to);
   });
+}
+
+/** Data models whose part is not a row of Affected parts (ADR 0031). */
+export function modelsOffPart(plan: Plan): DataModel[] {
+  const parts = new Set(plan.affected_parts.map((p) => p.node));
+  return (plan.data_models ?? []).filter((m) => !parts.has(m.part));
+}
+
+/** Data models that cross a seam no row of Affected parts touches (ADR 0031). */
+export function modelsOffSeam(plan: Plan): DataModel[] {
+  const seams = new Set(plan.affected_parts.flatMap((p) => p.seams ?? []));
+  return (plan.data_models ?? []).filter((m) => m.crosses !== undefined && !seams.has(m.crosses));
 }
 
 export function referencedIds(plan: Plan): string[] {
@@ -49,6 +67,12 @@ export function referencedIds(plan: Plan): string[] {
     ids.add(f.from);
     ids.add(f.to);
     ids.add(f.seam);
+  }
+  for (const m of plan.data_models ?? []) {
+    ids.add(m.part);
+    if (m.crosses !== undefined) {
+      ids.add(m.crosses);
+    }
   }
   return [...ids].sort();
 }
@@ -77,6 +101,9 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
     idsChecked: 0,
     flowsChecked: 0,
     flowsOffSeam: [],
+    dataModelsChecked: 0,
+    modelsOffPart: [],
+    modelsOffSeam: [],
     legacyKeys: legacyKeys(text),
     ok: false,
   };
@@ -99,7 +126,16 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
   result.seamsWithoutORow = seamsWithoutORow(plan);
   result.flowsChecked = plan.flows?.length ?? 0;
   result.flowsOffSeam = flowsOffSeam(plan, map).map((f) => `${f.from} → ${f.to} over ${f.seam}`);
-  result.ok = result.schemaErrors.length === 0 && result.unknownIds.length === 0 && result.seamsWithoutORow.length === 0 && result.flowsOffSeam.length === 0;
+  result.dataModelsChecked = plan.data_models?.length ?? 0;
+  result.modelsOffPart = modelsOffPart(plan).map((m) => `${m.model} on ${m.part}`);
+  result.modelsOffSeam = modelsOffSeam(plan).map((m) => `${m.model} over ${m.crosses}`);
+  result.ok =
+    result.schemaErrors.length === 0 &&
+    result.unknownIds.length === 0 &&
+    result.seamsWithoutORow.length === 0 &&
+    result.flowsOffSeam.length === 0 &&
+    result.modelsOffPart.length === 0 &&
+    result.modelsOffSeam.length === 0;
   return result;
 }
 
@@ -119,6 +155,9 @@ export function logLine(r: PlanCheckResult): Record<string, unknown> {
     ids_checked: r.idsChecked,
     flows_checked: r.flowsChecked,
     flows_off_seam: r.flowsOffSeam,
+    data_models: r.dataModelsChecked,
+    models_off_part: r.modelsOffPart,
+    models_off_seam: r.modelsOffSeam,
     legacy_keys: r.legacyKeys.length,
     legacy_key_names: r.legacyKeys,
     schema_errors: r.schemaErrors,

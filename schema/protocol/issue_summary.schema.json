@@ -286,6 +286,55 @@
         }
       ]
     },
+    "DataModel": {
+      "description": "One row of the plan's Data models table (ADR 0031): a model on the part that owns it, and the\nseam it travels over, if any.",
+      "type": "object",
+      "properties": {
+        "change": {
+          "$ref": "#/$defs/ModelChange"
+        },
+        "crosses": {
+          "description": "Seam id the model crosses. Must be touched in Affected parts.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/DataModelKind"
+        },
+        "model": {
+          "description": "The model's name or names, as written, backticks removed.",
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "part": {
+          "description": "Node id of the part that owns the model. Must be in Affected parts.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "kind",
+        "part",
+        "change"
+      ]
+    },
+    "DataModelKind": {
+      "type": "string",
+      "enum": [
+        "table",
+        "type",
+        "schema",
+        "event",
+        "file"
+      ]
+    },
     "DecisionRecord": {
       "description": "A decision recorded as an issue comment with the `Decision:` template (ADR 0014).",
       "type": "object",
@@ -410,6 +459,14 @@
         }
       ]
     },
+    "ModelChange": {
+      "type": "string",
+      "enum": [
+        "new",
+        "changed",
+        "removed"
+      ]
+    },
     "ORow": {
       "description": "The 3 am question for one seam: which signal leads back to it, where, and who is woken.",
       "type": "object",
@@ -473,6 +530,13 @@
           ],
           "format": "uint32",
           "minimum": 0
+        },
+        "data_models": {
+          "description": "The tables, types, schemas, events and files the change introduces, changes or removes,\nfrom its `## Data models` table (ADR 0031). Optional; empty when absent or \"None.\"",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DataModel"
+          }
         },
         "flows": {
           "description": "What the plan will send across seams, from its `## Flows` table (ADR 0021). Optional.",

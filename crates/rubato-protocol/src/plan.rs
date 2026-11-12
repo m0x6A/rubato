@@ -31,6 +31,45 @@ pub struct Plan {
     /// What the plan will send across seams, from its `## Flows` table (ADR 0021). Optional.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub flows: Vec<PlanFlow>,
+    /// The tables, types, schemas, events and files the change introduces, changes or removes,
+    /// from its `## Data models` table (ADR 0031). Optional; empty when absent or "None."
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_models: Vec<DataModel>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DataModelKind {
+    Table,
+    Type,
+    Schema,
+    Event,
+    File,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelChange {
+    New,
+    Changed,
+    Removed,
+}
+
+/// One row of the plan's Data models table (ADR 0031): a model on the part that owns it, and the
+/// seam it travels over, if any.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DataModel {
+    /// The model's name or names, as written, backticks removed.
+    pub model: String,
+    pub kind: DataModelKind,
+    /// Node id of the part that owns the model. Must be in Affected parts.
+    pub part: String,
+    pub change: ModelChange,
+    /// Seam id the model crosses. Must be touched in Affected parts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crosses: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// One row of the plan's Flows table: something the change sends from one part to another over
@@ -131,6 +170,11 @@ impl Plan {
                     .iter()
                     .flat_map(|f| [f.from.as_str(), f.to.as_str(), f.seam.as_str()]),
             )
+            .chain(
+                self.data_models
+                    .iter()
+                    .flat_map(|m| std::iter::once(m.part.as_str()).chain(m.crosses.as_deref())),
+            )
             .collect();
         ids.sort_unstable();
         ids.dedup();
@@ -143,6 +187,26 @@ impl Plan {
         self.flows
             .iter()
             .filter(|f| map.seam(&f.seam).is_some_and(|s| !s.joins(&f.from, &f.to)))
+            .collect()
+    }
+
+    /// Data models whose part is not a row of Affected parts (ADR 0031).
+    pub fn models_off_part(&self) -> Vec<&DataModel> {
+        self.data_models
+            .iter()
+            .filter(|m| !self.affected_parts.iter().any(|p| p.node == m.part))
+            .collect()
+    }
+
+    /// Data models that cross a seam no row of Affected parts touches (ADR 0031).
+    pub fn models_off_seam(&self) -> Vec<&DataModel> {
+        self.data_models
+            .iter()
+            .filter(|m| {
+                m.crosses
+                    .as_ref()
+                    .is_some_and(|s| !self.affected_parts.iter().any(|p| p.seams.contains(s)))
+            })
             .collect()
     }
 
@@ -183,6 +247,7 @@ mod tests {
             }],
             assumed: vec![],
             flows: vec![],
+            data_models: vec![],
         }
     }
 

@@ -48,6 +48,19 @@ export interface PlanFlow {
   carries: string;
 }
 
+/** One row of the `## Data models` table (ADR 0031). */
+export interface DataModel {
+  model: string;
+  kind: "table" | "type" | "schema" | "event" | "file";
+  part: string;
+  change: "new" | "changed" | "removed";
+  crosses?: string;
+  note?: string;
+}
+
+const MODEL_KINDS = ["table", "type", "schema", "event", "file"] as const;
+const MODEL_CHANGES = ["new", "changed", "removed"] as const;
+
 export interface Plan {
   issue: IssueRef;
   title?: string;
@@ -58,6 +71,7 @@ export interface Plan {
   o_rows?: ORow[];
   assumed?: Assumption[];
   flows?: PlanFlow[];
+  data_models?: DataModel[];
 }
 
 export class PlanParseError extends Error {
@@ -210,6 +224,7 @@ export const AFFECTED_PARTS_HEADING = /^affected parts/i;
 export const O_ROWS_HEADING = /^o-rows/i;
 export const ASSUMED_HEADING = /^assumed, not yet approved/i;
 export const FLOWS_HEADING = /^flows/i;
+export const DATA_MODELS_HEADING = /^data models/i;
 
 export function parsePlan(text: string, path: string): Plan {
   const { body, data } = splitFrontmatter(text);
@@ -321,6 +336,46 @@ export function parsePlan(text: string, path: string): Plan {
     }
     if (list.length) {
       plan.flows = list;
+    }
+  }
+
+  const models = tableAfterHeading(body, DATA_MODELS_HEADING);
+  if (models) {
+    const modelCol = requireColumn(models, "data models", "model", /^model/);
+    const kindCol = requireColumn(models, "data models", "kind", /^kind/);
+    const partCol = requireColumn(models, "data models", "part", /^part/);
+    const changeCol = requireColumn(models, "data models", "change", /^change/);
+    const crossesCol = column(models.headers, /^crosses/);
+    const noteCol = column(models.headers, /^note/);
+    const list: DataModel[] = [];
+    for (const row of models.rows) {
+      const kind = firstWord(row[kindCol] ?? "");
+      if (!(MODEL_KINDS as readonly string[]).includes(kind)) {
+        throw new PlanParseError(`data models: kind must be table, type, schema, event or file, got ${JSON.stringify(kind)}`);
+      }
+      const change = firstWord(row[changeCol] ?? "");
+      if (!(MODEL_CHANGES as readonly string[]).includes(change)) {
+        throw new PlanParseError(`data models: change must be new, changed or removed, got ${JSON.stringify(change)}`);
+      }
+      const m: DataModel = {
+        // Names keep their underscores; only the code ticks go.
+        model: (row[modelCol] ?? "").replace(/`/g, "").trim(),
+        kind: kind as DataModel["kind"],
+        part: cleanId(row[partCol] ?? ""),
+        change: change as DataModel["change"],
+      };
+      const crosses = crossesCol >= 0 ? cleanId(row[crossesCol] ?? "") : "";
+      if (crosses && crosses !== "—" && crosses !== "-") {
+        m.crosses = crosses;
+      }
+      const note = noteCol >= 0 ? (row[noteCol] ?? "").trim() : "";
+      if (note) {
+        m.note = note;
+      }
+      list.push(m);
+    }
+    if (list.length) {
+      plan.data_models = list;
     }
   }
   return plan;

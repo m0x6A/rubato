@@ -11,6 +11,7 @@ its own rows below. Each row is a question with the place to look. A "no" is a f
 | Must not break | Is every "must not break" item guarded by a test, a check or a scenario, named in the plan? | the plan; the existing tests |
 | Seam O-row | Does every seam in Affected parts have an O-row naming signal, panel and owner, and does that panel exist? | the map's seams; the dashboards |
 | Ids | Are all node and seam ids from the map, and does the plan contradict no accepted ADR? | `map.ts`, `adrs.ts` |
+| Data models | Does every new or changed table, wire type, schema or event appear in Data models, on the part that owns it, with the seam it crosses? | the plan; the migrations and protocol types the tasks name |
 | Decisions | Is every decision that touches a seam either an ADR (proposed) or a numbered question in *Assumed, not yet approved* with scope `seam`? | the plan |
 | Check reports its count | Does every new check print how many things it checked and have a fixture that makes it fail on purpose? | the tasks |
 | Concurrency | Can two writers, a retry or a timeout leave state wrong (a duplicate, a row stuck half-way)? | the tasks that write |

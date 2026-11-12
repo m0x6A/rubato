@@ -77,6 +77,10 @@ Fill it:
 - **How we'll debug it at 3 am**: point at the O-rows; name any new log line or finding.
 - **Affected parts**: one row per map node, status `affected`, `new` or `quiet`, one line on
   what changes, and the seam ids it touches.
+- **Data models**: every table, wire type, schema, event or file the change introduces,
+  changes or removes, on the part that owns it, with the seam it crosses if any. The part must
+  be a row of Affected parts and the seam one it touches; plan-check fails otherwise. Rubato
+  shows them on the plan and on the map. Write "None." when there are none.
 - **Data flow**: Mermaid, the data crossing each seam named above.
 - **Tasks**: ordered, each naming its failing test first. A task whose check could pass by
   accident names the fixture that makes it fail on purpose.
