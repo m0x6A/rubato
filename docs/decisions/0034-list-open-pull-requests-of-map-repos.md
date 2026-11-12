@@ -22,13 +22,20 @@ whether or not it has a tracked issue, and replaces that repo's rows in a table 
 by `github_poll`, with the time of the last good listing, whether it was cut and the last error. The
 per-issue pass uses the same listing, so a repo is listed once per tick. Pull requests whose head is
 in a fork are left out, as today. Checks of an open pull request not tied to a tracked issue are read
-on the full lane (every 300 s), only when its head sha changed since the last read. A pull request's
-detail (body, check runs, reviews, changed files, mergeable, and, with the person's token, their
-permission on the repo and its allowed merge methods) is read only when someone opens its view, cached
-in memory for 30 s per pull request, with one fetch in flight per pull request. Budget: per tick, +1
-call per map repo with no tracked issue; per open pull request outside tracked issues, at most 1
-checks call per 300 s; per opened view, 4 calls as the installation (pull, reviews, one page of files,
-check runs) and 1 as the person (the repo). On acceptance, ADR 0023's status becomes "accepted; pull
+on the full lane (every 300 s) when its head sha changed since the last read or its stored checks
+are not finished (pending, or none yet); a finished result at an unchanged head is not read again.
+A tracked issue's pull request keeps its checks where ADR 0023 reads them, and the listing takes them
+from there rather than storing a copy. A pull request's detail (body, check runs, reviews, changed
+files, mergeable, the plan file at its head when its branch names an issue, and, with the person's
+token, their permission on the repo and its allowed merge methods) is read only when someone opens
+its view, for any pull request of a repo the map names and the installation covers, cached in memory
+for 30 s per pull request, with one fetch in flight per pull request; a merge's fresh read replaces
+the cached entry and any merge outcome evicts it. Budget: per tick, +1 call per map repo with no
+tracked issue; per open pull request outside tracked issues, at most 1 checks call per 300 s; per
+opened view, 4 to 6 calls as the installation (pull, reviews, one page of files, check runs at the
+head; check runs at the base head only when the head has none; the plan file only when the branch
+names an issue) and 1 as the person (the repo); per merge, the same fresh reads again, 1 merge call
+as the person and at most 1 reconcile read. On acceptance, ADR 0023's status becomes "accepted; pull
 request listing extended by 0034".
 
 ## Alternatives considered
@@ -47,4 +54,5 @@ panel, `rubato.pulls.view_fetches{rubato.outcome}`).
 
 ## Supersedes
 
-None. Extends which repos ADR 0023 lists pull requests for; the rest of 0023 stands.
+The pull request listing scope in 0023 only ("per repo that has a tracked issue needing it, … the
+open pull requests"). The rest of 0023 stands.

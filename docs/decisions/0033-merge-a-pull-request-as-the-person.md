@@ -23,14 +23,20 @@ merges only that head and answers 409 if it moved. `merge_method` is one the rep
 (`allow_merge_commit`, `allow_squash_merge`, `allow_rebase_merge`, read with the person's token),
 chosen by the person, default squash when allowed. Retries are off and the call times out after
 10 s, as for the approval comment. Before anything is sent, Rubato re-reads the pull request and
-refuses when it is closed, a draft or from a fork; the head changed; checks are not green;
-`mergeable` is false or not yet computed; the person has no push permission on the repo; the method
-is not allowed; no token is stored; or the pull request's issue (from its branch name, ADR 0006) has
-a plan without a counted approval (ADR 0029: approval of the current plan, and the plan fits). A
-pull request whose issue has no plan is gated by GitHub's branch protection alone. A merge is
-attempted at most once per (repo, pull request, head sha), recorded in a table `pr_merges` owned by
-`pulls` (`opening`, `merged`); a request whose outcome is unknown stays `opening` until the poll
-sees the merge, or 600 s pass. GitHub's own refusal (405, 403, 409, 422) is reported as
+refuses when it is closed, a draft or from a fork; the head changed; checks are pending or red, or
+there are none at the head while the base branch's head has some (CI has not started); `mergeable`
+is false or not yet computed; the person has no push permission on the repo; the method is not
+allowed; no token is stored; or the pull request's issue (from its branch name, ADR 0006) has a plan
+and no counted approval names the plan **at the head being merged**. The plan file is read at that
+head, its approval sha computed as in ADR 0027, and a trusted `Approved:` must name it while the
+plan fits the map (ADR 0029). The issue has a plan when the file is at the head, Rubato holds a plan
+row for it, or it has a `Review:` or `Approved:` comment; only a pull request whose issue has none
+of these is gated by GitHub's branch protection alone. The refusal rule is one pure function in
+`rubato-protocol`, used by the view and the request alike. A merge is attempted at most once per
+(repo, pull request, head sha), recorded in a table `pr_merges` owned by `pulls` (`opening`,
+`merged`); an existing row is answered before any check; a request whose outcome is unknown stays
+`opening` until the poll sees the merge, the pull request is seen still open at that head on two
+complete listings, or 600 s pass. GitHub's own refusal (405, 403, 409, 422) is reported as
 `github_refused` with its message and leaves nothing behind. Rubato never deletes the head branch.
 The token still never leaves the server. On acceptance, ADR 0030's status becomes "accepted; v0
 write list extended by 0033".
@@ -49,10 +55,15 @@ The stored token now merges code, within the person's own permissions and branch
 leaked database plus key can merge as every person with a stored token (ADR 0030's exposure, now
 covering merges). Merging stays a person's act (ADR 0001, 0004): nothing merges without a click,
 and no agent is given the token. The plan gate makes an unapproved plan visible at the merge
-button. O-rows: `server-github` (span `rubato.pr.merge`, gauge `rubato.pulls.merges_opening`,
+button, and reading the plan at the head closes the gap where the stored plan lags the branch or
+was read from another branch of a stack. The team's `main` has no branch protection today, so the
+checks rule is the only gate before CI registers. A merge that changes `.github/workflows/` may be
+refused by GitHub because the App has no Workflows permission; it shows as `github_refused` with
+GitHub's message, and adding that permission is a separate decision. O-rows: `server-github` (span `rubato.pr.merge`, gauge `rubato.pulls.merges_opening`,
 `rubato.github.calls{rubato.github.endpoint=merge}`), `web-server`
 (`rubato.web.rejected{rubato.route=/api/pulls/merge}`).
 
 ## Supersedes
 
-None. Extends ADR 0030's list of writes as the person; the rest of 0030 stands.
+The list of writes as the person in 0030 only ("in v0 the only such write is the approval
+comment"). The rest of 0030 stands.
