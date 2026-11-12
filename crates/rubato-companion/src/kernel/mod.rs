@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod gitx;
+pub mod proc;
 pub mod telemetry;
 pub mod tmux;
 pub mod tmux_ide;

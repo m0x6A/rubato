@@ -52,6 +52,29 @@ impl Registry {
         worktree: &Path,
         now: DateTime<Utc>,
     ) {
+        // Plan 40 S6: the launched session's hook got here first (hooks do not wait for the
+        // launch). Keep what the hook said, add what only the launch knows.
+        let sid = cmd.session_id.to_string();
+        if let Some(e) = self
+            .entries
+            .iter_mut()
+            .find(|e| !e.ended && e.session_id.as_deref() == Some(sid.as_str()))
+        {
+            e.pane_id = Some(pane_id.to_owned());
+            e.tmux_session = Some(tmux_session.to_owned());
+            e.window = Some(0);
+            e.worktree = Some(worktree.to_path_buf());
+            e.branch = Some(cmd.branch.clone());
+            e.repo = Some(cmd.issue.repo.clone());
+            e.issue = Some(cmd.issue.clone());
+            e.launch_id = Some(cmd.id);
+            e.spend_cap_usd = Some(cmd.spend_cap_usd);
+            // A pane reconcile found meanwhile is the same session: drop the duplicate.
+            self.entries.retain(|o| {
+                !(o.session_id.is_none() && o.pane_id.as_deref() == Some(pane_id) && !o.ended)
+            });
+            return;
+        }
         let mut discovered = None;
         for (i, e) in self
             .entries
@@ -163,6 +186,75 @@ mod tests {
                 .iter()
                 .all(|e| !e.ended && e.status != SessionStatus::Ended),
             "no Ended entry"
+        );
+    }
+
+    /// Plan 40 S6: hooks no longer wait for the launch, so the launched session's first hook can
+    /// be applied before `apply_launch`. One entry for the session id, keeping the hook's state.
+    #[test]
+    fn a_hook_from_the_launched_session_before_the_launch_is_recorded_is_upgraded() {
+        let now = Utc.with_ymd_and_hms(2026, 11, 12, 12, 0, 0).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        let cmd = command();
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        let ev = rubato_protocol::HookEvent::from_payload(
+            serde_json::json!({
+                "session_id": cmd.session_id.to_string(),
+                "hook_event_name": "UserPromptSubmit",
+                "cwd": worktree.to_string_lossy(),
+                "transcript_path": "/t.jsonl",
+            }),
+            now,
+        )
+        .unwrap();
+        r.begin_launch(&cmd.issue);
+        r.apply_hook(&ev);
+        // Reconcile runs before the launch is recorded: it matches the hook-only entry to the new
+        // pane by cwd and gives it the pane id.
+        r.apply_panes(
+            &[Pane {
+                session: "rubato-27".into(),
+                window: 0,
+                pane_id: "%7".into(),
+                cwd: worktree.to_path_buf(),
+                current_command: "claude".into(),
+                pid: 1,
+            }],
+            now,
+        );
+        r.end_launch();
+        r.apply_launch(&cmd, "%7", "rubato-27", worktree, now);
+
+        assert!(
+            r.entries().iter().all(|e| !e.ended),
+            "nothing retired: {:?}",
+            r.entries()
+        );
+        assert_eq!(r.entries().len(), 1, "{:?}", r.entries());
+        let sid = cmd.session_id.to_string();
+        let same: Vec<&Entry> = r
+            .entries()
+            .iter()
+            .filter(|e| e.session_id.as_deref() == Some(sid.as_str()))
+            .collect();
+        assert_eq!(same.len(), 1, "one entry for the session id, not two");
+        let e = same[0];
+        assert_eq!(e.launch_id, Some(cmd.id));
+        assert_eq!(e.pane_id.as_deref(), Some("%7"));
+        assert_eq!(e.tmux_session.as_deref(), Some("rubato-27"));
+        assert_eq!(e.issue, Some(cmd.issue.clone()));
+        assert_eq!(e.spend_cap_usd, Some(cmd.spend_cap_usd));
+        assert_eq!(
+            e.status,
+            SessionStatus::Working,
+            "the hook's status is kept"
+        );
+        assert_eq!(e.source, StateSource::Hook);
+        assert_eq!(
+            e.transcript_path.as_deref(),
+            Some(Path::new("/t.jsonl")),
+            "the hook's transcript is kept"
         );
     }
 

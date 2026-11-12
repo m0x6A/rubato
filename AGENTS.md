@@ -114,14 +114,15 @@ web_link        websocket fan-out to browsers                   (none)
 <!-- slices: rubato-companion -->
 `crates/rubato-companion/src/`: composition root `lib.rs`, `main.rs`, `runtime.rs` (channels,
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
-state files, telemetry, tmux, tmux-ide and git adapters); slices:
+state files, telemetry, tmux, tmux-ide and git adapters, `proc` for running them with a deadline);
+slices:
 
 ```text
 pairing      device-code pairing with a GitHub login            pair
 server_link  outbound websocket, outbox, acks, Welcome limits   client task (essential)
 sessions     Registry, identity from the branch, discovery      reconcile (essential), events watcher (best-effort)
 hooks        loopback hook receiver, hooks template, apply_hook  hook server, dropped counter (essential)
-launch       LaunchCommand: own user only, worktree, tmux, exec  launch arm
+launch       LaunchCommand: own user only, worktree, tmux, exec  launch task (essential)
 spend        transcript cost, spend cap, CapHit                  after each hook
 stale        heartbeat, stale sessions                           heartbeat, sweep (essential)
 ```

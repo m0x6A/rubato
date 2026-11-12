@@ -8,5 +8,5 @@ mod launcher;
 mod script;
 
 pub use apply::LiveSession;
-pub use arm::on_command;
+pub use arm::{on_command, run};
 pub use launcher::{Launcher, Started};

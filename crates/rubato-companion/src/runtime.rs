@@ -2,7 +2,8 @@
 //! essential or best-effort flag, dispatches the select arms to the slices, and supervises the
 //! tasks (design D6, D12):
 //!
-//! - essential (server link, hook server, heartbeat, reconcile, stale sweep, dropped counter):
+//! - essential (server link, hook server, heartbeat, reconcile, stale sweep, dropped counter,
+//!   launch task, which handles launch commands one at a time off the dispatch loop, plan 40):
 //!   ending while shutdown is not requested logs `rubato.task.exited` and makes `run` return
 //!   `Err`, which `main` turns into a non-zero exit;
 //! - best-effort (tmux-ide events watcher): ending is normal on a machine with no adopted
@@ -21,7 +22,7 @@ use crate::{hooks, launch, server_link, sessions, spend, stale};
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use rubato_protocol::otel::event;
-use rubato_protocol::{CompanionMessage, HookEvent, ServerMessage, SessionStatus};
+use rubato_protocol::{CompanionMessage, HookEvent, LaunchCommand, ServerMessage, SessionStatus};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
@@ -109,7 +110,8 @@ async fn run(
     let tmux_ide = TmuxIde::new(
         cfg.workspace.companion.tmux_ide_command.clone(),
         tmux.clone(),
-    );
+    )
+    .with_timeout(cfg.workspace.companion.command_timeout());
     let limits = Arc::new(std::sync::Mutex::new(cfg.workspace.companion.limits));
 
     let (out_tx, out_rx) = mpsc::unbounded_channel::<CompanionMessage>();
@@ -190,15 +192,26 @@ async fn run(
         tmux: tmux.clone(),
         tmux_ide: tmux_ide.clone(),
     });
+    let (launch_tx, launch_rx) = mpsc::unbounded_channel::<LaunchCommand>();
+    tasks.spawn(
+        "launch",
+        Kind::Essential,
+        launch::run(
+            launch_rx,
+            launcher,
+            registry.clone(),
+            out_tx.clone(),
+            poll_tx.clone(),
+        ),
+    );
     let dispatch = Dispatch {
         cfg: &cfg,
         registry: &registry,
         out: &out_tx,
-        poll_tx: &poll_tx,
         metrics: &metrics,
         tmux: &tmux,
         limits: &limits,
-        launcher: &launcher,
+        launch: &launch_tx,
     };
     let supervised = supervise(tasks, shutdown.clone());
     tokio::pin!(supervised);
@@ -214,11 +227,11 @@ struct Dispatch<'a> {
     cfg: &'a DaemonConfig,
     registry: &'a Mutex<Registry>,
     out: &'a mpsc::UnboundedSender<CompanionMessage>,
-    poll_tx: &'a mpsc::UnboundedSender<()>,
     metrics: &'a Metrics,
     tmux: &'a Tmux,
     limits: &'a std::sync::Mutex<rubato_protocol::Limits>,
-    launcher: &'a Arc<Launcher>,
+    /// The launch task's queue (plan 40 S1).
+    launch: &'a mpsc::UnboundedSender<LaunchCommand>,
 }
 
 impl Dispatch<'_> {
@@ -237,8 +250,9 @@ impl Dispatch<'_> {
                 }
                 Some(msg) = in_rx.recv() => match msg {
                     ServerMessage::Welcome { limits, .. } => server_link::on_welcome(limits, self.limits),
+                    // Queued, not awaited: hooks keep flowing while it runs.
                     ServerMessage::Launch(cmd) => {
-                        launch::on_command(&cmd, self.launcher, self.registry, self.out, self.poll_tx).await;
+                        let _ = self.launch.send(cmd);
                     }
                     ServerMessage::Error { code, .. } if code == "auth" => {
                         tracing::error!("pairing token rejected; re-pair with `rubato-companion pair`");
