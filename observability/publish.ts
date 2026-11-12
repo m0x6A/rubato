@@ -34,7 +34,7 @@ const CONVERT = "/api/convert/prometheus/config/v1/rules";
 
 export type Settings = { url: string; token: string; prom: string; loki: string; alertsPaused?: boolean };
 export type Files = { dashboards: { name: string; text: string }[]; rules: { name: string; text: string }[] };
-export type Deps = { fetch?: typeof fetch; dryRun?: boolean; log?: (line: string) => void };
+export type Deps = { fetch?: typeof fetch; dryRun?: boolean; log?: (line: string) => void; wait?: (ms: number) => Promise<void> };
 export type Published = { dashboards: number; panels: number; groups: number; rules: number; dryRun: boolean };
 
 type Group = { name: string; interval?: string; rules: Record<string, unknown>[] };
@@ -69,6 +69,29 @@ function parsed<T>(answer: { text: string }, method: string, path: string, parse
     return parse(answer.text) as T;
   } catch {
     throw new Error(`${method} ${path} answered something that does not parse: ${answer.text.slice(0, 120)}`);
+  }
+}
+
+const READS = 5;
+
+/**
+ * A read-back, tried up to five times, 1, 2, 4 and 8 seconds apart. Grafana can refuse or come
+ * up short straight after the write: a dashboard in a folder made a second ago answered 403
+ * "dashboards:read", and a rule import answers 202 before its rules can be read. The write is
+ * never sent again; the last failure is the one reported.
+ */
+async function readBack(deps: Deps, check: () => Promise<void>): Promise<void> {
+  const wait = deps.wait ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+  for (let n = 1; ; n += 1) {
+    try {
+      return await check();
+    } catch (e) {
+      if (n === READS) {
+        throw e;
+      }
+      deps.log?.(`  read-back ${n} of ${READS} failed, reading again: ${(e as Error).message}`);
+      await wait(1000 * 2 ** (n - 1));
+    }
   }
 }
 
@@ -142,10 +165,12 @@ export async function publish(files: Files, s: Settings, deps: Deps = {}): Promi
     if (!deps.dryRun) {
       await call(s, deps, "POST", "/api/dashboards/db", JSON.stringify({ dashboard, folderUid: folder, overwrite: true, message: "published by observability/publish.ts" }));
       const path = `/api/dashboards/uid/${dashboard.uid}`;
-      const got = parsed<{ dashboard: Dashboard }>(await call(s, deps, "GET", path), "GET", path).dashboard.panels?.length ?? 0;
-      if (got !== sent) {
-        throw new Error(`dashboard ${dashboard.uid} reads back with ${got} panels, sent ${sent}`);
-      }
+      await readBack(deps, async () => {
+        const got = parsed<{ dashboard: Dashboard }>(await call(s, deps, "GET", path), "GET", path).dashboard.panels?.length ?? 0;
+        if (got !== sent) {
+          throw new Error(`dashboard ${dashboard.uid} reads back with ${got} panels, sent ${sent}`);
+        }
+      });
     }
     log(`dashboard ${dashboard.uid}: ${sent} panels`);
     out.dashboards += 1;
@@ -162,12 +187,14 @@ export async function publish(files: Files, s: Settings, deps: Deps = {}): Promi
           ...(s.alertsPaused ? { "X-Grafana-Alerting-Alert-Rules-Paused": "true" } : {}),
         },
       });
-      const back = await call(s, deps, "GET", path, undefined, { headers: { Accept: "application/yaml" } });
-      const stored = Object.values(parsed<Record<string, Group[]> | null>(back, "GET", path, parseYaml) ?? {}).flat();
-      const got = stored.find((g) => g.name === group.name)?.rules.length ?? 0;
-      if (got !== group.rules.length) {
-        throw new Error(`group ${group.name} reads back with ${got} rules, sent ${group.rules.length}`);
-      }
+      await readBack(deps, async () => {
+        const back = await call(s, deps, "GET", path, undefined, { headers: { Accept: "application/yaml" } });
+        const stored = Object.values(parsed<Record<string, Group[]> | null>(back, "GET", path, parseYaml) ?? {}).flat();
+        const got = stored.find((g) => g.name === group.name)?.rules.length ?? 0;
+        if (got !== group.rules.length) {
+          throw new Error(`group ${group.name} reads back with ${got} rules, sent ${group.rules.length}`);
+        }
+      });
     }
     log(`rule group ${group.name}: ${group.rules.length} rules${s.alertsPaused ? " (paused)" : ""}`);
     out.groups += 1;

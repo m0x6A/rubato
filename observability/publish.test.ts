@@ -87,6 +87,7 @@ function grafana(o: Options = {}) {
   return { fetcher, calls, dashboards, groups, folders };
 }
 
+const noWait = async () => {};
 const writes = (calls: Call[]) => calls.filter((c) => c.method !== "GET");
 
 test("publishes the committed dashboard and rules, reads them back, and reports the counts", async () => {
@@ -176,12 +177,12 @@ test("a refused call fails with the method, path, status and Grafana's answer, n
 
 test("a dashboard that reads back with fewer panels fails", async () => {
   const g = grafana({ readBack: { panels: 2 } });
-  await assert.rejects(publish(files, settings, { fetch: g.fetcher }), /rubato-overview reads back with 2 panels, sent \d+/);
+  await assert.rejects(publish(files, settings, { fetch: g.fetcher, wait: noWait }), /rubato-overview reads back with 2 panels, sent \d+/);
 });
 
 test("rules that read back short fail", async () => {
   const g = grafana({ readBack: { rules: 1 } });
-  await assert.rejects(publish(files, settings, { fetch: g.fetcher }), /group rubato reads back with 1 rules, sent \d+/);
+  await assert.rejects(publish(files, settings, { fetch: g.fetcher, wait: noWait }), /group rubato reads back with 1 rules, sent \d+/);
 });
 
 test("a datasource placeholder nobody resolves is refused", () => {
@@ -198,7 +199,8 @@ test("a dashboard without a uid, and a rules file without groups, are refused", 
 
 test("a missing dashboard on read-back, and an answer that is not JSON, name the call", async () => {
   const gone = grafana({ fail: (c) => (c.path.startsWith("/api/dashboards/uid/") ? { status: 404, body: "{}" } : undefined) });
-  await assert.rejects(publish(files, settings, { fetch: gone.fetcher }), /GET \/api\/dashboards\/uid\/rubato-overview answered 404/);
+  await assert.rejects(publish(files, settings, { fetch: gone.fetcher, wait: noWait }), /GET \/api\/dashboards\/uid\/rubato-overview answered 404/);
+  assert.equal(gone.calls.filter((c) => c.path.startsWith("/api/dashboards/uid/")).length, 5, "five reads, then it gives up");
   const html = grafana({ fail: (c) => (c.path.startsWith("/api/folders") ? { status: 200, body: "<html>login</html>" } : undefined) });
   await assert.rejects(publish(files, settings, { fetch: html.fetcher }), /GET \/api\/folders\?limit=1000 answered something that does not parse/);
 });
@@ -242,4 +244,27 @@ test("verify-live lists the metrics the stack has never stored", async () => {
   const r = await verifyLive(files, settings, { fetch: g.fetcher });
   assert.deepEqual(r, { checked: all.length, missing: [all[0]] });
   assert.deepEqual(writes(g.calls), []);
+});
+
+// Seen on the first real publish: the folder was new, the dashboard was written, and the read
+// straight after answered 403 "dashboards:read". A minute later the same read answered 200.
+test("a read-back refused straight after the write is read again, and the waits are said", async () => {
+  let refusals = 2;
+  const g = grafana({ fail: (c) => (c.method === "GET" && c.path.startsWith("/api/dashboards/uid/") && refusals-- > 0 ? { status: 403, body: '{"message":"Permissions needed: dashboards:read"}' } : undefined) });
+  const waits: number[] = [];
+  const lines: string[] = [];
+  const r = await publish(files, settings, { fetch: g.fetcher, wait: async (ms) => void waits.push(ms), log: (l) => lines.push(l) });
+  assert.equal(r.dashboards, 1);
+  assert.deepEqual(waits, [1000, 2000]);
+  assert.equal(lines.filter((l) => /read-back 1 of 5 failed.*answered 403/.test(l)).length, 1, lines.join("\n"));
+  assert.equal(writes(g.calls).filter((c) => c.path === "/api/dashboards/db").length, 1, "the write is not sent again");
+});
+
+test("rules that arrive after the import is accepted are read again", async () => {
+  let short = 1;
+  const g = grafana({ fail: (c) => (c.method === "GET" && c.path.startsWith("/api/convert/") && short-- > 0 ? { status: 200, body: "{}" } : undefined) });
+  const waits: number[] = [];
+  const r = await publish(files, settings, { fetch: g.fetcher, wait: async (ms) => void waits.push(ms) });
+  assert.ok(r.rules > 0);
+  assert.deepEqual(waits, [1000]);
 });
