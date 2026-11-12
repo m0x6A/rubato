@@ -405,6 +405,7 @@ mod tests {
             source: StateSource::Hook,
             last_seen: Utc::now(),
             spend_usd: None,
+            branch_drift: None,
         }
     }
 

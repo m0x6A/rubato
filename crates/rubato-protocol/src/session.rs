@@ -113,6 +113,10 @@ pub struct SessionState {
     /// Spend so far, summed from the transcript (A11).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_usd: Option<f64>,
+    /// A launched session that has moved off its launch branch: the branch it is on now. It
+    /// keeps its launch issue (its spend cap and telemetry are that issue's); this says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_drift: Option<String>,
 }
 
 impl SessionState {
@@ -181,6 +185,7 @@ mod tests {
             source,
             last_seen: now - chrono::Duration::seconds(last_seen_secs_ago),
             spend_usd: None,
+            branch_drift: None,
         };
         (s, now)
     }

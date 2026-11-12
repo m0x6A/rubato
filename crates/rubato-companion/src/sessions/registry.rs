@@ -31,6 +31,12 @@ pub struct Entry {
     pub stale_reported: bool,
     /// Set when the pane vanished; kept one cycle so the server sees `Ended`.
     pub ended: bool,
+    /// The worktree's `HEAD` file and its modification time when identity was last read: a
+    /// checkout changes it, so identity is read again only then (design 80 §5).
+    pub head: Option<PathBuf>,
+    pub head_mtime: Option<std::time::SystemTime>,
+    /// A launched session now on another branch than its launch branch.
+    pub branch_drift: Option<String>,
 }
 
 /// Identity from a path: worktree → branch → issue (ADR 0006).
@@ -40,6 +46,8 @@ pub struct Identity {
     pub branch: Option<String>,
     pub repo: Option<String>,
     pub issue: Option<IssueRef>,
+    /// The worktree's `HEAD` file.
+    pub head: Option<PathBuf>,
 }
 
 pub fn identify(path: &Path) -> Identity {
@@ -47,7 +55,8 @@ pub fn identify(path: &Path) -> Identity {
         return Identity::default();
     };
     let branch = gitx::current_branch(&worktree);
-    let repo = gitx::origin_repo(&worktree);
+    let repo = gitx::origin_repo(&worktree).or_else(|| gitx::remote_repo(&worktree, "upstream"));
+    let head = gitx::head_file(&worktree);
     let issue = match (&branch, &repo) {
         (Some(b), Some(r)) => IssueRef::number_from_branch(b).map(|n| IssueRef::new(r.clone(), n)),
         _ => None,
@@ -57,6 +66,7 @@ pub fn identify(path: &Path) -> Identity {
         branch,
         repo,
         issue,
+        head,
     }
 }
 
@@ -123,6 +133,7 @@ impl Registry {
                 source: e.source,
                 last_seen: e.last_seen,
                 spend_usd: e.spend_usd,
+                branch_drift: e.branch_drift.clone(),
             })
             .collect()
     }
@@ -173,6 +184,9 @@ mod tests {
             spend_cap_usd: None,
             stale_reported: false,
             ended: false,
+            head: None,
+            head_mtime: None,
+            branch_drift: None,
         });
         let counts = r.counts_by_source();
         assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");

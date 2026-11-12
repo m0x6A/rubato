@@ -3,8 +3,10 @@
 //! `impl Registry` blocks (design D7).
 
 mod discovery;
+mod identity;
 mod registry;
 mod tasks;
 
+pub use identity::recheck;
 pub use registry::{Entry, Identity, Registry, identify};
 pub use tasks::{reconcile, watch_events};

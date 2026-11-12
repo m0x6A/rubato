@@ -388,6 +388,11 @@ type: "hook"
  */
 export interface SessionState {
 branch?: (string | null)
+/**
+ * A launched session that has moved off its launch branch: the branch it is on now. It
+ * keeps its launch issue (its spend cap and telemetry are that issue's); this says so.
+ */
+branch_drift?: (string | null)
 companion_id: string
 cwd: string
 /**

@@ -45,6 +45,9 @@ impl Registry {
             spend_cap_usd: None,
             stale_reported: false,
             ended: false,
+            head: None,
+            head_mtime: None,
+            branch_drift: None,
         };
         self.entries.push(entry);
         id.issue

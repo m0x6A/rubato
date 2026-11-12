@@ -116,7 +116,7 @@ web_link        websocket fan-out to browsers                   (none)
 <!-- slices: rubato-companion -->
 `crates/rubato-companion/src/`: composition root `lib.rs`, `main.rs`, `runtime.rs` (channels,
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
-state files, telemetry, tmux, tmux-ide and git adapters, `proc` for running them with a deadline);
+state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline);
 slices:
 
 ```text

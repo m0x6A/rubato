@@ -41,8 +41,19 @@ pub fn current_branch(worktree: &Path) -> Option<String> {
 
 /// `owner/name` from the origin URL.
 pub fn origin_repo(worktree: &Path) -> Option<String> {
-    let url = git(worktree, &["remote", "get-url", "origin"]).ok()?;
+    remote_repo(worktree, "origin")
+}
+
+/// `owner/name` from a named remote's URL.
+pub fn remote_repo(worktree: &Path, remote: &str) -> Option<String> {
+    let url = git(worktree, &["remote", "get-url", remote]).ok()?;
     repo_from_url(&url)
+}
+
+/// The worktree's `HEAD` file (in a linked worktree, under the main repo's `.git/worktrees`).
+pub fn head_file(worktree: &Path) -> Option<PathBuf> {
+    let p = PathBuf::from(git(worktree, &["rev-parse", "--git-path", "HEAD"]).ok()?);
+    Some(if p.is_absolute() { p } else { worktree.join(p) })
 }
 
 pub fn repo_from_url(url: &str) -> Option<String> {
