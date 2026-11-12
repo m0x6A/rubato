@@ -5,6 +5,7 @@
 use crate::github::{ApprovalState, DecisionRecord, ReviewRecord};
 use crate::github::{ChecksStatus, PullRequestState};
 use crate::ids::{IssueRef, MapRef};
+use crate::issue_body::PinSuggestion;
 use crate::layout::MapLayout;
 use crate::map::MapResponse;
 use crate::map_draft::MapDraft;
@@ -186,6 +187,13 @@ pub struct OpenIssue {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
     pub updated_at: DateTime<Utc>,
+    /// The place its body's `Map:` line names, when its author is not trusted to place it
+    /// (ADR 0026); a trusted line pins the issue and it leaves this list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_line: Option<MapRef>,
+    /// Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<PinSuggestion>,
 }
 
 /// How fresh one repo's listing is. The trust check for the backlog.
@@ -276,6 +284,10 @@ pub struct Overview {
     /// The shared draft of the map and its proposal (ADR 0018). Never an input to progress.
     #[serde(default)]
     pub draft: MapDraft,
+    /// Whether "New issue here…" can create an issue: the GitHub App's installation has
+    /// Issues: write, or the server runs on the local stand-in (ADR 0025).
+    #[serde(default)]
+    pub can_create_issues: bool,
     pub generated_at: DateTime<Utc>,
 }
 

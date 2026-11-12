@@ -9,6 +9,11 @@
       "$ref": "#/$defs/Backlog",
       "default": {}
     },
+    "can_create_issues": {
+      "description": "Whether \"New issue here…\" can create an issue: the GitHub App's installation has\nIssues: write, or the server runs on the local stand-in (ADR 0025).",
+      "type": "boolean",
+      "default": false
+    },
     "companions": {
       "type": "array",
       "items": {
@@ -1035,6 +1040,28 @@
             "type": "string"
           }
         },
+        "map_line": {
+          "description": "The place its body's `Map:` line names, when its author is not trusted to place it\n(ADR 0026); a trusted line pins the issue and it leaves this list.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MapRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "suggestion": {
+          "description": "Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PinSuggestion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "title": {
           "type": "string"
         },
@@ -1103,6 +1130,33 @@
         "affected",
         "new",
         "quiet"
+      ]
+    },
+    "PinSuggestion": {
+      "description": "Where Rubato suggests an unpinned issue belongs, and why. A person confirms it with one\nclick through the pin route; nothing is pinned by a suggestion.",
+      "type": "object",
+      "properties": {
+        "score": {
+          "description": "0–100. Only suggestions at or above the server's threshold are sent.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "target": {
+          "$ref": "#/$defs/MapRef"
+        },
+        "why": {
+          "description": "What matched, in words a person can check: `id web-server in the body`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "target",
+        "score"
       ]
     },
     "Plan": {
@@ -1533,6 +1587,75 @@
         "url"
       ]
     },
+    "Scenario": {
+      "description": "A named journey: what crosses which seam, in order, when someone uses the system (ADR 0024).\nIts id shares the namespace of node and seam ids but is not one a pin or plan may name.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "description": "Short title shown in the scenario picker.",
+          "type": "string"
+        },
+        "steps": {
+          "description": "In order. Steps need not be contiguous: a journey may jump to another part.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScenarioStep"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "steps"
+      ]
+    },
+    "ScenarioStep": {
+      "description": "One step: a flow declared on `seam`, picked by its kind and direction, and by `carries` when\nthe seam declares more than one flow with that kind and direction.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "description": "Must equal the flow's `carries`; required only to tell two such flows apart.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FlowKind"
+        },
+        "says": {
+          "description": "What happens at this step, in words, for the caption.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seam": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seam",
+        "from",
+        "to",
+        "kind"
+      ]
+    },
     "Seam": {
       "description": "A seam between two nodes. The owner side is woken when it breaks.",
       "type": "object",
@@ -1744,6 +1867,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/RepoRef"
+          }
+        },
+        "scenarios": {
+          "description": "Named journeys through the system, as ordered steps over declared flows (ADR 0024).\nOptional; a map without scenarios is still version 1.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Scenario"
           }
         },
         "seams": {

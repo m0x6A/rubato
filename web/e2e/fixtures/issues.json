@@ -2,6 +2,8 @@
   "m0x6A/rubato": [
     { "number": 901, "title": "Lens: a plan with flows", "url": "https://github.com/m0x6A/rubato/issues/901", "labels": ["enhancement"] },
     { "number": 902, "title": "Backlog: an unpinned issue", "url": "https://github.com/m0x6A/rubato/issues/902", "labels": ["bug"] },
-    { "number": 903, "title": "Backlog: another unpinned issue", "url": "https://github.com/m0x6A/rubato/issues/903", "labels": [] }
+    { "number": 903, "title": "Backlog: another unpinned issue", "url": "https://github.com/m0x6A/rubato/issues/903", "labels": [] },
+    { "number": 912, "title": "Voice: hooks stop on a slow launch", "url": "https://github.com/m0x6A/rubato/issues/912", "labels": [], "author": "m0x6A", "author_association": "OWNER", "body": "## Summary\nHooks wait behind a slow launch.\n\nMap: seam companion-server\n" },
+    { "number": 913, "title": "Voice: from someone outside", "url": "https://github.com/m0x6A/rubato/issues/913", "labels": [], "author": "stranger", "author_association": "NONE", "body": "Map: node plan-check\n" }
   ]
 }

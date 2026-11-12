@@ -99,14 +99,15 @@ unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, task supervision);
 auth            GitHub login, team record, CurrentUser          users, web_sessions
 pairing         device-code pairing, the caller's pairings      pairing_codes, pairings
 companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
-pins            pin an issue to a node or seam                  pins
+pins            pin an issue to a node or seam, Map: lines      pins, map_line_pins
 launch          start a session through your own companion      launches, cap_hits
 layout          where each part sits on the shared map          map_layout
 map             load, validate, cache and serve the map         map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
+new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
 queue           issues queued on your own companions, in order  companion_queue
-github_poll     issue reads, open issues, repo coverage         pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals
+github_poll     issue reads, open issues, placement, coverage   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 ```
@@ -136,7 +137,7 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 ```text
 live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
-map         the system map: graph, shared layout over ELK, MapView  PUT, DELETE /api/layout
+map         the system map: graph, shared layout over ELK, MapView, scenario player  PUT, DELETE /api/layout
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
@@ -144,6 +145,7 @@ queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DE
 launch      start a session through your own companion           POST /api/launch
 drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
 findings    what the map and the plans disagree about            (none)
+new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->
@@ -157,9 +159,11 @@ pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PA
 session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
 hook       HookEvent
 pins       IssuePin, PinRequest; PINS
+issue_body the Map: line (parse_map_line, map_line), PinSuggestion
+issue_new  NewIssueRequest, NewIssueResponse, render_issue, the Rubato-Request: line; ISSUES
 launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
 layout     MapLayout, Position; LAYOUT
-map        SystemMap, MapResponse; MAP, MAP_RELOAD
+map        SystemMap, Scenario, MapResponse; MAP, MAP_RELOAD
 map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
 plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord, ApprovalState

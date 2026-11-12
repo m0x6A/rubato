@@ -38,6 +38,31 @@ export function seamJoins(s: Seam, from: string, to: string): boolean {
   return (from === s.from && to === s.to) || (from === s.to && to === s.from);
 }
 
+/** A named journey: ordered steps over declared flows (ADR 0024). */
+export interface Scenario {
+  id: string;
+  name: string;
+  description?: string;
+  steps: ScenarioStep[];
+}
+
+/** One declared flow on `seam`, picked by kind and direction, and `carries` when two match. */
+export interface ScenarioStep {
+  seam: string;
+  from: string;
+  to: string;
+  kind: "data" | "control";
+  carries?: string;
+  says?: string;
+}
+
+/** The declared flows a step could mean. Same rule as `Seam::flows_matching` in Rust. */
+export function flowsMatching(s: Seam, step: ScenarioStep): Flow[] {
+  return (s.flows ?? []).filter(
+    (f) => f.kind === step.kind && f.from === step.from && f.to === step.to && (step.carries === undefined || step.carries === f.carries),
+  );
+}
+
 export interface RepoRef {
   name: string;
   plan_path?: string;
@@ -50,6 +75,7 @@ export interface SystemMap {
   repos?: RepoRef[];
   nodes: MapNode[];
   seams?: Seam[];
+  scenarios?: Scenario[];
 }
 
 export class MapError extends Error {
@@ -65,7 +91,7 @@ export class MapError extends Error {
 export function structuralProblems(map: SystemMap): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
-  for (const id of [...map.nodes.map((n) => n.id), ...(map.seams ?? []).map((s) => s.id)]) {
+  for (const id of [...map.nodes.map((n) => n.id), ...(map.seams ?? []).map((s) => s.id), ...(map.scenarios ?? []).map((s) => s.id)]) {
     if (seen.has(id)) {
       problems.push(`duplicate id ${JSON.stringify(id)}`);
     }
@@ -86,6 +112,27 @@ export function structuralProblems(map: SystemMap): string[] {
         problems.push(`seam ${JSON.stringify(s.id)} has a flow from ${JSON.stringify(f.from)} to ${JSON.stringify(f.to)}, which are not its two nodes`);
       }
     }
+  }
+  const q = JSON.stringify;
+  for (const sc of map.scenarios ?? []) {
+    if (sc.steps.length === 0) {
+      problems.push(`scenario ${q(sc.id)} has no steps`);
+    }
+    sc.steps.forEach((step, i) => {
+      const seam = (map.seams ?? []).find((s) => s.id === step.seam);
+      if (!seam) {
+        problems.push(`scenario ${q(sc.id)} step ${i + 1} names unknown seam ${q(step.seam)}`);
+        return;
+      }
+      const n = flowsMatching(seam, step).length;
+      const at = `scenario ${q(sc.id)} step ${i + 1} on seam ${q(step.seam)}`;
+      if (n === 0) {
+        const carrying = step.carries === undefined ? "" : ` carrying ${q(step.carries)}`;
+        problems.push(`${at}: no declared ${step.kind} flow from ${q(step.from)} to ${q(step.to)}${carrying}`);
+      } else if (n > 1) {
+        problems.push(`${at}: ${n} declared ${step.kind} flows from ${q(step.from)} to ${q(step.to)}; name one with carries`);
+      }
+    });
   }
   return problems;
 }

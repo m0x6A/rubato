@@ -29,6 +29,10 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Map proposal age", "rubato_map_proposal_state_since"],
   // Issue #71, PR 5 (ADR 0027): the O-row of seam server-plan-file names this panel.
   ["Approvals", "rubato_plans_approval_stale"],
+  // Issue #71.
+  ["Map lines", "rubato_backlog_map_lines_total"],
+  ["Issues created", "rubato_issues_created_total"],
+  ["Issues created", "rubato_issues_opening"],
 ];
 
 type Panel = { title: string; type?: string; targets?: { expr?: string }[] };

@@ -1065,6 +1065,71 @@
       }
     },
     {
+      "id": 59,
+      "title": "Map lines",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 58
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Map: lines read from the open-issues listing (ADR 0026), by outcome: pinned (a member's line placed its issue), already_pinned, unknown_id and kind_mismatch (the line names no part or seam of that kind in the map; the issue stays in Not pinned), counted once per line; untrusted_author (someone outside the team wrote the line, so it is only a suggestion), counted per listing. Each tick logs 'backlog placement' with listed, map_lines, untrusted, suggested and none. Lines stop being read if the listing fails: see Backlog age.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_backlog_map_lines_total[1h]))",
+          "legendFormat": "{{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 60,
+      "title": "Issues created",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 58
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Issues created from Rubato's 'New issue here…' (ADR 0025), by outcome: created (GitHub answered), found (GitHub did not answer, and the listing found the issue by its Rubato-Request line), failed (refused with a 403, or unseen for ten minutes). 'opening' is how many creations wait for a confirmation now. A failure logs 'issue creation failed' with step (create, unseen), rubato.repo and request_id: a 403 means the installation lacks Issues: write (an admin approves it; Rubato reads the permission every full poll pass). Refusals before sending are in 'Web writes rejected' under route /api/issues.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_issues_created_total[1h]))",
+          "legendFormat": "{{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "max(rubato_issues_opening)",
+          "legendFormat": "opening"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
       "id": 70,
       "type": "row",
       "title": "Plans, reviews and approvals",
@@ -1072,7 +1137,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 64
       },
       "collapsed": false,
       "panels": []
@@ -1085,7 +1150,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",

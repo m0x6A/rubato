@@ -17,6 +17,7 @@ export interface MapSummary {
   name: string;
   nodes: { id: string; kind: string; repo?: string; description?: string }[];
   seams: { id: string; from: string; to: string; owner: string; carries?: string; description?: string; flows?: { kind: string; from: string; to: string; carries: string }[] }[];
+  scenarios: { id: string; name: string; description?: string; steps: { seam: string; from: string; to: string; kind: string; carries: string; says?: string }[] }[];
   repo: string | null;
   plan_path_template: string;
 }
@@ -57,6 +58,32 @@ export async function summarize(ws: Workspace, cwd: string): Promise<MapSummary>
       }
       return out;
     }),
+    // Each step printed with the flow it resolves to, so `carries` is always there (ADR 0024).
+    scenarios: (map.scenarios ?? []).map((sc) => {
+      const out: MapSummary["scenarios"][number] = {
+        id: sc.id,
+        name: sc.name,
+        steps: sc.steps.map((step) => {
+          const seam = (map.seams ?? []).find((x) => x.id === step.seam);
+          const flow = seam ? mapMod.flowsMatching(seam, step)[0] : undefined;
+          const s: MapSummary["scenarios"][number]["steps"][number] = {
+            seam: step.seam,
+            from: step.from,
+            to: step.to,
+            kind: step.kind,
+            carries: flow?.carries ?? step.carries ?? "",
+          };
+          if (step.says) {
+            s.says = step.says;
+          }
+          return s;
+        }),
+      };
+      if (sc.description) {
+        out.description = sc.description;
+      }
+      return out;
+    }),
     repo,
     plan_path_template: override ?? "docs/plans/{issue}.md",
   };
@@ -77,6 +104,16 @@ export function render(s: MapSummary): string {
       // One line per flow, so a plan's Flows table can name what already crosses the seam.
       ...(x.flows ?? []).map((f) => `  - ${f.kind}: ${f.from} → ${f.to}: ${f.carries}`),
     ]),
+    ...(s.scenarios.length
+      ? [
+          "",
+          "## Scenarios (journeys over the flows above; not ids a plan may name)",
+          ...s.scenarios.flatMap((sc) => [
+            `- ${sc.id}: ${sc.name}${sc.description ? ` — ${sc.description}` : ""}`,
+            ...sc.steps.map((st, i) => `  ${i + 1}. ${st.kind}: ${st.from} → ${st.to} over ${st.seam}: ${st.carries}${st.says ? ` — ${st.says}` : ""}`),
+          ]),
+        ]
+      : []),
   ];
   return lines.join("\n");
 }

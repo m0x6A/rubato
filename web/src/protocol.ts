@@ -159,6 +159,10 @@ error: string
 outcome: "failed"
 })
 /**
+ * Where a creation stands.
+ */
+export type CreationState = (("created" | "failed") | "opening")
+/**
  * An operation in the draft, with who made it and when.
  */
 export type DraftOp = ({
@@ -255,6 +259,8 @@ MapLayout?: MapLayout
 MapRef?: MapRef
 MapResponse?: MapResponse
 Me?: Me
+NewIssueRequest?: NewIssueRequest
+NewIssueResponse?: NewIssueResponse
 Overview?: Overview
 PairApproveRequest?: PairApproveRequest
 PairPollRequest?: PairPollRequest
@@ -831,6 +837,11 @@ owner_rule?: (string | null)
  * Repositories behind the nodes, with per-repo overrides (ADR 0009).
  */
 repos?: RepoRef[]
+/**
+ * Named journeys through the system, as ordered steps over declared flows (ADR 0024).
+ * Optional; a map without scenarios is still version 1.
+ */
+scenarios?: Scenario[]
 seams?: Seam[]
 /**
  * Map format version. v0 is `1`.
@@ -850,15 +861,108 @@ name: string
  */
 plan_path?: (string | null)
 }
+/**
+ * A named journey: what crosses which seam, in order, when someone uses the system (ADR 0024).
+ * Its id shares the namespace of node and seam ids but is not one a pin or plan may name.
+ */
+export interface Scenario {
+description?: (string | null)
+id: string
+/**
+ * Short title shown in the scenario picker.
+ */
+name: string
+/**
+ * In order. Steps need not be contiguous: a journey may jump to another part.
+ */
+steps: ScenarioStep[]
+}
+/**
+ * One step: a flow declared on `seam`, picked by its kind and direction, and by `carries` when
+ * the seam declares more than one flow with that kind and direction.
+ */
+export interface ScenarioStep {
+/**
+ * Must equal the flow's `carries`; required only to tell two such flows apart.
+ */
+carries?: (string | null)
+from: string
+kind: FlowKind
+/**
+ * What happens at this step, in words, for the caption.
+ */
+says?: (string | null)
+seam: string
+to: string
+}
 export interface Me {
 avatar_url?: (string | null)
 login: string
+}
+/**
+ * `POST /api/issues`. Each list item is one line of its section.
+ */
+export interface NewIssueRequest {
+context?: (string | null)
+/**
+ * "What the change does", at least one line.
+ */
+does: string[]
+/**
+ * "How we'll know it works", at least one line; written as checkboxes.
+ */
+know: string[]
+/**
+ * "What it must not break", at least one line.
+ */
+must_not_break: string[]
+open_questions?: string[]
+/**
+ * `owner/name`, a repo the map names.
+ */
+repo: string
+/**
+ * Made by the form once per draft; a second submit with the same id creates nothing more.
+ */
+request_id: string
+summary: string
+/**
+ * A reference into the system map: a node or a seam. Ids come from `system-map.yml` (ADR 0007).
+ */
+target: ({
+id: string
+kind: "node"
+} | {
+id: string
+kind: "seam"
+})
+title: string
+}
+/**
+ * The answer to `POST /api/issues`.
+ */
+export interface NewIssueResponse {
+/**
+ * Set once created.
+ */
+issue?: (IssueRef | null)
+/**
+ * What to tell the person, for `opening` and `failed`.
+ */
+message?: (string | null)
+state: CreationState
+url?: (string | null)
 }
 /**
  * The whole picture in one payload: what the web view renders.
  */
 export interface Overview {
 backlog?: Backlog
+/**
+ * Whether "New issue here…" can create an issue: the GitHub App's installation has
+ * Issues: write, or the server runs on the local stand-in (ADR 0025).
+ */
+can_create_issues?: boolean
 companions: PairingInfo[]
 draft?: MapDraft
 findings: Finding[]
@@ -893,9 +997,33 @@ repos?: BacklogRepo[]
 export interface OpenIssue {
 issue: IssueRef
 labels?: string[]
+/**
+ * The place its body's `Map:` line names, when its author is not trusted to place it
+ * (ADR 0026); a trusted line pins the issue and it leaves this list.
+ */
+map_line?: (MapRef | null)
+/**
+ * Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.
+ */
+suggestion?: (PinSuggestion | null)
 title: string
 updated_at: string
 url: string
+}
+/**
+ * Where Rubato suggests an unpinned issue belongs, and why. A person confirms it with one
+ * click through the pin route; nothing is pinned by a suggestion.
+ */
+export interface PinSuggestion {
+/**
+ * 0–100. Only suggestions at or above the server's threshold are sent.
+ */
+score: number
+target: MapRef
+/**
+ * What matched, in words a person can check: `id web-server in the body`.
+ */
+why?: string[]
 }
 /**
  * How fresh one repo's listing is. The trust check for the backlog.

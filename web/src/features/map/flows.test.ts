@@ -34,6 +34,17 @@ describe("arrows from a seam and a lens (S9)", () => {
     expect(arrowsFor(three, "data").map((a) => a.offset)).toEqual([-ARROW_GAP, 0, ARROW_GAP]);
   });
 
+  it("the scenario lens draws every flow standing still; only the plan lens moves (proposed)", () => {
+    const sc = arrowsFor(seam, "scenario");
+    expect(sc.map((a) => [a.id, a.kind, a.dashed, a.moving])).toEqual([
+      ["web-server#scenario-0", "data", false, false],
+      ["web-server#scenario-1", "data", false, false],
+      ["web-server#scenario-2", "control", true, false],
+    ]);
+    // The plan lens is unchanged: every arrow dashed and moving.
+    expect(arrowsFor(seam, "plan").every((a) => a.dashed && a.moving)).toBe(true);
+  });
+
   it("structure lens gives one arrow per seam", () => {
     expect(arrowsFor(seam, "structure")).toEqual([{ id: "web-server", seam: "web-server", kind: "structure", reversed: false, label: undefined, offset: 0, dashed: false, faint: false, moving: false }]);
     expect(arrowsFor({ id: "a-b", from: "a", to: "b" }, "structure")).toHaveLength(1);

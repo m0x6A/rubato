@@ -8,8 +8,9 @@ mod backlog;
 mod coverage;
 mod poll;
 mod store;
+mod suggest;
 
-pub use backlog::{BACKLOG_MAX_PER_REPO, Listed, list_open_issues};
+pub use backlog::{BACKLOG_MAX_PER_REPO, Listed, MapLine, list_open_issues};
 pub use coverage::check_coverage;
 pub use poll::{
     CommentsRead, RepoView, Standing, has_open_pr, poll_comments, poll_pr, poll_pr_of_gone_branch,
@@ -19,3 +20,4 @@ pub use store::{
     IssueMeta, all_approvals, all_decisions, all_issue_meta, all_prs, all_reviews, backlog,
     issue_meta, set_target_sha, uncovered,
 };
+pub use suggest::{SUGGEST_THRESHOLD, suggest};

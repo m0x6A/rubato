@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkPlanFile, logLine } from "../src/check.ts";
 import { parseArgs } from "../src/cli.ts";
-import { loadMap, loadMapText, MapError } from "../src/map.ts";
+import { loadMap, loadMapText, MapError, mapIds } from "../src/map.ts";
 import { parsePlan } from "../src/parse-plan.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -47,6 +47,29 @@ describe("map", () => {
     expect((err as MapError).problems).toEqual([
       'seam "web-server" has a flow from "server" to "store", which are not its two nodes',
       'seam "web-server" has a flow from "web" to "web", which are not its two nodes',
+    ]);
+  });
+
+  it("scenario fixtures", () => {
+    // The same files `rubato_protocol::map::tests::scenario_fixtures` reads: same problems, same order.
+    const dir = resolve(root, "schema/fixtures/maps");
+    const good = loadMapText(readFileSync(resolve(dir, "scenarios.yml"), "utf8"), schemaDir);
+    expect(good).toEqual(JSON.parse(readFileSync(resolve(dir, "scenarios.json"), "utf8")));
+    expect(mapIds(good).has("pin-an-issue")).toBe(false);
+    let err: unknown;
+    try {
+      loadMapText(readFileSync(resolve(dir, "scenarios-bad.yml"), "utf8"), schemaDir);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(MapError);
+    expect((err as MapError).problems).toEqual([
+      'duplicate id "web"',
+      'scenario "off-flow" step 1 on seam "web-server": no declared control flow from "web" to "server"',
+      'scenario "ambiguous" step 1 on seam "web-server": 2 declared control flows from "server" to "web"; name one with carries',
+      'scenario "ambiguous" step 2 on seam "web-server": no declared control flow from "server" to "web" carrying "Nope"',
+      'scenario "lost" step 1 names unknown seam "web-store"',
+      'scenario "empty" has no steps',
     ]);
   });
 

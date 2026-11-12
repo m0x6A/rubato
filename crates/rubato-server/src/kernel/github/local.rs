@@ -15,7 +15,7 @@ use tokio::process::Command;
 pub struct LocalGit {
     repos: HashMap<String, PathBuf>,
     /// Open issues per repo, from `RUBATO_DEV_ISSUES`. Git has none of its own.
-    open: HashMap<String, Vec<OpenIssueInfo>>,
+    open: std::sync::Mutex<HashMap<String, Vec<OpenIssueInfo>>>,
     /// Pull requests opened through this stand-in, by (repo, head branch). Git has none.
     pulls: std::sync::Mutex<HashMap<(String, String), PullInfo>>,
 }
@@ -35,14 +35,14 @@ impl LocalGit {
         }
         Ok(Self {
             repos,
-            open: HashMap::new(),
+            open: Default::default(),
             pulls: Default::default(),
         })
     }
 
     /// Give the stand-in its open issues.
     pub fn with_open_issues(mut self, open: HashMap<String, Vec<OpenIssueInfo>>) -> Self {
-        self.open = open;
+        self.open = std::sync::Mutex::new(open);
         self
     }
 
@@ -197,7 +197,13 @@ impl GitHubApi for LocalGit {
     }
 
     async fn open_issues(&self, repo: &str, max: usize) -> Result<OpenIssues> {
-        let all = self.open.get(repo).cloned().unwrap_or_default();
+        let all = self
+            .open
+            .lock()
+            .unwrap()
+            .get(repo)
+            .cloned()
+            .unwrap_or_default();
         let truncated = all.len() > max;
         Ok(OpenIssues {
             issues: all.into_iter().take(max).collect(),
@@ -208,6 +214,31 @@ impl GitHubApi for LocalGit {
     /// Real git underneath: branches and files can be written (the map proposal, ADR 0018).
     fn can_write(&self) -> bool {
         true
+    }
+
+    /// Issues live in memory here (from `RUBATO_DEV_ISSUES`), so creating one is adding a row:
+    /// dev mode can run the whole "New issue here…" flow (ADR 0025).
+    fn can_create_issues(&self) -> bool {
+        true
+    }
+
+    async fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<(u64, String)> {
+        self.path(repo)?;
+        let mut open = self.open.lock().unwrap();
+        let issues = open.entry(repo.to_owned()).or_default();
+        let number = issues.iter().map(|i| i.number).max().unwrap_or(0).max(1000) + 1;
+        let url = format!("https://github.com/{repo}/issues/{number}");
+        issues.push(OpenIssueInfo {
+            number,
+            title: title.to_owned(),
+            url: url.clone(),
+            labels: vec![],
+            updated_at: chrono::Utc::now(),
+            body: body.to_owned(),
+            author: "rubato[bot]".into(),
+            author_association: "NONE".into(),
+        });
+        Ok((number, url))
     }
 
     async fn create_ref(&self, repo: &str, branch: &str, sha: &str) -> Result<()> {

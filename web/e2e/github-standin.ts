@@ -87,6 +87,19 @@ async function body(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/** Issues created through the stand-in, in order (ADR 0025). */
+const created: Record<string, unknown>[] = [];
+
+function bodyOf(req: IncomingMessage): Promise<string> {
+  return new Promise((ok, fail) => {
+    let text = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk: string) => (text += chunk));
+    req.on("end", () => ok(text));
+    req.on("error", fail);
+  });
+}
+
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 const server = createServer(async (req, res) => {
@@ -148,7 +161,11 @@ const server = createServer(async (req, res) => {
     if (!isAppJwt(bearer(req))) {
       return unauthorized();
     }
-    return send(res, 201, { token: INSTALLATION_TOKEN, expires_at: new Date(Date.now() + 3600_000).toISOString(), permissions: { issues: "read", contents: "write" } });
+    return send(res, 201, { token: INSTALLATION_TOKEN, expires_at: new Date(Date.now() + 3600_000).toISOString(), permissions: { issues: "write", contents: "write" } });
+  }
+  // The installation's permissions, read as the App (ADR 0025).
+  if (path === `/app/installations/${INSTALLATION}`) {
+    return isAppJwt(bearer(req)) ? send(res, 200, { id: INSTALLATION, permissions: { issues: "write", contents: "write", pull_requests: "write" } }) : unauthorized();
   }
 
   // api.github.com as the installation.
@@ -162,8 +179,16 @@ const server = createServer(async (req, res) => {
     if (path === "/rate_limit") {
       return send(res, 200, { resources: { core: { remaining: 4900, limit: 5000 } } });
     }
+    if (path === "/repos/m0x6A/rubato/issues" && req.method === "POST") {
+      // An issue created by the App (ADR 0025): it joins the listing, as on GitHub.
+      const sent = JSON.parse(await bodyOf(req)) as { title: string; body: string };
+      const number = 950 + created.length;
+      const issue = { number, title: sent.title, body: sent.body, html_url: `https://github.com/m0x6A/rubato/issues/${number}`, labels: [], updated_at: new Date().toISOString(), author_association: "NONE", user: { login: "rubato-e2e[bot]" } };
+      created.push(issue);
+      return send(res, 201, issue);
+    }
     if (path === "/repos/m0x6A/rubato/issues") {
-      return send(res, 200, url.searchParams.get("page") === "1" ? ISSUES : []);
+      return send(res, 200, url.searchParams.get("page") === "1" ? [...ISSUES, ...created] : []);
     }
     if (path === "/repos/m0x6A/rubato/branches") {
       return send(res, 200, []);
