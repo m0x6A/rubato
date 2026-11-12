@@ -415,9 +415,11 @@ mod tests {
         assert_eq!(replay_drop_reason(&beat.message), None);
 
         let (events, _g) = capture::start();
-        let metrics = Metrics::new();
+        let (reader, metrics) = metric_reader::start();
+        let dropped = || reader.points(metric::EVENTS_DROPPED);
         let companion_id = Uuid::new_v4();
         on_replay(&metrics, companion_id, &beat);
+        assert_eq!(dropped(), [], "an outbox replay is not a drop");
         assert!(
             events
                 .lock()
@@ -439,6 +441,12 @@ mod tests {
             Some(&companion_id.to_string())
         );
         assert_eq!(warned[0].fields.get("seq").map(String::as_str), Some("1"));
+
+        // The drop is counted once, under reason `replay` (#41).
+        let points = dropped();
+        assert_eq!(points.len(), 1, "{points:?}");
+        assert_eq!(points[0].value, 1);
+        assert_eq!(points[0].attrs[attr::DROP_REASON], "replay");
     }
 
     #[test]
