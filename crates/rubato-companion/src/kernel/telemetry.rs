@@ -200,8 +200,9 @@ pub mod metric_reader {
 /// Test-only: collect the events emitted on this thread, with their fields as strings.
 #[cfg(test)]
 pub mod capture {
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Once};
     use tracing::field::{Field, Visit};
     use tracing_subscriber::layer::{Context, SubscriberExt};
 
@@ -214,7 +215,22 @@ pub mod capture {
 
     pub type Events = Arc<Mutex<Vec<Captured>>>;
 
-    struct Layer(Events);
+    thread_local! {
+        /// Where this thread's events go while a guard lives.
+        static SINK: RefCell<Option<Events>> = const { RefCell::new(None) };
+    }
+
+    struct Layer;
+
+    /// Stops the capture on this thread when dropped, and puts back the one it replaced.
+    pub struct Guard(Option<Events>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let before = self.0.take();
+            let _ = SINK.try_with(|s| *s.borrow_mut() = before);
+        }
+    }
 
     struct Visitor<'a>(&'a mut Captured);
 
@@ -239,20 +255,38 @@ pub mod capture {
 
     impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
         fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let Some(sink) = SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
+                return;
+            };
             let mut c = Captured {
                 level: *event.metadata().level(),
                 message: String::new(),
                 fields: BTreeMap::new(),
             };
             event.record(&mut Visitor(&mut c));
-            self.0.lock().unwrap().push(c);
+            sink.lock().unwrap().push(c);
         }
     }
 
-    /// Capture until the guard drops. Use from a plain test or a current-thread runtime.
-    pub fn start() -> (Events, tracing::subscriber::DefaultGuard) {
+    /// Capture this thread's events until the guard drops. Use from a plain test or a
+    /// current-thread runtime.
+    ///
+    /// One subscriber serves the whole test process and hands each event to its own thread's
+    /// sink. A subscriber per test (`set_default`) lost events now and then: tracing keeps one
+    /// answer per callsite for the whole process, and with subscribers coming and going on
+    /// other test threads a line could be cached as "nobody listens" (seen in CI on
+    /// `refusals_are_counted_by_route_and_reason`).
+    pub fn start() -> (Events, Guard) {
+        static GLOBAL: Once = Once::new();
+        GLOBAL.call_once(|| {
+            tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Layer))
+                .expect("the capture subscriber is the only global subscriber in unit tests");
+            // A callsite first reached while the subscriber was being installed may have
+            // cached "nobody listens"; ask again now that it is in place.
+            tracing::callsite::rebuild_interest_cache();
+        });
         let events: Events = Arc::default();
-        let sub = tracing_subscriber::registry().with(Layer(events.clone()));
-        (events, tracing::subscriber::set_default(sub))
+        let before = SINK.with(|s| s.borrow_mut().replace(events.clone()));
+        (events, Guard(before))
     }
 }
