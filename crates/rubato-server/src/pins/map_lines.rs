@@ -164,6 +164,7 @@ mod tests {
                 description: None,
                 flows: vec![],
             }],
+            scenarios: vec![],
         }
     }
 

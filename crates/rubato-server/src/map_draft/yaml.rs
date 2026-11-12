@@ -12,7 +12,15 @@ pub fn render(map: &SystemMap) -> Result<String> {
     Ok(format!("{HEADER}{}", serde_yaml_ng::to_string(map)?))
 }
 
-const TOP: &[&str] = &["version", "name", "owner_rule", "repos", "nodes", "seams"];
+const TOP: &[&str] = &[
+    "version",
+    "name",
+    "owner_rule",
+    "repos",
+    "nodes",
+    "seams",
+    "scenarios",
+];
 const REPO: &[&str] = &["name", "plan_path"];
 const NODE: &[&str] = &["id", "kind", "repo", "path", "description"];
 const SEAM: &[&str] = &[
@@ -26,6 +34,8 @@ const SEAM: &[&str] = &[
     "flows",
 ];
 const FLOW: &[&str] = &["kind", "from", "to", "carries"];
+const SCENARIO: &[&str] = &["id", "name", "description", "steps"];
+const STEP: &[&str] = &["seam", "from", "to", "kind", "carries", "says"];
 
 fn extra(value: &Value, known: &[&str], at: &str, out: &mut Vec<String>) {
     if let Value::Mapping(m) = value {
@@ -68,6 +78,12 @@ pub fn unknown_keys(text: &str) -> Result<Vec<String>> {
             extra(f, FLOW, &format!("seams[{i}].flows[{j}]"), &mut out);
         }
     }
+    for (i, s) in each(&doc, "scenarios") {
+        extra(s, SCENARIO, &format!("scenarios[{i}]"), &mut out);
+        for (j, step) in each(s, "steps") {
+            extra(step, STEP, &format!("scenarios[{i}].steps[{j}]"), &mut out);
+        }
+    }
     Ok(out)
 }
 
@@ -78,6 +94,7 @@ mod tests {
     const RUBATO: &str = include_str!("../../../../docs/design/rubato-map.yml");
     const TEAM: &str = include_str!("../../../../e2e/fixtures/team-map.yml");
     const FLOWS: &str = include_str!("../../../../schema/fixtures/maps/flows.yml");
+    const SCENARIOS: &str = include_str!("../../../../schema/fixtures/maps/scenarios.yml");
 
     #[test]
     fn round_trip_keeps_the_committed_maps() {
@@ -85,6 +102,7 @@ mod tests {
             ("rubato-map.yml", RUBATO),
             ("team-map.yml", TEAM),
             ("flows.yml", FLOWS),
+            ("scenarios.yml", SCENARIOS),
         ] {
             let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
             let written = render(&map).unwrap();
@@ -102,7 +120,7 @@ mod tests {
                 "{name}"
             );
         }
-        println!("checked 3 map files");
+        println!("checked 4 map files");
     }
 
     #[test]
@@ -117,6 +135,13 @@ mod tests {
                 "seams[0].slo",
                 "seams[0].flows[0].format"
             ]
+        );
+        let with_scenarios = format!(
+            "{text}scenarios:\n  - id: s\n    name: S\n    audience: ops\n    steps:\n      - {{seam: a-b, from: a, to: b, kind: data, at_ms: 5}}\n"
+        );
+        assert_eq!(
+            unknown_keys(&with_scenarios).unwrap()[5..],
+            ["scenarios[0].audience", "scenarios[0].steps[0].at_ms"]
         );
         // The file still loads: unknown keys are ignored by the model, which is why a rewrite
         // would lose them.

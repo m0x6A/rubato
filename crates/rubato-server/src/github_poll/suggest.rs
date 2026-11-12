@@ -215,6 +215,7 @@ mod tests {
                 description: Some("The browser reads the overview".into()),
                 flows: vec![],
             }],
+            scenarios: vec![],
         }
     }
 

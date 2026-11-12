@@ -144,6 +144,12 @@ button.link:hover { text-decoration: underline; }
 .react-flow__edge.moving.reversed .react-flow__edge-path { animation-direction: reverse; }
 @keyframes flow-move { to { stroke-dashoffset: -24; } }
 @media (prefers-reduced-motion: reduce) { .react-flow__edge.moving .react-flow__edge-path { animation: none; } }
+/* a scenario's current step (ADR 0024): the arrow is lit, a pulse travels along it; data is a
+   filled dot, control a ring, so the kind reads without colour. Reduced motion: it sits still. */
+.react-flow__edge.step-active .react-flow__edge-path { stroke: var(--accent); stroke-width: 3; opacity: 1; }
+.pulse { pointer-events: none; }
+.pulse.data { fill: var(--accent); stroke: var(--accent); stroke-width: 2; }
+.pulse.control { fill: var(--panel); stroke: var(--accent); stroke-width: 3; }
 .lens button:disabled { opacity: 0.6; cursor: default; }
 /* something is selected: what is not next to it steps back */
 .react-flow__edge.dim { opacity: 0.25; }
@@ -154,7 +160,7 @@ button.link:hover { text-decoration: underline; }
 .lens button { border-radius: 0; margin-left: -1px; min-height: 28px; padding: 4px 10px; }
 .lens button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
 .lens button:last-child { border-radius: 0 6px 6px 0; }
-.legend { margin-top: 6px; max-width: 360px; padding: 4px 8px; font-size: 12px; color: var(--chip-ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.legend { margin: 0; font-size: 12px; color: var(--chip-ink); }
 .legend-line { stroke: var(--muted); stroke-width: 2; }
 /* the shared map draft: dashed, badged, and its panel */
 .map-node.draft { border-style: dashed; border-color: var(--new); }
@@ -165,7 +171,7 @@ button.link:hover { text-decoration: underline; }
 .badge.draft-badge { color: var(--chip-ink); border-color: var(--new); border-style: dashed; }
 .seam-handle { width: 12px; height: 12px; background: var(--new); border: 2px solid var(--panel); }
 .seam-handle.hidden { opacity: 0; pointer-events: none; }
-.map-actions { display: flex; gap: 6px; }
+.map-actions { display: flex; gap: 6px; margin-left: auto; }
 .draft-panel { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px dashed var(--new); border-radius: 8px; }
 .draft-panel header { display: flex; align-items: baseline; gap: 8px; }
 .draft-panel header h2 { font-size: 15px; margin-right: auto; }
@@ -218,3 +224,21 @@ button.link:hover { text-decoration: underline; }
 .seam-chip.drop-over { color: var(--ink); border-color: var(--accent); border-style: solid; background: color-mix(in srgb, var(--accent) 18%, var(--panel)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
 /* Seam chips are HTML labels: keep them above the part cards where an edge runs close to one. */
 .react-flow__edgelabel-renderer { z-index: 5; }
+/* the map: a band of controls above the canvas, never over it */
+.map-frame { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.map-band { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.map-band-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.map-canvas { flex: 1; min-height: 0; position: relative; }
+/* the scenario player: one row of controls, the caption below */
+.scenario-player { display: flex; flex-direction: column; gap: 2px; }
+.scenario-player:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.scenario-controls { display: inline-flex; gap: 4px; }
+.scenario-controls button { min-width: 32px; min-height: 28px; }
+.scenario-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.scenario-key { font-size: 12px; color: var(--chip-ink); display: inline-flex; align-items: center; gap: 4px; }
+.scenario-caption { margin: 0; font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.scenario-note { margin: 0; font-size: 12px; color: var(--muted); }
+.scenario-steps { font-size: 12px; }
+.scenario-steps ol { margin: 4px 0 0; padding-left: 20px; max-height: 160px; overflow: auto; }
+.scenario-steps button { background: none; border: none; padding: 2px 0; text-align: left; cursor: pointer; color: inherit; }
+.scenario-steps button.current { font-weight: 600; text-decoration: underline; }

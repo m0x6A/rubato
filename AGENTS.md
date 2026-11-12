@@ -137,7 +137,7 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 ```text
 live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
-map         the system map: graph, shared layout over ELK, MapView  PUT, DELETE /api/layout
+map         the system map: graph, shared layout over ELK, MapView, scenario player  PUT, DELETE /api/layout
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
@@ -163,7 +163,7 @@ issue_body the Map: line (parse_map_line, map_line), PinSuggestion
 issue_new  NewIssueRequest, NewIssueResponse, render_issue, the Rubato-Request: line; ISSUES
 launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
 layout     MapLayout, Position; LAYOUT
-map        SystemMap, MapResponse; MAP, MAP_RELOAD
+map        SystemMap, Scenario, MapResponse; MAP, MAP_RELOAD
 map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
 plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord

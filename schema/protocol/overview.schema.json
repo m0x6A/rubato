@@ -1387,6 +1387,75 @@
         "name"
       ]
     },
+    "Scenario": {
+      "description": "A named journey: what crosses which seam, in order, when someone uses the system (ADR 0024).\nIts id shares the namespace of node and seam ids but is not one a pin or plan may name.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "description": "Short title shown in the scenario picker.",
+          "type": "string"
+        },
+        "steps": {
+          "description": "In order. Steps need not be contiguous: a journey may jump to another part.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScenarioStep"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "steps"
+      ]
+    },
+    "ScenarioStep": {
+      "description": "One step: a flow declared on `seam`, picked by its kind and direction, and by `carries` when\nthe seam declares more than one flow with that kind and direction.",
+      "type": "object",
+      "properties": {
+        "carries": {
+          "description": "Must equal the flow's `carries`; required only to tell two such flows apart.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FlowKind"
+        },
+        "says": {
+          "description": "What happens at this step, in words, for the caption.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seam": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seam",
+        "from",
+        "to",
+        "kind"
+      ]
+    },
     "Seam": {
       "description": "A seam between two nodes. The owner side is woken when it breaks.",
       "type": "object",
@@ -1598,6 +1667,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/RepoRef"
+          }
+        },
+        "scenarios": {
+          "description": "Named journeys through the system, as ordered steps over declared flows (ADR 0024).\nOptional; a map without scenarios is still version 1.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Scenario"
           }
         },
         "seams": {
