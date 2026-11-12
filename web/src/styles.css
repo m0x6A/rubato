@@ -139,6 +139,22 @@ button.link:hover { text-decoration: underline; }
 .react-flow__edge.moving.reversed .react-flow__edge-path { animation-direction: reverse; }
 @keyframes flow-move { to { stroke-dashoffset: -24; } }
 @media (prefers-reduced-motion: reduce) { .react-flow__edge.moving .react-flow__edge-path { animation: none; } }
+/* a scenario's current step (ADR 0024): the arrow is lit, a pulse travels along it; data is a
+   filled dot, control a ring, so the kind reads without colour. Reduced motion: it sits still. */
+.react-flow__edge.step-active .react-flow__edge-path { stroke: var(--accent); stroke-width: 3; opacity: 1; }
+.pulse { pointer-events: none; }
+.pulse.data { fill: var(--accent); stroke: var(--accent); stroke-width: 2; }
+.pulse.control { fill: var(--panel); stroke: var(--accent); stroke-width: 3; }
+.scenario-player { margin-top: 6px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; max-width: 420px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.scenario-player:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.scenario-controls { display: inline-flex; gap: 4px; }
+.scenario-controls button { min-width: 32px; min-height: 28px; }
+.scenario-caption { flex-basis: 100%; margin: 0; font-size: 13px; }
+.scenario-note { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--muted); }
+.scenario-steps { flex-basis: 100%; font-size: 12px; }
+.scenario-steps ol { margin: 4px 0 0; padding-left: 20px; max-height: 220px; overflow: auto; }
+.scenario-steps button { background: none; border: none; padding: 2px 0; text-align: left; cursor: pointer; color: inherit; }
+.scenario-steps button.current { font-weight: 600; text-decoration: underline; }
 .lens button:disabled { opacity: 0.6; cursor: default; }
 /* something is selected: what is not next to it steps back */
 .react-flow__edge.dim { opacity: 0.25; }
