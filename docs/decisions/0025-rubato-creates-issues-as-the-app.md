@@ -1,8 +1,8 @@
 # 0025. Rubato creates issues as the GitHub App, pinned where they were started
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-12
-- **Decided by:** proposed by agent (Claude Code, claude-opus-5-5, issue #71); awaiting Mattias Jonsson
+- **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #71)
 - **Seam:** server-github, web-server
 - **Issue:** m0x6A/rubato#71
 
