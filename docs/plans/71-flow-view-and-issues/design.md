@@ -55,7 +55,7 @@ Key signals:
 
 New panels: "Issues created" and "Map lines".
 
-## ADRs (proposed by the agent; you accept)
+## ADRs (accepted by Mattias Jonsson, 2026-11-12)
 
 - **0024 Scenarios in the map.** `scenarios[]: {id, name, description?, steps[{seam, from, to, kind, says?}]}`.
   - Each step must match a declared flow on that seam, so flows still need no id (ADR 0017).
