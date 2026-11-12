@@ -28,9 +28,10 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
         anyhow::Ok((sha, yaml))
     }
     .await;
-    // `stored_at` is set when the map comes from the database copy: that copy keeps the time it
-    // was fetched, and this reload has already counted its one failure (the fetch).
-    let (version, yaml, stored_at) = match fetched {
+    // `fallback` is set when the map comes from the database copy: that copy keeps the time it
+    // was fetched, and this reload has already counted its one failure (the fetch), whose error
+    // is kept so a broken copy does not hide it.
+    let (version, yaml, fallback) = match fetched {
         Ok((version, yaml)) => (version, yaml, None),
         Err(e) => {
             app.metrics.map_load_failures.add(1, &[]);
@@ -40,13 +41,19 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
             }
             if let Some((version, yaml, loaded_at)) = store::load_map(&app.db).await? {
                 tracing::warn!(error = %e, %loaded_at, "map fetch failed; using the database copy {version}");
-                (version, yaml, Some(loaded_at))
+                (version, yaml, Some((loaded_at, e)))
             } else {
                 return Err(e);
             }
         }
     };
-    let map = parse(app, &yaml, stored_at.is_none())?;
+    let map = match &fallback {
+        None => parse(app, &yaml, true)?,
+        Some((_, fetch_error)) => parse(app, &yaml, false).with_context(|| {
+            format!("map fetch failed: {fetch_error:#}; the database copy {version} is unusable")
+        })?,
+    };
+    let stored_at = fallback.map(|(at, _)| at);
     let loaded = LoadedMap {
         map,
         version: version.clone(),
@@ -306,20 +313,75 @@ mod tests {
         assert_eq!(row_at.timestamp(), stored_at.timestamp());
     }
 
+    const OFF_SEAM: &str = include_str!("../../../../schema/fixtures/maps/flows-off-seam.yml");
+
     #[tokio::test]
     async fn a_broken_database_copy_counts_one_failure_per_reload() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (a, reader) = failing_github_over(&tmp.path().join("t.db")).await;
-        store::store_map(&a.db, "sha-bad", "nodes: [unclosed", Utc::now())
-            .await
-            .unwrap();
+        // A copy that does not parse, then one that parses but does not validate.
+        for (n, (yaml, names)) in [
+            ("nodes: [unclosed", "does not parse"),
+            (OFF_SEAM, "\"web-server\""),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let tmp = tempfile::tempdir().unwrap();
+            let (a, reader) = failing_github_over(&tmp.path().join(format!("{n}.db"))).await;
+            store::store_map(&a.db, "sha-bad", yaml, Utc::now())
+                .await
+                .unwrap();
 
-        // One reload, one failure: the fetch is counted, the unparsable copy behind it is not
-        // counted again.
-        let e = reload(&a).await.unwrap_err();
-        assert!(format!("{e:#}").contains("does not parse"), "{e:#}");
-        assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
-        assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
-        assert!(a.map.read().await.is_none());
+            // One reload, one failure: the fetch is counted, the broken copy behind it is not
+            // counted again, and the error still names the failed fetch.
+            let e = format!("{:#}", reload(&a).await.unwrap_err());
+            assert!(e.contains(names), "{e}");
+            assert!(e.contains("map fetch failed: map ref not found"), "{e}");
+            assert!(e.contains("the database copy sha-bad is unusable"), "{e}");
+            assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1, "{yaml}");
+            assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
+            assert!(a.map.read().await.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fetched_map_that_is_broken_is_counted_once_and_not_stored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let github = Arc::new(FakeGitHub::new());
+        let serve = |yaml: &str| {
+            github.with(|g| {
+                g.files.insert(
+                    (
+                        "m0x6A/rubato".into(),
+                        "docs/design/rubato-map.yml".into(),
+                        "main".into(),
+                    ),
+                    yaml.into(),
+                );
+                g.branches
+                    .insert("m0x6A/rubato".into(), vec![("main".into(), "sha1".into())]);
+            })
+        };
+        let cfg = Config::for_tests(
+            format!("sqlite://{}/t.db?mode=rwc", tmp.path().display()),
+            "m0x6A",
+        );
+        let (a, reader) = app(cfg, github.clone()).await;
+
+        // Each broken fetch adds one failure, sets no time and stores nothing.
+        for (n, (yaml, names)) in [
+            ("nodes: [unclosed", "does not parse"),
+            (OFF_SEAM, "\"web-server\""),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            serve(yaml);
+            let e = format!("{:#}", reload(&a).await.unwrap_err());
+            assert!(e.contains(names), "{e}");
+            assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, n as u64 + 1);
+            assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
+            assert!(store::load_map(&a.db).await.unwrap().is_none());
+            assert!(a.map.read().await.is_none());
+        }
     }
 }
