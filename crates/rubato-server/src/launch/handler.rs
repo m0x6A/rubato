@@ -37,7 +37,7 @@ async fn refuse_past_attempt_limit(
         at: Utc::now(),
     };
     tracing::warn!(rubato.issue = %hit.issue, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", event::CAP_HIT);
-    if let Err(e) = store::store_cap_hit(db, &hit).await {
+    if let Err(e) = store::store_cap_hit(db, &hit, hit.at).await {
         tracing::error!(slice = SLICE, rubato.issue = %hit.issue, error = %e, "storing cap hit");
     }
     (

@@ -31,7 +31,43 @@ pub enum StateSource {
     Launch,
 }
 
+impl SessionStatus {
+    /// Every status, for the gauges that also report zero. A test checks it against the
+    /// JSON Schema, so a new variant fails it until it is listed here.
+    pub const ALL: [Self; 5] = [
+        Self::Working,
+        Self::Idle,
+        Self::Blocked,
+        Self::Ended,
+        Self::Unknown,
+    ];
+
+    /// The status as the protocol spells it on the wire.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Working => "working",
+            Self::Idle => "idle",
+            Self::Blocked => "blocked",
+            Self::Ended => "ended",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 impl StateSource {
+    /// Every source, for the gauges that also report zero. Checked like `SessionStatus::ALL`.
+    pub const ALL: [Self; 4] = [Self::Hook, Self::TmuxIde, Self::Scraped, Self::Launch];
+
+    /// The source as the protocol spells it on the wire.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Hook => "hook",
+            Self::TmuxIde => "tmux_ide",
+            Self::Scraped => "scraped",
+            Self::Launch => "launch",
+        }
+    }
+
     pub fn is_trusted(self) -> bool {
         !matches!(self, Self::Scraped)
     }
@@ -147,6 +183,86 @@ mod tests {
             spend_usd: None,
         };
         (s, now)
+    }
+
+    /// Every string the JSON Schema of `T` allows: its `enum` lists and `const`s.
+    fn schema_variants<T: JsonSchema>() -> std::collections::BTreeSet<String> {
+        fn walk(v: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
+            match v {
+                serde_json::Value::Object(m) => {
+                    if let Some(serde_json::Value::String(s)) = m.get("const") {
+                        out.insert(s.clone());
+                    }
+                    if let Some(serde_json::Value::Array(a)) = m.get("enum") {
+                        out.extend(a.iter().filter_map(|x| x.as_str().map(str::to_owned)));
+                    }
+                    m.values().for_each(|x| walk(x, out));
+                }
+                serde_json::Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+                _ => {}
+            }
+        }
+        let mut out = std::collections::BTreeSet::new();
+        walk(
+            &serde_json::to_value(schemars::schema_for!(T)).unwrap(),
+            &mut out,
+        );
+        out
+    }
+
+    #[test]
+    fn all_statuses_cover_every_variant_once() {
+        let names: Vec<String> = SessionStatus::ALL
+            .iter()
+            .map(|s| s.name().to_owned())
+            .collect();
+        for s in SessionStatus::ALL {
+            assert_eq!(
+                serde_json::to_value(s).unwrap(),
+                serde_json::json!(s.name())
+            );
+        }
+        let unique: std::collections::BTreeSet<String> = names.iter().cloned().collect();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "a status listed twice: {names:?}"
+        );
+        assert_eq!(unique, schema_variants::<SessionStatus>());
+        println!("checked {} session statuses", names.len());
+    }
+
+    #[test]
+    fn all_sources_cover_every_variant_once() {
+        let names: Vec<String> = StateSource::ALL
+            .iter()
+            .map(|s| s.name().to_owned())
+            .collect();
+        for s in StateSource::ALL {
+            assert_eq!(
+                serde_json::to_value(s).unwrap(),
+                serde_json::json!(s.name())
+            );
+        }
+        let unique: std::collections::BTreeSet<String> = names.iter().cloned().collect();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "a source listed twice: {names:?}"
+        );
+        assert_eq!(unique, schema_variants::<StateSource>());
+        println!("checked {} state sources", names.len());
+    }
+
+    /// The check fails when a variant is missing from `ALL`: the schema of `SessionStatus`
+    /// against a list without `unknown`.
+    #[test]
+    fn a_list_missing_a_variant_fails_the_check() {
+        let short: std::collections::BTreeSet<String> = SessionStatus::ALL[..4]
+            .iter()
+            .map(|s| s.name().to_owned())
+            .collect();
+        assert_ne!(short, schema_variants::<SessionStatus>());
     }
 
     #[test]

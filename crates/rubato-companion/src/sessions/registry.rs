@@ -136,7 +136,7 @@ impl Registry {
     /// Count by status, for the `rubato.sessions.by_state` gauge. Every status is present, zero
     /// included: a gauge keeps its last value, so a status that empties must be recorded as 0.
     pub fn counts(&self) -> HashMap<SessionStatus, usize> {
-        let mut m: HashMap<_, _> = STATUSES.iter().map(|s| (*s, 0)).collect();
+        let mut m: HashMap<_, _> = SessionStatus::ALL.iter().map(|s| (*s, 0)).collect();
         for e in &self.entries {
             *m.entry(e.status).or_insert(0) += 1;
         }
@@ -146,28 +146,13 @@ impl Registry {
     /// Count by source, for the `rubato.sessions.discovered` gauge. Every source is present,
     /// zero included, for the same reason.
     pub fn counts_by_source(&self) -> HashMap<StateSource, usize> {
-        let mut m: HashMap<_, _> = SOURCES.iter().map(|s| (*s, 0)).collect();
+        let mut m: HashMap<_, _> = StateSource::ALL.iter().map(|s| (*s, 0)).collect();
         for e in &self.entries {
             *m.entry(e.source).or_insert(0) += 1;
         }
         m
     }
 }
-
-/// Every session status and every state source, for the gauges that also report zero.
-const STATUSES: [SessionStatus; 5] = [
-    SessionStatus::Working,
-    SessionStatus::Idle,
-    SessionStatus::Blocked,
-    SessionStatus::Ended,
-    SessionStatus::Unknown,
-];
-const SOURCES: [StateSource; 4] = [
-    StateSource::Hook,
-    StateSource::TmuxIde,
-    StateSource::Launch,
-    StateSource::Scraped,
-];
 
 #[cfg(test)]
 mod tests {
@@ -177,7 +162,7 @@ mod tests {
     fn counts_include_every_status() {
         let mut r = Registry::new(Uuid::nil(), "m0x6A");
         let counts = r.counts();
-        assert_eq!(counts.len(), 5, "{counts:?}");
+        assert_eq!(counts.len(), SessionStatus::ALL.len(), "{counts:?}");
         assert!(counts.values().all(|n| *n == 0), "{counts:?}");
         r.entries.push(Entry {
             session_id: Some("s1".into()),
@@ -200,7 +185,7 @@ mod tests {
             ended: false,
         });
         let counts = r.counts();
-        assert_eq!(counts.len(), 5, "{counts:?}");
+        assert_eq!(counts.len(), SessionStatus::ALL.len(), "{counts:?}");
         assert_eq!(counts[&SessionStatus::Working], 1);
         for status in [
             SessionStatus::Idle,

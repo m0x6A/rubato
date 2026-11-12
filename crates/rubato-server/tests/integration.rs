@@ -991,6 +991,139 @@ async fn attempt_limit_does_not_block_a_running_issue() {
     );
 }
 
+/// A spend cap hit from the companion: kind `spend`, the given session and companion time.
+fn spend_hit(
+    issue: &IssueRef,
+    seq: u64,
+    session_id: &str,
+    at: chrono::DateTime<chrono::Utc>,
+) -> CompanionEnvelope {
+    let mut cap = Harness::fixture("companion_cap_hit.json");
+    if let CompanionMessage::CapHit(c) = &mut cap.message {
+        c.issue = issue.clone();
+        c.session_id = Some(session_id.into());
+        c.at = at;
+    }
+    cap.seq = seq;
+    cap
+}
+
+/// The companion's `Launch` result for a launch it started.
+fn started(seq: u64, launched: &rubato_protocol::LaunchResponse) -> CompanionEnvelope {
+    CompanionEnvelope {
+        seq,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Started {
+            command_id: launched.command.id,
+            session_id: launched.command.session_id,
+            worktree: "/w".into(),
+            tmux_session: "t".into(),
+            at: chrono::Utc::now(),
+        }),
+    }
+}
+
+#[tokio::test]
+async fn a_spend_hit_blocks_whatever_the_companion_clock_says() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_companion_id, mut ws) = ready_to_launch(&h, &issue).await;
+
+    // Two runs, one after the other, each started by the companion.
+    let mut runs = Vec::new();
+    for seq in [2, 3] {
+        let launched: rubato_protocol::LaunchResponse =
+            start(&h, &issue, 3).await.json().await.unwrap();
+        await_reason(&mut web, "launch").await;
+        let _ = send(&mut ws, &started(seq, &launched)).await;
+        await_reason(&mut web, "launch").await;
+        runs.push(launched.command.session_id.to_string());
+    }
+
+    // A hit from the first run, stamped now: the second run superseded it, so it does not block.
+    let _ = send(&mut ws, &spend_hit(&issue, 4, &runs[0], chrono::Utc::now())).await;
+    await_reason(&mut web, "cap hit").await;
+    assert_ne!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+
+    // The second run's hit, from a companion whose clock is an hour behind: it blocks.
+    let behind = chrono::Utc::now() - chrono::Duration::hours(1);
+    let _ = send(&mut ws, &spend_hit(&issue, 5, &runs[1], behind)).await;
+    await_reason(&mut web, "cap hit").await;
+    let p = progress_of(&h, &issue).await;
+    assert_eq!(p.state, ProgressState::Blocked);
+    assert_eq!(p.reason.as_deref(), Some("cap hit"));
+}
+
+#[tokio::test]
+async fn a_spend_hit_blocks_after_a_second_start_was_refused_as_already_running() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_companion_id, mut ws) = ready_to_launch(&h, &issue).await;
+    let result = |seq: u64, result: rubato_protocol::LaunchResult| CompanionEnvelope {
+        seq,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Launch(result),
+    };
+
+    let first: rubato_protocol::LaunchResponse = start(&h, &issue, 3).await.json().await.unwrap();
+    await_reason(&mut web, "launch").await;
+    let _ = send(&mut ws, &started(2, &first)).await;
+    await_reason(&mut web, "launch").await;
+
+    // Someone presses Start again during the run; the companion refuses it.
+    let second: rubato_protocol::LaunchResponse = start(&h, &issue, 3).await.json().await.unwrap();
+    await_reason(&mut web, "launch").await;
+    let _ = send(
+        &mut ws,
+        &result(
+            3,
+            rubato_protocol::LaunchResult::Refused {
+                command_id: second.command.id,
+                reason: rubato_protocol::RefusalReason::AlreadyRunning,
+                detail: "running".into(),
+                at: chrono::Utc::now(),
+            },
+        ),
+    )
+    .await;
+    await_reason(&mut web, "launch").await;
+
+    // The first run passes its spend cap: the issue is Blocked.
+    let session = first.command.session_id.to_string();
+    let _ = send(&mut ws, &spend_hit(&issue, 4, &session, chrono::Utc::now())).await;
+    await_reason(&mut web, "cap hit").await;
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+}
+
+#[tokio::test]
+async fn a_companion_attempts_hit_blocks_whatever_the_companion_clock_says() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_companion_id, mut ws) = ready_to_launch(&h, &issue).await;
+
+    let r = start(&h, &issue, 3).await;
+    assert_eq!(r.status(), 200);
+    await_reason(&mut web, "launch").await;
+
+    // The companion refuses the launch at its own limit check, with a clock an hour behind.
+    let mut cap = spend_hit(
+        &issue,
+        2,
+        "",
+        chrono::Utc::now() - chrono::Duration::hours(1),
+    );
+    if let CompanionMessage::CapHit(c) = &mut cap.message {
+        c.kind = rubato_protocol::CapKind::Attempts;
+        c.session_id = None;
+    }
+    let _ = send(&mut ws, &cap).await;
+    await_reason(&mut web, "cap hit").await;
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+}
+
 #[tokio::test]
 async fn welcome_carries_last_seen_seq_after_reconnect() {
     let h = harness().await;

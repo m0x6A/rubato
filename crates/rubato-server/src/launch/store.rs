@@ -1,8 +1,8 @@
 //! Tables `launches` and `cap_hits`. `issues_with_live_cap_hit` reads both.
 
-use crate::kernel::db::ts;
+use crate::kernel::db::{parse_ts, ts};
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rubato_protocol::{CapHit, CapKind, IssueRef, LaunchCommand, LaunchResult};
 use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet};
@@ -73,31 +73,85 @@ pub async fn launch_map_versions(db: &SqlitePool) -> Result<Vec<(IssueRef, Strin
         .collect())
 }
 
-pub async fn store_cap_hit(db: &SqlitePool, hit: &CapHit) -> Result<()> {
+/// `at` is when the server received the hit, on its own clock, so it compares with `launches.created_at`
+/// whatever the companion clock says; the companion's own time stays in the payload.
+pub async fn store_cap_hit(db: &SqlitePool, hit: &CapHit, at: DateTime<Utc>) -> Result<()> {
     sqlx::query("INSERT INTO cap_hits (repo, number, payload, at) VALUES (?, ?, ?, ?)")
         .bind(&hit.issue.repo)
         .bind(hit.issue.number as i64)
         .bind(serde_json::to_string(hit)?)
-        .bind(ts(hit.at))
+        .bind(ts(at))
         .execute(db)
         .await?;
     Ok(())
 }
 
-/// Issues with a cap hit newer than their latest launch (or any cap hit when never launched),
-/// each with the kind of that hit. When hits of both kinds are live the issue reads as `Spend`,
-/// the kind that blocks whatever the sessions say; so does a payload that does not parse.
+/// One stored launch, as far as cap-hit liveness needs it.
+struct LaunchRow {
+    created_at: DateTime<Utc>,
+    session_id: Option<String>,
+    started: bool,
+}
+
+/// Issues with a live cap hit, each with the kind of that hit. A hit is live when the issue was
+/// never launched, or when no newer run superseded it:
+///
+/// - a hit naming a session whose launch the server stored is live unless a launch *started*
+///   after that one (a second Start refused as `already_running` does not supersede the run);
+/// - any other hit (attempts, or a session the server never launched) is live when the server
+///   received it at or after the issue's latest launch was stored.
+///
+/// Both rules use the server's own records, never the companion's clock (#44). When hits of
+/// both kinds are live the issue reads as `Spend`, the kind that blocks whatever the sessions
+/// say; so does a payload that does not parse.
 pub async fn issues_with_live_cap_hit(db: &SqlitePool) -> Result<HashMap<IssueRef, CapKind>> {
-    let rows = sqlx::query("SELECT c.repo, c.number, c.payload FROM cap_hits c WHERE c.at >= COALESCE((SELECT MAX(created_at) FROM launches l WHERE l.repo = c.repo AND l.number = c.number), '')").fetch_all(db).await?;
+    let rows = sqlx::query("SELECT repo, number, created_at, command, (result LIKE '%\"outcome\":\"started\"%') AS started FROM launches").fetch_all(db).await?;
+    let mut launches: HashMap<IssueRef, Vec<LaunchRow>> = HashMap::new();
+    for r in &rows {
+        let issue = IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64);
+        launches.entry(issue).or_default().push(LaunchRow {
+            created_at: parse_ts(&r.get::<String, _>("created_at")),
+            session_id: serde_json::from_str::<LaunchCommand>(&r.get::<String, _>("command"))
+                .ok()
+                .map(|c| c.session_id.to_string()),
+            started: r.get::<Option<bool>, _>("started").unwrap_or(false),
+        });
+    }
+    let rows = sqlx::query("SELECT repo, number, payload, at FROM cap_hits")
+        .fetch_all(db)
+        .await?;
     let mut live = HashMap::new();
     for r in &rows {
         let issue = IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64);
-        let kind = serde_json::from_str::<CapHit>(&r.get::<String, _>("payload"))
-            .map_or(CapKind::Spend, |hit| hit.kind);
+        let hit = serde_json::from_str::<CapHit>(&r.get::<String, _>("payload")).ok();
+        let received = parse_ts(&r.get::<String, _>("at"));
+        if !hit_is_live(launches.get(&issue), hit.as_ref(), received) {
+            continue;
+        }
+        let kind = hit.map_or(CapKind::Spend, |hit| hit.kind);
         let entry = live.entry(issue).or_insert(kind);
         if kind == CapKind::Spend {
             *entry = CapKind::Spend;
         }
     }
     Ok(live)
+}
+
+fn hit_is_live(
+    launches: Option<&Vec<LaunchRow>>,
+    hit: Option<&CapHit>,
+    received: DateTime<Utc>,
+) -> bool {
+    let Some(launches) = launches.filter(|l| !l.is_empty()) else {
+        return true;
+    };
+    let own = hit
+        .and_then(|h| h.session_id.as_deref())
+        .and_then(|s| launches.iter().find(|l| l.session_id.as_deref() == Some(s)));
+    match own {
+        Some(own) => !launches
+            .iter()
+            .any(|l| l.started && l.created_at > own.created_at),
+        None => launches.iter().all(|l| received >= l.created_at),
+    }
 }
