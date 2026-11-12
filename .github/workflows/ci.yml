@@ -109,6 +109,9 @@ jobs:
           VERSION=$(curl -fsSL https://api.github.com/repos/prometheus/prometheus/releases/latest | jq -r .tag_name | sed "s/^v//")
           wget -q "https://github.com/prometheus/prometheus/releases/download/v$VERSION/prometheus-$VERSION.linux-amd64.tar.gz"
           tar xzf "prometheus-$VERSION.linux-amd64.tar.gz"
-          "prometheus-$VERSION.linux-amd64/promtool" check rules observability/alerts/rubato.rules.yml
-          "prometheus-$VERSION.linux-amd64/promtool" test rules observability/alerts/tests/rubato.test.yml
+          PROMTOOL="$PWD/prometheus-$VERSION.linux-amd64/promtool"
+          "$PROMTOOL" check rules observability/alerts/rubato.rules.yml
+          "$PROMTOOL" test rules observability/alerts/tests/rubato.test.yml
+          # Each rule mutant must fail the rule test case written for it (#41).
+          PROMTOOL="$PROMTOOL" pnpm observability:rules
       - run: pnpm e2e

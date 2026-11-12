@@ -11,6 +11,7 @@
     "plan-check": "node --experimental-strip-types actions/plan-check/src/cli.ts",
     "observability:check": "node --experimental-strip-types observability/check.ts",
     "observability:test": "node --experimental-strip-types --test observability/check.test.ts observability/publish.test.ts",
+    "observability:rules": "node --experimental-strip-types --test observability/rules.test.ts",
     "observability:publish": "node --experimental-strip-types observability/publish.ts",
     "e2e": "pnpm --filter @rubato/e2e e2e"
   },

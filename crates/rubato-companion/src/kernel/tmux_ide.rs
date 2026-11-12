@@ -1,17 +1,27 @@
 //! tmux-ide as a CLI (ADR 0003): `team --json` for reconciliation, `worktree create`,
 //! `adopt`, `events --follow --json` as a change trigger, and the version pin.
 
+use crate::kernel::proc;
 use crate::kernel::tmux::Tmux;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct TmuxIde {
     pub command: String,
     tmux: Tmux,
+    /// Every call but `events --follow` (plan 40 S3).
+    timeout: Duration,
 }
+
+/// `companion.command_timeout_secs` when nothing else is set.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// `team --json`, polled by reconcile: at most this, whatever the configured timeout.
+pub const TEAM_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `tmux-ide team --json`, the parts we read. Unknown fields are ignored on purpose.
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
@@ -93,7 +103,12 @@ impl TmuxIde {
         Self {
             command: command.into(),
             tmux,
+            timeout: DEFAULT_TIMEOUT,
         }
+    }
+
+    pub fn with_timeout(self, timeout: Duration) -> Self {
+        Self { timeout, ..self }
     }
 
     fn cmd(&self) -> Command {
@@ -103,14 +118,16 @@ impl TmuxIde {
     }
 
     fn run(&self, args: &[&str], cwd: Option<&Path>) -> Result<String> {
+        self.run_within(args, cwd, self.timeout)
+    }
+
+    fn run_within(&self, args: &[&str], cwd: Option<&Path>, timeout: Duration) -> Result<String> {
         let mut c = self.cmd();
         c.args(args);
         if let Some(d) = cwd {
             c.current_dir(d);
         }
-        let out = c
-            .output()
-            .with_context(|| format!("running {} {}", self.command, args.join(" ")))?;
+        let out = proc::output(c, &format!("{} {}", self.command, args.join(" ")), timeout)?;
         if !out.status.success() {
             bail!(
                 "{} {} failed: {}",
@@ -134,7 +151,9 @@ impl TmuxIde {
     }
 
     pub fn team(&self) -> Result<Fleet> {
-        Fleet::parse(&self.run(&["team", "--json"], None)?)
+        // Reconcile waits for this every cycle: never the launch's whole budget (plan 40 A1).
+        let timeout = self.timeout.min(TEAM_TIMEOUT);
+        Fleet::parse(&self.run_within(&["team", "--json"], None, timeout)?)
     }
 
     /// `tmux-ide worktree create <branch> --from <base> --no-session` in `repo`; returns the worktree path.

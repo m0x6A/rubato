@@ -255,4 +255,37 @@ mod tests {
         );
         assert_eq!(events.lock().unwrap().len(), 3);
     }
+
+    /// The span's error status is what a trace search for failed polls finds (#41); the
+    /// OpenTelemetry layer maps `otel.status_code` to the exported status.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failing_team_poll_marks_its_span_as_an_error() {
+        let (spans, _g) = capture::spans();
+        let tmp = tempfile::tempdir().unwrap();
+        let broken = stand_in(tmp.path(), "broken", "echo no tmux-ide here >&2; exit 1");
+        let working = stand_in(tmp.path(), "working", r#"echo '{"projects":[]}'"#);
+        let mut poll = TeamPoll::default();
+
+        assert!(poll.poll(&broken).await.unwrap().is_none());
+        assert_eq!(poll.poll(&working).await.unwrap(), Some(Fleet::default()));
+
+        let spans = spans.lock().unwrap();
+        let polls: Vec<_> = spans
+            .iter()
+            .filter(|s| s.message == span::TEAM_POLL)
+            .collect();
+        assert_eq!(polls.len(), 2, "one span per poll: {spans:?}");
+        let failed = &polls[0].fields;
+        assert_eq!(
+            failed.get("otel.status_code").map(String::as_str),
+            Some("ERROR"),
+            "{failed:?}"
+        );
+        assert!(
+            failed["otel.status_description"].contains("no tmux-ide here"),
+            "{failed:?}"
+        );
+        let ok = &polls[1].fields;
+        assert!(!ok.contains_key("otel.status_code"), "{ok:?}");
+    }
 }
