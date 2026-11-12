@@ -236,8 +236,9 @@ pub mod metric_reader {
 /// Test-only: collect the events emitted on this thread, with their fields as strings.
 #[cfg(test)]
 pub mod capture {
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Once};
     use tracing::field::{Field, Visit};
     use tracing_subscriber::layer::{Context, SubscriberExt};
 
@@ -250,7 +251,22 @@ pub mod capture {
 
     pub type Events = Arc<Mutex<Vec<Captured>>>;
 
-    struct Layer(Events);
+    thread_local! {
+        /// Where this thread's events go while a guard lives.
+        static SINK: RefCell<Option<Events>> = const { RefCell::new(None) };
+    }
+
+    struct Layer;
+
+    /// Stops the capture on this thread when dropped, and puts back the one it replaced.
+    pub struct Guard(Option<Events>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let before = self.0.take();
+            let _ = SINK.try_with(|s| *s.borrow_mut() = before);
+        }
+    }
 
     struct Visitor<'a>(&'a mut Captured);
 
@@ -275,20 +291,90 @@ pub mod capture {
 
     impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
         fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let Some(sink) = SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
+                return;
+            };
             let mut c = Captured {
                 level: *event.metadata().level(),
                 message: String::new(),
                 fields: BTreeMap::new(),
             };
             event.record(&mut Visitor(&mut c));
-            self.0.lock().unwrap().push(c);
+            sink.lock().unwrap().push(c);
         }
     }
 
-    /// Capture until the guard drops. Use from a plain test or a current-thread runtime.
-    pub fn start() -> (Events, tracing::subscriber::DefaultGuard) {
+    /// Capture this thread's events until the guard drops. Use from a plain test or a
+    /// current-thread runtime.
+    ///
+    /// One subscriber serves the whole test process and hands each event to its own thread's
+    /// sink. A subscriber per test (`set_default`) lost events now and then: tracing keeps one
+    /// answer per callsite for the whole process, and with subscribers coming and going on
+    /// other test threads a line could be cached as "nobody listens" (seen in CI on
+    /// `refusals_are_counted_by_route_and_reason`).
+    pub fn start() -> (Events, Guard) {
+        static GLOBAL: Once = Once::new();
+        GLOBAL.call_once(|| {
+            tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Layer))
+                .expect("the capture subscriber is the only global subscriber in unit tests");
+            // A callsite first reached while the subscriber was being installed may have
+            // cached "nobody listens"; ask again now that it is in place.
+            tracing::callsite::rebuild_interest_cache();
+        });
         let events: Events = Arc::default();
-        let sub = tracing_subscriber::registry().with(Layer(events.clone()));
-        (events, tracing::subscriber::set_default(sub))
+        let before = SINK.with(|s| s.borrow_mut().replace(events.clone()));
+        (events, Guard(before))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::start;
+
+        fn messages(events: &super::Events) -> Vec<String> {
+            let events = events.lock().unwrap();
+            events.iter().map(|e| e.message.clone()).collect()
+        }
+
+        /// A capture holds its own thread's events only, and stops when its guard drops.
+        #[test]
+        fn a_capture_holds_its_own_threads_events_until_the_guard_drops() {
+            let (events, guard) = start();
+            tracing::info!(n = 1, "mine");
+            // Another thread with its own capture, and one with none: neither reaches this one.
+            std::thread::spawn(|| {
+                let (theirs, _g) = start();
+                tracing::info!("theirs");
+                assert_eq!(messages(&theirs), ["theirs"]);
+            })
+            .join()
+            .unwrap();
+            std::thread::spawn(|| tracing::info!("nobody's"))
+                .join()
+                .unwrap();
+            assert_eq!(messages(&events), ["mine"]);
+            assert_eq!(
+                events.lock().unwrap()[0]
+                    .fields
+                    .get("n")
+                    .map(String::as_str),
+                Some("1")
+            );
+            drop(guard);
+            tracing::info!("after the guard");
+            assert_eq!(messages(&events), ["mine"]);
+        }
+
+        /// A line first reached on a thread with no capture is still captured later on a
+        /// thread with one.
+        #[test]
+        fn a_line_first_reached_without_a_capture_is_captured_later() {
+            fn line() {
+                tracing::info!("reached twice");
+            }
+            std::thread::spawn(line).join().unwrap();
+            let (events, _guard) = start();
+            line();
+            assert_eq!(messages(&events), ["reached twice"]);
+        }
     }
 }
