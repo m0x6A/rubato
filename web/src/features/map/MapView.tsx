@@ -12,7 +12,7 @@ import type { OnPin } from "./drop.ts";
 import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, layout } from "./graph.ts";
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
-import { FlowParticles, type ParticleMode, particleMode } from "./particles.tsx";
+import { FlowParticles, type ParticleMode, particleBudget, particleMode } from "./particles.tsx";
 import { useReducedMotion } from "../../shared/motion.ts";
 
 type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
@@ -62,6 +62,7 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
   const label = flow?.label ?? "";
   return (
     <>
+      <path d={path} className="conduit" />
       <BaseEdge path={path} {...(markerEnd ? { markerEnd } : {})} {...(markerStart ? { markerStart } : {})} {...(data?.arrow.dashed ? { style: { strokeDasharray: "7 5" } } : {})} />
       {data && (
         <EdgeLabelRenderer>
@@ -295,8 +296,8 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     },
     [save],
   );
-  const edges: SeamFlowEdge[] = useMemo(
-    () =>
+  const edges: SeamFlowEdge[] = useMemo(() => {
+    const drawn: SeamFlowEdge[] =
       graph.edges.flatMap((e) =>
         arrowsFor(planView ? { ...e, flows: planView.flows.get(e.id) } : e, lens).map((arrow, i) => {
           const marker = { type: MarkerType.ArrowClosed, width: 18, height: 18 };
@@ -322,9 +323,23 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
             data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id), particles: particleMode(arrow, lens, step?.arrow === arrow.id), still: reducedMotion },
           };
         }),
-      ),
-    [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion],
-  );
+      );
+    // The particle cap (design §5): past it, flows next to the selection or a lit part keep
+    // moving and the rest show the still marker.
+    const painted = new Set(graph.nodes.filter((n) => n.paint).map((n) => n.id));
+    const near = (d: SeamEdgeData) => (litNow !== null && litNow.seams.has(d.seam.id)) || painted.has(d.seam.from) || painted.has(d.seam.to);
+    const ambient = drawn.flatMap((ed) => (ed.data && ed.data.particles === "ambient" ? [{ id: ed.id, near: near(ed.data) }] : []));
+    const moving = particleBudget(ambient);
+    return drawn.map((ed) => (ed.data && ed.data.particles === "ambient" && !moving.has(ed.id) ? { ...ed, data: { ...ed.data, still: true } } : ed));
+  }, [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion]);
+  // Particles and halos rest while a part is dragged or the page is hidden.
+  const [dragging, setDragging] = useState(false);
+  const [hidden, setHidden] = useState(typeof document !== "undefined" && document.visibilityState === "hidden");
+  useEffect(() => {
+    const on = () => setHidden(document.visibilityState === "hidden");
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, []);
 
   // The lens switch, the scenario player, the legend and the map actions sit in a band above the
   // canvas, never over it: no part is hidden under them.
@@ -464,7 +479,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   return (
     <div className="map-frame">
       {band}
-      <div className="map-canvas" ref={canvasRef}>
+      <div className={dragging || hidden ? "map-canvas paused" : "map-canvas"} ref={canvasRef}>
         {!positions ? (
           <div className="empty">Laying out the map…</div>
         ) : (
@@ -474,6 +489,8 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
+            onNodeDragStart={() => setDragging(true)}
+            onNodeDragStop={() => setDragging(false)}
             nodesDraggable={Boolean(onMove)}
             nodesConnectable={editing}
             onConnect={(c) => onConnectParts?.(c.source, c.target)}

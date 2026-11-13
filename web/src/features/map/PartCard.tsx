@@ -23,6 +23,30 @@ export function DraftBadge({ draft }: { draft: DraftMarkLike }) {
   );
 }
 
+/** The order the strip shows issue states in: the progress model's, blocked and unknown last. */
+const STRIP_ORDER = ["planned", "started", "designing", "designed", "building", "in_review", "done", "blocked", "unknown"] as const;
+
+/** A small mark for the part's kind (issue #81): a context is a block, a contract two sheets, an external a dashed ring. */
+function KindGlyph({ kind }: { kind: GraphNode["kind"] }) {
+  return (
+    <svg className="kind-glyph" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+      {kind === "contract" ? (
+        <>
+          <rect x="1.5" y="3.5" width="8" height="9" rx="1.5" />
+          <rect x="4.5" y="1.5" width="8" height="9" rx="1.5" />
+        </>
+      ) : kind === "external" ? (
+        <circle cx="7" cy="7" r="5.5" strokeDasharray="2.4 2" />
+      ) : (
+        <>
+          <rect x="1.5" y="1.5" width="11" height="11" rx="2.5" />
+          <rect x="4.5" y="4.5" width="5" height="5" rx="1" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 /** One part of the map. Renders without React Flow, so it is tested on its own. */
 export function PartCard({ node, selected, onPin, dim, draft }: Props) {
   // A part that exists only in the draft takes no pins (the server would refuse them).
@@ -30,10 +54,13 @@ export function PartCard({ node, selected, onPin, dim, draft }: Props) {
   const issues = issueCounts(node.issues);
   const sessions = sessionCounts(node.sessions);
   const approvals = approvalCounts(node.issues);
-  const classes = ["map-node", node.kind, node.paint ? `paint-${node.paint}` : "", selected ? "selected" : "", dim ? "dim" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
+  // Breathing means a session is working here now; unknown, idle or ended never breathe (AGENTS.md).
+  const working = (sessions.working ?? 0) > 0;
+  const classes = ["map-node", node.kind, node.paint ? `paint-${node.paint}` : "", working ? "work" : "", selected ? "selected" : "", dim ? "dim" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes} data-testid={`node-${node.id}`} title={node.description} {...handlers}>
       <div className="title">
+        <KindGlyph kind={node.kind} />
         <span className="id">{node.id}</span>
         <span className="kind">{node.kind}</span>
       </div>
@@ -69,6 +96,13 @@ export function PartCard({ node, selected, onPin, dim, draft }: Props) {
       </div>
       {node.findings.length > 0 && <div className="warn">⚠ {node.findings.length} finding{node.findings.length === 1 ? "" : "s"}</div>}
       {over && <div className="drop-hint">Drop to pin here</div>}
+      {node.issues.length > 0 && (
+        <div className="activity" aria-hidden="true">
+          {STRIP_ORDER.filter((st) => issues[st]).map((st) => (
+            <span key={st} data-state={st} className={st} style={{ flexGrow: issues[st] }} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
