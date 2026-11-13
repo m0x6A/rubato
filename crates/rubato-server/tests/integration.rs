@@ -1212,6 +1212,7 @@ async fn attempt_limit_does_not_block_a_running_issue() {
                 last_seen: chrono::Utc::now(),
                 spend_usd: None,
                 branch_drift: None,
+                blocked_by: None,
             }],
         },
     };

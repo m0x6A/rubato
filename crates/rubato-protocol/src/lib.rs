@@ -65,11 +65,11 @@ pub use plan::{
 };
 pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,
-    ProgressInputs, ProgressState, derive_progress,
+    ProgressInputs, ProgressState, blocked_from, derive_progress,
 };
 pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use session::{
-    Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
+    BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
 };
 pub use web_link::WebEvent;

@@ -73,6 +73,38 @@ impl StateSource {
     }
 }
 
+/// Which hook blocked a session (ADR 0043): the current cause of the current status, set with
+/// a *blocked* status and cleared by the next hook that implies a status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockCause {
+    /// `Notification` with `permission_prompt`: waiting for a permission, mid-turn.
+    PermissionPrompt,
+    /// `Notification` with `idle_prompt`: waiting for input after the turn ended.
+    IdlePrompt,
+    /// `StopFailure`: the turn failed, mid-turn.
+    StopFailure,
+}
+
+impl BlockCause {
+    /// Every cause, checked against the JSON Schema like `SessionStatus::ALL`.
+    pub const ALL: [Self; 3] = [Self::PermissionPrompt, Self::IdlePrompt, Self::StopFailure];
+
+    /// The cause as the protocol spells it on the wire.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PermissionPrompt => "permission_prompt",
+            Self::IdlePrompt => "idle_prompt",
+            Self::StopFailure => "stop_failure",
+        }
+    }
+
+    /// Blocked mid-turn: the session would be working but for the wait.
+    pub fn is_mid_turn(self) -> bool {
+        !matches!(self, Self::IdlePrompt)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TmuxLocation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,6 +149,10 @@ pub struct SessionState {
     /// keeps its launch issue (its spend cap and telemetry are that issue's); this says so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_drift: Option<String>,
+    /// Which hook blocked the session, with `status = blocked` (ADR 0043). Absent from an
+    /// older companion and for a block tmux-ide reported: read as mid-turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_by: Option<BlockCause>,
 }
 
 impl SessionState {
@@ -186,8 +222,38 @@ mod tests {
             last_seen: now - chrono::Duration::seconds(last_seen_secs_ago),
             spend_usd: None,
             branch_drift: None,
+            blocked_by: None,
         };
         (s, now)
+    }
+
+    #[test]
+    fn all_block_causes_cover_every_variant_once() {
+        let names: std::collections::BTreeSet<String> = BlockCause::ALL
+            .iter()
+            .map(|c| {
+                assert_eq!(
+                    serde_json::to_value(c).unwrap(),
+                    serde_json::json!(c.name())
+                );
+                c.name().to_owned()
+            })
+            .collect();
+        assert_eq!(names.len(), BlockCause::ALL.len());
+        assert_eq!(names, schema_variants::<BlockCause>());
+        println!("checked {} block causes", names.len());
+    }
+
+    #[test]
+    fn blocked_by_is_skipped_when_absent() {
+        let (mut s, _) = state(SessionStatus::Blocked, StateSource::Hook, 1);
+        let v = serde_json::to_value(&s).unwrap();
+        assert!(v.get("blocked_by").is_none(), "{v}");
+        s.blocked_by = Some(BlockCause::IdlePrompt);
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["blocked_by"], "idle_prompt");
+        let back: SessionState = serde_json::from_value(v).unwrap();
+        assert_eq!(back, s);
     }
 
     /// Every string the JSON Schema of `T` allows: its `enum` lists and `const`s.

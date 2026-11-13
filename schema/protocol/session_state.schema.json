@@ -4,6 +4,17 @@
   "description": "One session as the companion sees it. Identity comes from the branch (ADR 0006).",
   "type": "object",
   "properties": {
+    "blocked_by": {
+      "description": "Which hook blocked the session, with `status = blocked` (ADR 0043). Absent from an\nolder companion and for a block tmux-ide reported: read as mid-turn.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BlockCause"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "branch": {
       "type": [
         "string",
@@ -97,6 +108,26 @@
     "last_seen"
   ],
   "$defs": {
+    "BlockCause": {
+      "description": "Which hook blocked a session (ADR 0043): the current cause of the current status, set with\na *blocked* status and cleared by the next hook that implies a status.",
+      "oneOf": [
+        {
+          "description": "`Notification` with `permission_prompt`: waiting for a permission, mid-turn.",
+          "type": "string",
+          "const": "permission_prompt"
+        },
+        {
+          "description": "`Notification` with `idle_prompt`: waiting for input after the turn ended.",
+          "type": "string",
+          "const": "idle_prompt"
+        },
+        {
+          "description": "`StopFailure`: the turn failed, mid-turn.",
+          "type": "string",
+          "const": "stop_failure"
+        }
+      ]
+    },
     "IssueRef": {
       "description": "A GitHub issue, addressed as `owner/name#number`.",
       "type": "object",
