@@ -1,8 +1,8 @@
 # 0036. Self-host the web's type pairing from npm font packages
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-13
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #81) — proposed; a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-13 by approval comment https://github.com/m0x6A/rubato/issues/81#issuecomment-6861609460 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #81) — proposed
 - **Seam:** none (dependency)
 - **Issue:** m0x6A/rubato#81
 
