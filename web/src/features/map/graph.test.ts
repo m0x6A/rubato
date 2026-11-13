@@ -9,7 +9,7 @@ describe("buildGraph from docs/design/rubato-map.yml", () => {
     const g = buildGraph(overview());
     expect(g.nodes.map((n) => n.id).sort()).toEqual(realMap().nodes.map((n) => n.id).sort());
     expect(g.nodes.length).toBe(11);
-    expect(g.edges.length).toBe(10);
+    expect(g.edges.length).toBe(11);
     expect(g.edges.find((e) => e.id === "companion-server")).toMatchObject({ from: "rubato-companion", to: "rubato-server", owner: "rubato-server" });
   });
 
