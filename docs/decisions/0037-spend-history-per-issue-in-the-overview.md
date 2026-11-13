@@ -1,8 +1,8 @@
 # 0037. Keep each issue's spend history on the server and carry it, downsampled, in the overview
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-13
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #103) — proposed; a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-13 by approval comment https://github.com/m0x6A/rubato/issues/103#issuecomment-6864513135 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #103) — proposed
 - **Seam:** web-server
 - **Issue:** m0x6A/rubato#103
 
