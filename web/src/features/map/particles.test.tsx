@@ -4,7 +4,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Flow } from "../../protocol.ts";
 import { arrowsFor } from "./flows.ts";
-import { FlowParticles, particleMode, tripSeconds } from "./particles.tsx";
+import { FlowParticles, PARTICLE_CAP, particleBudget, particleMode, tripSeconds } from "./particles.tsx";
 
 const css = readFileSync(resolve(import.meta.dirname, "../../styles.css"), "utf8");
 const flow = (kind: Flow["kind"], from: string, to: string, carries: string): Flow => ({ kind, from, to, carries });
@@ -81,5 +81,30 @@ describe("what moves along an arrow (issue #81, design §5)", () => {
 
   it("ambient trips take 2 to 6 s, by length", () => {
     expect([tripSeconds(10), tripSeconds(256), tripSeconds(2000)]).toEqual([2, 4, 6]);
+  });
+});
+
+describe("the particle cap (design §5)", () => {
+  it("every flow moves while 2 per flow fits in 120", () => {
+    const sixty = Array.from({ length: 60 }, (_, i) => ({ id: `f${i}`, near: false }));
+    expect(particleBudget(sixty).size).toBe(60);
+  });
+
+  it("past the cap, flows next to the selection or a lit part move first, the rest stand still", () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({ id: `f${i}`, near: i >= 190 }));
+    const moving = particleBudget(many);
+    console.log(`cap: ${moving.size} of ${many.length} flows move`);
+    expect(moving.size).toBe(60);
+    for (let i = 190; i < 200; i++) {
+      expect(moving.has(`f${i}`)).toBe(true);
+    }
+    expect(moving.has("f50")).toBe(false);
+    expect(moving.has("f0")).toBe(true);
+  });
+
+  it("must fail: without the cap 200 flows would run 400 particles", () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({ id: `f${i}`, near: false }));
+    expect(particleBudget(many, Number.POSITIVE_INFINITY).size * 2).toBe(400);
+    expect(particleBudget(many).size * 2).toBeLessThanOrEqual(PARTICLE_CAP);
   });
 });

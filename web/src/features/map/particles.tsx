@@ -84,3 +84,21 @@ export function FlowParticles({ id, path, kind, reversed, mode, reduced, length 
     </>
   );
 }
+
+/** At most this many ambient particles on the map at once (design §5): 2 per flow. */
+export const PARTICLE_CAP = 120;
+const PER_FLOW = 2;
+
+/**
+ * Which ambient flows keep moving when there are more than the cap allows: first the flows next
+ * to the selection or a lit part, then the rest in map order, until the cap is spent. The others
+ * show the still marker. Returns the ids of the flows that move.
+ */
+export function particleBudget(ambient: { id: string; near: boolean }[], cap = PARTICLE_CAP): Set<string> {
+  const slots = Math.floor(cap / PER_FLOW);
+  if (ambient.length <= slots) {
+    return new Set(ambient.map((a) => a.id));
+  }
+  const ordered = [...ambient.filter((a) => a.near), ...ambient.filter((a) => !a.near)];
+  return new Set(ordered.slice(0, slots).map((a) => a.id));
+}

@@ -36,7 +36,7 @@ export function SeamChip({ seam, selected, onSelect, onPin, draft }: Props) {
     >
       {seam.id}
       {draft && ` · ${draft.state === "added" ? "draft" : draft.state === "changed" ? "changed in draft" : "removed in draft"} · ${draft.author}`}
-      {plans > 0 && ` · ${plans} plan${plans === 1 ? "" : "s"}`}
+      {plans > 0 && <span className="count">{`${plans} plan${plans === 1 ? "" : "s"}`}</span>}
       {pinned > 0 && ` · ${pinned} issue${pinned === 1 ? "" : "s"}`}
       {seam.findings.length > 0 && (
         <>

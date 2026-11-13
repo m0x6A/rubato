@@ -231,25 +231,43 @@ button.link:hover { text-decoration: underline; }
 .pin-menu-list [role="menuitem"]:hover, .pin-menu-list [role="menuitem"]:focus-visible { background: var(--accent-wash); outline: none; }
 .pin-menu-list [role="menuitem"][aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
 /* map nodes */
-.map-node { width: 220px; min-height: 96px; background: var(--panel); border: 2px solid var(--line); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
-.map-node.contract { border-style: dashed; }
-.map-node.external { background: var(--raised); }
-.map-node.paint-new { border-color: var(--new); box-shadow: 0 0 0 3px color-mix(in srgb, var(--new) 25%, transparent); }
-.map-node.paint-affected { border-color: var(--affected); box-shadow: 0 0 0 3px color-mix(in srgb, var(--affected) 25%, transparent); }
-.map-node.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
-.map-node .title { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
-.map-node .id { font-weight: 600; font-family: var(--font-mono); font-size: 12px; }
-.map-node .kind { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+.map-node { position: relative; width: 220px; min-height: 96px; background: linear-gradient(180deg, var(--node-top), var(--node-bottom)); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px 14px; display: flex; flex-direction: column; gap: 4px; box-shadow: var(--rim), var(--shadow); }
+.map-node.contract { border-style: dashed; border-color: var(--line-strong); }
+.map-node.external { background: var(--raised); box-shadow: var(--rim); }
+.map-node.paint-new { border-color: var(--new); border-style: dashed; box-shadow: var(--rim), var(--glow-new); }
+.map-node.paint-affected { border-color: var(--accent); box-shadow: var(--rim), var(--glow-accent); }
+.map-node.selected { outline: 2px solid var(--accent); outline-offset: 4px; }
+/* a session is working here: a green halo breathes (M4); unknown, idle and ended never do */
+.map-node.work::after { content: ""; position: absolute; inset: -1px; border-radius: 12px; box-shadow: var(--glow-ok); opacity: 0.6; pointer-events: none; }
+:root[data-motion="full"] .map-node.work::after { animation: breathe 2.8s var(--ease-in-out) infinite; }
+@keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }
+/* lighting up (M5): rims and glows fade in rather than snap */
+:root[data-motion="full"] .map-node { transition: box-shadow var(--dur-slow) var(--ease-out), border-color var(--dur-slow) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
+.map-node .title { display: flex; gap: 7px; align-items: center; }
+.map-node .kind-glyph { color: var(--muted); flex: none; }
+.map-node .id { font-weight: 600; font-family: var(--font-mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-node .kind { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
 .map-node .badges { display: flex; flex-wrap: wrap; gap: 4px; }
 .map-node .warn { color: var(--warn-ink); font-size: 11px; }
 .map-node.drop-over { border-color: var(--accent); border-style: solid; background: var(--accent-wash); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
 .map-node .drop-hint { font-size: 11px; color: var(--accent-ink); font-weight: 600; pointer-events: none; }
-.react-flow__edge-path { stroke: var(--line); stroke-width: 1.5; }
-.react-flow__edge.collision .react-flow__edge-path { stroke: var(--bad); stroke-width: 2.5; }
+/* the part's issues as a strip along its bottom edge, one segment per state */
+.map-node .activity { position: absolute; left: 12px; right: 12px; bottom: 6px; height: 4px; display: flex; gap: 2px; border-radius: 999px; overflow: hidden; background: var(--conduit); }
+.map-node .activity span { display: block; min-width: 4px; }
+.map-node .activity .planned, .map-node .activity .started, .map-node .activity .unknown { background: var(--quiet); }
+.map-node .activity .designing { background: var(--new); }
+.map-node .activity .designed, .map-node .activity .building { background: var(--accent); }
+.map-node .activity .in_review { background: var(--warn); }
+.map-node .activity .done { background: var(--ok); }
+.map-node .activity .blocked { background: var(--bad); }
+.react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.5; }
+/* a seam is a conduit: a dark channel under its core line */
+.conduit { fill: none; stroke: var(--conduit); stroke-width: 12; stroke-linecap: round; pointer-events: none; }
+.react-flow__edge.collision .react-flow__edge-path { stroke: var(--heat); stroke-width: 2.5; }
 .react-flow__edge.busy .react-flow__edge-path { stroke: var(--accent); stroke-width: 2; }
 .react-flow__edge.chosen .react-flow__edge-path { stroke: var(--accent); stroke-width: 2.5; }
 .react-flow__edge.faint .react-flow__edge-path { opacity: 0.35; }
-.react-flow__edge.flow .react-flow__edge-path { stroke: var(--muted); stroke-width: 2; }
+.react-flow__edge.flow .react-flow__edge-path { stroke: var(--chip-ink); stroke-width: 1.75; }
 .react-flow__edge.flow.chosen .react-flow__edge-path { stroke: var(--accent); }
 /* A flow a plan proposes: violet dashes that march, so it reads as not there yet. Nothing travels
    on it; particles are for declared flows only (issue #81, design §5). */
@@ -263,7 +281,7 @@ button.link:hover { text-decoration: underline; }
 :root[data-motion="full"] .legend-line.proposed { animation: flow-move 1.2s linear infinite; }
 /* a scenario's current step (ADR 0024): the arrow is lit, a pulse travels along it; data is a
    filled dot, control a ring, so the kind reads without colour. Reduced motion: it sits still. */
-.react-flow__edge.step-active .react-flow__edge-path { stroke: var(--accent); stroke-width: 3; opacity: 1; }
+.react-flow__edge.step-active .react-flow__edge-path { stroke: var(--accent); stroke-width: 3; opacity: 1; filter: drop-shadow(0 0 4px var(--accent)); }
 /* What travels along a flow (particles.tsx): data is a filled dot, control a hollow ring. They
    sit in the edge-label layer, positioned on the edge's own path with offset-path. */
 .particle, .pulse, .pulse-trail { position: absolute; left: 0; top: 0; border-radius: 50%; offset-rotate: 0deg; pointer-events: none; z-index: 1; }
@@ -280,16 +298,16 @@ button.link:hover { text-decoration: underline; }
 .key-mark { display: inline-block; vertical-align: -1px; border-radius: 50%; margin-right: 2px; }
 .key-mark.data { width: 9px; height: 9px; background: var(--accent); }
 .key-mark.control { width: 10px; height: 10px; border: 2.5px solid var(--accent); background: var(--canvas); }
+.lens button.active { background: var(--accent-strong); color: var(--on-accent); font-weight: 600; }
 .lens button:disabled { opacity: 0.6; cursor: default; }
 /* something is selected: what is not next to it steps back */
 .react-flow__edge.dim { opacity: 0.25; }
 .map-node.dim { opacity: 0.35; }
 .flow-label { font-family: var(--font-mono); font-size: 10.5px; line-height: 1.3; padding: 1px 7px; border-radius: 5px; color: var(--chip-ink); background: var(--raised); border: 1px solid var(--line); white-space: nowrap; pointer-events: none; }
 .flow-label.control { border-style: dashed; }
-.lens { display: inline-flex; gap: 0; }
-.lens button { border-radius: 0; margin-left: -1px; min-height: 28px; padding: 4px 10px; }
-.lens button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
-.lens button:last-child { border-radius: 0 6px 6px 0; }
+.lens { display: inline-flex; gap: 2px; padding: 3px; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; }
+.lens button { border: 0; border-radius: 7px; margin-left: 0; min-height: 28px; padding: 4px 12px; background: none; color: var(--chip-ink); }
+:root[data-motion="full"] .lens button, :root[data-motion="full"] .tabs button { transition: background-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out); }
 .legend { margin: 0; font-size: 12px; color: var(--chip-ink); }
 .legend-line { stroke: var(--muted); stroke-width: 2; }
 /* the shared map draft: dashed, badged, and its panel */
@@ -346,10 +364,15 @@ button.link:hover { text-decoration: underline; }
 .flow-kind.control { border-style: dashed; }
 /* seam chips: the label of a seam, a button and a drop target */
 .seam-label { position: absolute; pointer-events: all; }
-.seam-chip { font-family: var(--font-mono); font-size: 11px; line-height: 1.3; min-height: 24px; padding: 3px 10px; border-radius: 999px; color: var(--chip-ink); background: var(--raised); border: 1px solid var(--line); white-space: nowrap; }
+.seam-chip { position: relative; font-family: var(--font-mono); font-size: 11px; line-height: 1.3; min-height: 24px; padding: 3px 10px; border-radius: 999px; color: var(--chip-ink); background: var(--raised); border: 1px solid var(--line); white-space: nowrap; }
+.seam-chip .count { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--heat-wash); color: var(--heat-ink); }
 .seam-chip:hover { color: var(--ink); border-color: var(--muted); }
 .seam-chip.busy { color: var(--accent-ink); border-color: var(--accent); }
 .seam-chip.collision { color: var(--heat-ink); background: var(--heat-wash); border-color: var(--heat); font-weight: 600; }
+/* two open plans on one seam (M12): a magenta halo throbs; still under reduced motion */
+.seam-chip.collision::after { content: ""; position: absolute; inset: -1px; border-radius: 999px; box-shadow: var(--glow-heat); opacity: 0.7; pointer-events: none; }
+:root[data-motion="full"] .seam-chip.collision::after { animation: throb 1.6s var(--ease-in-out) infinite; }
+@keyframes throb { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.95; } }
 .seam-chip.selected { color: var(--ink); border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .seam-chip.drop-over { color: var(--ink); border-color: var(--accent); border-style: solid; background: var(--accent-wash); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
 /* Seam chips are HTML labels: keep them above the part cards where an edge runs close to one. */
@@ -358,7 +381,11 @@ button.link:hover { text-decoration: underline; }
 .map-frame { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .map-band { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .map-band-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
-.map-canvas { flex: 1; min-height: 0; position: relative; }
+.map-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--canvas); }
+.map-canvas .react-flow { --xy-background-color-default: var(--canvas); --xy-background-pattern-dots-color-default: var(--grid); --xy-edge-stroke-default: var(--line-strong); }
+.react-flow__background-pattern.dots { fill: var(--grid); }
+/* particles and halos rest while a part is dragged or the page is hidden */
+.map-canvas.paused .particle, .map-canvas.paused .pulse, .map-canvas.paused .pulse-trail, .map-canvas.paused .map-node.work::after { animation-play-state: paused; }
 /* the scenario player: one row of controls, the caption below */
 .scenario-player { display: flex; flex-direction: column; gap: 2px; }
 .scenario-player:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

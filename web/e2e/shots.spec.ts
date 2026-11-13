@@ -169,6 +169,8 @@ test.describe("screenshots", () => {
           await page.setViewportSize({ width: size.width, height: size.height });
           await surface.setup(page);
           await page.evaluate(() => document.fonts.ready);
+          // Let transitions (lens, tabs, glows: at most 480 ms) finish; endless motion keeps running.
+          await page.waitForTimeout(600);
           await page.screenshot({ path: `${dir}/${surface.name}-${theme}-${size.name}.png` });
           written += 1;
         });
