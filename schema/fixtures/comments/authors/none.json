@@ -1,0 +1,12 @@
+{
+  "trusted": false,
+  "comment": {
+    "id": 5,
+    "user": { "login": "stranger", "type": "User" },
+    "author_association": "NONE",
+    "body": "Approved: plan f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9",
+    "created_at": "2026-11-12T10:00:00Z",
+    "updated_at": "2026-11-12T10:00:00Z",
+    "html_url": "https://github.com/m0x6A/rubato/issues/1#issuecomment-5"
+  }
+}

@@ -120,6 +120,12 @@ See the O-rows.
 | --- | --- | --- | --- | --- |
 | | | | | |
 
+## ADRs proposed
+
+<!-- Each ADR this plan proposes, pinned by its file's git blob sha so the approval covers its text (ADR 0035). Fill Blob with: plan.ts adrs-pin. Write "None." when there are none. -->
+
+None.
+
 ## Review map
 
 1.
@@ -189,6 +195,129 @@ export async function sha(ws: Workspace, cwd: string, planPath?: string): Promis
   return { path, sha: planSha(readFileSync(resolve(cwd, path), "utf8")) };
 }
 
+/** The plan path for the issue the current branch names, as the map places it. */
+export async function planPathFromBranch(ws: Workspace, cwd: string): Promise<string> {
+  const n = issueFromBranch(currentBranch(cwd));
+  if (n === null) {
+    throw new Error("not on an issue/<n>-<slug> branch; pass the plan path");
+  }
+  return (await resolvePlanPath(ws, cwd, n, "")).path;
+}
+
+/** Whether the plan text fits the map (ADR 0029), with the `rubato.plan.check` line. */
+export async function fits(ws: Workspace, text: string, rel: string): Promise<{ ok: boolean; line: Record<string, unknown> }> {
+  const { check: checkMod, map: mapMod } = await planCheck();
+  const result = checkMod.checkPlanText(text, rel, mapMod.loadMap(mapFile(ws), schemaDir()), schemaDir());
+  return { ok: result.ok, line: checkMod.logLine(result) };
+}
+
+/** Exit codes of `plan.ts wait`: one per reason, so a caller can act on it. */
+export const WAIT_EXIT = { approved: 0, not_yet: 3, not_pushed: 4, local_edit: 4, does_not_fit: 5, gh_failed: 6, plan_changed: 7 } as const;
+
+export interface WaitOptions {
+  intervalSecs?: number;
+  once?: boolean;
+  /** Consecutive `gh` failures before giving up. */
+  maxFailures?: number;
+  out?: (line: string) => void;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Wait for a person's approval of this plan (ADR 0035): the newest trusted, unedited
+ * `Approved:` comment naming the sha of the plan as pushed, with the plan fitting the map. Prints
+ * one `rubato.plan.wait` line per event, `started` first and `exited` or `approved` last; never
+ * silent. Posts nothing.
+ */
+export async function wait(ws: Workspace, cwd: string, planPath: string | undefined, o: WaitOptions = {}): Promise<number> {
+  const out = o.out ?? ((l: string) => console.log(l));
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const { line, planIssue, pushedPlan, issueComments, ghLogin, ghFailure } = await import("./lib/approval.ts");
+  const { classify } = await import("./lib/comments.ts");
+  const emit = (kind: string, fields: Record<string, unknown> = {}) => out(line("rubato.plan.wait", { kind, ...fields }));
+  const path = planPath ?? (await planPathFromBranch(ws, cwd));
+  const rel = relative(cwd, resolve(cwd, path));
+  const exit = (reason: keyof typeof WAIT_EXIT, fields: Record<string, unknown> = {}) => {
+    emit("exited", { reason, ...fields });
+    return WAIT_EXIT[reason];
+  };
+  const read = () => pushedPlan(cwd, rel, readFileSync(resolve(cwd, rel), "utf8"));
+  const pushed = read();
+  if (!pushed.ok) {
+    return exit(pushed.reason, { branch: pushed.branch });
+  }
+  const issue = planIssue(pushed.text);
+  if (!issue) {
+    throw new Error(`${rel} has no issue: owner/name#n in its front matter`);
+  }
+  const ref = `${issue.repo}#${issue.number}`;
+  const sha = planSha(pushed.text);
+  const fit = await fits(ws, pushed.text, rel);
+  if (!fit.ok) {
+    return exit("does_not_fit", { "rubato.issue": ref, sha, check: fit.line });
+  }
+  let me: string | null = null;
+  try {
+    me = ghLogin();
+  } catch {
+    // Without a login, `self` is unknown; the wait still works.
+  }
+  const interval = o.intervalSecs ?? 30;
+  emit("started", { "rubato.issue": ref, sha, branch: pushed.branch, interval });
+  const seen = new Set<number>();
+  let failures = 0;
+  for (;;) {
+    let comments;
+    try {
+      comments = issueComments(issue.repo, issue.number);
+      failures = 0;
+    } catch (e) {
+      failures++;
+      emit("poll_failed", { "rubato.issue": ref, ...ghFailure(e), failures });
+      if (failures >= (o.maxFailures ?? 5)) {
+        return exit("gh_failed", { "rubato.issue": ref });
+      }
+      if (o.once) {
+        return exit("gh_failed", { "rubato.issue": ref });
+      }
+      await sleep(interval * 1000);
+      continue;
+    }
+    comments.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id));
+    let approvedBy = null;
+    for (const c of comments) {
+      if (seen.has(c.id)) {
+        continue;
+      }
+      seen.add(c.id);
+      const kind = classify(c, sha);
+      if (kind && kind !== "approved") {
+        emit(kind, { "rubato.issue": ref, author: c.user.login, url: c.html_url });
+      }
+    }
+    const { approvalFor } = await import("./lib/comments.ts");
+    const verdict = approvalFor(comments, sha);
+    if (verdict.ok) {
+      approvedBy = verdict.comment;
+    }
+    if (approvedBy) {
+      emit("approved", { "rubato.issue": ref, sha, author: approvedBy.user.login, self: me !== null && approvedBy.user.login === me, url: approvedBy.html_url });
+      return WAIT_EXIT.approved;
+    }
+    if (o.once) {
+      return WAIT_EXIT.not_yet;
+    }
+    await sleep(interval * 1000);
+    const again = read();
+    if (!again.ok) {
+      return exit(again.reason, { branch: again.branch });
+    }
+    if (planSha(again.text) !== sha) {
+      return exit("plan_changed", { "rubato.issue": ref, sha, now: planSha(again.text) });
+    }
+  }
+}
+
 function opt(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
@@ -233,6 +362,22 @@ async function main(argv: string[]): Promise<number> {
       console.log(`wrote ${path}; fill the tables, then: plan.ts check ${path}`);
       return 0;
     }
+    if (cmd === "adrs-pin") {
+      const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd");
+      const { pinAdrs } = await import("./adrs.ts");
+      const rows = await pinAdrs(cwd, positional[0] ?? (await planPathFromBranch(ws, cwd)));
+      console.log(JSON.stringify({ pinned: rows }));
+      return 0;
+    }
+    if (cmd === "wait") {
+      const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd" && rest[i - 1] !== "--interval");
+      const o: WaitOptions = { once: rest.includes("--once") };
+      const interval = opt(rest, "--interval");
+      if (interval) {
+        o.intervalSecs = Number(interval);
+      }
+      return await wait(ws, cwd, positional[0], o);
+    }
     if (cmd === "check" || cmd === "sha") {
       const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd");
       if (cmd === "sha") {
@@ -244,7 +389,7 @@ async function main(argv: string[]): Promise<number> {
       console.log(JSON.stringify(r.line));
       return r.ok ? 0 : 1;
     }
-    console.error("usage: plan.ts init|path|check|sha ...");
+    console.error("usage: plan.ts init|path|check|sha|wait|adrs-pin ...");
     return 2;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));

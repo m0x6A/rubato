@@ -358,10 +358,35 @@ mod tests {
         assert!(ApprovalRecord::parse_body(&other).is_none());
         assert!(DecisionRecord::parse_body(&other).is_none());
         assert_eq!(
-            std::fs::read_dir(&dir).unwrap().count(),
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .filter(|e| e.as_ref().unwrap().path().is_file())
+                .count(),
             5,
             "fixtures checked"
         );
+    }
+
+    /// The trust cases shared with the skill's TypeScript reading (ADR 0035):
+    /// `schema/fixtures/comments/authors/*.json`, each with the answer `trusted_author` must give.
+    #[test]
+    fn trusts_the_author_fixtures_as_the_skill_does() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schema/fixtures/comments/authors");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let c = &v["comment"];
+            let got = trusted_author(
+                c["author_association"].as_str().unwrap(),
+                c["user"]["type"] == "Bot",
+            );
+            assert_eq!(got, v["trusted"].as_bool().unwrap(), "{}", path.display());
+            checked += 1;
+        }
+        assert!(checked >= 7, "checked {checked} author fixtures");
     }
 
     #[test]
