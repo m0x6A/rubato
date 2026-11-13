@@ -12,6 +12,8 @@ import type { OnPin } from "./drop.ts";
 import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, layout } from "./graph.ts";
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
+import { FlowParticles, type ParticleMode, particleMode } from "./particles.tsx";
+import { useReducedMotion } from "../../shared/motion.ts";
 
 type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
 type MapFlowNode = Node<MapNodeData, "map">;
@@ -24,9 +26,9 @@ type SeamEdgeData = {
   onSelect: (id: string) => void;
   onPin: OnPin | undefined;
   draft: DraftMarkLike | undefined;
-  /** The scenario's current step runs along this arrow: a pulse moves on it (ADR 0024). */
-  pulse: boolean;
-  /** No moving pulse: it sits still in the middle of the arrow. */
+  /** What moves along this arrow: ambient particles, the scenario step's pulse, or nothing (issue #81). */
+  particles: ParticleMode;
+  /** Reduced motion: one still marker instead of anything that travels. */
   still: boolean;
 };
 type SeamFlowEdge = Edge<SeamEdgeData, "seam">;
@@ -61,18 +63,17 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
   return (
     <>
       <BaseEdge path={path} {...(markerEnd ? { markerEnd } : {})} {...(markerStart ? { markerStart } : {})} {...(data?.arrow.dashed ? { style: { strokeDasharray: "7 5" } } : {})} />
-      {data?.pulse && flow && (
-        // Data is a filled dot, control a ring: the kind reads without colour. It travels in the
-        // flow's own direction; with reduced motion it sits still on the arrow.
-        <circle className={`pulse ${flow.kind}`} data-testid={`pulse-${flow.id}`} r={6} {...(data.still ? { cx: labelX, cy: labelY } : {})}>
-          {!data.still && <animateMotion dur={`${PULSE_MS}ms`} repeatCount="indefinite" path={path} {...(flow.reversed ? { keyPoints: "1;0", keyTimes: "0;1", calcMode: "linear" } : {})} />}
-        </circle>
-      )}
       {data && (
         <EdgeLabelRenderer>
+          {flow && flow.kind !== "structure" && (
+            // Data is a filled dot, control a ring: the kind reads without colour. Particles travel
+            // in the flow's own direction; with reduced motion one marker sits still (particles.tsx).
+            <FlowParticles id={flow.id} path={path} kind={flow.kind} reversed={flow.reversed} mode={data.particles} reduced={data.still} length={Math.hypot(targetX - sourceX, targetY - sourceY) * 1.15} />
+          )}
           {flow && (
             <div className={`seam-label flow-label ${flow.kind}`} data-testid={`flow-${flow.id}`} title={`${flow.kind} flow over ${data.seam.id}: ${label}`} style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
               <span aria-hidden="true">{flow.reversed ? "← " : ""}</span>
+              {flow.moving && <span className="proposed-tag">proposed</span>}
               {label.length > FLOW_LABEL_MAX ? `${label.slice(0, FLOW_LABEL_MAX - 1)}…` : label}
               <span aria-hidden="true">{flow.reversed ? "" : " →"}</span>
             </div>
@@ -119,24 +120,8 @@ interface Props {
 
 /** A burst of arrow-key moves, or the end of a drag, becomes one write after this pause. */
 const SAVE_AFTER_MS = 250;
-/** One trip of a scenario pulse along its arrow, and how long Play shows each step. */
-const PULSE_MS = 1200;
+/** How long Play shows each step; one trip of the pulse is `PULSE_MS` in particles.tsx. */
 const STEP_MS = 2400;
-
-/** Whether the person asked for less motion. jsdom and old browsers have no matchMedia. */
-function usePrefersReducedMotion(): boolean {
-  const query = typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
-  const [reduced, setReduced] = useState(query?.matches ?? false);
-  useEffect(() => {
-    if (!query) {
-      return;
-    }
-    const on = () => setReduced(query.matches);
-    query.addEventListener("change", on);
-    return () => query.removeEventListener("change", on);
-  }, [query]);
-  return reduced;
-}
 
 function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt }: Props) {
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }> | null>(null);
@@ -171,7 +156,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   const lens: Lens = planView ? "plan" : chosenLens;
   const counts = useMemo(() => flowCounts(graph.edges), [graph]);
   // The scenario lens (ADR 0024): one scenario, one step at a time.
-  const reducedMotion = usePrefersReducedMotion();
+  const reducedMotion = useReducedMotion();
   const [scenarioId, setScenarioId] = useState<string | null>(null);
   const scenario = useMemo(() => {
     const sc = graph.scenarios.find((s) => s.id === scenarioId) ?? graph.scenarios[0];
@@ -334,7 +319,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               .filter(Boolean)
               .join(" "),
             ...(arrow.reversed ? { markerStart: marker } : { markerEnd: marker }),
-            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id), pulse: step?.arrow === arrow.id, still: reducedMotion },
+            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id), particles: particleMode(arrow, lens, step?.arrow === arrow.id), still: reducedMotion },
           };
         }),
       ),
@@ -413,13 +398,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               {total ? `${player.step + 1}/${total}` : "0/0"}
             </span>
             <span className="scenario-key" data-testid="legend">
-              <svg width="12" height="12" aria-hidden="true">
-                <circle cx="6" cy="6" r="4.5" className="pulse data" />
-              </svg>{" "}
-              data moves{" "}
-              <svg width="12" height="12" aria-hidden="true">
-                <circle cx="6" cy="6" r="4" className="pulse control" />
-              </svg>{" "}
+              <i className="key-mark data" aria-hidden="true" /> data moves <i className="key-mark control" aria-hidden="true" />{" "}
               control: one side tells the other to act
             </span>
             <details className="scenario-steps">
@@ -446,7 +425,17 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           {lens === "plan" && plan && planView && (
             <>
               <strong>The plan of {issueKey(plan.issue)}.</strong> Its parts are painted, the rest steps back
-              {planView.flows.size > 0 ? ", and what it will send moves along dashed arrows." : ". It declares no flows."}
+              {planView.flows.size > 0 ? (
+                <>
+                  , and what it will send is proposed:{" "}
+                  <svg width="34" height="8" aria-hidden="true">
+                    <line x1="0" y1="4" x2="34" y2="4" className="legend-line proposed" />
+                  </svg>{" "}
+                  its dashes move along dashed arrows; nothing travels on them yet.
+                </>
+              ) : (
+                ". It declares no flows."
+              )}
               {planView.unplaced > 0 && ` ${planView.unplaced} of its flows cannot be drawn: the seam does not join the two parts.`}
             </>
           )}
@@ -456,7 +445,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               <svg width="34" height="8" aria-hidden="true">
                 <line x1="0" y1="4" x2="34" y2="4" className="legend-line" />
               </svg>{" "}
-              Data moves along a solid arrow, in the arrow's direction. A faint seam declares no data flow.
+              <i className="key-mark data" aria-hidden="true" /> Data moves along a solid arrow as dots, in the arrow's direction. A faint seam declares no data flow.
             </>
           )}
           {lens === "control" && (
@@ -464,7 +453,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               <svg width="34" height="8" aria-hidden="true">
                 <line x1="0" y1="4" x2="34" y2="4" className="legend-line" strokeDasharray="7 5" />
               </svg>{" "}
-              Control runs along a dashed arrow: one side tells the other to act. A faint seam declares no control flow.
+              <i className="key-mark control" aria-hidden="true" /> Control runs along a dashed arrow as rings: one side tells the other to act. A faint seam declares no control flow.
             </>
           )}
         </p>

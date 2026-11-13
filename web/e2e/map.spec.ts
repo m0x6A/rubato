@@ -284,7 +284,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
     const player = page.getByRole("group", { name: "Scenario player" });
     await expect(player.getByRole("combobox", { name: "Scenario" })).toHaveValue("start-a-session");
     const caption = page.getByTestId("scenario-caption");
-    const pulse = page.locator("circle.pulse:not(svg[aria-hidden] circle)");
+    const pulse = page.locator('[data-testid^="pulse-"]');
     const active = page.locator(".react-flow__edge.step-active");
 
     // Step 1: web tells the server to start. The control pulse is a ring on that one arrow.
@@ -295,8 +295,9 @@ for (const motion of ["no-preference", "reduce"] as const) {
     await expect(page.getByTestId("node-web")).not.toHaveClass(/dim/);
     await expect(page.getByTestId("node-rubato-server")).not.toHaveClass(/dim/);
     await expect(page.getByTestId("node-rubato-companion")).toHaveClass(/dim/);
-    // Moving, or still under reduced motion.
-    await expect(pulse.locator("animateMotion")).toHaveCount(motion === "reduce" ? 0 : 1);
+    // Moving (a CSS animation on the pulse), or still under reduced motion (issue #81).
+    expect(await pulse.evaluate((e) => e.getAnimations().length)).toBe(motion === "reduce" ? 0 : 1);
+    await expect(page.locator("animateMotion")).toHaveCount(0);
     await expectClear(page, ["web", "rubato-server"]);
 
     // Step 2: the launch goes to the companion; the lit parts follow the step.

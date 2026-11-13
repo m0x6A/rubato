@@ -251,17 +251,35 @@ button.link:hover { text-decoration: underline; }
 .react-flow__edge.faint .react-flow__edge-path { opacity: 0.35; }
 .react-flow__edge.flow .react-flow__edge-path { stroke: var(--muted); stroke-width: 2; }
 .react-flow__edge.flow.chosen .react-flow__edge-path { stroke: var(--accent); }
-/* a flow a plan proposes: it moves, so it reads as not there yet */
-.react-flow__edge.moving .react-flow__edge-path { stroke: var(--new); stroke-width: 2.5; animation: flow-move 1.2s linear infinite; }
+/* A flow a plan proposes: violet dashes that march, so it reads as not there yet. Nothing travels
+   on it; particles are for declared flows only (issue #81, design §5). */
+.react-flow__edge.moving .react-flow__edge-path { stroke: var(--new); stroke-width: 2.5; stroke-dasharray: 6 6; }
+:root[data-motion="full"] .react-flow__edge.moving .react-flow__edge-path { animation: flow-move 1.2s linear infinite; }
 .react-flow__edge.moving.reversed .react-flow__edge-path { animation-direction: reverse; }
 @keyframes flow-move { to { stroke-dashoffset: -24; } }
-@media (prefers-reduced-motion: reduce) { .react-flow__edge.moving .react-flow__edge-path { animation: none; } }
+.proposed-tag { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--new-ink); margin-right: 5px; }
+.flow-label:has(.proposed-tag) { border: 1px dashed var(--new); background: var(--new-wash); }
+.legend-line.proposed { stroke: var(--new); stroke-width: 2.5; stroke-dasharray: 6 6; }
+:root[data-motion="full"] .legend-line.proposed { animation: flow-move 1.2s linear infinite; }
 /* a scenario's current step (ADR 0024): the arrow is lit, a pulse travels along it; data is a
    filled dot, control a ring, so the kind reads without colour. Reduced motion: it sits still. */
 .react-flow__edge.step-active .react-flow__edge-path { stroke: var(--accent); stroke-width: 3; opacity: 1; }
-.pulse { pointer-events: none; }
-.pulse.data { fill: var(--accent); stroke: var(--accent); stroke-width: 2; }
-.pulse.control { fill: var(--panel); stroke: var(--accent); stroke-width: 3; }
+/* What travels along a flow (particles.tsx): data is a filled dot, control a hollow ring. They
+   sit in the edge-label layer, positioned on the edge's own path with offset-path. */
+.particle, .pulse, .pulse-trail { position: absolute; left: 0; top: 0; border-radius: 50%; offset-rotate: 0deg; pointer-events: none; z-index: 1; }
+.particle.data { width: 8px; height: 8px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.particle.control { width: 10px; height: 10px; border: 2px solid var(--accent); background: var(--canvas); }
+.pulse.data, .pulse-trail.data { width: 14px; height: 14px; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+.pulse.control, .pulse-trail.control { width: 15px; height: 15px; border: 3px solid var(--accent); background: var(--canvas); box-shadow: 0 0 12px var(--accent); }
+.pulse-trail.t1 { opacity: 0.5; scale: 0.8; }
+.pulse-trail.t2 { opacity: 0.3; scale: 0.65; }
+.pulse-trail.t3 { opacity: 0.15; scale: 0.5; }
+:root[data-motion="full"] .particle { animation-name: travel; animation-timing-function: linear; animation-iteration-count: infinite; }
+:root[data-motion="full"] .pulse, :root[data-motion="full"] .pulse-trail { animation-name: travel; animation-timing-function: var(--ease-in-out); animation-iteration-count: infinite; }
+@keyframes travel { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+.key-mark { display: inline-block; vertical-align: -1px; border-radius: 50%; margin-right: 2px; }
+.key-mark.data { width: 9px; height: 9px; background: var(--accent); }
+.key-mark.control { width: 10px; height: 10px; border: 2.5px solid var(--accent); background: var(--canvas); }
 .lens button:disabled { opacity: 0.6; cursor: default; }
 /* something is selected: what is not next to it steps back */
 .react-flow__edge.dim { opacity: 0.25; }
@@ -383,3 +401,5 @@ button.link:hover { text-decoration: underline; }
 .react-flow__controls-button { background: var(--raised); border-bottom: 1px solid var(--line); color: var(--ink); fill: var(--ink); }
 .react-flow__controls-button:hover { background: var(--panel); }
 .react-flow__controls-button svg { fill: var(--ink); }
+/* The belt: whatever the switch says, the media query stops everything (design §5). */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
