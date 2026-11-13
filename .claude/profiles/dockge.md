@@ -46,3 +46,4 @@ Dockge's **Update** button pulls and must not be used for this stack; redeploy w
 | --- | --- | --- | --- | --- |
 | 2026-11-10 | `sha-df0e692` | `df0e692` | — (first deploy) | healthy, 200 on `/api/health` from the LAN, map loaded, logs clean |
 | 2026-11-12 | `sha-e4488fa` | `e4488fa` | `sha-df0e692` | healthy, 200 on `/api/health` from the LAN, logs clean (one warning: no GitHub App configured); migrations 0002–0005 applied, database copied first to `data/rubato.db.before-e4488fa`; metrics reach Grafana Cloud (17 of 27 queried names stored after two minutes) |
+| 2026-11-12 | `sha-2f8a446` | `2f8a446` | `sha-e4488fa` | healthy, 200 on `/api/health` from the LAN, logs clean; migrations 0006–0008 applied, database copied first to `data/rubato.db.before-2f8a446`; map loaded with scenarios; installation reports Issues: write, so issues can be created from the app |
