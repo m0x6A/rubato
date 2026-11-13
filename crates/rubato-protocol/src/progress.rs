@@ -337,7 +337,16 @@ pub struct Overview {
     /// Open pull requests per map repo (ADR 0034). Never an input to progress.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pulls: Vec<crate::pulls::RepoPulls>,
+    /// The companion stale threshold N in seconds, from the server's config
+    /// (`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and
+    /// `CompanionSilent` fires past it (#105). An older server's overview reads as 600.
+    #[serde(default = "default_companion_silent_secs")]
+    pub companion_silent_secs: u64,
     pub generated_at: DateTime<Utc>,
+}
+
+fn default_companion_silent_secs() -> u64 {
+    crate::limits::Limits::default().companion_silent_secs
 }
 
 /// Route path for the overview.
@@ -486,5 +495,27 @@ mod tests {
         let (s, reason) = derive_progress(&inputs(&none, &[], None));
         assert_eq!(s, ProgressState::Unknown);
         assert!(reason.unwrap().contains("not pinned"));
+    }
+
+    #[test]
+    fn an_overview_without_the_companion_threshold_reads_the_default() {
+        // An older server's overview has no `companion_silent_secs` (#105): the reader gets 600.
+        let json = serde_json::json!({
+            "map": {
+                "map": { "version": 1, "name": "t", "nodes": [] },
+                "version": "abc",
+                "loaded_at": "2026-11-13T00:00:00Z"
+            },
+            "issues": [],
+            "findings": [],
+            "companions": [],
+            "generated_at": "2026-11-13T00:00:00Z"
+        });
+        let ov: Overview = serde_json::from_value(json).unwrap();
+        assert_eq!(ov.companion_silent_secs, 600);
+        assert_eq!(
+            ov.companion_silent_secs,
+            crate::limits::Limits::default().companion_silent_secs
+        );
     }
 }

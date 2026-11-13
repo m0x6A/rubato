@@ -14,6 +14,13 @@
       "type": "boolean",
       "default": false
     },
+    "companion_silent_secs": {
+      "description": "The companion stale threshold N in seconds, from the server's config\n(`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and\n`CompanionSilent` fires past it (#105). An older server's overview reads as 600.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 600,
+      "minimum": 0
+    },
     "companions": {
       "type": "array",
       "items": {

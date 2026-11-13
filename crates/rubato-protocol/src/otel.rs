@@ -101,6 +101,9 @@ pub mod metric {
     /// Approvals Rubato posted as a person that GitHub has not confirmed for two minutes
     /// (ADR 0030), recorded every full poll tick.
     pub const PLANS_APPROVALS_OPENING: &str = "rubato.plans.approvals_opening";
+    /// The companion stale threshold N in seconds, from config, recorded every poll tick.
+    /// `CompanionSilent` compares heartbeats against it, with 600 when it is missing (#105).
+    pub const COMPANION_SILENT_SECS: &str = "rubato.companion.silent_secs";
 }
 
 /// Span names.
@@ -189,6 +192,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GITHUB_CALLS,
         metric::PLANS_NOT_FITTING,
         metric::PLANS_APPROVALS_OPENING,
+        metric::COMPANION_SILENT_SECS,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
