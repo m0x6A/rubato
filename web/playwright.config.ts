@@ -13,14 +13,14 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "dev", testIgnore: /(app-login|shots)\.spec\.ts/, use: { browserName: "chromium" } },
+    { name: "dev", testIgnore: /(app-login|shots|motion)\.spec\.ts/, use: { browserName: "chromium" } },
     {
       name: "app",
       testMatch: /app-login\.spec\.ts/,
       use: { browserName: "chromium", baseURL: process.env["RUBATO_E2E_APP_URL"] ?? "http://127.0.0.1:18091" },
     },
-    // Issue #81: screenshots change shared state (pins), so they run after every other test.
-    { name: "shots", testMatch: /shots\.spec\.ts/, dependencies: ["dev", "app"], use: { browserName: "chromium" } },
+    // Issue #81: these pin #901, which other tests expect unpinned, so they run after every other test.
+    { name: "late", testMatch: /(motion|shots)\.spec\.ts/, dependencies: ["dev", "app"], use: { browserName: "chromium" } },
   ],
   reporter: [["list"]],
 });

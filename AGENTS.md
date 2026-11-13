@@ -131,7 +131,8 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 <!-- /slices -->
 <!-- slices: web -->
 `web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, selection, handlers);
-`shared/` (`api.ts` request, `ApiError` and needs-login; `format.ts`; `dnd.ts` the dragged issue);
+`shared/` (`api.ts` request, `ApiError` and needs-login; `format.ts`; `dnd.ts` the dragged issue;
+`motion.ts` the one motion switch, `data-motion` on `<html>`);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
 `features/features.test.ts`:
 
