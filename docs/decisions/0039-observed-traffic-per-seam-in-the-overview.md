@@ -1,8 +1,8 @@
 # 0039. Carry observed traffic per seam in the overview; judge the map only from a fresh report
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-13
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #104) — proposed; a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-13 by approval comment https://github.com/m0x6A/rubato/issues/104#issuecomment-6864513668 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #104) — proposed
 - **Seam:** web-server
 - **Issue:** m0x6A/rubato#104
 
