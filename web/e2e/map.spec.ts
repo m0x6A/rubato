@@ -242,11 +242,6 @@ test("the data flow lens shows rubato-map.yml's flows with arrowheads", async ({
   }
   // Control arrows are dashed.
   await expect(page.locator(".react-flow__edge.flow.control .react-flow__edge-path").first()).toHaveAttribute("style", /stroke-dasharray/);
-  if (process.env["RUBATO_E2E_SHOTS"]) {
-    await page.setViewportSize({ width: 1600, height: 1000 });
-    await page.getByRole("radio", { name: /^Data flow/ }).click();
-    await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/lens-data.png` });
-  }
 
   // Selecting a part explains it and dims what is not next to it.
   await page.getByRole("radio", { name: "Structure" }).click();
@@ -257,9 +252,6 @@ test("the data flow lens shows rubato-map.yml's flows with arrowheads", async ({
   await expect(inspector).toContainText("LaunchCommand, for the paired user only from rubato-server over companion-server");
   await expect(page.getByTestId("node-rubato-server")).not.toHaveClass(/dim/);
   await expect(page.getByTestId("node-web")).toHaveClass(/dim/);
-  if (process.env["RUBATO_E2E_SHOTS"]) {
-    await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/inspector-part.png` });
-  }
   // Walk the map from the inspector: to the seam, which explains itself.
   await inspector.getByRole("button", { name: "companion-server" }).first().click();
   await expect(inspector.getByRole("heading", { name: "companion-server" })).toBeVisible();
@@ -320,10 +312,6 @@ for (const motion of ["no-preference", "reduce"] as const) {
     }
     await expect(caption).toHaveText(/^Step 5 of 11: rubato-companion → rubato-server, data:/);
     await expect(pulse).toHaveClass(/data/);
-    if (process.env["RUBATO_E2E_SHOTS"] && motion === "no-preference") {
-      await page.setViewportSize({ width: 1600, height: 1000 });
-      await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/scenario-step.png` });
-    }
 
     // Nothing covers the step: its two parts are inside the canvas and clear of the band of
     // controls above it, at every step, even zoomed in so far that the map has to pan.
@@ -383,10 +371,6 @@ test("selecting an issue with a plan paints its parts and flows", async ({ page 
   await expect(plan).toContainText("rubato-server affected serves one more field in the overview");
   await expect(plan).toContainText("data the new overview field: rubato-server → web over web-server");
   await expect(plan).toContainText("web-server (the field is missing in the overview)");
-  if (process.env["RUBATO_E2E_SHOTS"]) {
-    await page.setViewportSize({ width: 1600, height: 1000 });
-    await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/plan-lens.png` });
-  }
 
   // Clearing the selection returns to the team view.
   await page.getByRole("button", { name: "← all issues" }).click();
@@ -491,10 +475,6 @@ test("draft a part and a seam, propose", async ({ page }) => {
   await expect(seam).toContainText("draft · m0x6A");
   await expect(panel).toContainText("add seam web-billing (web to billing)");
 
-  if (process.env["RUBATO_E2E_SHOTS"]) {
-    await page.setViewportSize({ width: 1600, height: 1000 });
-    await page.screenshot({ path: `${process.env["RUBATO_E2E_SHOTS"]}/draft.png` });
-  }
   // A draft id is not a map id: it cannot be pinned, and an invalid change says why.
   const pin = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 903 }, target: { kind: "node", id: "billing" } } });
   expect(pin.status()).toBe(422);
