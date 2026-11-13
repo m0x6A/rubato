@@ -1078,6 +1078,12 @@ backlog?: Backlog
  * Issues: write, or the server runs on the local stand-in (ADR 0025).
  */
 can_create_issues?: boolean
+/**
+ * The companion stale threshold N in seconds, from the server's config
+ * (`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and
+ * `CompanionSilent` fires past it (#105). An older server's overview reads as 600.
+ */
+companion_silent_secs?: number
 companions: PairingInfo[]
 draft?: MapDraft
 findings: Finding[]
