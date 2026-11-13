@@ -1,8 +1,8 @@
 # 0043. A blocked issue's progress carries the station it left from, derived from the same signals
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-13
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #106) — proposed; a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-13 by approval comment https://github.com/m0x6A/rubato/issues/106#issuecomment-6864514635 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #106) — proposed
 - **Seam:** web-server, companion-server
 - **Issue:** m0x6A/rubato#106
 
