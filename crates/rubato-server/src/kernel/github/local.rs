@@ -313,8 +313,8 @@ impl GitHubApi for LocalGit {
         &self,
         repo: &str,
         head: &str,
-        _base: &str,
-        _title: &str,
+        base: &str,
+        title: &str,
         _body: &str,
     ) -> Result<(u64, String)> {
         let head_sha = self
@@ -334,7 +334,9 @@ impl GitHubApi for LocalGit {
                 merged_at: None,
                 updated_at: chrono::Utc::now(),
                 url: url.clone(),
-                base: None,
+                base: Some(base.to_owned()),
+                title: title.to_owned(),
+                author: "rubato[bot]".into(),
             },
         );
         Ok((number, url))

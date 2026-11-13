@@ -187,6 +187,17 @@ impl Poller {
         let discovered = self
             .discover(app, &map, &issues, &listed, &mut view, &approved)
             .await;
+        // Every open pull request of every map repo (ADR 0034): the listing the per-issue pass
+        // already made is reused, so a repo is listed once per tick. Checks of pull requests no
+        // tracked issue owns are read on the full lane while they are due.
+        let owned: HashSet<(String, u64)> = github_poll::all_prs(&app.db)
+            .await?
+            .into_values()
+            .map(|p| (p.repo, p.number))
+            .collect();
+        let pulls =
+            github_poll::list_repo_pulls(app, &map.map, &mut view, &owned, lane == Lane::Full)
+                .await;
         // After the comments pass: approvals posted from Rubato that GitHub did not confirm,
         // and the tokens of people with no session that still counts (ADR 0030).
         if lane == Lane::Full {
@@ -205,6 +216,9 @@ impl Poller {
                 failed,
                 repos,
                 discovered,
+                pulls_listed = pulls.listed,
+                pulls_failed = pulls.failed,
+                pull_checks = pulls.checks_read,
                 "poll tick"
             );
         } else {

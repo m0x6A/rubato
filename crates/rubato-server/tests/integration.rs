@@ -384,6 +384,8 @@ async fn protocol_fixtures_replay_derives_progress() {
                 updated_at: chrono::Utc::now(),
                 url: "pr".into(),
                 base: None,
+                title: String::new(),
+                author: String::new(),
             },
         );
         g.checks.insert("sha-1".into(), ChecksStatus::Green);
@@ -1538,6 +1540,8 @@ async fn poll_makes_the_same_github_calls_per_issue() {
                 updated_at: chrono::Utc::now(),
                 url: "pr41".into(),
                 base: None,
+                title: String::new(),
+                author: String::new(),
             },
         );
         g.pulls.insert(
@@ -1551,6 +1555,8 @@ async fn poll_makes_the_same_github_calls_per_issue() {
                 updated_at: chrono::Utc::now(),
                 url: "pr42".into(),
                 base: None,
+                title: String::new(),
+                author: String::new(),
             },
         );
         g.checks.insert("s31".into(), ChecksStatus::Green);
@@ -3453,6 +3459,8 @@ fn open_pull(number: u64, sha: &str) -> PullInfo {
         updated_at: chrono::Utc::now(),
         url: format!("pr{number}"),
         base: None,
+        title: String::new(),
+        author: String::new(),
     }
 }
 
@@ -4638,4 +4646,218 @@ async fn login_keeps_the_token_and_refresh_is_single_flight_with_compare_and_del
             .await
             .is_err()
     );
+}
+
+// ----- issue #82, PR 1: open pull requests of every map repo (ADR 0034) ----------------------
+
+impl Harness {
+    /// The map names `extra` repos besides `m0x6A/rubato`; reloaded at a new version.
+    async fn map_with_repos(&self, extra: &[&str]) {
+        let listed: String = extra.iter().map(|r| format!("  - name: {r}\n")).collect();
+        self.github.with(|g| {
+            let key = (
+                "m0x6A/rubato".to_string(),
+                "docs/design/rubato-map.yml".to_string(),
+                "main".to_string(),
+            );
+            let yaml = g.files[&key].replacen("repos:\n", &format!("repos:\n{listed}"), 1);
+            g.files.insert(key, yaml);
+            let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+            b.iter_mut().find(|(n, _)| n == "main").unwrap().1 = "mapsha-82".into();
+        });
+        map::reload(&self.app).await.unwrap();
+    }
+
+    fn open_pull_in(&self, repo: &str, branch: &str, number: u64, sha: &str) {
+        self.github.with(|g| {
+            let mut pr = open_pull(number, sha);
+            pr.title = format!("PR {number}");
+            pr.author = "m0x6A".into();
+            pr.base = Some("main".into());
+            g.pulls.insert((repo.into(), branch.into()), pr);
+        });
+    }
+
+    fn pulls_of(ov: &Overview, repo: &str) -> rubato_protocol::RepoPulls {
+        ov.pulls
+            .iter()
+            .find(|r| r.repo == repo)
+            .cloned()
+            .unwrap_or_else(|| panic!("no listing for {repo}"))
+    }
+}
+
+/// ADR 0034: every map repo is listed once per tick, tracked issue or not; the per-issue pass
+/// reuses that listing. Fails on purpose if any repo is listed twice.
+#[tokio::test]
+async fn every_map_repo_is_listed_once_per_tick() {
+    let h = harness().await;
+    h.map_with_repos(&["m0x6A/alpha", "m0x6A/beta"]).await;
+    let mut poller = tasks::Poller::default();
+    h.github.with(|g| g.calls.clear());
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    let mut listed = h.call_args("open_pulls");
+    listed.sort();
+    assert_eq!(listed, ["m0x6A/alpha", "m0x6A/beta", "m0x6A/rubato"]);
+
+    // A tracked issue with a pull request in one of them: still one listing per repo.
+    h.working_issue(9, true);
+    h.pin_issue(9).await;
+    h.github.with(|g| g.calls.clear());
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    let listed = h.call_args("open_pulls");
+    assert_eq!(
+        listed.len(),
+        3,
+        "one listing per map repo, shared: {listed:?}"
+    );
+    assert!(
+        h.call_args("pull_for_branch").is_empty(),
+        "the shared listing had the branch"
+    );
+    println!("checked {} listings over 2 ticks", 3 + listed.len());
+}
+
+/// Every open pull request of every map repo reaches the overview with the issue its branch
+/// names; the repo row counts them; a tracked issue's pull request shows the checks read for
+/// that issue, not a copy.
+#[tokio::test]
+async fn open_pulls_reach_the_overview_with_their_issue() {
+    let h = harness().await;
+    h.map_with_repos(&["m0x6A/alpha"]).await;
+    h.open_pull_in("m0x6A/alpha", "issue/5-thing", 7, "a7");
+    h.open_pull_in("m0x6A/alpha", "fix-typo", 8, "a8");
+    h.working_issue(9, true);
+    h.pin_issue(9).await;
+    h.github.with(|g| {
+        g.checks.insert("s9".into(), ChecksStatus::Red);
+    });
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+
+    let alpha = Harness::pulls_of(&ov, "m0x6A/alpha");
+    assert!(alpha.listed_at.is_some() && alpha.error.is_none() && !alpha.truncated);
+    assert_eq!(alpha.pulls.len(), 2);
+    let p7 = alpha.pulls.iter().find(|p| p.number == 7).unwrap();
+    assert_eq!(p7.issue, Some(IssueRef::new("m0x6A/alpha", 5)));
+    assert_eq!(
+        (p7.title.as_str(), p7.author.as_str(), p7.base.as_str()),
+        ("PR 7", "m0x6A", "main")
+    );
+    assert_eq!(
+        alpha.pulls.iter().find(|p| p.number == 8).unwrap().issue,
+        None
+    );
+
+    let rubato = Harness::pulls_of(&ov, "m0x6A/rubato");
+    let tracked = rubato
+        .pulls
+        .iter()
+        .find(|p| p.branch == "issue/9-x")
+        .unwrap();
+    assert_eq!(
+        tracked.checks,
+        Some(ChecksStatus::Red),
+        "from pull_requests"
+    );
+    let row = |repo: &str| ov.repos.iter().find(|r| r.repo == repo).unwrap().open_pulls;
+    assert_eq!((row("m0x6A/alpha"), row("m0x6A/rubato")), (2, 1));
+    println!(
+        "checked {} pull requests in 2 repos",
+        alpha.pulls.len() + rubato.pulls.len()
+    );
+}
+
+/// ADR 0034: checks of a pull request no tracked issue owns are read on the full lane while
+/// they are due, never on the fast lane, and not again once finished at the same head. Fails on
+/// purpose if a pending run is never read again (a stale "pending" forever).
+#[tokio::test]
+async fn untracked_pull_checks_are_read_until_finished() {
+    let h = harness().await;
+    h.map_with_repos(&["m0x6A/alpha"]).await;
+    h.open_pull_in("m0x6A/alpha", "issue/5-thing", 7, "a7");
+    h.working_issue(9, true);
+    h.pin_issue(9).await;
+    h.github.with(|g| {
+        g.checks.insert("a7".into(), ChecksStatus::Pending);
+    });
+    let mut poller = tasks::Poller::default();
+    let checks_of = |h: &Harness, sha: &str| {
+        h.call_args("checks")
+            .iter()
+            .filter(|a| a.ends_with(sha))
+            .count()
+    };
+    let mut seen = Vec::new();
+    for (lane, status_before) in [
+        (tasks::Lane::Full, None),
+        (tasks::Lane::Fast, None),
+        (tasks::Lane::Full, None),
+        (tasks::Lane::Full, Some(ChecksStatus::Green)),
+        (tasks::Lane::Full, None),
+    ] {
+        if let Some(s) = status_before {
+            h.github.with(|g| {
+                g.checks.insert("a7".into(), s);
+            });
+        }
+        h.github.with(|g| g.calls.clear());
+        poller.tick(&h.app, lane).await.unwrap();
+        seen.push(checks_of(&h, "a7"));
+    }
+    assert_eq!(
+        seen,
+        [1, 0, 1, 1, 0],
+        "pending is read again; green at the same head is not"
+    );
+    let ov = h.overview("m0x6A").await;
+    let p7 = Harness::pulls_of(&ov, "m0x6A/alpha").pulls[0].clone();
+    assert_eq!(p7.checks, Some(ChecksStatus::Green));
+
+    // The head moves: read again on the next full tick.
+    h.open_pull_in("m0x6A/alpha", "issue/5-thing", 7, "a7b");
+    h.github.with(|g| {
+        g.checks.insert("a7b".into(), ChecksStatus::Red);
+        g.calls.clear();
+    });
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert_eq!(checks_of(&h, "a7b"), 1);
+    // The tracked issue's pull request is never read by this pass: only its own per-issue read.
+    assert_eq!(checks_of(&h, "s9"), 1);
+    println!("checked {} ticks of check reads", seen.len() + 1);
+}
+
+/// A cut listing still lists what it has and says so, and tracked issues fall back to
+/// `pull_for_branch`; a failed listing keeps the last rows and records why.
+#[tokio::test]
+async fn a_cut_or_failed_pull_listing_is_said_and_tracked_issues_fall_back() {
+    let h = harness().await;
+    h.working_issue(9, true);
+    h.pin_issue(9).await;
+    h.github.with(|g| {
+        g.open_pulls_truncated = true;
+        g.calls.clear();
+    });
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(h.call_args("open_pulls").len(), 1, "once per repo");
+    assert_eq!(h.call_args("pull_for_branch"), ["m0x6A/rubato issue/9-x"]);
+    assert_eq!(h.state_of(9).await, ProgressState::InReview);
+    let ov = h.overview("m0x6A").await;
+    let rubato = Harness::pulls_of(&ov, "m0x6A/rubato");
+    assert!(rubato.truncated);
+    assert_eq!(rubato.pulls.len(), 1);
+
+    h.github.with(|g| {
+        g.open_pulls_truncated = false;
+        g.open_pulls_error = Some("boom".into());
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let rubato = Harness::pulls_of(&ov, "m0x6A/rubato");
+    assert!(rubato.error.as_deref().is_some_and(|e| e.contains("boom")));
+    assert_eq!(rubato.pulls.len(), 1, "last good rows kept");
+    assert!(rubato.listed_at.is_some());
+    println!("checked a cut and a failed listing");
 }

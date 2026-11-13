@@ -111,8 +111,10 @@ pub struct BranchPrefs {
 #[derive(Default)]
 pub struct RepoView {
     branches: HashMap<String, Result<Vec<BranchHead>, String>>,
-    /// `None`: the listing failed or was cut; issues fall back to `pull_for_branch`.
-    pulls: HashMap<String, Option<OpenPulls>>,
+    /// The open pull request listing as GitHub answered it, cut or not, or why it failed. Shared
+    /// by the per-issue pass and the per-repo listing (ADR 0034); a cut or failed listing makes
+    /// issues fall back to `pull_for_branch`.
+    pulls: HashMap<String, Result<OpenPulls, String>>,
 }
 
 impl RepoView {
@@ -187,26 +189,36 @@ impl RepoView {
     /// `Some(pr)` when the open listing has a pull request from `branch`, `Some(None)` when the
     /// listing is whole and has none, `None` when there is no usable listing.
     async fn open_pull(&mut self, app: &App, repo: &str, branch: &str) -> Option<Option<PullInfo>> {
+        match self.pull_listing(app, repo).await {
+            Ok(l) if !l.truncated => Some(
+                l.pulls
+                    .iter()
+                    .find(|(b, _)| b == branch)
+                    .map(|(_, pr)| pr.clone()),
+            ),
+            _ => None,
+        }
+    }
+
+    /// The repo's open pull request listing, made on first use this tick (one `pulls` call per
+    /// repo per tick, ADR 0034).
+    pub async fn pull_listing(&mut self, app: &App, repo: &str) -> &Result<OpenPulls, String> {
         if !self.pulls.contains_key(repo) {
-            let listing = match app.github.open_pulls(repo).await {
+            let listing = app
+                .github
+                .open_pulls(repo)
+                .await
+                .map_err(|e| format!("{e:#}"));
+            match &listing {
                 Ok(l) if l.truncated => {
                     tracing::warn!(rubato.repo = %repo, "pull listing cut; reading pull requests one by one");
-                    None
                 }
-                Ok(l) => Some(l),
-                Err(e) => {
-                    tracing::warn!(rubato.repo = %repo, error = %e, "pull listing failed");
-                    None
-                }
-            };
+                Ok(_) => {}
+                Err(e) => tracing::warn!(rubato.repo = %repo, error = %e, "pull listing failed"),
+            }
             self.pulls.insert(repo.to_owned(), listing);
         }
-        self.pulls[repo].as_ref().map(|l| {
-            l.pulls
-                .iter()
-                .find(|(b, _)| b == branch)
-                .map(|(_, pr)| pr.clone())
-        })
+        &self.pulls[repo]
     }
 }
 

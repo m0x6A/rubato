@@ -1086,6 +1086,10 @@ issues: IssueSummary[]
 layout?: MapLayout1
 map: MapResponse
 /**
+ * Open pull requests per map repo (ADR 0034). Never an input to progress.
+ */
+pulls?: RepoPulls[]
+/**
  * What each developer intends to run on their companions, lane by lane (ADR 0020).
  * Never an input to progress.
  */
@@ -1214,6 +1218,60 @@ positions?: {
 }
 }
 /**
+ * One map repo's open pull requests and how fresh that listing is.
+ */
+export interface RepoPulls {
+/**
+ * Why the last listing failed, when it did; `pulls` are from the last good one.
+ */
+error?: (string | null)
+/**
+ * When the last listing succeeded; absent until one has.
+ */
+listed_at?: (string | null)
+pulls?: OpenPull[]
+repo: string
+/**
+ * The last listing hit its one page: there are more than `pulls` shows.
+ */
+truncated?: boolean
+}
+/**
+ * One open pull request from a branch of the repo itself.
+ */
+export interface OpenPull {
+/**
+ * GitHub login of who opened it.
+ */
+author: string
+/**
+ * The branch it merges into.
+ */
+base: string
+/**
+ * The head branch.
+ */
+branch: string
+/**
+ * The folded check runs at `head_sha`; absent until they have been read.
+ */
+checks?: (ChecksStatus | null)
+draft: boolean
+head_sha: string
+/**
+ * The issue the branch names (`issue/<n>-…`, ADR 0006), if it names one.
+ */
+issue?: (IssueRef | null)
+number: number
+/**
+ * `owner/name`, in the map's spelling.
+ */
+repo: string
+title: string
+updated_at: string
+url: string
+}
+/**
  * One issue waiting on one companion.
  */
 export interface QueuedIssue {
@@ -1249,6 +1307,10 @@ in_map: boolean
  * Open issues in the latest listing.
  */
 open_issues: number
+/**
+ * Open pull requests from its own branches in the latest listing (ADR 0034).
+ */
+open_pulls?: number
 /**
  * Tracked issues with a plan file.
  */

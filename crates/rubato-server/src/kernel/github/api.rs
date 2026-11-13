@@ -117,6 +117,9 @@ pub struct PullInfo {
     /// The branch it merges into, when known: the bottom of a stack targets the default branch
     /// (ADR 0032).
     pub base: Option<String>,
+    /// The title, and the login of who opened it (issue #82, ADR 0034).
+    pub title: String,
+    pub author: String,
 }
 
 /// A branch and the commit it points at.
@@ -555,6 +558,8 @@ impl GitHubApi for Octo {
                             updated_at: p.updated_at.unwrap_or_else(Utc::now),
                             url: p.html_url.map(|u| u.to_string()).unwrap_or_default(),
                             base: Some(p.base.ref_field.clone()),
+                            title: p.title.clone().unwrap_or_default(),
+                            author: p.user.as_ref().map(|u| u.login.clone()).unwrap_or_default(),
                         },
                     )
                 })
@@ -634,6 +639,8 @@ impl GitHubApi for Octo {
             updated_at: p.updated_at.unwrap_or_else(Utc::now),
             url: p.html_url.map(|u| u.to_string()).unwrap_or_default(),
             base: Some(p.base.ref_field.clone()),
+            title: p.title.clone().unwrap_or_default(),
+            author: p.user.as_ref().map(|u| u.login.clone()).unwrap_or_default(),
         }))
     }
 

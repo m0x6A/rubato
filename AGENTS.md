@@ -108,7 +108,7 @@ new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
 approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
-github_poll     issue reads, open issues, placement, coverage   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals
+github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 ```

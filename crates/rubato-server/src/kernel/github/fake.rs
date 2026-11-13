@@ -24,6 +24,9 @@ pub struct FakeInner {
     pub budget: Option<u64>,
     /// The open pull request listing fails with this text.
     pub open_pulls_error: Option<String>,
+    /// The open pull request listing says it was cut at one page (ADR 0034), as GitHub does
+    /// past 100 open pull requests.
+    pub open_pulls_truncated: bool,
     /// Reading comments fails with this text.
     pub comments_error: Option<String>,
     /// Open issues per repo, as a listing answers them.
@@ -134,7 +137,7 @@ impl GitHubApi for FakeGitHub {
         pulls.sort_by_key(|(_, p)| p.number);
         Ok(OpenPulls {
             pulls,
-            truncated: false,
+            truncated: g.open_pulls_truncated,
         })
     }
 
@@ -260,6 +263,8 @@ impl GitHubApi for FakeGitHub {
                 updated_at: chrono::Utc::now(),
                 url: url.clone(),
                 base: None,
+                title: title.to_owned(),
+                author: "rubato[bot]".into(),
             },
         );
         if g.pull_times_out {

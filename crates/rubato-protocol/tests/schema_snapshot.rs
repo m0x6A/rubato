@@ -145,3 +145,34 @@ fn no_wire_type_carries_a_token() {
     );
     println!("checked {checked} schemas for token properties");
 }
+
+/// ADR 0026: an issue's body (or its excerpt) stays on the server; the open issues the web shows
+/// per repo (issue #82) carry title, labels, time and link only. Fails on purpose for an
+/// `OpenIssue` with a `body`.
+#[test]
+fn no_open_issue_carries_its_body() {
+    let overview = rubato_protocol::schema::all()
+        .into_iter()
+        .find(|(n, _)| *n == "overview")
+        .map(|(_, s)| serde_json::to_value(s).unwrap())
+        .unwrap();
+    let props = |def: &str| -> Vec<String> {
+        overview["$defs"][def]["properties"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default()
+    };
+    let open_issue = props("OpenIssue");
+    assert!(
+        open_issue.contains(&"title".to_string()),
+        "precondition: {open_issue:?}"
+    );
+    let bodies = |p: &[String]| {
+        p.iter()
+            .filter(|k| k.contains("body") || *k == "excerpt")
+            .count()
+    };
+    assert_eq!(bodies(&open_issue), 0, "OpenIssue: {open_issue:?}");
+    assert_eq!(bodies(&["body".to_string()]), 1, "the check can fail");
+    println!("checked {} OpenIssue properties", open_issue.len());
+}
