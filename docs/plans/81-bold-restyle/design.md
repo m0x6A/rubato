@@ -12,8 +12,8 @@ system, and what leads on each surface. Everything here uses data the web alread
 ## Where it sits on the map
 
 `web` only. No change to `web-server`: the same `GET /api/overview`, `/ws/web` and request
-types. No protocol type, no server code and no schema changes. `rubato-server` embeds `web/dist`
-as today; the fonts ship inside `dist` as hashed `.woff2` assets, served by the same handler.
+types. No protocol type, no server code and no schema changes. `rubato-server` serves `web/dist`
+from disk as today (`ServeDir`, `app.rs:84`); the fonts ship inside `dist` as hashed `.woff2` assets.
 
 ## 1. Moodboards
 
@@ -64,7 +64,7 @@ outside the card.
 **Self-hosted.** `@fontsource-variable/space-grotesk` and `@fontsource-variable/jetbrains-mono`
 (both 5.3.0, OFL-1.1) as `web` dependencies, imported once in `main.tsx`
 (`import "@fontsource-variable/space-grotesk/wght.css"`, same for the mono). Vite copies the
-`.woff2` files into `dist/assets` with hashed names; the server embeds them. No request leaves
+`.woff2` files into `dist/assets` with hashed names; the server serves them from disk with the rest of `dist`. No request leaves
 the origin at runtime: an e2e check fails on any request to a host other than the app's (§7).
 Only the `latin` and `latin-ext` subsets load (their `unicode-range` makes the browser fetch only
 what a page uses). `font-display: swap` with metric-matched fallbacks (`--font-ui-fallback:
@@ -178,6 +178,15 @@ their own `--raised` background).
   `--panel` (3.19:1) and dark `--quiet` on `--panel` (3.32:1) are each below 4.5:1, which proves
   the base tokens are not text tokens; a fixture CSS string with the light block removed makes
   `schemes()` throw; a fixture gradient whose top is darker in one channel fails `GRADIENTS`.
+- The light block defines every colour token the dark block defines (no pair is checked with a
+  dark value by inheritance).
+- `rule()` finds each selector exactly once and matches `color:` only where it is not
+  `background-color:`.
+- A scan fails any rule whose `color:` is a role base (`--accent`, `--new`, `--heat`, `--ok`,
+  `--warn`, `--bad`, `--quiet`) or whose text sits on a `color-mix(…)` background; such rules use
+  an `-ink` on a `-wash` or `--raised` instead. It prints the rules it scanned.
+- A fixture with one `-ink` lowered below 4.5:1 must be reported by the pair loop (the checker,
+  not only the tokens, fails on purpose).
 - It still prints how many pairs, rules and targets it checked.
 
 ## 5. Motion system
@@ -188,7 +197,7 @@ change), and exports `useMotion()` for the few JS decisions (fitView duration, w
 particles at all). The `usePrefersReducedMotion` hook in `MapView.tsx:127` moves there. **Every
 CSS animation and transition is written under `:root[data-motion="full"]`**; nothing animates by
 default. If the script never runs, nothing moves. One `@media (prefers-reduced-motion: reduce)`
-block remains as a belt: `*, *::before, *::after { animation: none !important; transition: none
+block remains as a belt (the e2e proves the switch without leaning on it, §7a): `*, *::before, *::after { animation: none !important; transition: none
 !important; }`.
 
 **No SMIL, no rAF loops.** The scenario pulse today is an SVG `<animateMotion>`
@@ -203,9 +212,9 @@ cubic-bezier(.65,0,.35,1)`.
 
 | # | Animation | Means | Duration, easing | Implemented as | Under reduced motion |
 | --- | --- | --- | --- | --- | --- |
-| M1 | **Flow particles** on declared flows (data and plan lenses) | a flow the map declares, in its direction; data is a **filled dot**, control a **ring** | 64 px/s (duration from path length, 2–6 s), linear, infinite; 2 particles per flow, staggered half a cycle | circles with `offset-path` = the edge path, `offset-distance` 0→100% | not rendered; one static marker of the same shape at the label |
-| M2 | **Proposed flow** (`.react-flow__edge.moving`) | a flow a plan *proposes*: not there yet | 1.2 s linear infinite (as today) | violet dashed conduit `6 6`, `stroke-dashoffset` −24; **no particles ever** | static dashes; the label gains a "proposed" tag (also shown with motion) |
-| M3 | **Scenario step pulse** with a comet trail | the step being played, in its direction, kind by shape | 1200 ms `--ease-in-out`, infinite while the step shows; edge brightens over `--dur-base` | head circle (dot or ring) + 3 followers at 60/120/180 ms delay, opacity .5/.3/.15, same shape; other particles hidden in the scenario lens | head sits still at the label (as today), no trail |
+| M1 | **Flow particles** on declared flows, in the data lens (filled dots) and the control lens (rings) | a flow the map declares, in its direction; data is a **filled dot**, control a **ring** | 64 px/s (duration from path length, 2–6 s), linear, infinite; 2 particles per flow, staggered half a cycle | elements with `offset-path` = the edge path, `offset-distance` 0→100% | not rendered; one static marker of the same shape at 30 % of the path, clear of the label |
+| M2 | **Proposed flow** (`.react-flow__edge.moving`, every flow of the plan lens) | a flow a plan *proposes*: not there yet | 1.2 s linear infinite (as today) | violet dashed conduit `6 6`, `stroke-dashoffset` −24; **no particles ever** | static dashes; the label gains a "proposed" tag (also shown with motion) |
+| M3 | **Scenario step pulse** with a comet trail | the step being played, in its direction, kind by shape | 1200 ms `--ease-in-out`, infinite while the step shows; edge brightens over `--dur-base` | head circle (dot or ring) + 3 followers at 60/120/180 ms delay, opacity .5/.3/.15, same shape; the followers carry `pulse-trail`, not `pulse` or a `pulse-<id>` test id; other particles hidden in the scenario lens | head sits still at 30 % of the path, no trail |
 | M4 | **Working breathe** | a session is `working` on an issue on this part (status from the overview, never for `unknown`) | 2.8 s `--ease-in-out` infinite, opacity .35↔.85 | a pre-blurred `box-shadow` on a `::after` layer; only its `opacity` animates | halo at fixed .6 opacity |
 | M5 | **Light up** | a part or seam becomes affected, new or selected | `--dur-slow` `--ease-out` | `transition` on `box-shadow` of a `::before` layer's opacity and the rim colour | instant |
 | M6 | **Badge change** | a state changed (planned → started → …) | colour transition `--dur-base`; one 360 ms flash (wash brightens then settles) | keyed by state so the element re-mounts with a `badge-in` keyframe | instant swap |
@@ -220,9 +229,14 @@ Twelve animations. Under reduced motion every row loses its movement and keeps i
 (dot vs ring), dash (proposed), halo (working, collision) and text all remain.
 
 **The `moving`-means-proposed encoding.** Two vocabularies, never mixed on one edge: **particles
-travel on solid conduits** (declared flows, M1, M3) and **dashes march on violet dashed conduits**
-(proposed flows, M2). A proposed flow never carries particles, a declared one never marches. The
-legend in the map band shows both, and each flow label says "proposed" when it is. The shared
+travel** on declared flows (M1, M3), and **dashes march** only on proposed ones (M2). The lenses
+keep what `flows.ts` does today (`flows.ts:58`, `:69`, `:71`): the data lens shows declared data
+flows on solid conduits with dots; the control lens shows declared control flows on dashed `7 5`
+conduits whose dashes **stand still**, with rings; the plan lens shows only the plan's flows, all
+`moving`, violet, marching, and no particles; the scenario lens shows every flow with the step's
+comet. So the line between declared and proposed is *moving particles versus moving dashes*, plus
+violet and the "proposed" tag; a declared dashed control flow never marches. The legend in the map
+band draws all three samples, and each flow label in the plan lens says "proposed". The shared
 draft's seams stay dashed `3 4` in violet and do not move (they are a map change, not a flow).
 
 **Honesty about particles.** Particle speed and density are fixed; they say "declared, this
@@ -235,9 +249,29 @@ Particles are capped at 2 per flow and 120 in total; past the cap, particles run
 flows touching the selection or a lit part (the rest show the static marker). Particles pause
 (`animation-play-state: paused`) while a part is being dragged and while the page is hidden.
 Checked by an e2e on a synthetic map of 40 parts and 60 seams (one flow each, data lens, 10
-working parts): over 5 s of steady state, Chromium's `long-animation-frame` observer records no
-frame over 50 ms, and a 200 ms rAF probe (test-only, injected) sees median frame time ≤ 20 ms.
-Run in CI and reported with the counts it saw.
+working parts, served by stubbing `/api/overview` with a typed `Overview` fixture,
+`web/e2e/fixtures/big-map.ts`): it first asserts `long-animation-frame` is in
+`PerformanceObserver.supportedEntryTypes` (else it fails, not passes), then over 5 s of steady
+state records no frame over 50 ms; it prints the parts, seams, particles and the median frame
+time but does not fail on the median (CI machines vary). Must fail: the same page with an
+injected 80 ms busy rAF callback reports long frames.
+
+## 7a. Proving reduced motion
+
+- **Static check of the CSS** (Vitest, `web/src/motion.test.ts`): every rule in `styles.css` that
+  declares `animation`, `animation-name` or `transition` (other than `none`) has a selector
+  starting `:root[data-motion="full"]`. It prints how many rules it checked; a fixture rule
+  outside the switch fails it on purpose.
+- **E2e, the switch alone**: `reducedMotion: "no-preference"` with `data-motion="reduced"`
+  forced by an init script, so the media-query belt cannot be what stops things. Then the same with
+  `reducedMotion: "reduce"` and no forcing, to prove the switch follows the media query.
+- **E2e, what it does**: in one `evaluate`, select a part, open an issue and start a scenario
+  step, then read `document.getAnimations()` (CSS animations and running transitions) at once:
+  empty. No `animateMotion`/`animate` element anywhere. Play is paused, and two screenshots of
+  the map canvas 500 ms apart (the "refreshed" text masked) are identical, which catches movement
+  driven from JS too.
+- **Must fail**: under `no-preference` without forcing, the pulse's own `getAnimations()` is
+  non-empty and the two screenshots differ.
 
 ## 6. Surfaces: the visual leads, the text supports
 
