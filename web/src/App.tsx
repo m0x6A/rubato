@@ -3,7 +3,7 @@ import { LoginPage, authApi } from "./features/auth/index.ts";
 import { CompanionsPanel } from "./features/companions/index.ts";
 import { DraftPanel, draftMarks, draftsApi, seamOpFor, withDraft } from "./features/drafts/index.ts";
 import { Findings } from "./features/findings/index.ts";
-import { IssuePanel } from "./features/issues/index.ts";
+import { IssuePanel, TeamTrack } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe } from "./features/live/index.ts";
 import { NewIssueForm } from "./features/new_issue/index.ts";
@@ -290,7 +290,8 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <strong>Rubato</strong>
-          {overview && <span className="muted">map {overview.map.map.name} @ {overview.map.version}</span>}
+          {overview && <span className="map-version">map {overview.map.map.name} @ {overview.map.version.slice(0, 7)}</span>}
+          {overview && <TeamTrack issues={overview.issues} />}
         </div>
         <div className="status">
           <span className={live ? "dot live" : "dot"} title={live ? "live" : "disconnected"} />

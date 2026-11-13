@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ProgressRing, SpendGauge, StageRail } from "./visuals.tsx";
 import { PinMenu } from "../pins/index.ts";
 import { WhereItFits } from "../plans/index.ts";
 import { QueueMenu } from "../queue/index.ts";
@@ -75,6 +76,10 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           )}
         </h2>
         {selected.title && <p>{selected.title}</p>}
+        <div className="instruments">
+          <StageRail state={selected.progress.state} />
+          <SpendGauge spend={selected.spend_usd ?? 0} cap={selected.plan?.spend_cap_usd} />
+        </div>
         <p>
           <span className={`badge ${selected.progress.state}`}>{STATE_LABEL[selected.progress.state]}</span> <span className="muted">last signal {relative(selected.progress.last_seen)}</span>
           {selected.progress.reason && <span className="muted"> · {selected.progress.reason}</span>}
@@ -179,6 +184,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           <li key={issueKey(i.issue)} className="issue-row" onClick={() => onSelect(i.issue)} data-testid={`issue-${i.issue.number}`} draggable onDragStart={(e) => setIssueDrag(e, i.issue)} title="Drag onto a part or a seam of the map to add a pin">
             {/* `issue-row-N` names the whole row for the e2e; `issue-N` is the older id on the same row. */}
             <div className="row" data-testid={`issue-row-${i.issue.number}`}>
+              <ProgressRing state={i.progress.state} />
               <span className="issue-main">
                 {/* A real button, so the row opens from the keyboard; its click reaches the row's handler. */}
                 <button type="button" className="link">
