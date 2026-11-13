@@ -430,3 +430,101 @@ button.link:hover { text-decoration: underline; }
 .react-flow__controls-button svg { fill: var(--ink); }
 /* The belt: whatever the switch says, the media query stops everything (design §5). */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+/* Issue #81, PR 4: the panels open with a picture of their state (design §6). */
+.map-version { font-family: var(--font-mono); font-size: 11.5px; color: var(--chip-ink); background: var(--raised); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+.brand { align-items: center; }
+.team-track { display: inline-flex; align-items: center; gap: 8px; }
+.team-track .track-bar { display: flex; gap: 2px; width: 180px; height: 8px; border-radius: 999px; overflow: hidden; background: var(--conduit); }
+.team-track .segment { display: block; min-width: 3px; }
+.team-track .track-words { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+.segment.planned, .segment.started, .segment.unknown { background: var(--quiet); }
+.segment.designing { background: var(--new); }
+.segment.designed, .segment.building { background: var(--accent); }
+.segment.in_review { background: var(--warn); }
+.segment.done { background: var(--ok); }
+.segment.blocked { background: var(--bad); }
+:root[data-motion="full"] .team-track .segment { transition: flex-grow var(--dur-fill) var(--ease-out); }
+/* the live light: a ring pings while the socket is live (M9) */
+.dot { position: relative; }
+.dot.live { box-shadow: 0 0 8px var(--ok); }
+.dot.live::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--ok); opacity: 0; }
+:root[data-motion="full"] .dot.live::after { animation: ping 2s var(--ease-out) infinite; }
+@keyframes ping { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(2.6); opacity: 0; } }
+/* rings on issue rows, the stage rail and the spend gauge on the selected issue (M7, M10) */
+.issue-row > .row > .ring { flex: none; align-self: center; }
+.ring .ring-track { fill: none; stroke: var(--conduit); stroke-width: 3.5; }
+.ring .ring-arc { fill: none; stroke: var(--accent); stroke-width: 3.5; stroke-linecap: round; }
+.ring .ring-dashed { fill: none; stroke: var(--quiet); stroke-width: 2; stroke-dasharray: 3 3; }
+.ring.planned .ring-arc, .ring.started .ring-arc { stroke: var(--quiet); }
+.ring.designing .ring-arc { stroke: var(--new); }
+.ring.in_review .ring-arc { stroke: var(--warn); }
+.ring.done .ring-arc { stroke: var(--ok); }
+.ring.blocked .ring-arc { stroke: var(--bad); }
+.ring.blocked .ring-track { stroke: var(--bad-wash); }
+:root[data-motion="full"] .ring .ring-arc, :root[data-motion="full"] .gauge .gauge-arc { transition: stroke-dasharray var(--dur-fill) var(--ease-out), stroke var(--dur-base) var(--ease-out); }
+.instruments { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; margin: 10px 0 4px; }
+.stage-rail { position: relative; flex: 1 1 220px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.stage-rail .station { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage-rail .station i { display: block; height: 6px; border-radius: 999px; background: var(--conduit); }
+.stage-rail .station.past i { background: var(--accent); opacity: 0.55; }
+.stage-rail .station.now i { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.stage-rail .station.now { color: var(--accent-ink); font-weight: 600; }
+/* the panel is too narrow for seven labels: only the current station names itself (the rail says the rest) */
+.stage-rail .station:not(.now) .label { visibility: hidden; }
+.stage-rail .station.now { overflow: visible; }
+.stage-rail.unknown .station i { background: transparent; border: 1px dashed var(--quiet); }
+.stage-rail .notch { position: absolute; left: calc(100% / 7 * 1.5); top: -3px; width: 4px; height: 12px; border-radius: 2px; background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+:root[data-motion="full"] .stage-rail .station i { transition: background-color var(--dur-fill) var(--ease-out), box-shadow var(--dur-fill) var(--ease-out); }
+.gauge { position: relative; width: 132px; height: 80px; flex: none; }
+.gauge .gauge-track { fill: none; stroke: var(--conduit); stroke-width: 9; stroke-linecap: round; }
+.gauge .gauge-arc { fill: none; stroke: var(--accent); stroke-width: 9; stroke-linecap: round; }
+.gauge[data-tone="near"] .gauge-arc { stroke: var(--warn); }
+.gauge[data-tone="over"] .gauge-arc { stroke: var(--bad); }
+.gauge .gauge-mark { stroke: var(--warn); stroke-width: 2; }
+.gauge .gauge-value { position: absolute; left: 0; right: 0; top: 38px; text-align: center; font-family: var(--font-mono); font-weight: 600; font-size: 18px; }
+.gauge .gauge-cap { position: absolute; left: 0; right: 0; top: 62px; text-align: center; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+/* a panel or inspector opens rather than snaps (M8); a badge eases between states (M6) */
+:root[data-motion="full"] [data-testid="issue-detail"], :root[data-motion="full"] .inspector, :root[data-motion="full"] .draft-panel { animation: panel-in var(--dur-base) var(--ease-out); }
+@keyframes panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+:root[data-motion="full"] .badge { transition: background-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out); }
+/* the Plans tab: big counts, a mini map per plan */
+.big-counts { display: flex; gap: 22px; align-items: flex-end; margin: 4px 0 8px; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.big-counts b { display: block; font-size: 28px; line-height: 1; color: var(--ink); letter-spacing: 0; }
+.big-counts .warn b { color: var(--warn-ink); }
+.plan-row > .row { display: flex; gap: 12px; align-items: flex-start; }
+.mini-map { flex: none; border-radius: 7px; background: var(--canvas); border: 1px solid var(--line); }
+.mini-seam { stroke: var(--line-strong); stroke-width: 1; }
+.mini-seam.lit { stroke: var(--accent); stroke-width: 2; }
+.mini-part { fill: var(--line-strong); }
+.mini-part.affected { fill: var(--accent); }
+.mini-part.new { fill: var(--canvas); stroke: var(--new); stroke-width: 2; }
+/* Connected repos: rack units */
+.racks { gap: 8px; }
+.rack { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+.rack-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.rack-name { font-family: var(--font-mono); font-weight: 600; font-size: 12px; margin-right: auto; overflow-wrap: anywhere; }
+.rack-led { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.rack-led::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.rack-led.off::before { background: transparent; border: 1.5px solid var(--warn); box-shadow: none; }
+.rack-bars { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.rack-bar { display: flex; flex-direction: column; gap: 4px; font-family: var(--font-mono); font-size: 10.5px; color: var(--chip-ink); }
+.rack-bar i { position: relative; display: block; height: 28px; border-radius: 4px; background: var(--conduit); overflow: hidden; }
+.rack-bar b { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 4px; background: var(--accent); }
+.rack-bar.plans b { background: var(--new); }
+.rack-bar.sessions b { background: var(--ok); }
+.rack-bar.open_pulls b { background: var(--warn); }
+.rack-bar em { font-style: normal; font-weight: 600; color: var(--ink); }
+:root[data-motion="full"] .rack-bar b { transition: height var(--dur-fill) var(--ease-out); }
+/* companions: a connection light and a freshness bar draining towards stale */
+.lane .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--bad); vertical-align: 0; }
+.lane .led.live { position: relative; border-color: var(--ok); background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.lane .led.live::after { content: ""; position: absolute; inset: -1.5px; border-radius: 50%; border: 2px solid var(--ok); opacity: 0; }
+:root[data-motion="full"] .lane .led.live::after { animation: ping 2s var(--ease-out) infinite; }
+.lane .fresh { display: block; height: 4px; margin-top: 4px; border-radius: 999px; background: var(--conduit); overflow: hidden; }
+.lane .fresh b { display: block; height: 100%; border-radius: 999px; }
+.lane .fresh b.live { background: var(--ok); }
+.lane .fresh b.fading { background: var(--warn); }
+:root[data-motion="full"] .lane .fresh b { transition: width var(--dur-fill) var(--ease-out); }
+/* the login page: one lit slab on the dot field */
+.login { border-radius: 14px; box-shadow: var(--rim), var(--glow-accent); }
+body:has(.login) { background-color: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1.3px); background-size: 24px 24px; }

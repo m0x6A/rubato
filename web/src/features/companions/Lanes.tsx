@@ -9,6 +9,17 @@ import { issueKey, relative } from "../../shared/format.ts";
  */
 export const SESSION_STALE_SECS = 120;
 
+/** A companion that has not reported for this long is stale (AGENTS.md, "never silent": N defaults to 10 minutes). */
+export const COMPANION_STALE_MS = 10 * 60_000;
+
+/** How fresh a companion's signal is: 1 just now, 0 at the stale threshold or never seen. */
+export function freshness(lastSeen: string | null | undefined, now = Date.now(), staleMs = COMPANION_STALE_MS): number {
+  if (!lastSeen) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, 1 - (now - Date.parse(lastSeen)) / staleMs));
+}
+
 /** What to show for a session: its status, or unknown when the signal stopped flowing. */
 export function shownStatus(s: SessionState, now = Date.now(), staleSecs = SESSION_STALE_SECS): SessionStatus {
   return s.status === "working" && now - Date.parse(s.last_seen) > staleSecs * 1000 ? "unknown" : s.status;
@@ -101,8 +112,13 @@ function Lane({ companion: c, own, sessions, queue, issues, titles, onQueue, onR
     >
       <header data-testid={`companion-${c.user}`}>
         <span>
-          <strong>{c.hostname}</strong> <span className="muted">{own ? "yours" : c.user}</span>
+          <i className={c.connected && !c.revoked_at ? "led live" : "led"} aria-hidden="true" /> <strong>{c.hostname}</strong> <span className="muted">{own ? "yours" : c.user}</span>
           <div className={c.connected && !c.revoked_at ? "muted" : "warn"}>{state}</div>
+          {!c.revoked_at && (
+            <span className="fresh" data-testid={`fresh-${c.companion_id}`} data-share={(c.connected ? 1 : freshness(c.last_seen)).toFixed(2)} aria-hidden="true">
+              <b className={c.connected ? "live" : freshness(c.last_seen) > 0 ? "fading" : "stale"} style={{ width: `${Math.round((c.connected ? 1 : freshness(c.last_seen)) * 100)}%` }} />
+            </span>
+          )}
         </span>
         {own && !c.revoked_at && (
           <button type="button" onClick={() => onRevoke(c.companion_id)}>
@@ -129,7 +145,7 @@ function Lane({ companion: c, own, sessions, queue, issues, titles, onQueue, onR
                     {s.spend_usd !== undefined && s.spend_usd !== null ? ` · $${s.spend_usd.toFixed(2)}` : ""}
                   </div>
                 </span>
-                <span className={`badge ${status}`} title={status === "unknown" && s.status === "working" ? "It reported working, but no signal has arrived for a while" : undefined}>
+                <span className={`badge ${status}`} data-led={status === "working" ? "breathe" : undefined} title={status === "unknown" && s.status === "working" ? "It reported working, but no signal has arrived for a while" : undefined}>
                   {status}
                 </span>
               </li>
