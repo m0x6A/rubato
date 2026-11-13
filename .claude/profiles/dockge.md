@@ -23,7 +23,7 @@ variable names.
 
 | Fact | Value |
 | --- | --- |
-| Image source | local, built here and sent with `docker save | ssh apps docker load` (unregistry is not installed here) |
+| Image source | local, built here and sent with `docker save local/rubato:<tag> \| gzip -1 \| ssh apps 'gunzip \| docker load'`. unregistry is not installed: `docker pussh --help` exits 0 anyway, so do not test for it that way (2026-11-12) |
 | Image | `local/rubato` |
 | Platform | `linux/amd64` |
 
@@ -37,7 +37,7 @@ Dockge's **Update** button pulls and must not be used for this stack; redeploy w
 | Container port | `8080` (`RUBATO_BIND=0.0.0.0:8080`, set in the image) |
 | Host port | `8081` |
 | Health check | `GET /api/health` → 200 |
-| Environment (names only; values live in `/opt/stacks/rubato/.env` on the host) | `RUBATO_PUBLIC_URL`, `RUBATO_SESSION_SECRET` (secret), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (secret), `RUBATO_GITHUB_TOKEN` (secret); `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` (secret; Grafana Cloud OTLP gateway, set 2026-11-12); optional `RUBATO_MAP_REPO`, `RUBATO_MAP_PATH`, `RUBATO_MAP_REF` |
+| Environment (names only; values live in `/opt/stacks/rubato/.env` on the host) | `RUBATO_PUBLIC_URL`, `RUBATO_SESSION_SECRET` (secret), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (secret); GitHub App: `RUBATO_GITHUB_APP_ID`, `RUBATO_GITHUB_APP_INSTALLATION_ID`, `RUBATO_GITHUB_APP_PRIVATE_KEY_FILE=/data/github-app.pem` (verified 2026-11-12); `RUBATO_TOKEN_KEY` (secret, 64 hex, generated on the host 2026-11-12; ADR 0030); `RUBATO_GITHUB_TOKEN` (secret, ignored as an App); `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` (secret; Grafana Cloud OTLP gateway, set 2026-11-12); optional `RUBATO_MAP_REPO`, `RUBATO_MAP_PATH`, `RUBATO_MAP_REF` |
 | Persistent data | `./data` → `/data` (`rubato.db`, owned by uid 1000) |
 
 ## Deploys
@@ -46,4 +46,6 @@ Dockge's **Update** button pulls and must not be used for this stack; redeploy w
 | --- | --- | --- | --- | --- |
 | 2026-11-10 | `sha-df0e692` | `df0e692` | — (first deploy) | healthy, 200 on `/api/health` from the LAN, map loaded, logs clean |
 | 2026-11-12 | `sha-e4488fa` | `e4488fa` | `sha-df0e692` | healthy, 200 on `/api/health` from the LAN, logs clean (one warning: no GitHub App configured); migrations 0002–0005 applied, database copied first to `data/rubato.db.before-e4488fa`; metrics reach Grafana Cloud (17 of 27 queried names stored after two minutes) |
-| 2026-11-12 | `sha-2f8a446` | `2f8a446` | `sha-e4488fa` | healthy, 200 on `/api/health` from the LAN, logs clean; migrations 0006–0008 applied, database copied first to `data/rubato.db.before-2f8a446`; map loaded with scenarios; installation reports Issues: write, so issues can be created from the app |
+| 2026-11-12 | `sha-2f8a446` | `2f8a446` | `sha-e4488fa` | healthy (deployed outside this profile; row added from the host's image list); running as a GitHub App |
+| 2026-11-12 | `sha-1603f90` | `1603f90` | `sha-2f8a446` | healthy, 200 on `/api/health` from the LAN, logs clean; migrations 0006–0010 applied (`user_tokens`, `plan_approvals`), database copied first to `data/rubato.db.before-1603f90`; `RUBATO_TOKEN_KEY` replaced (was 40 chars, the server needs 64 hex). About 3 minutes down: the first `up` ran before the image was on the host |
+| 2026-11-13 | `sha-9db533e` | `9db533e` | `sha-1603f90` | healthy, 200 on `/api/health` from the LAN, logs clean, map loaded (11 nodes, 11 seams); restyle #81 served; migration 0011 (`repo_pulls`, additive) applied, database copied first to `data/rubato.db.before-9db533e` |
