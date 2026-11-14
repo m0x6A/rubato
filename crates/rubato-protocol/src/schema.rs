@@ -51,6 +51,7 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::approve::ApproveResponse>("approve_response"),
         one::<crate::progress::Overview>("overview"),
         one::<crate::web_link::WebEvent>("web_event"),
+        one::<crate::session_log::LaunchLog>("launch_log"),
         one::<crate::traffic::TrafficReport>("traffic_report"),
     ]
 }

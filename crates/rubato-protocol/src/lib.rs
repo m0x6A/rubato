@@ -27,6 +27,7 @@ pub mod pulls;
 pub mod queue;
 pub mod schema;
 pub mod session;
+pub mod session_log;
 pub mod session_message;
 pub mod traffic;
 pub mod web_link;
@@ -83,6 +84,7 @@ pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use session::{
     BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
 };
+pub use session_log::{LaunchLog, LogKind, LogRole, SessionLogEntry};
 pub use session_message::{
     LaunchMessages, MessageRefusal, SessionMessage, SessionMessageKind, SessionMessageOutcome,
     SessionMessageRequest, SessionMessageResult, SessionMessageState, SessionMessageView,

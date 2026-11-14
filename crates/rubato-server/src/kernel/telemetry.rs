@@ -138,6 +138,9 @@ pub struct Metrics {
     pub session_messages_oldest_idle_queued: Gauge<u64>,
     /// Connected companions per announced capability.
     pub companions_by_capability: Gauge<u64>,
+    /// Session log entries stored, and hooks that should have made one and did not (ADR 0052).
+    pub session_log_entries: Counter<u64>,
+    pub session_log_dropped: Counter<u64>,
 }
 
 impl Metrics {
@@ -200,6 +203,8 @@ impl Metrics {
                 )
                 .build(),
             companions_by_capability: m.u64_gauge(otel::metric::COMPANIONS_BY_CAPABILITY).build(),
+            session_log_entries: m.u64_counter(otel::metric::SESSION_LOG_ENTRIES).build(),
+            session_log_dropped: m.u64_counter(otel::metric::SESSION_LOG_DROPPED).build(),
         }
     }
 

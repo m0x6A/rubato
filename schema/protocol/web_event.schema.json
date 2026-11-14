@@ -75,6 +75,24 @@
             "kind",
             "launch_id"
           ]
+        },
+        {
+          "description": "`GET` `session_log::routes::LAUNCH_LOG` for this launch.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "launch_log"
+            },
+            "launch_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "launch_id"
+          ]
         }
       ]
     }

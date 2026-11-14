@@ -46,6 +46,10 @@ pub mod attr {
     pub const SESSION_MESSAGE_KIND: &str = "rubato.session_message.kind";
     /// A capability a companion announced (`rubato.companions.by_capability`).
     pub const CAPABILITY: &str = "rubato.capability";
+    /// A session log entry's role (`user`, `assistant`) and kind (`prompt`, `reply`, `review`,
+    /// `summary`), on `rubato.session_log.entries`.
+    pub const LOG_ROLE: &str = "rubato.log.role";
+    pub const LOG_KIND: &str = "rubato.log.kind";
 }
 
 /// Metric instrument names.
@@ -150,6 +154,10 @@ pub mod metric {
     pub const COMPANIONS_BY_CAPABILITY: &str = "rubato.companions.by_capability";
     /// Companion: pastes that failed, by reason.
     pub const SESSION_INPUT_FAILED: &str = "rubato.session_input.failed";
+    /// Session log entries stored, by role and kind (ADR 0052).
+    pub const SESSION_LOG_ENTRIES: &str = "rubato.session_log.entries";
+    /// Hooks that should have made a log entry and did not, by reason (`no_text`, `no_prompt_id`).
+    pub const SESSION_LOG_DROPPED: &str = "rubato.session_log.dropped";
     /// Workspaces configured (ADR 0044), recorded at start and every poll tick.
     pub const WORKSPACES_CONFIGURED: &str = "rubato.workspaces.configured";
     /// Repos named by more than one workspace's map (ADR 0048), recorded every poll tick.
@@ -229,6 +237,8 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SESSION_MESSAGE_ID,
         attr::SESSION_MESSAGE_KIND,
         attr::CAPABILITY,
+        attr::LOG_ROLE,
+        attr::LOG_KIND,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -279,6 +289,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
         metric::COMPANIONS_BY_CAPABILITY,
         metric::SESSION_INPUT_FAILED,
+        metric::SESSION_LOG_ENTRIES,
+        metric::SESSION_LOG_DROPPED,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

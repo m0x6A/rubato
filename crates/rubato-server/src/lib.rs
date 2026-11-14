@@ -23,6 +23,7 @@ pub mod pairing;
 pub mod pins;
 pub mod plans;
 pub mod queue;
+pub mod session_log;
 pub mod session_messages;
 pub mod spend_history;
 pub mod traffic;

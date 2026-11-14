@@ -225,6 +225,15 @@ export type DataModelKind = ("table" | "type" | "schema" | "event" | "file")
 export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
 export type ChecksStatus = (("green" | "red" | "pending") | "none")
 /**
+ * What a reply is, by its first line (ADR 0056): the design review, the discussion summary, or
+ * any other reply.
+ */
+export type LogKind = (("prompt" | "reply") | "review" | "summary")
+/**
+ * Who said it.
+ */
+export type LogRole = ("user" | "assistant")
+/**
  * Companion → server: what happened to a launch command.
  */
 export type LaunchResult1 = ({
@@ -373,10 +382,13 @@ type: "updated"
 /**
  * A resource a view can refetch on its own.
  */
-export type WebResource = {
+export type WebResource = ({
 kind: "launch_messages"
 launch_id: string
-}
+} | {
+kind: "launch_log"
+launch_id: string
+})
 
 export interface RubatoProtocol {
 ApproveRequest?: ApproveRequest
@@ -392,6 +404,7 @@ IssuePin?: IssuePin
 IssueRef?: IssueRef
 IssueSummary?: IssueSummary
 LaunchCommand?: LaunchCommand
+LaunchLog?: LaunchLog
 LaunchRequest?: LaunchRequest
 LaunchResponse?: LaunchResponse
 LaunchResult?: LaunchResult1
@@ -656,6 +669,15 @@ hook_event_name: HookEventKind
  */
 launch_id?: (string | null)
 /**
+ * On `UserPromptSubmit`: the session message this prompt carried, matched by the companion
+ * because the prompt ends with the message it pasted (ADR 0051, plan 122 PR 4).
+ */
+message_id?: (string | null)
+/**
+ * With `message_id`: the prompt holds text before the message (someone was typing).
+ */
+mixed?: boolean
+/**
  * `notification_type` for `Notification` events, such as `permission_prompt` or `idle_prompt`.
  */
 notification_type?: (string | null)
@@ -676,6 +698,10 @@ received_at: string
 session_id: string
 tool_name?: (string | null)
 transcript_path?: (string | null)
+/**
+ * The prompt or reply text in `payload` was cut to `Limits.session_log_max_chars`.
+ */
+truncated?: boolean
 }
 /**
  * An issue pinned to a node or seam. The one piece of state GitHub does not hold (ADR 0008).
@@ -1033,6 +1059,40 @@ spend_cap_usd: number
 user: string
 }
 /**
+ * A launch's log, oldest first.
+ */
+export interface LaunchLog {
+entries: SessionLogEntry[]
+launch_id: string
+}
+/**
+ * One line of a launched session's log.
+ */
+export interface SessionLogEntry {
+at: string
+kind: LogKind
+/**
+ * The session message this prompt carried, when it was one (ADR 0051).
+ */
+message_id?: (string | null)
+/**
+ * The prompt held text before the message: a person was typing in the terminal when it was
+ * pasted.
+ */
+mixed?: boolean
+/**
+ * Claude Code's `prompt_id`: the prompt and the reply of one turn share it.
+ */
+prompt_id: string
+role: LogRole
+session_id: string
+text: string
+/**
+ * The text was cut to `Limits.session_log_max_chars` on the machine.
+ */
+truncated?: boolean
+}
+/**
  * Start a session on an issue. Only the caller's own companions are eligible (ADR 0004).
  */
 export interface LaunchRequest {
@@ -1070,6 +1130,11 @@ heartbeat_interval_secs?: number
  * How often the server looks for a plan file on a live branch.
  */
 plan_poll_interval_secs?: number
+/**
+ * The longest prompt or reply the companion forwards for the session log (ADR 0052); longer
+ * text is cut and marked truncated.
+ */
+session_log_max_chars?: number
 /**
  * The longest session message the companion types (ADR 0051); longer ones are refused.
  */

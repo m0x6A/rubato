@@ -30,6 +30,8 @@ pub enum WebEvent {
 pub enum WebResource {
     /// `GET` `session_message::routes::LAUNCH_MESSAGES` for this launch.
     LaunchMessages { launch_id: uuid::Uuid },
+    /// `GET` `session_log::routes::LAUNCH_LOG` for this launch.
+    LaunchLog { launch_id: uuid::Uuid },
 }
 
 /// Route path for the browser websocket.

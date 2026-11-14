@@ -19,6 +19,18 @@
       ],
       "format": "uuid"
     },
+    "message_id": {
+      "description": "On `UserPromptSubmit`: the session message this prompt carried, matched by the companion\nbecause the prompt ends with the message it pasted (ADR 0051, plan 122 PR 4).",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "mixed": {
+      "description": "With `message_id`: the prompt holds text before the message (someone was typing).",
+      "type": "boolean"
+    },
     "notification_type": {
       "description": "`notification_type` for `Notification` events, such as `permission_prompt` or `idle_prompt`.",
       "type": [
@@ -55,6 +67,10 @@
         "string",
         "null"
       ]
+    },
+    "truncated": {
+      "description": "The prompt or reply text in `payload` was cut to `Limits.session_log_max_chars`.",
+      "type": "boolean"
     }
   },
   "required": [
