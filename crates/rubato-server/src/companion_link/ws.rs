@@ -171,7 +171,7 @@ async fn on_envelope(
     async move {
         let now = app.clock.now();
         if !matches!(env.message, CompanionMessage::Ack { .. }) {
-            let payload = serde_json::to_value(&env.message).unwrap_or_default();
+            let payload = serde_json::to_value(stored_form(&env.message)).unwrap_or_default();
             match store::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
                 Ok(false) => {
                     on_replay(&app.metrics, companion_id, &env);
@@ -374,12 +374,43 @@ async fn settle_queue(
     }
 }
 
+/// The envelope as it is kept in `companion_events`. A hook's raw Claude Code payload is never
+/// stored, even from a companion that still sends it (ADR 0052); deduplication needs only the
+/// sequence.
+fn stored_form(m: &CompanionMessage) -> std::borrow::Cow<'_, CompanionMessage> {
+    match m {
+        CompanionMessage::Hook(h) if h.payload.is_some() => {
+            let mut h = h.clone();
+            h.payload = None;
+            std::borrow::Cow::Owned(CompanionMessage::Hook(h))
+        }
+        other => std::borrow::Cow::Borrowed(other),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kernel::telemetry::{capture, metric_reader};
     use rubato_protocol::otel::metric;
     use rubato_protocol::{IssueRef, StateSource};
+
+    /// An old companion still sends the raw payload; the server never stores it (ADR 0052).
+    #[test]
+    fn a_hooks_raw_payload_is_not_stored() {
+        let ev = rubato_protocol::HookEvent::from_payload(
+            serde_json::json!({"session_id": "s", "hook_event_name": "PostToolUse", "cwd": "/w",
+                "tool_name": "Bash", "tool_response": {"stdout": "TOKEN=abc"}}),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        let m = CompanionMessage::Hook(ev);
+        let stored = serde_json::to_string(&*stored_form(&m)).unwrap();
+        assert!(!stored.contains("TOKEN=abc"), "{stored}");
+        assert!(stored.contains(r#""tool_name":"Bash""#), "{stored}");
+        let hb = CompanionMessage::Ack { seq: 1 };
+        assert!(matches!(stored_form(&hb), std::borrow::Cow::Borrowed(_)));
+    }
 
     #[test]
     fn a_remote_spelled_differently_takes_the_maps_spelling() {

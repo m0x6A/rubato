@@ -82,6 +82,8 @@ pub fn init(service_name: &'static str, endpoint: Option<&str>) -> Result<Guard>
 pub struct Metrics {
     pub heartbeat: Gauge<u64>,
     pub hook_forwarded: Counter<u64>,
+    /// Hook events whose payload lost keys outside the allowlist before forwarding (ADR 0052).
+    pub hook_payload_trimmed: Counter<u64>,
     pub sessions_discovered: Gauge<u64>,
     pub events_dropped: Counter<u64>,
 }
@@ -99,6 +101,10 @@ impl Metrics {
                 .with_description("unix seconds of the last heartbeat")
                 .build(),
             hook_forwarded: m.u64_counter(otel::metric::HOOK_FORWARDED).build(),
+            hook_payload_trimmed: m
+                .u64_counter(otel::metric::HOOK_PAYLOAD_TRIMMED)
+                .with_description("hook events whose payload was cut to the allowlist")
+                .build(),
             sessions_discovered: m.u64_gauge(otel::metric::SESSIONS_DISCOVERED).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
         }

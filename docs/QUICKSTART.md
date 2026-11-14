@@ -209,6 +209,14 @@ code and approve. The companion stores its pairing token in
 
 The *Companions* tab shows your machine as connected. Leave it running; it reconnects by itself.
 
+**What leaves your machine** (ADR 0052), which `pair` also prints:
+- the sessions the companion sees: repo, branch, issue, status and spend;
+- heartbeats and launch results;
+- each hook's event name and metadata: session, cwd, tool name.
+
+Tool input and output, prompts and replies stay on your machine. The companion cuts every hook
+payload to an allowlist before it leaves, and the server stores no hook payload at all.
+
 ## 7. Put an issue through the flow
 
 1. Open a small issue on `m0x6A/rubato`, for example a docs fix. Note its number *n*.

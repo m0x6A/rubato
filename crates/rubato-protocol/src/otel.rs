@@ -49,6 +49,8 @@ pub mod metric {
     /// Companion counter, by `rubato.hook_event` and `rubato.companion_id`. No session id: that
     /// is on the `rubato.hook.forward` span, so the series stay bounded (#43).
     pub const HOOK_FORWARDED: &str = "rubato.hook.forwarded";
+    /// Hook events whose payload the companion cut to its allowlist before forwarding (ADR 0052).
+    pub const HOOK_PAYLOAD_TRIMMED: &str = "rubato.hook.payload_trimmed";
     pub const SESSIONS_DISCOVERED: &str = "rubato.sessions.discovered";
     /// Server gauge, from each companion snapshot, by `rubato.session_state` and
     /// `rubato.companion_id`. Only the server records it (#43), so a sum counts each session once.
@@ -203,8 +205,10 @@ pub fn all_names() -> Vec<&'static str> {
         attr::TASK,
         attr::ROUTE,
         attr::OUTCOME,
+        attr::WORKSPACE,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
+        metric::HOOK_PAYLOAD_TRIMMED,
         metric::SESSIONS_DISCOVERED,
         metric::SESSIONS_BY_STATE,
         metric::ISSUES_BY_STATE,
@@ -242,6 +246,12 @@ pub fn all_names() -> Vec<&'static str> {
         metric::TRAFFIC_UNDECLARED_EDGES,
         metric::TRAFFIC_UNMAPPED_SERVICES,
         metric::COMPANION_SILENT_SECS,
+        metric::SPEND_POINTS,
+        metric::WORKSPACES_CONFIGURED,
+        metric::WORKSPACE_SHARED_REPOS,
+        metric::WORKSPACE_ORPHAN_ROWS,
+        metric::WORKSPACE_ID_COLLISIONS,
+        metric::PLANS_FIT_NONE,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
@@ -281,5 +291,35 @@ mod tests {
             );
         }
         println!("checked {} otel names", names.len());
+    }
+
+    /// Every `rubato.*` string declared in this file is listed in `all_names()`, so the namespace
+    /// test above sees it. Parsed from the source: a constant added without listing it fails here.
+    #[test]
+    fn every_declared_name_is_listed() {
+        let src = include_str!("otel.rs");
+        let listed: std::collections::BTreeSet<&str> = super::all_names().into_iter().collect();
+        let mut declared = 0;
+        let mut missing = Vec::new();
+        for line in src.lines() {
+            let line = line.trim();
+            if !(line.starts_with("pub const ") && line.contains(": &str = \"rubato.")) {
+                continue;
+            }
+            let value = line.split('"').nth(1).expect("a quoted name");
+            declared += 1;
+            if !listed.contains(value) {
+                missing.push(value);
+            }
+        }
+        assert!(
+            declared > 50,
+            "parsed only {declared} names; the pattern is wrong"
+        );
+        assert!(
+            missing.is_empty(),
+            "declared in otel.rs but not in all_names(): {missing:?}"
+        );
+        println!("checked {declared} declared otel names against all_names()");
     }
 }

@@ -46,3 +46,16 @@ Feature: Forwarding Claude Code hook events
     When something posts the recorded hook "stop.json" without the bearer token
     Then the companion answers 401
     And the server receives no hook event within 1 second
+
+  Scenario: Tool input and output never leave the machine
+    Only an allowlist of payload keys is forwarded (ADR 0052). The fixture adds a key no
+    allowlist knows, so a filter that only drops known secrets fails here.
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And the companion daemon is running and connected
+    When Claude Code posts the recorded hook "post-tool-use-extra.json" to the companion
+    Then the server receives a hook event "PostToolUse" for session "0f8fad5b-d9cb-469f-a165-70867728950e"
+    And the forwarded hook payload has no key "tool_input"
+    And the forwarded hook payload has no key "tool_response"
+    And the forwarded hook payload has no key "secret_x"
+    And the forwarded hook payload keeps key "tool_name"
