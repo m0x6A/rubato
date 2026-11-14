@@ -112,6 +112,7 @@ pub struct Metrics {
     pub issues_opening: Gauge<u64>,
     pub plans_not_fitting: Gauge<u64>,
     pub plans_approvals_opening: Gauge<u64>,
+    pub spend_points: Counter<u64>,
     /// The configured companion stale threshold N in seconds (#105). No unit, so the series
     /// stays `rubato_companion_silent_secs`, the name `CompanionSilent` reads.
     pub companion_silent_secs: Gauge<u64>,
@@ -157,6 +158,7 @@ impl Metrics {
             issues_opening: m.u64_gauge(otel::metric::ISSUES_OPENING).build(),
             plans_not_fitting: m.u64_gauge(otel::metric::PLANS_NOT_FITTING).build(),
             plans_approvals_opening: m.u64_gauge(otel::metric::PLANS_APPROVALS_OPENING).build(),
+            spend_points: m.u64_counter(otel::metric::SPEND_POINTS).build(),
             companion_silent_secs: m.u64_gauge(otel::metric::COMPANION_SILENT_SECS).build(),
         }
     }

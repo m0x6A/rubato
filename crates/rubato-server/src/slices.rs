@@ -36,6 +36,7 @@ const SLICES: &[&str] = &[
     "approve",
     "queue",
     "github_poll",
+    "spend_history",
     "overview",
     "web_link",
 ];

@@ -4,7 +4,7 @@
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
-use crate::{launch, pairing, queue};
+use crate::{launch, pairing, queue, spend_history};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -169,7 +169,7 @@ async fn on_envelope(
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
     async move {
-        let now = Utc::now();
+        let now = app.clock.now();
         if !matches!(env.message, CompanionMessage::Ack { .. }) {
             let payload = serde_json::to_value(&env.message).unwrap_or_default();
             match store::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
@@ -246,6 +246,14 @@ async fn on_envelope(
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
+                // Keyed by the pairing's companion id, never the one a session claims.
+                observe(
+                    "record_spend",
+                    companion_id,
+                    env.seq,
+                    spend_history::record(&app.db, &app.metrics, companion_id, &sessions, now)
+                        .await,
+                );
                 record_sessions_by_state(&app.metrics, companion_id, &sessions);
                 app.notify("sessions");
                 Some(ServerMessage::Ack { seq: env.seq })
@@ -511,5 +519,127 @@ mod tests {
             e.fields.get("error").map(String::as_str),
             Some("database is locked")
         );
+    }
+
+    /// An app on a fresh database with in-memory metrics, and a pairing to send as.
+    async fn spend_app() -> (
+        App,
+        metric_reader::Reader,
+        pairing::PairingRow,
+        tempfile::TempDir,
+    ) {
+        use crate::kernel::config::Config;
+        use crate::kernel::github::FakeGitHub;
+        use crate::kernel::state::AppState;
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let (reader, metrics) = metric_reader::start();
+        let mut app = AppState::new(
+            pool,
+            Config::for_tests(url, "m0x6A"),
+            std::sync::Arc::new(FakeGitHub::new()),
+        );
+        std::sync::Arc::get_mut(&mut app).unwrap().metrics = metrics;
+        let pairing = pairing::PairingRow {
+            companion_id: Uuid::new_v4(),
+            user: "m0x6A".into(),
+            hostname: "h".into(),
+            created_at: Utc::now(),
+            revoked_at: None,
+            last_seen: None,
+            server_seq: 0,
+            last_companion_seq: 0,
+        };
+        (app, reader, pairing, tmp)
+    }
+
+    fn spend_snapshot(companion_id: Uuid, seq: u64, usd: f64) -> CompanionEnvelope {
+        let mut s = session(companion_id, SessionStatus::Working);
+        s.issue = Some(IssueRef::new("m0x6A/rubato", 103));
+        s.spend_usd = Some(usd);
+        CompanionEnvelope {
+            seq,
+            sent_at: Utc::now(),
+            message: CompanionMessage::Sessions { sessions: vec![s] },
+        }
+    }
+
+    fn spend_count(reader: &metric_reader::Reader, outcome: &str) -> u64 {
+        reader
+            .points(metric::SPEND_POINTS)
+            .iter()
+            .filter(|p| p.attrs[attr::OUTCOME] == outcome)
+            .map(|p| p.value)
+            .sum()
+    }
+
+    async fn spend_rows(app: &App) -> Vec<(String, f64)> {
+        use sqlx::Row;
+        sqlx::query("SELECT bucket, usd FROM spend_points ORDER BY bucket")
+            .fetch_all(&app.db)
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| (r.get("bucket"), r.get("usd")))
+            .collect()
+    }
+
+    /// ADR 0012: a replayed envelope is only acked. Spend history never sees it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_replayed_sessions_envelope_adds_no_spend_row_and_no_count() {
+        let (app, reader, pairing, _tmp) = spend_app().await;
+        let c = pairing.companion_id;
+        let first = on_envelope(&app, &pairing, spend_snapshot(c, 1, 1.0)).await;
+        assert!(matches!(first, Some(ServerMessage::Ack { seq: 1 })));
+        assert_eq!(spend_rows(&app).await.len(), 1);
+        assert_eq!(spend_count(&reader, "stored"), 1);
+
+        app.clock.set(Utc::now() + chrono::Duration::hours(1));
+        let replay = on_envelope(&app, &pairing, spend_snapshot(c, 1, 9.0)).await;
+        assert!(matches!(replay, Some(ServerMessage::Ack { seq: 1 })));
+        let rows = spend_rows(&app).await;
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].1, 1.0);
+        assert_eq!(spend_count(&reader, "stored"), 1);
+        assert_eq!(spend_count(&reader, "unchanged"), 0);
+    }
+
+    /// A failed spend write is a logged bookkeeping write: the snapshot is still stored and the
+    /// envelope still acked (design 103 §2, Failure).
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_spend_write_is_logged_and_the_snapshot_still_acked() {
+        use sqlx::Row;
+        let (app, reader, pairing, _tmp) = spend_app().await;
+        let c = pairing.companion_id;
+        sqlx::query("DROP TABLE spend_points")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let (events, _guard) = capture::start();
+        let reply = on_envelope(&app, &pairing, spend_snapshot(c, 3, 2.0)).await;
+        assert!(
+            matches!(reply, Some(ServerMessage::Ack { seq: 3 })),
+            "{reply:?}"
+        );
+        let stored: i64 = sqlx::query("SELECT COUNT(*) AS n FROM session_snapshots")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+            .get("n");
+        assert_eq!(stored, 1, "the snapshot is stored");
+        let events = events.lock().unwrap();
+        let failed: Vec<_> = events
+            .iter()
+            .filter(|e| e.message == "companion bookkeeping write failed")
+            .collect();
+        assert_eq!(failed.len(), 1, "{events:?}");
+        assert_eq!(failed[0].level, tracing::Level::ERROR);
+        assert_eq!(
+            failed[0].fields.get("write").map(String::as_str),
+            Some("record_spend")
+        );
+        assert_eq!(failed[0].fields.get("seq").map(String::as_str), Some("3"));
+        assert_eq!(spend_count(&reader, "failed"), 1);
     }
 }

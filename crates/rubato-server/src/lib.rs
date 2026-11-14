@@ -23,6 +23,7 @@ pub mod pairing;
 pub mod pins;
 pub mod plans;
 pub mod queue;
+pub mod spend_history;
 pub mod web_link;
 
 #[cfg(test)]

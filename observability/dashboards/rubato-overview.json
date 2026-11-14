@@ -753,6 +753,41 @@
       "options": {}
     },
     {
+      "id": 44,
+      "title": "Spend history writes",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Writes of each issue's spend history (ADR 0037), by outcome: stored (a session's spend changed and the issue's point was written), unchanged (same or older value), rejected (not finite or negative), failed (the write errored; log 'companion bookkeeping write failed' with write=record_spend). A flat stored line while working sessions is above zero means companions stopped sending spend (no pricing configured?) or the write fails.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_spend_points_total[1h]))",
+          "legendFormat": "{{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rubato_sessions_by_state{rubato_session_state=\"working\"})",
+          "legendFormat": "working sessions"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
       "id": 50,
       "type": "row",
       "title": "Interactive map",
@@ -760,7 +795,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 58
       },
       "collapsed": false,
       "panels": []
@@ -773,7 +808,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 53
+        "y": 59
       },
       "datasource": {
         "type": "prometheus",
@@ -829,7 +864,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 53
+        "y": 59
       },
       "datasource": {
         "type": "prometheus",
@@ -859,7 +894,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 53
+        "y": 59
       },
       "datasource": {
         "type": "prometheus",
@@ -889,7 +924,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 53
+        "y": 59
       },
       "datasource": {
         "type": "prometheus",
@@ -941,7 +976,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -971,7 +1006,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -1001,7 +1036,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -1036,7 +1071,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -1115,7 +1150,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1145,7 +1180,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1180,7 +1215,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 71
+        "y": 77
       },
       "collapsed": false,
       "panels": []
@@ -1193,7 +1228,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 72
+        "y": 78
       },
       "datasource": {
         "type": "prometheus",
@@ -1256,7 +1291,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 84
       },
       "datasource": {
         "type": "prometheus",

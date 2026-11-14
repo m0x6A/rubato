@@ -11,7 +11,7 @@ use rubato_protocol::{
     ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
     DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, OpenIssue, Plan,
     Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls, ReviewRecord,
-    SessionState, SessionStatus, blocked_from, derive_progress, plan_fit,
+    SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress, plan_fit,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -41,6 +41,8 @@ pub struct OverviewInputs {
     pub repo_pulls: Vec<RepoPulls>,
     /// Every queued issue, lanes of revoked companions included; the handler leaves those out.
     pub queue: Vec<QueuedIssue>,
+    /// Each issue's spend over time, downsampled (ADR 0037). Copied onto its summary only.
+    pub spend: HashMap<IssueRef, Vec<SpendPoint>>,
 }
 
 pub struct Built {
@@ -290,6 +292,7 @@ pub fn build(
             fit,
             plan_sha: plan_row.and_then(|p| p.approval_sha.clone()),
             spend_usd: spend,
+            spend_history: inputs.spend.get(issue).cloned().unwrap_or_default(),
         });
     }
     for s in &mut out {
@@ -643,6 +646,7 @@ mod tests {
             layout: MapLayout::default(),
             queue: vec![],
             repo_pulls: vec![],
+            spend: HashMap::new(),
         }
     }
 

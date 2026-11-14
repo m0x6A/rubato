@@ -29,6 +29,22 @@ pub struct LoadedMap {
     pub yaml: String,
 }
 
+/// The server's clock for receipt times on the companion socket. The system clock, unless a
+/// test sets a time (plan 103: snapshots received 20 minutes apart).
+#[derive(Default)]
+pub struct Clock(Mutex<Option<DateTime<Utc>>>);
+
+impl Clock {
+    pub fn now(&self) -> DateTime<Utc> {
+        self.0.lock().unwrap().unwrap_or_else(Utc::now)
+    }
+
+    /// Test-only in use: every later `now` answers `at` until it is set again.
+    pub fn set(&self, at: DateTime<Utc>) {
+        *self.0.lock().unwrap() = Some(at);
+    }
+}
+
 pub struct AppState {
     pub db: SqlitePool,
     pub config: Arc<Config>,
@@ -39,6 +55,7 @@ pub struct AppState {
     pub map: RwLock<Option<LoadedMap>>,
     pub metrics: Metrics,
     pub signer: Signer,
+    pub clock: Clock,
 }
 
 pub type App = Arc<AppState>;
@@ -56,6 +73,7 @@ impl AppState {
             map: RwLock::new(None),
             metrics: Metrics::new(),
             signer,
+            clock: Clock::default(),
         })
     }
 
