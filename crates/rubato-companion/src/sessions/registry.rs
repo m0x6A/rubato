@@ -134,6 +134,7 @@ impl Registry {
                 last_seen: e.last_seen,
                 spend_usd: e.spend_usd,
                 branch_drift: e.branch_drift.clone(),
+                blocked_by: None,
             })
             .collect()
     }

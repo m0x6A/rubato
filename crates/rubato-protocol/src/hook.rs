@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::session::SessionStatus;
+use crate::session::{BlockCause, SessionStatus};
 
 /// Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -39,6 +39,20 @@ impl HookEventKind {
             Self::StopFailure => Some(SessionStatus::Blocked),
             Self::SessionEnd => Some(SessionStatus::Ended),
             Self::Unknown => None,
+        }
+    }
+
+    /// Which hook blocked the session, when this event implies *blocked* (ADR 0043). `None`
+    /// for every other event, so a hook that implies another status clears the cause.
+    pub fn implied_block_cause(self, notification_type: Option<&str>) -> Option<BlockCause> {
+        match self {
+            Self::Notification => match notification_type {
+                Some("permission_prompt") => Some(BlockCause::PermissionPrompt),
+                Some("idle_prompt") => Some(BlockCause::IdlePrompt),
+                _ => None,
+            },
+            Self::StopFailure => Some(BlockCause::StopFailure),
+            _ => None,
         }
     }
 }
@@ -93,6 +107,11 @@ impl HookEvent {
         self.hook_event_name
             .implied_status(self.notification_type.as_deref())
     }
+
+    pub fn implied_block_cause(&self) -> Option<BlockCause> {
+        self.hook_event_name
+            .implied_block_cause(self.notification_type.as_deref())
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +141,59 @@ mod tests {
         assert_eq!(e.implied_status(), None);
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains("\"Unknown\""));
+    }
+
+    /// The cause travels with *blocked* and only with it: every kind and notification type,
+    /// a cause exactly when the status is blocked.
+    #[test]
+    fn implied_block_cause_names_the_blocking_hook() {
+        use HookEventKind::*;
+        let kinds = [
+            SessionStart,
+            UserPromptSubmit,
+            PreToolUse,
+            PostToolUse,
+            PostToolUseFailure,
+            Notification,
+            Stop,
+            StopFailure,
+            SessionEnd,
+            Unknown,
+        ];
+        let types = [
+            None,
+            Some("permission_prompt"),
+            Some("idle_prompt"),
+            Some("auth_success"),
+        ];
+        let mut checked = 0;
+        for k in kinds {
+            for t in types {
+                let cause = k.implied_block_cause(t);
+                assert_eq!(
+                    cause.is_some(),
+                    k.implied_status(t) == Some(SessionStatus::Blocked),
+                    "{k:?} {t:?}"
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(
+            StopFailure.implied_block_cause(None),
+            Some(BlockCause::StopFailure)
+        );
+        assert_eq!(
+            Notification.implied_block_cause(Some("permission_prompt")),
+            Some(BlockCause::PermissionPrompt)
+        );
+        assert_eq!(
+            Notification.implied_block_cause(Some("idle_prompt")),
+            Some(BlockCause::IdlePrompt)
+        );
+        // A Notification of another type implies no status and no cause.
+        assert_eq!(Notification.implied_status(Some("auth_success")), None);
+        assert_eq!(Notification.implied_block_cause(Some("auth_success")), None);
+        println!("checked {checked} hook kinds and notification types");
     }
 
     #[test]

@@ -156,12 +156,13 @@ pub fn build(
             });
         }
         let pr = inputs.prs.get(issue);
+        let cap_kind = inputs.cap_hits.get(issue).copied();
         let (state, reason) = derive_progress(&ProgressInputs {
             pins: &pins,
             launched: inputs.launched.contains(issue),
             sessions: &sessions,
             has_plan: plan.is_some(),
-            cap_hit: cap_hit_blocks(inputs.cap_hits.get(issue).copied(), &sessions),
+            cap_hit: cap_kind.filter(|_| cap_hit_blocks(cap_kind, &sessions)),
             pr,
             now,
             session_stale_secs: limits.session_stale_secs,
@@ -270,6 +271,7 @@ pub fn build(
                     .filter_map(|s| s.session_id.clone())
                     .collect(),
                 reason,
+                blocked_from: None,
             },
             sessions,
             plan,
@@ -585,6 +587,7 @@ mod tests {
             last_seen: now(),
             spend_usd: Some(1.5),
             branch_drift: None,
+            blocked_by: None,
         }
     }
 
