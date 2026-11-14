@@ -176,15 +176,27 @@ pub fn assess(f: &LinkFacts) -> Assessment {
                 None => {}
             }
         }
-        // Overdue: typed into the session long enough ago, still the newest revision, not on
-        // the branch, and no report that it committed or that the plan changed under it.
+        // Overdue: typed into the session long enough ago, still the newest revision and the
+        // newest approval of its branch, not on the branch, and no report that it committed or
+        // that what it approved changed under it (plan, bundle or a pinned ADR: nothing was
+        // written, and the approval reads as for an earlier version until a person approves
+        // again). A superseded approval is never overdue.
         let current = f
             .newest
             .get(&a.draft_id)
-            .is_some_and(|s| s.eq_ignore_ascii_case(&a.plan_sha));
+            .is_some_and(|s| s.eq_ignore_ascii_case(&a.plan_sha))
+            && newest_of_branch
+                .get(&(&a.issue, a.branch.as_str()))
+                .is_some_and(|n| n.id == a.id);
         let reported = a.handoff.as_ref().is_some_and(|h| {
-            h.outcome == HandoffOutcome::Committed.name()
-                || h.outcome == HandoffOutcome::PlanChanged.name()
+            [
+                HandoffOutcome::Committed,
+                HandoffOutcome::PlanChanged,
+                HandoffOutcome::BundleChanged,
+                HandoffOutcome::AdrChanged,
+            ]
+            .iter()
+            .any(|o| h.outcome == o.name())
         });
         let delivered_long_ago = f
             .delivered
