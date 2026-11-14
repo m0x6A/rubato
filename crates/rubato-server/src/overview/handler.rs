@@ -77,6 +77,9 @@ pub async fn overview(
         pulls: built.pulls,
         traffic: built.traffic,
         companion_silent_secs: app.config.limits.companion_silent_secs,
+        // One workspace until the server holds several (ADR 0044, plan 89 PR 4).
+        workspace: rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+        workspaces: vec![],
         generated_at: Utc::now(),
     }))
 }

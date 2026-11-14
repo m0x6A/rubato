@@ -24,6 +24,8 @@ pub mod attr {
     pub const HOOK_EVENT: &str = "rubato.hook_event";
     pub const LAUNCH_ID: &str = "rubato.launch_id";
     pub const MAP_VERSION: &str = "rubato.map.version";
+    /// The workspace a route, map load, gauge or launch belongs to (ADR 0044).
+    pub const WORKSPACE: &str = "rubato.workspace";
     pub const PLAN_PATH: &str = "rubato.plan.path";
     pub const PLAN_UNKNOWN_IDS: &str = "rubato.plan.unknown_ids";
     pub const PLAN_O_ROWS_MISSING: &str = "rubato.plan.o_rows_missing";
@@ -130,6 +132,17 @@ pub mod metric {
     /// The companion stale threshold N in seconds, from config, recorded every poll tick.
     /// `CompanionSilent` compares heartbeats against it, with 600 when it is missing (#105).
     pub const COMPANION_SILENT_SECS: &str = "rubato.companion.silent_secs";
+    /// Workspaces configured (ADR 0044), recorded at start and every poll tick.
+    pub const WORKSPACES_CONFIGURED: &str = "rubato.workspaces.configured";
+    /// Repos named by more than one workspace's map (ADR 0048), recorded every poll tick.
+    pub const WORKSPACE_SHARED_REPOS: &str = "rubato.workspace.shared_repos";
+    /// Rows whose workspace is no longer configured (ADR 0047), counted at start.
+    pub const WORKSPACE_ORPHAN_ROWS: &str = "rubato.workspace.orphan_rows";
+    /// Ids that name parts with different repos in two workspaces sharing a repo (finding
+    /// `IdCollision`, ADR 0045), recorded every poll tick.
+    pub const WORKSPACE_ID_COLLISIONS: &str = "rubato.workspace.id_collisions";
+    /// Tracked plans that fit none of their issue's workspaces (ADR 0045), every poll tick.
+    pub const PLANS_FIT_NONE: &str = "rubato.plans.fit_none";
 }
 
 /// Span names.

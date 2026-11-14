@@ -94,6 +94,18 @@
       "items": {
         "$ref": "#/$defs/SessionState"
       }
+    },
+    "workspace": {
+      "description": "The workspace this overview is of (ADR 0049). An older server's overview reads as `default`.",
+      "type": "string",
+      "default": "default"
+    },
+    "workspaces": {
+      "description": "Every configured workspace, in switcher order. Empty from an older server.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WorkspaceInfo"
+      }
     }
   },
   "required": [
@@ -937,6 +949,54 @@
             "to",
             "calls"
           ]
+        },
+        {
+          "description": "Two workspaces whose maps name a repo give it different plan paths (ADR 0045). The\nfirst in config order is used.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plan_path_conflict"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "workspaces": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "repo",
+            "workspaces"
+          ]
+        },
+        {
+          "description": "An id in a repo shared by two workspaces names parts with different repos in their maps\n(ADR 0045): it may mean two things. Shown, never refused.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "id_collision"
+            },
+            "workspaces": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "workspaces"
+          ]
         }
       ]
     },
@@ -1151,8 +1211,22 @@
             }
           ]
         },
+        "fits_in": {
+          "description": "Names of the workspaces whose map the plan fits (ADR 0045). The approval counts when this\nis not empty; in a workspace not named here the issue reads \"counts in <name>\".",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "issue": {
           "$ref": "#/$defs/IssueRef"
+        },
+        "pinned_in": {
+          "description": "Names of the other workspaces where the issue is pinned (ADR 0047): \"pinned in <name>\".",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "pins": {
           "type": "array",
@@ -1324,6 +1398,53 @@
       "required": [
         "id",
         "kind"
+      ]
+    },
+    "MapPlacement": {
+      "description": "Where a `Map:` line places an issue: the part or seam, and the workspace it names, if any\n(ADR 0046). On the wire it is a `MapRef` with an optional `workspace`, so an old value reads.",
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "description": "A workspace id: the line places the issue in this workspace only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "node"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "seam"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
       ]
     },
     "MapRef": {
@@ -1537,7 +1658,7 @@
           "description": "The place its body's `Map:` line names, when its author is not trusted to place it\n(ADR 0026); a trusted line pins the issue and it leaves this list.",
           "anyOf": [
             {
-              "$ref": "#/$defs/MapRef"
+              "$ref": "#/$defs/MapPlacement"
             },
             {
               "type": "null"
@@ -2693,6 +2814,43 @@
         "to",
         "calls",
         "errors"
+      ]
+    },
+    "WorkspaceInfo": {
+      "description": "One workspace as the switcher shows it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "`[a-z0-9-]{1,32}`: in URLs (`?w=`, `/api/w/{id}`), rows and the `rubato.workspace` attribute.",
+          "type": "string"
+        },
+        "loaded_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "map_repo": {
+          "description": "`owner/name` of the repo holding this workspace's map.",
+          "type": "string"
+        },
+        "name": {
+          "description": "What people call it: the entry's `name`, else the map's.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Git sha of the map as loaded. Absent until it has loaded once.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "map_repo"
       ]
     }
   }

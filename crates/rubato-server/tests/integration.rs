@@ -1851,7 +1851,7 @@ async fn map_lines_place_member_issues_and_suggest_for_the_rest() {
     let backlog: Vec<u64> = ov.backlog.issues.iter().map(|i| i.issue.number).collect();
     assert_eq!(backlog, [72, 73]);
     let stranger = &ov.backlog.issues[0];
-    assert_eq!(stranger.map_line, Some(MapRef::node("web")));
+    assert_eq!(stranger.map_line, Some(MapRef::node("web").into()));
     assert_eq!(
         stranger.suggestion.as_ref().map(|s| s.target.clone()),
         Some(MapRef::node("web"))

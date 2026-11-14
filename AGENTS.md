@@ -166,7 +166,7 @@ pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PA
 session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
 hook       HookEvent
 pins       IssuePin, PinRequest; PINS
-issue_body the Map: line (parse_map_line, map_line), PinSuggestion
+issue_body the Map: line (parse_map_line, parse_map_placement, map_line_in), MapPlacement, PinSuggestion
 issue_new  NewIssueRequest, NewIssueResponse, render_issue, the Rubato-Request: line; ISSUES
 launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
 layout     MapLayout, Position; LAYOUT
@@ -178,6 +178,7 @@ progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, derive_traffic, limits
 web_link   WebEvent; WEB_WS
+workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
 ```
 
 The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).
