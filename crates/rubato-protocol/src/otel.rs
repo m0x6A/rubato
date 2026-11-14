@@ -41,6 +41,8 @@ pub mod attr {
     /// How something ended, or which state it is in: `opened`, `failed`, `withdrawn`, `merged`,
     /// `closed` for a map proposal; `opening`, `proposed`, `merged` for its state.
     pub const OUTCOME: &str = "rubato.outcome";
+    /// Which traffic source answered a fetch (ADR 0040): `dev_file` or `prometheus`.
+    pub const TRAFFIC_SOURCE: &str = "rubato.traffic.source";
 }
 
 /// Metric instrument names.
@@ -203,6 +205,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::TASK,
         attr::ROUTE,
         attr::OUTCOME,
+        attr::TRAFFIC_SOURCE,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::SESSIONS_DISCOVERED,
