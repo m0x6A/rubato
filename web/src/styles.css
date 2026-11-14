@@ -489,8 +489,12 @@ button.link:hover { text-decoration: underline; }
 /* the panel is too narrow for seven labels: only the current station names itself (the rail says the rest) */
 .stage-rail .station:not(.now) .label { visibility: hidden; }
 .stage-rail .station.now { overflow: visible; }
+/* #106: the station a blocked issue left from: a red dot, its label named in small red text (after the rule above, which it overrides) */
+.stage-rail .station.left i { background: var(--bad); box-shadow: 0 0 10px var(--bad); }
+.stage-rail .station.left .label { color: var(--bad-ink); font-weight: 600; visibility: visible; }
+.stage-rail .station.left { overflow: visible; }
 .stage-rail.unknown .station i { background: transparent; border: 1px dashed var(--quiet); }
-.stage-rail .notch { position: absolute; left: calc(100% / 7 * 1.5); top: -3px; width: 4px; height: 12px; border-radius: 2px; background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+.stage-rail .notch { position: absolute; left: calc(100% / 7 * (var(--at, 1) + 0.5)); top: -3px; width: 4px; height: 12px; border-radius: 2px; background: var(--bad); box-shadow: 0 0 8px var(--bad); }
 :root[data-motion="full"] .stage-rail .station i { transition: background-color var(--dur-fill) var(--ease-out), box-shadow var(--dur-fill) var(--ease-out); }
 .gauge { position: relative; width: 132px; height: 80px; flex: none; }
 .gauge .gauge-track { fill: none; stroke: var(--conduit); stroke-width: 9; stroke-linecap: round; }
@@ -500,6 +504,11 @@ button.link:hover { text-decoration: underline; }
 .gauge .gauge-mark { stroke: var(--warn); stroke-width: 2; }
 .gauge .gauge-value { position: absolute; left: 0; right: 0; top: 38px; text-align: center; font-family: var(--font-mono); font-weight: 600; font-size: 18px; }
 .gauge .gauge-cap { position: absolute; left: 0; right: 0; top: 62px; text-align: center; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+/* spend over time beside the gauge (issue #103): static, accent stroke, muted value */
+.sparkline { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.sparkline .sparkline-line { fill: none; stroke: var(--accent); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
+.sparkline .sparkline-dot { fill: var(--accent); }
+.sparkline .sparkline-value { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
 /* a panel or inspector opens rather than snaps (M8); a badge eases between states (M6) */
 :root[data-motion="full"] [data-testid="issue-detail"], :root[data-motion="full"] .inspector, :root[data-motion="full"] .draft-panel { animation: panel-in var(--dur-base) var(--ease-out); }
 @keyframes panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

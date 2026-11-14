@@ -285,6 +285,7 @@ impl Handles {
                 last_seen: e.last_seen,
                 spend_usd: None,
                 branch_drift: None,
+                blocked_by: None,
             };
             st.effective_status(Utc::now(), stale_secs)
         })

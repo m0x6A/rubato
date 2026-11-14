@@ -79,6 +79,8 @@ pub fn init(service_name: &'static str, endpoint: Option<&str>) -> Result<Guard>
 pub struct Metrics {
     pub sessions_by_state: Gauge<u64>,
     pub issues_by_state: Gauge<u64>,
+    /// Blocked issues by the station they left from (ADR 0043).
+    pub issues_blocked_from: Gauge<u64>,
     pub events_dropped: Counter<u64>,
     pub rate_limit_remaining: Gauge<u64>,
     pub rate_limit_limit: Gauge<u64>,
@@ -116,6 +118,10 @@ pub struct Metrics {
     pub traffic_seams_quiet: Gauge<u64>,
     pub traffic_undeclared_edges: Gauge<u64>,
     pub traffic_unmapped_services: Gauge<u64>,
+    pub spend_points: Counter<u64>,
+    /// The configured companion stale threshold N in seconds (#105). No unit, so the series
+    /// stays `rubato_companion_silent_secs`, the name `CompanionSilent` reads.
+    pub companion_silent_secs: Gauge<u64>,
 }
 
 impl Metrics {
@@ -128,6 +134,7 @@ impl Metrics {
         Self {
             sessions_by_state: m.u64_gauge(otel::metric::SESSIONS_BY_STATE).build(),
             issues_by_state: m.u64_gauge(otel::metric::ISSUES_BY_STATE).build(),
+            issues_blocked_from: m.u64_gauge(otel::metric::ISSUES_BLOCKED_FROM).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
             rate_limit_remaining: m
                 .u64_gauge(otel::metric::GITHUB_RATE_LIMIT_REMAINING)
@@ -162,7 +169,17 @@ impl Metrics {
             traffic_seams_quiet: m.u64_gauge(otel::metric::TRAFFIC_SEAMS_QUIET).build(),
             traffic_undeclared_edges: m.u64_gauge(otel::metric::TRAFFIC_UNDECLARED_EDGES).build(),
             traffic_unmapped_services: m.u64_gauge(otel::metric::TRAFFIC_UNMAPPED_SERVICES).build(),
+            spend_points: m.u64_counter(otel::metric::SPEND_POINTS).build(),
+            companion_silent_secs: m.u64_gauge(otel::metric::COMPANION_SILENT_SECS).build(),
         }
+    }
+
+    /// What every poll tick records: one `rubato.poll.ticks`, so `ServerPollSilent` sees it
+    /// stop, and the configured N, so `CompanionSilent` has it on every export (#105).
+    pub fn record_poll_tick(&self, limits: &rubato_protocol::Limits) {
+        self.poll_ticks.add(1, &[]);
+        self.companion_silent_secs
+            .record(limits.companion_silent_secs, &[]);
     }
 }
 
@@ -399,5 +416,33 @@ pub mod capture {
             line();
             assert_eq!(messages(&events), ["reached twice"]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::metric_reader;
+    use rubato_protocol::{Limits, otel};
+
+    /// #105: every poll tick records the configured N, so `CompanionSilent` compares against
+    /// the server's threshold on every collection, whatever the exporter's temporality.
+    #[test]
+    fn a_poll_tick_records_the_companion_threshold() {
+        let (reader, metrics) = metric_reader::start();
+        let limits = Limits {
+            companion_silent_secs: 300,
+            ..Limits::default()
+        };
+        metrics.record_poll_tick(&limits);
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            let points = reader.points(otel::metric::COMPANION_SILENT_SECS);
+            assert_eq!(points.len(), 1, "{points:?}");
+            assert_eq!(points[0].value, 300);
+            assert!(points[0].attrs.is_empty(), "{points:?}");
+            seen.push(points[0].value);
+        }
+        assert_eq!(reader.points(otel::metric::POLL_TICKS)[0].value, 1);
+        println!("checked the threshold on {} collections", seen.len());
     }
 }

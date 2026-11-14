@@ -11,7 +11,8 @@ use rubato_protocol::{
     ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
     DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, ObservedTraffic,
     OpenIssue, Plan, Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls,
-    ReviewRecord, SessionState, SessionStatus, derive_progress, derive_traffic, plan_fit,
+    ReviewRecord, SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress,
+    derive_traffic, plan_fit,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -43,6 +44,8 @@ pub struct OverviewInputs {
     pub queue: Vec<QueuedIssue>,
     /// The latest traffic report and its source (ADR 0039). Never an input to progress.
     pub traffic: TrafficLatest,
+    /// Each issue's spend over time, downsampled (ADR 0037). Copied onto its summary only.
+    pub spend: HashMap<IssueRef, Vec<SpendPoint>>,
 }
 
 pub struct Built {
@@ -160,16 +163,20 @@ pub fn build(
             });
         }
         let pr = inputs.prs.get(issue);
-        let (state, reason) = derive_progress(&ProgressInputs {
+        let cap_kind = inputs.cap_hits.get(issue).copied();
+        let progress_inputs = ProgressInputs {
             pins: &pins,
             launched: inputs.launched.contains(issue),
             sessions: &sessions,
             has_plan: plan.is_some(),
-            cap_hit: cap_hit_blocks(inputs.cap_hits.get(issue).copied(), &sessions),
+            cap_hit: cap_kind.filter(|_| cap_hit_blocks(cap_kind, &sessions)),
             pr,
             now,
             session_stale_secs: limits.session_stale_secs,
-        });
+        };
+        let (state, reason) = derive_progress(&progress_inputs);
+        // Same inputs, so the station never disagrees with the state (ADR 0043).
+        let blocked_from = blocked_from(&progress_inputs);
         let last_seen = sessions
             .iter()
             .map(|s| s.last_seen)
@@ -274,6 +281,7 @@ pub fn build(
                     .filter_map(|s| s.session_id.clone())
                     .collect(),
                 reason,
+                blocked_from,
             },
             sessions,
             plan,
@@ -289,6 +297,7 @@ pub fn build(
             fit,
             plan_sha: plan_row.and_then(|p| p.approval_sha.clone()),
             spend_usd: spend,
+            spend_history: inputs.spend.get(issue).cloned().unwrap_or_default(),
         });
     }
     for s in &mut out {
@@ -529,11 +538,42 @@ pub fn counts(built: &Built) -> (BTreeMap<ProgressState, usize>, BTreeMap<String
     (by_state, by_seam)
 }
 
+/// Blocked issues by the station they left from, for `rubato.issues.blocked_from`: all five
+/// values, zeros included (A6), so the sum always equals the blocked count of [`counts`].
+pub fn blocked_from_counts(built: &Built) -> BTreeMap<&'static str, usize> {
+    let mut by: BTreeMap<&'static str, usize> =
+        BLOCKED_FROM_VALUES.iter().map(|v| (*v, 0)).collect();
+    for i in built
+        .issues
+        .iter()
+        .filter(|i| i.progress.state == ProgressState::Blocked)
+    {
+        *by.entry(blocked_from_label(i.progress.blocked_from))
+            .or_insert(0) += 1;
+    }
+    by
+}
+
+/// The values of `rubato.issue.blocked_from`.
+pub const BLOCKED_FROM_VALUES: [&str; 5] =
+    ["started", "designing", "designed", "building", "off_rail"];
+
+fn blocked_from_label(at: Option<ProgressState>) -> &'static str {
+    match at {
+        Some(ProgressState::Started) => "started",
+        Some(ProgressState::Designing) => "designing",
+        Some(ProgressState::Designed) => "designed",
+        Some(ProgressState::Building) => "building",
+        // `blocked_from` names only the four rail stations; anything else is off the rail.
+        _ => "off_rail",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use rubato_protocol::{AffectedPart, ORow, PartStatus, StateSource, SystemMap};
+    use rubato_protocol::{AffectedPart, BlockCause, ORow, PartStatus, StateSource, SystemMap};
     use uuid::Uuid;
 
     fn now() -> DateTime<Utc> {
@@ -605,6 +645,7 @@ mod tests {
             last_seen: now(),
             spend_usd: Some(1.5),
             branch_drift: None,
+            blocked_by: None,
         }
     }
 
@@ -630,6 +671,7 @@ mod tests {
                 report: None,
                 source: rubato_protocol::SourceStatus::NotConfigured,
             },
+            spend: HashMap::new(),
         }
     }
 
@@ -796,6 +838,100 @@ mod tests {
             );
         }
         println!("checked {} cap hit cases", cases.len());
+    }
+
+    /// Issue #106: a session blocked mid-turn after the plan leaves from Building.
+    #[test]
+    fn blocked_while_building_says_building() {
+        let a = IssueRef::new("o/r", 1);
+        let mut inputs = empty();
+        inputs.plans = vec![plan(&a, "web-server", "web")];
+        let mut s = session(&a, SessionStatus::Blocked, StateSource::Hook);
+        s.blocked_by = Some(BlockCause::PermissionPrompt);
+        inputs.sessions = vec![s];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let p = &built.issues[0].progress;
+        assert_eq!(p.state, ProgressState::Blocked);
+        assert_eq!(p.blocked_from, Some(ProgressState::Building));
+        // Waiting for input after its turn, the same session leaves from Designed.
+        inputs.sessions[0].blocked_by = Some(BlockCause::IdlePrompt);
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert_eq!(
+            built.issues[0].progress.blocked_from,
+            Some(ProgressState::Designed)
+        );
+    }
+
+    /// Issue #106: blocked before anything ran (a refused Start, no session) is off the rail,
+    /// and the field is not on the wire.
+    #[test]
+    fn blocked_before_any_session_is_off_the_rail() {
+        let a = IssueRef::new("o/r", 1);
+        let mut inputs = empty();
+        inputs.pins = vec![IssuePin {
+            issue: a.clone(),
+            target: MapRef::node("web"),
+            pinned_by: "m0x6A".into(),
+            pinned_at: now(),
+        }];
+        inputs.cap_hits = HashMap::from([(a.clone(), CapKind::Attempts)]);
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let p = &built.issues[0].progress;
+        assert_eq!(p.state, ProgressState::Blocked);
+        assert_eq!(p.blocked_from, None);
+        let v = serde_json::to_value(p).unwrap();
+        assert!(v.get("blocked_from").is_none(), "{v}");
+        let by = blocked_from_counts(&built);
+        assert_eq!(by["off_rail"], 1);
+    }
+
+    /// An older companion sends no `blocked_by`: the block reads as mid-turn.
+    #[test]
+    fn a_block_without_a_cause_reads_as_mid_turn() {
+        let a = IssueRef::new("o/r", 1);
+        let mut inputs = empty();
+        inputs.sessions = vec![session(&a, SessionStatus::Blocked, StateSource::Hook)];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert_eq!(
+            built.issues[0].progress.blocked_from,
+            Some(ProgressState::Designing)
+        );
+        inputs.plans = vec![plan(&a, "web-server", "web")];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert_eq!(
+            built.issues[0].progress.blocked_from,
+            Some(ProgressState::Building)
+        );
+    }
+
+    /// The gauge's five series always exist and add up to the blocked bar of issues by state.
+    #[test]
+    fn blocked_from_counts_cover_every_value_and_sum_to_blocked() {
+        let mut inputs = empty();
+        let a = IssueRef::new("o/r", 1);
+        let b = IssueRef::new("o/r", 2);
+        let c = IssueRef::new("o/r", 3);
+        let mut sa = session(&a, SessionStatus::Blocked, StateSource::Hook);
+        sa.blocked_by = Some(BlockCause::StopFailure);
+        let sb = session(&b, SessionStatus::Working, StateSource::Hook);
+        inputs.sessions = vec![sa, sb];
+        inputs.plans = vec![plan(&a, "web-server", "web")];
+        inputs.launched = HashSet::from([c.clone()]);
+        inputs.cap_hits = HashMap::from([(c.clone(), CapKind::Attempts)]);
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let by = blocked_from_counts(&built);
+        let keys: Vec<&str> = by.keys().copied().collect();
+        assert_eq!(
+            keys,
+            ["building", "designed", "designing", "off_rail", "started"]
+        );
+        assert_eq!((by["building"], by["started"]), (1, 1));
+        let (by_state, _) = counts(&built);
+        assert_eq!(
+            by.values().sum::<usize>(),
+            by_state[&ProgressState::Blocked]
+        );
+        println!("checked {} blocked_from values", by.len());
     }
 
     fn open(repo: &str, n: u64) -> OpenIssue {

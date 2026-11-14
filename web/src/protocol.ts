@@ -27,6 +27,11 @@ seq: number
 type: "ack"
 })
 /**
+ * Which hook blocked a session (ADR 0043): the current cause of the current status, set with
+ * a *blocked* status and cleared by the next hook that implies a status.
+ */
+export type BlockCause = ("permission_prompt" | "idle_prompt" | "stop_failure")
+/**
  * Where a status came from. Anything not hook-derived is rendered *unknown* (A10).
  */
 export type StateSource = ("hook" | "tmux_ide" | "scraped" | "launch")
@@ -401,6 +406,11 @@ type: "hook"
  * One session as the companion sees it. Identity comes from the branch (ADR 0006).
  */
 export interface SessionState {
+/**
+ * Which hook blocked the session, with `status = blocked` (ADR 0043). Absent from an
+ * older companion and for a block tmux-ide reported: read as mid-turn.
+ */
+blocked_by?: (BlockCause | null)
 branch?: (string | null)
 /**
  * A launched session that has moved off its launch branch: the branch it is on now. It
@@ -613,6 +623,11 @@ pull_request?: (PullRequestState | null)
 review?: (ReviewRecord | null)
 sessions?: SessionState[]
 /**
+ * Spend over time, oldest first, at most 24 points: each the issue's total over every
+ * session it has had, ended ones included (ADR 0037). Not an input to progress.
+ */
+spend_history?: SpendPoint[]
+/**
  * Sum over this issue's sessions.
  */
 spend_usd?: (number | null)
@@ -768,6 +783,12 @@ signal: string
  * Derived progress of one issue, with the time of the newest signal behind it.
  */
 export interface Progress {
+/**
+ * The rail station a *Blocked* issue left from (ADR 0043): `started`, `designing`,
+ * `designed` or `building`. Absent for every other state, and when nothing ran (off the
+ * rail). Derived by [`blocked_from`] from the same inputs as `state`; never stored.
+ */
+blocked_from?: (ProgressState | null)
 issue: IssueRef
 last_seen: string
 pinned_to?: MapRef[]
@@ -815,6 +836,14 @@ plan_sha?: (string | null)
  */
 track: string
 url: string
+}
+/**
+ * One point of an issue's spend over time: the total over every session it has had, at the
+ * start of a 15-minute span (ADR 0037).
+ */
+export interface SpendPoint {
+at: string
+usd: number
 }
 /**
  * Server → companion: start a session. Addressed to exactly one pairing; the companion refuses
@@ -1092,6 +1121,12 @@ backlog?: Backlog
  * Issues: write, or the server runs on the local stand-in (ADR 0025).
  */
 can_create_issues?: boolean
+/**
+ * The companion stale threshold N in seconds, from the server's config
+ * (`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and
+ * `CompanionSilent` fires past it (#105). An older server's overview reads as 600.
+ */
+companion_silent_secs?: number
 companions: PairingInfo[]
 draft?: MapDraft
 findings: Finding[]

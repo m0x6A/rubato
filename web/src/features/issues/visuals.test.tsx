@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { issue } from "../../../test/fixtures.ts";
 import type { ProgressState } from "../../protocol.ts";
-import { ProgressRing, RAIL, SpendGauge, StageRail, TeamTrack } from "./visuals.tsx";
+import { ProgressRing, RAIL, SpendGauge, SpendSparkline, StageRail, TeamTrack } from "./visuals.tsx";
 
 // Issue #81, design §6: each surface opens with a picture of its state.
 
@@ -43,13 +43,26 @@ describe("the stage rail", () => {
     expect(rail).toHaveAttribute("aria-label", "Progress: Building, station 5 of 7");
   });
 
-  it("puts blocked as a notch, not a station, and unknown lights nothing", () => {
+  it("puts the notch at the station a blocked issue left from (#106)", () => {
+    render(<StageRail state="blocked" blockedFrom="building" />);
+    const rail = screen.getByTestId("stage-rail");
+    const stations = [...rail.querySelectorAll(".station")];
+    expect(stations.map((s) => s.className.replace("station", "").trim())).toEqual(["past", "past", "past", "past", "left", "", ""]);
+    expect(rail.querySelector<HTMLElement>(".notch")!.style.getPropertyValue("--at")).toBe("4");
+    expect(rail).toHaveAttribute("aria-label", "Progress: Blocked, left from Building, station 5 of 7");
+  });
+
+  it("keeps the notch off the rail when nothing says where it left from, and unknown lights nothing", () => {
     const { unmount } = render(<StageRail state="blocked" />);
-    expect(screen.getByTestId("stage-rail").querySelectorAll(".station.now")).toHaveLength(0);
-    expect(screen.getByTestId("stage-rail").querySelector(".notch")).not.toBeNull();
+    const rail = screen.getByTestId("stage-rail");
+    expect(rail.querySelectorAll(".station.now, .station.past, .station.left")).toHaveLength(0);
+    const notch = rail.querySelector<HTMLElement>(".notch");
+    expect(notch).not.toBeNull();
+    expect(notch!.style.getPropertyValue("--at")).toBe("");
+    expect(rail).toHaveAttribute("aria-label", "Progress: Blocked");
     unmount();
-    render(<StageRail state="unknown" />);
-    expect(screen.getByTestId("stage-rail").querySelectorAll(".station.now, .station.past")).toHaveLength(0);
+    render(<StageRail state="unknown" blockedFrom="building" />);
+    expect(screen.getByTestId("stage-rail").querySelectorAll(".station.now, .station.past, .station.left")).toHaveLength(0);
   });
 });
 
@@ -70,6 +83,43 @@ describe("the spend gauge", () => {
     unmount();
     render(<SpendGauge spend={18.4} cap={60} />);
     expect(screen.getByRole("img")).toHaveAttribute("aria-label", "spend $18.40 of a $60.00 cap");
+  });
+});
+
+describe("the spend sparkline (issue #103)", () => {
+  const at = (m: number) => new Date(Date.UTC(2026, 10, 13, 8, m)).toISOString();
+
+  it("shows nothing with no point or one point: one sample is no line", () => {
+    for (const points of [[], [{ at: at(0), usd: 1 }]]) {
+      const { container, unmount } = render(<SpendSparkline points={points} />);
+      expect(container).toBeEmptyDOMElement();
+      unmount();
+    }
+  });
+
+  it("draws a rising line, says it in words, and labels the last value all sessions, without a cap", () => {
+    const points = [
+      { at: at(0), usd: 1 },
+      { at: at(20), usd: 2.5 },
+      { at: at(40), usd: 4 },
+    ];
+    const { container } = render(<SpendSparkline points={points} />);
+    expect(screen.getByRole("img")).toHaveAttribute("aria-label", "spend over time, $1.00 to $4.00 across 3 points");
+    const ys = container
+      .querySelector("polyline")!
+      .getAttribute("points")!
+      .trim()
+      .split(/\s+/)
+      .map((p) => Number(p.split(",")[1]));
+    expect(ys).toHaveLength(3);
+    expect(ys[2]!).toBeLessThan(ys[0]!); // SVG y grows downward: the last point is higher
+    expect(screen.getByText("$4.00 all sessions")).toBeInTheDocument();
+  });
+
+  it("draws a flat series at mid-height", () => {
+    const { container } = render(<SpendSparkline points={[{ at: at(0), usd: 2 }, { at: at(15), usd: 2 }]} />);
+    const ys = container.querySelector("polyline")!.getAttribute("points")!.trim().split(/\s+/).map((p) => Number(p.split(",")[1]));
+    expect(new Set(ys).size).toBe(1);
   });
 });
 

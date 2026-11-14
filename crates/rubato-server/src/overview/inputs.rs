@@ -2,7 +2,7 @@
 
 use super::build::OverviewInputs;
 use crate::kernel::state::App;
-use crate::{companion_link, github_poll, launch, layout, pins, plans, queue};
+use crate::{companion_link, github_poll, launch, layout, pins, plans, queue, spend_history};
 use anyhow::Result;
 
 pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
@@ -24,5 +24,6 @@ pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
         queue: queue::all(&app.db).await?,
         repo_pulls: github_poll::repo_pulls(&app.db).await?,
         traffic: app.traffic.read().await.clone(),
+        spend: spend_history::series(&app.db).await?,
     })
 }

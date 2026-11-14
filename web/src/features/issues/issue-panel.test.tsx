@@ -57,6 +57,24 @@ describe("issue list", () => {
   });
 });
 
+describe("spend over time in the instruments (issue #103)", () => {
+  it("draws the sparkline after the gauge for an issue with history, and none without", () => {
+    const history = [
+      { at: "2026-11-13T08:00:00Z", usd: 1 },
+      { at: "2026-11-13T08:15:00Z", usd: 4 },
+    ];
+    const withCap = issue(1, "web", { spend_usd: 4, spend_history: history, plan: { issue: { repo: "m0x6A/rubato", number: 1 }, path: "docs/plans/1.md", affected_parts: [], spend_cap_usd: 25 } });
+    const { container, unmount } = render(<IssuePanel overview={overview({ issues: [withCap] })} me={me} selected={withCap} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    const kids = [...container.querySelector(".instruments")!.children].map((el) => el.className);
+    expect(kids.indexOf("sparkline")).toBeGreaterThan(kids.indexOf("gauge"));
+    expect(kids.indexOf("gauge")).toBeGreaterThanOrEqual(0);
+    unmount();
+    const without = issue(2, "web");
+    renderPanel(overview({ issues: [without] }), without);
+    expect(document.querySelector(".instruments .sparkline")).toBeNull();
+  });
+});
+
 describe("pins on the issue detail and the part filter (N18)", () => {
   it("unpin posts a delete", () => {
     const onUnpin = vi.fn();

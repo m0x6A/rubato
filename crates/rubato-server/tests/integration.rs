@@ -769,6 +769,17 @@ async fn derived_state_is_never_stored() {
     );
 }
 
+/// #105: the web's freshness bar drains over the server's N, not a constant of its own. Fails
+/// on purpose if the handler writes `Limits::default()` instead of the configured value.
+#[tokio::test]
+async fn the_overview_carries_the_configured_companion_threshold() {
+    let h = harness_with(|c| c.limits.companion_silent_secs = 300).await;
+    assert_eq!(h.overview("m0x6A").await.companion_silent_secs, 300);
+    let d = harness().await;
+    assert_eq!(d.overview("m0x6A").await.companion_silent_secs, 600);
+    println!("checked the threshold on 2 overviews");
+}
+
 #[tokio::test]
 async fn bad_and_revoked_tokens_are_refused() {
     let h = harness().await;
@@ -1212,6 +1223,7 @@ async fn attempt_limit_does_not_block_a_running_issue() {
                 last_seen: chrono::Utc::now(),
                 spend_usd: None,
                 branch_drift: None,
+                blocked_by: None,
             }],
         },
     };
@@ -4860,4 +4872,71 @@ async fn a_cut_or_failed_pull_listing_is_said_and_tracked_issues_fall_back() {
     assert_eq!(rubato.pulls.len(), 1, "last good rows kept");
     assert!(rubato.listed_at.is_some());
     println!("checked a cut and a failed listing");
+}
+
+/// Plan 103: snapshots received 20 minutes apart for one issue, with the given spend per
+/// session in each, and the issue's `spend_history` read back from the overview.
+async fn spend_line(per_snapshot: &[&[f64]]) -> Vec<rubato_protocol::SpendPoint> {
+    use chrono::TimeZone;
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    let issue = IssueRef::new("m0x6A/rubato", 103);
+    let t0 = chrono::Utc.with_ymd_and_hms(2026, 11, 13, 8, 0, 0).unwrap();
+    for (i, spends) in per_snapshot.iter().enumerate() {
+        let mut env = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+        env.seq = 10 + i as u64;
+        let CompanionMessage::Sessions { sessions } = &mut env.message else {
+            panic!("fixture")
+        };
+        let template = sessions[0].clone();
+        *sessions = spends
+            .iter()
+            .enumerate()
+            .map(|(k, usd)| {
+                let mut s = template.clone();
+                s.session_id = Some(format!("s{k}"));
+                s.issue = Some(issue.clone());
+                s.spend_usd = Some(*usd);
+                s
+            })
+            .collect();
+        h.app
+            .clock
+            .set(t0 + chrono::Duration::minutes(20 * i as i64));
+        assert!(matches!(
+            send(&mut ws, &env).await,
+            ServerMessage::Ack { .. }
+        ));
+    }
+    let ov = h.overview("m0x6A").await;
+    let summary = ov
+        .issues
+        .iter()
+        .find(|s| s.issue == issue)
+        .expect("the issue is in the overview");
+    summary.spend_history.clone()
+}
+
+#[tokio::test]
+async fn spend_history_rises_with_each_snapshot() {
+    let line = spend_line(&[&[1.0], &[2.5], &[4.0]]).await;
+    let usd: Vec<f64> = line.iter().map(|p| p.usd).collect();
+    assert_eq!(usd, [1.0, 2.5, 4.0], "{line:?}");
+    assert!(line.windows(2).all(|w| w[0].at < w[1].at), "oldest first");
+    println!("checked {} points", line.len());
+}
+
+/// The must-fail variant: a point written per session instead of summed ends at one session's
+/// spend, not the issue's.
+#[tokio::test]
+async fn spend_history_sums_two_sessions_on_the_issue() {
+    let line = spend_line(&[&[1.0, 0.5], &[2.5, 0.5], &[4.0, 1.0]]).await;
+    let usd: Vec<f64> = line.iter().map(|p| p.usd).collect();
+    assert_eq!(usd, [1.5, 3.0, 5.0], "{line:?}");
 }

@@ -1,5 +1,5 @@
-//! Gauges from the derived picture: issues by state, open plans per seam, unknown plan ids,
-//! approvals of an earlier plan version.
+//! Gauges from the derived picture: issues by state, blocked issues by the station they left
+//! from, open plans per seam, unknown plan ids, approvals of an earlier plan version.
 
 use super::build;
 use super::inputs::build_overview_inputs;
@@ -21,6 +21,11 @@ pub async fn refresh_gauges(app: &App, map: &LoadedMap) -> Result<()> {
                 format!("{state:?}").to_lowercase(),
             )],
         );
+    }
+    for (at, n) in build::blocked_from_counts(&built) {
+        app.metrics
+            .issues_blocked_from
+            .record(n as u64, &[KeyValue::new(attr::ISSUE_BLOCKED_FROM, at)]);
     }
     for (seam, n) in by_seam {
         app.metrics

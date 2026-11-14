@@ -39,6 +39,12 @@ const mutants: Mutant[] = [
     to: "max(rubato_traffic_report_age) > 200",
     caughtBy: "alertname: TrafficReportStale, time: 3m",
   },
+  {
+    why: "#105: without the threshold series CompanionSilent falls back to 600 s, never silent",
+    from: " or vector(600)",
+    to: "",
+    caughtBy: "alertname: CompanionSilent, time: 11m",
+  },
 ];
 
 /** Run the committed rule tests against `rules`, in a scratch copy of the alerts folder. */
