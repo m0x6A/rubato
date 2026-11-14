@@ -260,6 +260,9 @@ async function fitsAny(ws: Workspace, cwd: string, text: string, rel: string): P
 }
 
 /** Exit codes of `plan.ts wait`: one per reason, so a caller can act on it. */
+/** The exit of a command retired at the cutover (ADR 0054): plans are approved in Rubato. */
+export const RETIRED_EXIT = 11;
+
 export const WAIT_EXIT = { approved: 0, not_yet: 3, not_pushed: 4, local_edit: 4, does_not_fit: 5, gh_failed: 6, plan_changed: 7 } as const;
 
 export interface WaitOptions {
@@ -423,13 +426,10 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     if (cmd === "wait") {
-      const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd" && rest[i - 1] !== "--interval");
-      const o: WaitOptions = { once: rest.includes("--once") };
-      const interval = opt(rest, "--interval");
-      if (interval) {
-        o.intervalSecs = Number(interval);
-      }
-      return await wait(ws, cwd, positional[0], o);
+      // Retired at the cutover (ADR 0054): an Approved: comment no longer counts, so there is
+      // nothing to wait for. A plan is approved in Rubato, and the approval arrives as a prompt.
+      console.log(JSON.stringify({ event: "rubato.plan.wait", kind: "exited", reason: "approval_in_rubato" }));
+      return RETIRED_EXIT;
     }
     if (cmd === "check" || cmd === "sha") {
       const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd");

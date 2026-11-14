@@ -322,11 +322,15 @@ describe("plan.ts handoff: its arguments and exit codes", () => {
     expect(new Set(Object.values(HANDOFF_EXIT)).size).toBe(Object.keys(HANDOFF_EXIT).length);
   });
 
-  it("the skill's version is the first with handoff (SKILL_HANDOFF_VERSION)", () => {
+  it("the skill's version has handoff: at least SKILL_HANDOFF_VERSION", () => {
     const rust = readFileSync(join(root, "crates/rubato-protocol/src/handoff.rs"), "utf8");
-    const need = /SKILL_HANDOFF_VERSION: &str = "([\d.]+)"/.exec(rust)?.[1];
+    const need = /SKILL_HANDOFF_VERSION: &str = "([\d.]+)"/.exec(rust)?.[1] ?? "";
     const pkg = JSON.parse(readFileSync(join(root, "skills/rubato/package.json"), "utf8")) as { version: string };
-    expect(pkg.version).toBe(need);
+    const parts = (v: string) => v.split(".").map(Number);
+    const [have, want] = [parts(pkg.version), parts(need)];
+    const cmp = have.map((n, i) => n - (want[i] ?? 0)).find((d) => d !== 0) ?? 0;
+    expect(want.length, need).toBe(3);
+    expect(cmp, `${pkg.version} has no handoff (needs ${need})`).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -359,9 +363,12 @@ describe("the two planning modes in the skill and the prompt (ADR 0053)", () => 
     for (const [outcome, code] of Object.entries(HANDOFF_EXIT)) {
       expect(mode, outcome).toContain(`| ${code} | \`${outcome}\` |`);
     }
-    // The git mode keeps its comments and its wait.
-    expect(skill).toContain("plan.ts wait docs/plans/<n>.md");
-    expect(skill).toContain("adrs.ts accept --comment");
+    // After the cutover nothing posts a review, an approval or a decision as a comment, and the
+    // wait and the comment acceptance are retired (ADR 0054).
+    expect(skill).not.toContain("gh issue comment");
+    expect(skill).not.toContain("plan.ts wait docs/plans/<n>.md");
+    expect(skill).toContain("`plan.ts wait` and `adrs.ts accept --comment` are retired");
+    expect(skill).toContain("press *Import*");
   });
 });
 
