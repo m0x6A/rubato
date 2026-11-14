@@ -4368,6 +4368,25 @@ async fn the_poll_reads_the_plan_from_the_branch_approved_in_rubato() {
     );
 }
 
+/// ADR 0054: the overview says whether plans are approved in Rubato, so the web offers Approve
+/// on the draft only where the server takes it, and Accept plan only where it posts.
+#[tokio::test]
+async fn the_overview_carries_the_cutover_only_when_one_is_set() {
+    let h = harness().await;
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(ov.comment_approvals_until, None);
+    let v = serde_json::to_value(&ov).unwrap();
+    assert!(
+        v.get("comment_approvals_until").is_none(),
+        "unset, the field is not on the wire: the golden overview is unchanged"
+    );
+    let at = chrono::DateTime::parse_from_rfc3339("2026-11-20T10:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let h = harness_with(|c| c.comment_approvals_until = Some(at)).await;
+    assert_eq!(h.overview("m0x6A").await.comment_approvals_until, Some(at));
+}
+
 /// ADR 0029: an approval of the current plan counts only while the plan fits the map.
 #[tokio::test]
 async fn an_approval_of_a_plan_that_does_not_fit_does_not_count() {

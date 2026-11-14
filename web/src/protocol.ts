@@ -1541,6 +1541,12 @@ backlog?: Backlog
  */
 can_create_issues?: boolean
 /**
+ * The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, ADR 0054), when one is configured: plans are
+ * approved in Rubato, and an `Approved:` comment posted at or after it does not count. Absent
+ * before the cutover is set, and from an older server: *Accept plan* as before.
+ */
+comment_approvals_until?: (string | null)
+/**
  * The companion stale threshold N in seconds, from the server's config
  * (`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and
  * `CompanionSilent` fires past it (#105). An older server's overview reads as 600.

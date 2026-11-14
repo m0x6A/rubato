@@ -14,6 +14,14 @@
       "type": "boolean",
       "default": false
     },
+    "comment_approvals_until": {
+      "description": "The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, ADR 0054), when one is configured: plans are\napproved in Rubato, and an `Approved:` comment posted at or after it does not count. Absent\nbefore the cutover is set, and from an older server: *Accept plan* as before.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
     "companion_silent_secs": {
       "description": "The companion stale threshold N in seconds, from the server's config\n(`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and\n`CompanionSilent` fires past it (#105). An older server's overview reads as 600.",
       "type": "integer",

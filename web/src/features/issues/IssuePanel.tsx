@@ -142,11 +142,11 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             </table>
           </>
         )}
-        {selected.draft && <DraftSection issue={selected} me={me} />}
+        {selected.draft && <DraftSection issue={selected} me={me} approvalsInRubato={Boolean(overview.comment_approvals_until)} />}
         {(selected.plan || selected.fit) && (
           <>
             <h3 style={{ marginTop: 12 }}>Plan · {selected.plan?.path ?? "does not parse"}</h3>
-            <WhereItFits issue={selected} map={overview.map.map} me={me} onNotice={(t) => onNotice?.(t)} />
+            <WhereItFits issue={selected} map={overview.map.map} me={me} onNotice={(t) => onNotice?.(t)} approvalsInRubato={Boolean(overview.comment_approvals_until)} />
             {selected.plan?.assumed && selected.plan.assumed.some((a) => a.scope === "seam") && (
               <p className="warn">⚠ {selected.plan.assumed.filter((a) => a.scope === "seam").length} seam-level question(s) wait for a human.</p>
             )}
