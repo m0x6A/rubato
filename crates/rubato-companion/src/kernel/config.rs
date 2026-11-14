@@ -7,12 +7,18 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// The developer's `workspace.yml`. Same shape the skill reads (`skills/rubato/workspace.example.yml`).
+/// The developer's local config, `local.yml` (once `workspace.yml`, ADR 0044). Same shape the skill
+/// reads (`skills/rubato/local.example.yml`). The companion never reads a map, so `map:` and
+/// `maps:` are both optional here.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Workspace {
     #[serde(default)]
     pub server_url: Option<String>,
-    pub map: MapLocation,
+    #[serde(default)]
+    pub map: Option<MapLocation>,
+    /// Several map clones, one per workspace the developer plans against. Read by the skill.
+    #[serde(default)]
+    pub maps: Vec<MapLocation>,
     #[serde(default)]
     pub repos: Vec<WorkspaceRepo>,
     #[serde(default)]
@@ -118,12 +124,22 @@ impl Workspace {
         Self::parse(&text)
     }
 
-    /// `$RUBATO_WORKSPACE`, then `$XDG_CONFIG_HOME/rubato/workspace.yml`, then `~/.config/rubato/workspace.yml`.
+    /// `$RUBATO_LOCAL`, then `$RUBATO_WORKSPACE`, then `local.yml` in the config directory
+    /// (`$XDG_CONFIG_HOME/rubato`, else `~/.config/rubato`), then the old `workspace.yml` there
+    /// when only it exists. A new machine gets `local.yml`.
     pub fn default_path() -> PathBuf {
-        if let Ok(p) = std::env::var("RUBATO_WORKSPACE") {
-            return PathBuf::from(p);
+        for var in ["RUBATO_LOCAL", "RUBATO_WORKSPACE"] {
+            if let Ok(p) = std::env::var(var) {
+                return PathBuf::from(p);
+            }
         }
-        config_dir().join("workspace.yml")
+        let local = config_dir().join("local.yml");
+        let old = config_dir().join("workspace.yml");
+        if !local.exists() && old.exists() {
+            old
+        } else {
+            local
+        }
     }
 
     pub fn repo(&self, name: &str) -> Option<&WorkspaceRepo> {
@@ -236,17 +252,27 @@ mod tests {
 
     #[test]
     fn parses_the_example_workspace() {
-        let text = include_str!("../../../../skills/rubato/workspace.example.yml");
+        let text = include_str!("../../../../skills/rubato/local.example.yml");
         let ws = Workspace::parse(text).unwrap();
-        assert_eq!(ws.map.repo, "m0x6A/rubato");
+        assert_eq!(ws.maps[0].repo, "m0x6A/rubato");
         assert_eq!(ws.companion.claude_command, "claude");
         assert_eq!(ws.companion.limits.session_stale_secs, 120);
         assert_eq!(ws.companion.command_timeout_secs, 120);
     }
 
     #[test]
+    fn a_config_without_a_map_reads_for_the_companion() {
+        // The companion never reads a map (plan 89): a `local.yml` with `maps:`, or with none, starts it.
+        let ws = Workspace::parse("maps:\n  - { repo: a/m, path: m.yml, local: /m }\nrepos: []\n")
+            .unwrap();
+        assert!(ws.map.is_none());
+        assert_eq!(ws.maps.len(), 1);
+        assert!(Workspace::parse("repos: []\n").is_ok());
+    }
+
+    #[test]
     fn a_zero_command_timeout_is_refused_by_name() {
-        let text = include_str!("../../../../skills/rubato/workspace.example.yml");
+        let text = include_str!("../../../../skills/rubato/local.example.yml");
         let zero = format!("{text}\ncompanion:\n  command_timeout_secs: 0\n");
         let e = Workspace::parse(&zero).unwrap_err();
         assert!(

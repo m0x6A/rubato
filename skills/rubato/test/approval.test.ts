@@ -7,7 +7,7 @@ import { accept, pinnedAdrs, pinAdrs } from "../scripts/adrs.ts";
 import { install } from "../scripts/install.ts";
 import { approvalFor, classify, currentApproval, type GhComment, parseApproval, shaToken, trustedAuthor } from "../scripts/lib/comments.ts";
 import { gitBlobSha, planSha } from "../scripts/lib/plan-sha.ts";
-import type { Workspace } from "../scripts/lib/workspace.ts";
+import type { Workspace } from "../scripts/lib/local.ts";
 import { WAIT_EXIT, wait } from "../scripts/plan.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -122,7 +122,8 @@ function makeWorld(): World {
   git(work, "commit", "-q", "-m", "map");
   git(work, "push", "-q", "origin", "main");
   git(work, "checkout", "-q", "-b", "issue/7-try");
-  const ws: Workspace = { map: { repo: "acme/map", path: "system-map.yml", local: work }, repos: [] };
+  const mapClone = { repo: "acme/map", path: "system-map.yml", local: work };
+  const ws: Workspace = { map: mapClone, maps: [mapClone], repos: [] };
   const bin = join(tmp, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "gh"), GH);
@@ -293,7 +294,8 @@ describe("adrs.ts accept (ADR 0035)", () => {
       expect([r.code, r.line.refused], reason).toEqual([1, reason]);
     }
     w.stub({ comments: [comment(1, `Approved: plan ${w.sha}`)] });
-    const elsewhere = await accept({ ...w.ws, map: { ...w.ws.map, repo: "acme/other" } }, w.work, "1", w.plan);
+    const other = { ...w.ws.map, repo: "acme/other" };
+    const elsewhere = await accept({ ...w.ws, map: other, maps: [other] }, w.work, "1", w.plan);
     expect(elsewhere.line).toMatchObject({ refused: "not_map_repo", would_accept: ["0099"] });
     expect(readFileSync(join(w.work, w.adr), "utf8")).toBe(before);
   });
@@ -322,7 +324,7 @@ describe("install ships the wait (ADR 0035)", () => {
     install(to, false);
     const shipped = (d: string): string[] =>
       readdirSync(join(skill, d), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? shipped(join(d, e.name)) : [join(d, e.name)]));
-    const files = ["SKILL.md", "hooks.json", "prompt.md", "decision-template.md", "review-template.md", "review-checklist.md", "workspace.example.yml", ...shipped("scripts")];
+    const files = ["SKILL.md", "hooks.json", "prompt.md", "decision-template.md", "review-template.md", "review-checklist.md", "local.example.yml", ...shipped("scripts")];
     for (const f of files) {
       expect(readFileSync(join(to, f)).equals(readFileSync(join(skill, f))), f).toBe(true);
     }
