@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import { ProgressRing, SpendGauge, SpendSparkline, StageRail } from "./visuals.tsx";
+import { SessionChat } from "../chat/index.ts";
 import { PinMenu } from "../pins/index.ts";
 import { WhereItFits } from "../plans/index.ts";
 import { QueueMenu } from "../queue/index.ts";
@@ -117,15 +118,25 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             <table className="mini">
               <tbody>
                 {(selected.sessions ?? []).map((s, i) => (
-                  <tr key={s.session_id ?? i}>
-                    <td>
-                      <span className={`badge ${s.status}`}>{s.status}</span>
-                    </td>
-                    <td className="muted">{s.source}</td>
-                    <td>{s.tmux?.session ?? s.cwd}</td>
-                    <td className="muted">{relative(s.last_seen)}</td>
-                    <td>{s.spend_usd !== undefined && s.spend_usd !== null ? `$${s.spend_usd.toFixed(2)}` : ""}</td>
-                  </tr>
+                  <Fragment key={s.session_id ?? i}>
+                    <tr>
+                      <td>
+                        <span className={`badge ${s.status}`}>{s.status}</span>
+                      </td>
+                      <td className="muted">{s.source}</td>
+                      <td>{s.tmux?.session ?? s.cwd}</td>
+                      <td className="muted">{relative(s.last_seen)}</td>
+                      <td>{s.spend_usd !== undefined && s.spend_usd !== null ? `$${s.spend_usd.toFixed(2)}` : ""}</td>
+                    </tr>
+                    {/* A session Rubato launched can be messaged by its owner and read by everyone (ADR 0051). */}
+                    {s.launch_id && (
+                      <tr className="chat-row">
+                        <td colSpan={5}>
+                          <SessionChat session={s} me={me} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
