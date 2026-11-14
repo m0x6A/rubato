@@ -24,6 +24,91 @@ pub mod reason {
     pub const UNKNOWN_LAUNCH: &str = "unknown_launch";
     pub const EMPTY: &str = "empty";
     pub const TOO_LONG: &str = "too_long";
+    /// A stop for a companion that is not live: never queued (ADR 0059).
+    pub const COMPANION_OFFLINE: &str = "companion_offline";
+    /// A stop for a companion that did not announce `session_stop`.
+    pub const CANNOT_STOP: &str = "companion_cannot_stop";
+}
+
+/// `POST /api/launches/{launch_id}/stop` (ADR 0059, plan 122 §D14). Only the owner; never queued
+/// (409 when the companion is not live, so a stop never reaches a later session); pushed at once,
+/// past any message in flight; the companion skips only its idle check.
+pub async fn stop(
+    State(app): State<App>,
+    CurrentUser(user): CurrentUser,
+    Path(launch_id): Path<Uuid>,
+) -> Result<Json<SessionMessageView>, Refused> {
+    let refuse_stop = |app: &App, status, why: &str| {
+        app.reject(routes::LAUNCH_STOP, why, &user);
+        (status, Json(json!({ "reason": why })))
+    };
+    let Some(target) = launch::launch_target(&app.db, launch_id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(refuse_stop(
+            &app,
+            StatusCode::NOT_FOUND,
+            reason::UNKNOWN_LAUNCH,
+        ));
+    };
+    if !target.user.eq_ignore_ascii_case(&user) {
+        return Err(refuse_stop(
+            &app,
+            StatusCode::FORBIDDEN,
+            reason::NOT_YOUR_SESSION,
+        ));
+    }
+    if !app.announced(target.companion_id, capability::SESSION_STOP) {
+        return Err(refuse_stop(&app, StatusCode::CONFLICT, reason::CANNOT_STOP));
+    }
+    let now = app.clock.now();
+    if !app.companion_live(target.companion_id, capability::SESSION_STOP, now) {
+        return Err(refuse_stop(
+            &app,
+            StatusCode::CONFLICT,
+            reason::COMPANION_OFFLINE,
+        ));
+    }
+    let row = MessageRow {
+        id: Uuid::new_v4(),
+        launch_id,
+        session_id: target.session_id.clone(),
+        companion_id: target.companion_id,
+        owner: target.user.clone(),
+        issue: target.issue.clone(),
+        kind: SessionMessageKind::Stop {
+            requested_by: user.clone(),
+        },
+        author: user.clone(),
+        priority: 0,
+        // Recorded as pushed: it bypasses the queue, so dispatch never pushes it again.
+        state: SessionMessageState::Sent,
+        created_at: now,
+        pushed_at: Some(now),
+        outcome_at: None,
+        detail: None,
+    };
+    store::insert(&app.db, &row).await.map_err(internal)?;
+    if !app.send_to_companion(target.companion_id, dispatch::wire(&row)) {
+        let _ = store::settle(
+            &app.db,
+            row.id,
+            target.companion_id,
+            SessionMessageState::Failed,
+            Some("companion went away"),
+            now,
+        )
+        .await;
+        return Err(refuse_stop(
+            &app,
+            StatusCode::CONFLICT,
+            reason::COMPANION_OFFLINE,
+        ));
+    }
+    tracing::info!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, rubato.user = %user, "session stop sent");
+    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    Ok(Json(row.view()))
 }
 
 type Refused = (StatusCode, Json<Value>);

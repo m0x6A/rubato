@@ -286,6 +286,9 @@ pub struct LaunchMessages {
 pub mod routes {
     /// `GET` the launch's messages; `POST` a `SessionMessageRequest` (owner only).
     pub const LAUNCH_MESSAGES: &str = "/api/launches/{launch_id}/messages";
+    /// `POST` with no body: the owner stops their own session (ADR 0059). 403 for anyone else,
+    /// 409 `companion_offline` when its companion is not live: a stop is never queued.
+    pub const LAUNCH_STOP: &str = "/api/launches/{launch_id}/stop";
 }
 
 #[cfg(test)]

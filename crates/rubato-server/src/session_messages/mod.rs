@@ -15,7 +15,7 @@ pub use dispatch::{
     dispatch, on_hello, on_hook, on_result, on_sessions, record_gauges, run_sweep, sweep,
 };
 pub use enqueue::{PLAN_APPROVED_PRIORITY, enqueue};
-pub use handlers::{list, send};
+pub use handlers::{list, send, stop};
 pub use store::plan_approved_open;
 
 /// When each approval's `plan_approved` was typed into its session, by approval id.

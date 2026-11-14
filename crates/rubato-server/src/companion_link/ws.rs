@@ -92,7 +92,15 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
 
     loop {
         tokio::select! {
-            Some(msg) = rx.recv() => {
+            msg = rx.recv() => {
+                // The sender is gone: the pairing was revoked (`pairing::revoke` drops it after
+                // its `Error { auth }`). Close, so nothing more from this companion is applied
+                // (ADR 0059). Before, the arm was only disabled and the socket stayed open.
+                let Some(msg) = msg else {
+                    tracing::warn!(%companion_id, "companion socket closed: pairing revoked");
+                    let _ = sink.close().await;
+                    break;
+                };
                 if !send_env(&app, companion_id, &mut sink, msg).await {
                     break;
                 }

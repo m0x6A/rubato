@@ -432,3 +432,65 @@ async fn a_clear_moves_queued_rows_to_the_new_session_and_an_old_hook_finds_them
         "a message queued for a session waiting for input is aged"
     );
 }
+
+async fn stop_as(h: &H, user: &str) -> Result<Uuid, (StatusCode, String)> {
+    handlers::stop(
+        State(h.app.clone()),
+        CurrentUser(user.into()),
+        Path(h.launch),
+    )
+    .await
+    .map(|Json(v)| v.id)
+    .map_err(|(s, Json(b))| (s, b["reason"].as_str().unwrap_or("").to_owned()))
+}
+
+/// ADR 0059: only the owner stops; a companion that cannot take it or is not live gets nothing,
+/// so a stop never waits for a later Hello and never reaches a later session.
+#[tokio::test]
+async fn stop_is_owner_only_and_never_queued() {
+    let h = harness().await;
+    assert_eq!(
+        stop_as(&h, OWNER).await.unwrap_err(),
+        (StatusCode::CONFLICT, "companion_cannot_stop".into()),
+        "a companion that did not announce session_stop"
+    );
+    let mut rx = connect_companion(&h, &[capability::SESSION_INPUT, capability::SESSION_STOP]);
+    assert_eq!(
+        stop_as(&h, "alice").await.unwrap_err(),
+        (StatusCode::FORBIDDEN, "not_your_session".into())
+    );
+    assert!(pushed(&mut rx).is_empty(), "nothing pushed for alice");
+    // Gone quiet: announced, but no envelope within two heartbeats.
+    h.app.clock.set(t0() + Duration::minutes(10));
+    assert_eq!(
+        stop_as(&h, OWNER).await.unwrap_err(),
+        (StatusCode::CONFLICT, "companion_offline".into())
+    );
+    let queued = store::queued(&h.app.db).await.unwrap();
+    assert!(
+        queued.is_empty(),
+        "a refused stop is not queued: {}",
+        queued.len()
+    );
+}
+
+/// A stop goes out at once, even while a chat message is in flight, and is never pushed again.
+#[tokio::test]
+async fn stop_goes_past_a_message_in_flight() {
+    let h = harness().await;
+    let mut rx = connect_companion(&h, &[capability::SESSION_INPUT, capability::SESSION_STOP]);
+    let chat = send(&h, OWNER, "working on it?").await.unwrap();
+    assert_eq!(pushed(&mut rx).len(), 1);
+    assert_eq!(state_of(&h, chat).await, SessionMessageState::Sent);
+    let s = stop_as(&h, OWNER).await.unwrap();
+    let got = pushed(&mut rx);
+    assert_eq!(
+        got,
+        [(s, format!("Stopped by {OWNER}"))],
+        "the stop, not the queue"
+    );
+    assert_eq!(state_of(&h, s).await, SessionMessageState::Sent);
+    // The next dispatch does not push the stop a second time.
+    dispatch::dispatch(&h.app, h.launch).await;
+    assert!(pushed(&mut rx).iter().all(|(id, _)| *id != s));
+}
