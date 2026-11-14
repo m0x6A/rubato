@@ -13,6 +13,9 @@ tests:
       # A companion whose heartbeat keeps up with the clock.
       - series: 'rubato_companion_heartbeat{rubato_companion_id="c2", rubato_user="alice"}'
         values: "0+60x20"
+      # The server's configured N (#105), at its default.
+      - series: "rubato_companion_silent_secs"
+        values: "600x20"
     alert_rule_test:
       - eval_time: 15m
         alertname: CompanionSilent
@@ -24,9 +27,56 @@ tests:
               rubato_companion_id: c1
               rubato_user: m0x6A
             exp_annotations:
-              summary: "Companion c1 (m0x6A) has not reported for over 10 minutes"
+              summary: "Companion c1 (m0x6A) has not reported for 15m 0s"
               panel: Companions
       - eval_time: 5m
+        alertname: CompanionSilent
+        exp_alerts: []
+
+  # #105: the server is configured with N = 300 s, and the alert follows it.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_companion_heartbeat{rubato_companion_id="c1", rubato_user="m0x6A"}'
+        values: "0x20"
+      - series: "rubato_companion_silent_secs"
+        values: "300x20"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: CompanionSilent
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: companion-server
+              owner: rubato-server
+              rubato_companion_id: c1
+              rubato_user: m0x6A
+            exp_annotations:
+              summary: "Companion c1 (m0x6A) has not reported for 6m 0s"
+              panel: Companions
+      - eval_time: 4m
+        alertname: CompanionSilent
+        exp_alerts: []
+
+  # #105: no threshold series (an older server, or a dropped export): the alert falls back to
+  # 600 s rather than never firing.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_companion_heartbeat{rubato_companion_id="c1", rubato_user="m0x6A"}'
+        values: "0x20"
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: CompanionSilent
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: companion-server
+              owner: rubato-server
+              rubato_companion_id: c1
+              rubato_user: m0x6A
+            exp_annotations:
+              summary: "Companion c1 (m0x6A) has not reported for 11m 0s"
+              panel: Companions
+      - eval_time: 9m
         alertname: CompanionSilent
         exp_alerts: []
 

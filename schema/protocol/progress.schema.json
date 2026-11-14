@@ -4,6 +4,17 @@
   "description": "Derived progress of one issue, with the time of the newest signal behind it.",
   "type": "object",
   "properties": {
+    "blocked_from": {
+      "description": "The rail station a *Blocked* issue left from (ADR 0043): `started`, `designing`,\n`designed` or `building`. Absent for every other state, and when nothing ran (off the\nrail). Derived by [`blocked_from`] from the same inputs as `state`; never stored.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProgressState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "issue": {
       "$ref": "#/$defs/IssueRef"
     },

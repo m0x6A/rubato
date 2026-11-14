@@ -5,7 +5,9 @@
 
 use crate::kernel::gitx;
 use chrono::{DateTime, Utc};
-use rubato_protocol::{IssueRef, SessionState, SessionStatus, StateSource, TmuxLocation};
+use rubato_protocol::{
+    BlockCause, IssueRef, SessionState, SessionStatus, StateSource, TmuxLocation,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -37,6 +39,9 @@ pub struct Entry {
     pub head_mtime: Option<std::time::SystemTime>,
     /// A launched session now on another branch than its launch branch.
     pub branch_drift: Option<String>,
+    /// Which hook blocked the session (ADR 0043): set by the hook that implied *blocked*,
+    /// cleared by the next status a hook or tmux-ide sets. Sent only with *blocked*.
+    pub blocked_by: Option<BlockCause>,
 }
 
 /// Identity from a path: worktree → branch → issue (ADR 0006).
@@ -134,6 +139,8 @@ impl Registry {
                 last_seen: e.last_seen,
                 spend_usd: e.spend_usd,
                 branch_drift: e.branch_drift.clone(),
+                // The cause only travels with the status it explains.
+                blocked_by: e.blocked_by.filter(|_| e.status == SessionStatus::Blocked),
             })
             .collect()
     }
@@ -187,6 +194,7 @@ mod tests {
             head: None,
             head_mtime: None,
             branch_drift: None,
+            blocked_by: None,
         });
         let counts = r.counts_by_source();
         assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");

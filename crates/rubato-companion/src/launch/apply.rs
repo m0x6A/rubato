@@ -112,6 +112,7 @@ impl Registry {
             head: None,
             head_mtime: None,
             branch_drift: None,
+            blocked_by: None,
         };
         match discovered {
             Some(i) => self.entries[i] = launched,

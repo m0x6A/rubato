@@ -183,6 +183,7 @@ mod tests {
             head: None,
             head_mtime: None,
             branch_drift: None,
+            blocked_by: None,
         }
     }
 

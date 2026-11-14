@@ -98,7 +98,10 @@ same two settings to run the whole App login against a stand-in (`web/e2e/github
 Other knobs: `RUBATO_GITHUB_POLL_SECS` (default 60), `RUBATO_SESSION_STALE_SECS` (120),
 `RUBATO_COMPANION_SILENT_SECS` (600), `RUBATO_DEFAULT_SPEND_CAP_USD` (25),
 `RUBATO_DEFAULT_ATTEMPT_LIMIT` (3), `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces and
-metrics. For a run without GitHub at all, `RUBATO_MAP_FILE` reads the map from a local file
+metrics. `RUBATO_COMPANION_SILENT_SECS` is the one companion stale threshold N: the overview
+carries it to the companion lanes' freshness bars, and the gauge `rubato_companion_silent_secs`
+carries it to the `CompanionSilent` alert (which falls back to 600 without that series). A value
+below 60 is raised to 60 with a warning at startup. For a run without GitHub at all, `RUBATO_MAP_FILE` reads the map from a local file
 and `RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git` reads branches and plans from local
 bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
 `RUBATO_DEV_USER=<login>` skips OAuth and must never be set where others

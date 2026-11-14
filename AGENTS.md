@@ -110,6 +110,7 @@ approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
 traffic         observed calls per seam from a traffic report   (none; latest report in memory)
+spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 ```
@@ -173,7 +174,7 @@ map        SystemMap, Scenario, MapResponse; MAP, MAP_RELOAD
 map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
 plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord, ApprovalState
-progress   derive_progress, Overview, IssueSummary, Backlog, Finding; OVERVIEW
+progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, derive_traffic, limits
 web_link   WebEvent; WEB_WS

@@ -76,6 +76,7 @@ pub async fn overview(
         repos: built.repos,
         pulls: built.pulls,
         traffic: built.traffic,
+        companion_silent_secs: app.config.limits.companion_silent_secs,
         generated_at: Utc::now(),
     }))
 }
