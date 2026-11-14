@@ -1038,6 +1038,29 @@ async fn unauthenticated_requests_without_dev_user_are_401() {
         .await
         .unwrap();
     assert_eq!(r.status(), 401);
+    // A room is read and posted in only by someone who may log in (ADR 0057).
+    let r = reqwest::get(format!(
+        "http://{addr}{}?repo=m0x6A%2Frubato&number=1&branch=issue%2F1-x",
+        rubato_protocol::room::routes::ROOM
+    ))
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 401);
+    let r = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}{}",
+            rubato_protocol::room::routes::ROOM_MESSAGES
+        ))
+        .json(&rubato_protocol::RoomPostRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 1,
+            branch: "issue/1-x".into(),
+            text: "hi".into(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
     let r = reqwest::get(format!("http://{addr}/api/health"))
         .await
         .unwrap();
@@ -5879,5 +5902,86 @@ async fn a_plan_that_does_not_fit_is_rewritten_by_the_importers_session() {
             .draft
             .is_none(),
         "no draft until the rewrite mirrors one"
+    );
+}
+
+/// #122 PR 10 (ADR 0057): the poll tick posts the seam notices, once over two ticks, and the
+/// team routes serve the room: what one person posts, another reads.
+#[tokio::test]
+async fn the_tick_posts_seam_notices_and_the_room_is_read_by_the_team() {
+    let h = harness().await;
+    for n in [95u64, 96] {
+        let branch = format!("issue/{n}-x");
+        h.github.with(|g| {
+            g.branches
+                .get_mut("m0x6A/rubato")
+                .unwrap()
+                .push((branch.clone(), format!("s{n}")));
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    format!("docs/plans/{n}.md"),
+                    branch.clone(),
+                ),
+                PLAN_49.replace("#1", &format!("#{n}")),
+            );
+        });
+        h.pin_issue(n).await;
+    }
+    tasks::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let room = |n: u64, user: &'static str| {
+        let h = &h;
+        async move {
+            let r = h
+                .http
+                .get(format!(
+                    "{}{}?repo=m0x6A%2Frubato&number={n}&branch=issue%2F{n}-x",
+                    h.url,
+                    rubato_protocol::room::routes::ROOM
+                ))
+                .header("x-rubato-dev-user", user)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            r.json::<rubato_protocol::RoomView>().await.unwrap()
+        }
+    };
+    let in95 = room(95, "alice").await;
+    assert_eq!(in95.messages.len(), 1, "{:?}", in95.messages);
+    let notice = in95.messages[0].notice.as_ref().unwrap();
+    assert_eq!(
+        (
+            notice.seam.as_str(),
+            notice.other.number,
+            notice.other_branch.as_str()
+        ),
+        ("server-github", 96, "issue/96-x")
+    );
+    assert_eq!(room(96, "alice").await.messages.len(), 1);
+
+    let r = h
+        .http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::room::routes::ROOM_MESSAGES
+        ))
+        .header("x-rubato-dev-user", "alice")
+        .json(&rubato_protocol::RoomPostRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 95,
+            branch: "issue/95-x".into(),
+            text: "Shall we share the comments pass?".into(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let seen = room(95, "bob").await.messages;
+    assert_eq!(
+        seen.last().map(|m| (m.author.as_str(), m.text.as_str())),
+        Some(("alice", "Shall we share the comments pass?"))
     );
 }

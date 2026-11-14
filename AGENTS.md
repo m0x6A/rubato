@@ -113,6 +113,7 @@ session_messages  messages to your own launched session, at most once  session_m
 session_log     prompts and last replies of launched sessions   session_log_entries
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, issue_suggestions, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
 import          a plan written outside Rubato becomes your draft  (none)
+rooms           a plan's room: people's messages, seam notices   room_messages
 traffic         observed calls per seam from a traffic report   (none; latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)

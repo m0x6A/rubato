@@ -9,7 +9,7 @@
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
     approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins,
-    plans, queue, session_messages, traffic,
+    plans, queue, rooms, session_messages, traffic,
 };
 use anyhow::{Result, anyhow};
 use rubato_protocol::otel::event;
@@ -229,6 +229,11 @@ impl Poller {
         // Every tick, after the plans and comments are read: handoff commits get their link
         // comment, found or posted once, and the handoff gauges are recorded (ADR 0055).
         approve::reconcile_links(app).await;
+        // Every tick, after the plans are read: one notice per pair of issue and seam in the
+        // rooms of two open plans that touch the same seam (ADR 0057).
+        if let Err(e) = rooms::post_seam_notices(app).await {
+            tracing::error!(error = %format!("{e:#}"), "posting seam notices failed");
+        }
         // After the comments pass: approvals posted from Rubato that GitHub did not confirm,
         // and the tokens of people with no session that still counts (ADR 0030).
         if lane == Lane::Full {
