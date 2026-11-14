@@ -34,6 +34,8 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Map lines", "rubato_backlog_map_lines_total"],
   ["Issues created", "rubato_issues_created_total"],
   ["Issues created", "rubato_issues_opening"],
+  // Issue #106 (ADR 0043): both O-rows name this panel.
+  ["Blocked, by station left from", "rubato_issues_blocked_from"],
   // Issue #105: the Companions panel shows the N that CompanionSilent compares against.
   ["Companions", "rubato_companion_silent_secs"],
 ];

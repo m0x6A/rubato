@@ -330,6 +330,44 @@
       "options": {}
     },
     {
+      "id": 73,
+      "title": "Blocked, by station left from",
+      "type": "bargauge",
+      "description": "Blocked issues by the rail station they left from (ADR 0043); the sum equals the blocked bar of Issues by state. off_rail equal to that count means blocked_from is not being set. B: blocking hooks by cause; no idle_prompt while building rises means every block reads mid-turn.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_issue_blocked_from) (rubato_issues_blocked_from)",
+          "legendFormat": "__auto"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_session_blocked_by) (increase(rubato_hook_forwarded_total{rubato_session_blocked_by!=\"\"}[1h]))",
+          "legendFormat": "hook {{rubato_session_blocked_by}} /1h"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal"
+      }
+    },
+    {
       "id": 20,
       "type": "row",
       "title": "Map",
@@ -337,7 +375,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 22
       },
       "collapsed": false,
       "panels": []
@@ -350,7 +388,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 16
+        "y": 23
       },
       "datasource": {
         "type": "prometheus",
@@ -392,7 +430,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 16
+        "y": 23
       },
       "datasource": {
         "type": "prometheus",
@@ -447,7 +485,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 16
+        "y": 23
       },
       "datasource": {
         "type": "prometheus",
@@ -478,7 +516,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 16
+        "y": 23
       },
       "datasource": {
         "type": "prometheus",
@@ -519,7 +557,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 29
       },
       "datasource": {
         "type": "loki",
@@ -545,7 +583,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 36
       },
       "collapsed": false,
       "panels": []
@@ -558,7 +596,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 37
       },
       "datasource": {
         "type": "prometheus",
@@ -587,7 +625,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 30
+        "y": 37
       },
       "datasource": {
         "type": "prometheus",
@@ -616,7 +654,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 43
       },
       "collapsed": false,
       "panels": []
@@ -629,7 +667,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 37
+        "y": 44
       },
       "datasource": {
         "type": "prometheus",
@@ -661,7 +699,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 37
+        "y": 44
       },
       "datasource": {
         "type": "prometheus",
@@ -693,7 +731,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 37
+        "y": 44
       },
       "datasource": {
         "type": "prometheus",
@@ -722,7 +760,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 45
+        "y": 52
       },
       "collapsed": false,
       "panels": []
@@ -735,7 +773,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 46
+        "y": 53
       },
       "datasource": {
         "type": "prometheus",
@@ -791,7 +829,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 46
+        "y": 53
       },
       "datasource": {
         "type": "prometheus",
@@ -821,7 +859,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 46
+        "y": 53
       },
       "datasource": {
         "type": "prometheus",
@@ -851,7 +889,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 46
+        "y": 53
       },
       "datasource": {
         "type": "prometheus",
@@ -903,7 +941,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 52
+        "y": 59
       },
       "datasource": {
         "type": "prometheus",
@@ -933,7 +971,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 52
+        "y": 59
       },
       "datasource": {
         "type": "prometheus",
@@ -963,7 +1001,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 52
+        "y": 59
       },
       "datasource": {
         "type": "prometheus",
@@ -998,7 +1036,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 52
+        "y": 59
       },
       "datasource": {
         "type": "prometheus",
@@ -1077,7 +1115,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 58
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -1107,7 +1145,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 58
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -1142,7 +1180,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 71
       },
       "collapsed": false,
       "panels": []
@@ -1155,7 +1193,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 65
+        "y": 72
       },
       "datasource": {
         "type": "prometheus",
@@ -1218,7 +1256,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 71
+        "y": 78
       },
       "datasource": {
         "type": "prometheus",
