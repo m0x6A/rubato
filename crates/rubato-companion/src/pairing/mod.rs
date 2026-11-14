@@ -8,4 +8,5 @@ pub use pair::{Paired, pair, pair_and_save};
 /// Shown once pairing succeeds (ADR 0052): what this companion sends to the server.
 pub const WHAT_LEAVES: &str = "What leaves this machine: the sessions this companion sees (repo, branch, issue, status, \
 spend), heartbeats, launch results, and each hook's event name and metadata (session, cwd, \
-tool name). Tool input and output, prompts and replies stay here.";
+tool name). For sessions started from Rubato, also your prompts and the agent's replies, which \
+the whole team reads in the session log. Tool input and output stay here.";
