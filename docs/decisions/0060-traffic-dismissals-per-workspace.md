@@ -1,8 +1,8 @@
 # 0060. Keep dismissed traffic discrepancies per workspace on the server
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** Mattias Jonsson (#140 Q4, 2026-11-14); drafted by agent (Claude Code, claude-opus-5-5, issue #140) — proposed
+- **Decided by:** m0x6A, accepted 2026-11-14 by approval comment https://github.com/m0x6A/rubato/issues/140#issuecomment-6882263766 (self); drafted by Mattias Jonsson (#140 Q4, 2026-11-14); drafted by agent (Claude Code, claude-opus-5-5, issue #140) — proposed
 - **Seam:** web-server
 - **Issue:** m0x6A/rubato#140
 

@@ -1,8 +1,8 @@
 # 0061. Skills and plan-check emit spans through one dependency-free script; the companion mirrors the OTLP env for sessions
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** Mattias Jonsson (#142 Q1–Q3, answered in planning #140, 2026-11-14); drafted by agent (Claude Code, claude-opus-5-5, issue #140) — proposed
+- **Decided by:** m0x6A, accepted 2026-11-14 by approval comment https://github.com/m0x6A/rubato/issues/140#issuecomment-6882263766 (self); drafted by Mattias Jonsson (#142 Q1–Q3, answered in planning #140, 2026-11-14); drafted by agent (Claude Code, claude-opus-5-5, issue #140) — proposed
 - **Seam:** companion-claude-code, skill-github, skill-plan-file, skill-system-map, plan-check-plan-file
 - **Issue:** m0x6A/rubato#142
 

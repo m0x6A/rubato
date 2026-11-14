@@ -1,8 +1,8 @@
 # 0040. Read production traffic from the OTel service graph through the Prometheus query API, behind the Source port
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** Mattias Jonsson (decisions on #107, 2026-11-14); drafted by agent (Claude Code, claude-opus-5-5, issue #140) — proposed
+- **Decided by:** m0x6A, accepted 2026-11-14 by approval comment https://github.com/m0x6A/rubato/issues/140#issuecomment-6882263766 (self); drafted by Mattias Jonsson (decisions on #107, 2026-11-14); drafted by agent (Claude Code, claude-opus-5-5, issue #140) — proposed
 - **Seam:** none until a person adds the source's part and seam to the map (plan `docs/plans/140.md`, A1); the data it produces crosses `web-server` as ADR 0039 says
 - **Issue:** m0x6A/rubato#107
 

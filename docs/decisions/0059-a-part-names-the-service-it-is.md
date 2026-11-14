@@ -1,8 +1,8 @@
 # 0059. A map part names the service it is, by the namespace and name that service emits
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** Mattias Jonsson (#140 Settled and Q2, 2026-11-14; namespaceless ends answered in planning, 2026-11-14); drafted by agent (Claude Code, claude-opus-5-5, issue #140) — proposed
+- **Decided by:** m0x6A, accepted 2026-11-14 by approval comment https://github.com/m0x6A/rubato/issues/140#issuecomment-6882263766 (self); drafted by Mattias Jonsson (#140 Settled and Q2, 2026-11-14; namespaceless ends answered in planning, 2026-11-14); drafted by agent (Claude Code, claude-opus-5-5, issue #140) — proposed
 - **Seam:** server-system-map, skill-system-map, web-server
 - **Issue:** m0x6A/rubato#140
 
