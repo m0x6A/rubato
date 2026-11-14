@@ -1,0 +1,12 @@
+# A second workspace for the e2e server (issue #89): a small application of its own. Its repo is
+# not the seeded one, so the default workspace's issues and tests are unchanged.
+version: 1
+name: shop
+repos: [{ name: acme/shop }]
+nodes:
+  - { id: storefront, kind: context, repo: acme/shop, description: "What shoppers see" }
+  - { id: checkout, kind: context, repo: acme/shop, description: "Takes the order" }
+  - { id: payments, kind: external, description: "The card processor" }
+seams:
+  - { id: storefront-checkout, from: storefront, to: checkout, owner: checkout }
+  - { id: checkout-payments, from: checkout, to: payments, owner: checkout }

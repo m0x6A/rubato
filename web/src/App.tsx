@@ -5,17 +5,19 @@ import { DraftPanel, draftMarks, draftsApi, seamOpFor, withDraft } from "./featu
 import { Findings } from "./features/findings/index.ts";
 import { IssuePanel, TeamTrack } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
-import { liveApi, subscribe } from "./features/live/index.ts";
+import { liveApi, subscribe, takeForgottenWorkspace } from "./features/live/index.ts";
 import { NewIssueForm } from "./features/new_issue/index.ts";
 import { Inspector, MapView, PlanInspector, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
 import { PlansPanel, groupPlans } from "./features/plans/index.ts";
 import { ConnectedRepos } from "./features/repos/index.ts";
 import { queueApi } from "./features/queue/index.ts";
+import { WorkspaceSwitcher } from "./features/workspaces/index.ts";
 import type { IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
 import { hasIssueDrag } from "./shared/dnd.ts";
 import { issueKey, relative } from "./shared/format.ts";
+import { concernsUs, setWorkspace } from "./shared/workspace.ts";
 
 type Tab = "issues" | "plans" | "companions" | "repos";
 
@@ -44,6 +46,10 @@ export function App() {
     try {
       const ov = await liveApi.overview();
       setOverview(ov);
+      const gone = takeForgottenWorkspace();
+      if (gone) {
+        setNotice(`Workspace ${gone} no longer exists; showing ${ov.map.map.name}`);
+      }
       setError(null);
       setRefreshedAt(new Date().toISOString());
     } catch (e) {
@@ -55,7 +61,7 @@ export function App() {
         setError(e instanceof Error ? e.message : String(e));
       }
     }
-  }, []);
+  }, [setNotice]);
 
   useEffect(() => {
     // A 401 from any call, or from the probe after the websocket closes, leads here (design S24).
@@ -71,7 +77,12 @@ export function App() {
         // A 401 is raised by `request`; any other failure shows through the overview's error.
       });
     void refresh();
-    const unsubscribe = subscribe(() => void refresh(), setLive);
+    // A change for another workspace is not ours to refetch for (ADR 0049).
+    const unsubscribe = subscribe((ev) => {
+      if (concernsUs(ev)) {
+        void refresh();
+      }
+    }, setLive);
     return () => {
       unsubscribe();
       offNeedsLogin();
@@ -291,6 +302,18 @@ export function App() {
         <div className="brand">
           <strong>Rubato</strong>
           {overview && <span className="map-version">map {overview.map.map.name} @ {overview.map.version.slice(0, 7)}</span>}
+          {overview && (
+            <WorkspaceSwitcher
+              overview={overview}
+              onSwitch={(id) => {
+                setWorkspace(id);
+                setSelection(null);
+                setSelectedIssue(null);
+                setEditing(false);
+                void refresh();
+              }}
+            />
+          )}
           {overview && <TeamTrack issues={overview.issues} />}
         </div>
         <div className="status">

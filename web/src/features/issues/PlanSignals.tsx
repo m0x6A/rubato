@@ -54,10 +54,23 @@ export function PlanSignals({ issue }: { issue: IssueSummary }) {
   );
 }
 
-/** The compact badges on an issue row: reviewed, approved or approval stale. */
-export function SignalBadges({ issue }: { issue: IssueSummary }) {
+/** The compact badges on an issue row: reviewed, approved or approval stale; and, with several
+ * workspaces (issue #89), where else it is pinned and where its plan counts when not here. */
+export function SignalBadges({ issue, here }: { issue: IssueSummary; here?: string | undefined }) {
+  const fitsIn = issue.fits_in ?? [];
+  const countsElsewhere = fitsIn.length > 0 && here !== undefined && !fitsIn.includes(here);
   return (
     <>
+      {(issue.pinned_in ?? []).length > 0 && (
+        <span className="badge elsewhere" title="Pinned in another workspace">
+          pinned in {(issue.pinned_in ?? []).join(", ")}
+        </span>
+      )}
+      {countsElsewhere && (
+        <span className="badge elsewhere" title="The plan fits that workspace's map, so its approval counts there">
+          counts in {fitsIn.join(", ")}
+        </span>
+      )}
       {issue.review && (
         <span className="badge reviewed" title={reviewLabel(issue.review)}>
           reviewed
