@@ -1111,6 +1111,10 @@ author: string
  */
 branch?: (string | null)
 /**
+ * The bundle an approval given in Rubato covers (the plan, its design note, its ADRs).
+ */
+bundle_hash?: (string | null)
+/**
  * The comment's id, for a comment approval.
  */
 comment_id?: (number | null)
