@@ -158,6 +158,12 @@ pub mod metric {
     pub const COMPANIONS_BY_CAPABILITY: &str = "rubato.companions.by_capability";
     /// Companion: pastes that failed, by reason.
     pub const SESSION_INPUT_FAILED: &str = "rubato.session_input.failed";
+    /// Headless turns ended (ADR 0059), by `rubato.outcome`: `ok`, `failed`, `no_result`,
+    /// `timeout`, `killed`.
+    pub const HEADLESS_TURNS: &str = "rubato.headless.turns";
+    /// Headless turns the companion killed, by `rubato.reason`: `stop`, `cap`, `revoke`,
+    /// `timeout`, `quiet`, `companion_restarted`. `HeadlessTurnsKilled` fires on the last three.
+    pub const HEADLESS_KILLED: &str = "rubato.headless.killed";
     /// Session log entries stored, by role and kind (ADR 0052).
     pub const SESSION_LOG_ENTRIES: &str = "rubato.session_log.entries";
     /// Hooks that should have made a log entry and did not, by reason (`no_text`, `no_prompt_id`).
@@ -318,6 +324,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
         metric::COMPANIONS_BY_CAPABILITY,
         metric::SESSION_INPUT_FAILED,
+        metric::HEADLESS_TURNS,
+        metric::HEADLESS_KILLED,
         metric::SESSION_LOG_ENTRIES,
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
