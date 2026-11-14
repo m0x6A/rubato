@@ -85,20 +85,30 @@ export function FlowParticles({ id, path, kind, reversed, mode, reduced, length 
   );
 }
 
-/** At most this many ambient particles on the map at once (design §5): 2 per flow. */
+/** At most this many moving particles on the map at once (design §5): dots, rings and chevrons. */
 export const PARTICLE_CAP = 120;
+/** A declared flow runs two particles; a traffic seam passes its chevron count (up to 6, #104). */
 const PER_FLOW = 2;
 
 /**
- * Which ambient flows keep moving when there are more than the cap allows: first the flows next
- * to the selection or a lit part, then the rest in map order, until the cap is spent. The others
- * show the still marker. Returns the ids of the flows that move.
+ * Which ambient items keep moving when their particles are more than the cap allows: first the
+ * items next to the selection or a lit part, then the rest in map order, while their counts fit.
+ * The others show the still marker. Returns the ids of the items that move.
  */
-export function particleBudget(ambient: { id: string; near: boolean }[], cap = PARTICLE_CAP): Set<string> {
-  const slots = Math.floor(cap / PER_FLOW);
-  if (ambient.length <= slots) {
+export function particleBudget(ambient: { id: string; near: boolean; count?: number }[], cap = PARTICLE_CAP): Set<string> {
+  const count = (a: { count?: number }) => a.count ?? PER_FLOW;
+  if (ambient.reduce((n, a) => n + count(a), 0) <= cap) {
     return new Set(ambient.map((a) => a.id));
   }
   const ordered = [...ambient.filter((a) => a.near), ...ambient.filter((a) => !a.near)];
-  return new Set(ordered.slice(0, slots).map((a) => a.id));
+  const moving = new Set<string>();
+  let used = 0;
+  for (const a of ordered) {
+    if (used + count(a) > cap) {
+      break;
+    }
+    used += count(a);
+    moving.add(a.id);
+  }
+  return moving;
 }

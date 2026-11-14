@@ -1,5 +1,6 @@
 import { type OnPin, useIssueDrop } from "./drop.ts";
 import type { DraftMarkLike, GraphEdge } from "./graph.ts";
+import { windowText } from "../findings/index.ts";
 
 interface Props {
   seam: GraphEdge;
@@ -9,6 +10,8 @@ interface Props {
   onPin?: OnPin | undefined;
   /** The shared draft adds, changes or removes this seam. */
   draft?: DraftMarkLike | undefined;
+  /** In the Traffic lens: the rate and error share, or "no calls in 1 h" (ADR 0039). */
+  traffic?: string | undefined;
 }
 
 /**
@@ -16,10 +19,10 @@ interface Props {
  * target for pinning an issue to it, since React Flow edges take no drops (design S3, S4).
  * Renders without React Flow, so it is tested on its own.
  */
-export function SeamChip({ seam, selected, onSelect, onPin, draft }: Props) {
+export function SeamChip({ seam, selected, onSelect, onPin, draft, traffic }: Props) {
   const { over, handlers } = useIssueDrop<HTMLButtonElement>({ kind: "seam", id: seam.id }, draft?.state === "added" ? undefined : onPin);
   const plans = seam.openPlans.length;
-  const classes = ["seam-chip", "nodrag", "nopan", seam.collision || seam.findings.length ? "collision" : plans ? "busy" : "", selected ? "selected" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
+  const classes = ["seam-chip", "nodrag", "nopan", seam.collision || seam.findings.length ? "collision" : seam.quietFor !== undefined ? "quiet" : plans ? "busy" : "", selected ? "selected" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
   const pinned = seam.issues.length;
   return (
     <button
@@ -35,6 +38,7 @@ export function SeamChip({ seam, selected, onSelect, onPin, draft }: Props) {
       {...handlers}
     >
       {seam.id}
+      {traffic && ` · ${traffic}`}
       {draft && ` · ${draft.state === "added" ? "draft" : draft.state === "changed" ? "changed in draft" : "removed in draft"} · ${draft.author}`}
       {plans > 0 && <span className="count">{`${plans} plan${plans === 1 ? "" : "s"}`}</span>}
       {pinned > 0 && ` · ${pinned} issue${pinned === 1 ? "" : "s"}`}
@@ -46,6 +50,13 @@ export function SeamChip({ seam, selected, onSelect, onPin, draft }: Props) {
             {" "}
             {seam.findings.length} finding{seam.findings.length === 1 ? "" : "s"}: a plan sends something over this seam that it does not join
           </span>
+        </>
+      )}
+      {seam.quietFor !== undefined && (
+        <>
+          {" "}
+          <span aria-hidden="true">⚠</span>
+          <span className="sr-only"> no calls observed on this seam in the last {windowText(seam.quietFor)}, though both its parts show traffic</span>
         </>
       )}
       {seam.collision && (

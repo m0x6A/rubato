@@ -13,6 +13,9 @@ import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, layout 
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 import { FlowParticles, type ParticleMode, particleBudget, particleMode } from "./particles.tsx";
+import { TerritoryMark, TrafficChevrons, chevronCount, chevronsOn, chipTraffic, perMinute, trafficLegend, unknownSentence } from "./traffic.tsx";
+import { windowText } from "../findings/index.ts";
+import type { UndeclaredEdge } from "../../protocol.ts";
 import { useReducedMotion } from "../../shared/motion.ts";
 
 type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
@@ -30,8 +33,14 @@ type SeamEdgeData = {
   particles: ParticleMode;
   /** Reduced motion: one still marker instead of anything that travels. */
   still: boolean;
+  /** In the Traffic lens on a fresh report: chevrons each way (issue #104). */
+  chevrons: { forward: number; reverse: number } | null;
+  /** In the Traffic lens: what the chip adds, the rate or "no calls in 1 h". */
+  chipTraffic: string | undefined;
 };
 type SeamFlowEdge = Edge<SeamEdgeData, "seam">;
+type TerritoryEdgeData = { edge: UndeclaredEdge; windowSecs: number; reduced: boolean; still: boolean };
+type TerritoryFlowEdge = Edge<TerritoryEdgeData, "territory">;
 
 function MapNodeCard({ data }: NodeProps<MapFlowNode>) {
   return (
@@ -66,6 +75,10 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
       <BaseEdge path={path} {...(markerEnd ? { markerEnd } : {})} {...(markerStart ? { markerStart } : {})} {...(data?.arrow.dashed ? { style: { strokeDasharray: "7 5" } } : {})} />
       {data && (
         <EdgeLabelRenderer>
+          {data.chevrons && (
+            // Observed calls, as chevrons pointing the way they go (issue #104, design §5.2).
+            <TrafficChevrons id={data.seam.id} path={path} forward={data.chevrons.forward} reverse={data.chevrons.reverse} reduced={data.still} length={Math.hypot(targetX - sourceX, targetY - sourceY) * 1.15} />
+          )}
           {flow && flow.kind !== "structure" && (
             // Data is a filled dot, control a ring: the kind reads without colour. Particles travel
             // in the flow's own direction; with reduced motion one marker sits still (particles.tsx).
@@ -81,7 +94,7 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
           )}
           {data.chip && (
             <div className="seam-label" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - (flow ? CHIP_ABOVE_FLOW : 0)}px)` }}>
-              <SeamChip seam={data.seam} selected={data.selected} onSelect={data.onSelect} onPin={data.onPin} draft={data.draft} />
+              <SeamChip seam={data.seam} selected={data.selected} onSelect={data.onSelect} onPin={data.onPin} draft={data.draft} traffic={data.chipTraffic} />
             </div>
           )}
         </EdgeLabelRenderer>
@@ -90,8 +103,26 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
   );
 }
 
+/**
+ * Calls between two parts no seam joins (issue #104, design §5.4): a static dotted amber line
+ * with the calls' chevrons and a label. Not a seam: it cannot be selected, pinned or dropped on.
+ */
+function TerritoryEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<TerritoryFlowEdge>) {
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  return (
+    <>
+      <BaseEdge path={path} interactionWidth={0} />
+      {data && (
+        <EdgeLabelRenderer>
+          <TerritoryMark edge={data.edge} windowSecs={data.windowSecs} path={path} labelX={labelX} labelY={labelY} reduced={data.reduced} still={data.still} length={Math.hypot(targetX - sourceX, targetY - sourceY) * 1.15} />
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
 const nodeTypes = { map: MapNodeCard };
-const edgeTypes = { seam: SeamEdge };
+const edgeTypes = { seam: SeamEdge, territory: TerritoryEdge };
 
 interface Props {
   graph: Graph;
@@ -296,7 +327,18 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     },
     [save],
   );
-  const edges: SeamFlowEdge[] = useMemo(() => {
+  const traffic = graph.traffic ?? { state: "not_configured" as const };
+  const windowSecs = traffic.window_secs ?? 3600;
+  const showTraffic = chevronsOn(lens, traffic.state);
+  const edges: (SeamFlowEdge | TerritoryFlowEdge)[] = useMemo(() => {
+    const chevronsFor = (e: GraphEdge) => {
+      if (!showTraffic || !e.traffic) {
+        return null;
+      }
+      const c = { forward: chevronCount(perMinute(e.traffic.forward_calls, windowSecs)), reverse: chevronCount(perMinute(e.traffic.reverse_calls, windowSecs)) };
+      return c.forward + c.reverse > 0 ? c : null;
+    };
+    const chipFor = (e: GraphEdge) => (!showTraffic ? undefined : e.quietFor !== undefined ? `no calls in ${windowText(e.quietFor)}` : e.traffic ? chipTraffic(e.traffic, windowSecs) : undefined);
     const drawn: SeamFlowEdge[] =
       graph.edges.flatMap((e) =>
         arrowsFor(planView ? { ...e, flows: planView.flows.get(e.id) } : e, lens).map((arrow, i) => {
@@ -314,13 +356,14 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               arrow.moving ? "moving" : "",
               step?.arrow === arrow.id ? "step-active" : "",
               arrow.reversed ? "reversed" : "",
+              showTraffic && e.quietFor !== undefined ? "quiet" : "",
               draftMarks?.has(e.id) ? `draft draft-${draftMarks.get(e.id)?.state}` : "",
               litNow !== null && !litNow.seams.has(e.id) ? "dim" : "",
             ]
               .filter(Boolean)
               .join(" "),
             ...(arrow.reversed ? { markerStart: marker } : { markerEnd: marker }),
-            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id), particles: particleMode(arrow, lens, step?.arrow === arrow.id), still: reducedMotion },
+            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id), particles: particleMode(arrow, lens, step?.arrow === arrow.id), still: reducedMotion, chevrons: chevronsFor(e), chipTraffic: chipFor(e) },
           };
         }),
       );
@@ -328,10 +371,30 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     // moving and the rest show the still marker.
     const painted = new Set(graph.nodes.filter((n) => n.paint).map((n) => n.id));
     const near = (d: SeamEdgeData) => (litNow !== null && litNow.seams.has(d.seam.id)) || painted.has(d.seam.from) || painted.has(d.seam.to);
-    const ambient = drawn.flatMap((ed) => (ed.data && ed.data.particles === "ambient" ? [{ id: ed.id, near: near(ed.data) }] : []));
+    const territory: TerritoryFlowEdge[] = showTraffic
+      ? (graph.territory ?? []).map((u) => ({
+          id: `territory-${u.from}-${u.to}`,
+          type: "territory" as const,
+          source: u.from,
+          target: u.to,
+          className: "territory",
+          selectable: false,
+          focusable: false,
+          data: { edge: u, windowSecs, reduced: reducedMotion, still: false },
+        }))
+      : [];
+    // Dots, rings and chevrons share one cap; only one lens is on, so they never add up.
+    const ambient = [
+      ...drawn.flatMap((ed) => (ed.data && ed.data.particles === "ambient" ? [{ id: ed.id, near: near(ed.data) }] : [])),
+      ...drawn.flatMap((ed) => (ed.data?.chevrons ? [{ id: ed.id, near: near(ed.data), count: ed.data.chevrons.forward + ed.data.chevrons.reverse }] : [])),
+      ...territory.map((t) => ({ id: t.id, near: painted.has(t.source) || painted.has(t.target), count: chevronCount(perMinute(t.data?.edge.calls ?? 0, windowSecs)) })),
+    ];
     const moving = particleBudget(ambient);
-    return drawn.map((ed) => (ed.data && ed.data.particles === "ambient" && !moving.has(ed.id) ? { ...ed, data: { ...ed.data, still: true } } : ed));
-  }, [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion]);
+    return [
+      ...drawn.map((ed) => (ed.data && (ed.data.particles === "ambient" || ed.data.chevrons) && !moving.has(ed.id) ? { ...ed, data: { ...ed.data, still: true } } : ed)),
+      ...territory.map((t) => (t.data && !moving.has(t.id) ? { ...t, data: { ...t.data, still: true } } : t)),
+    ];
+  }, [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion, showTraffic, windowSecs]);
   // Particles and halos rest while a part is dragged or the page is hidden.
   const [dragging, setDragging] = useState(false);
   const [hidden, setHidden] = useState(typeof document !== "undefined" && document.visibilityState === "hidden");
@@ -350,7 +413,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           {LENSES.map((l) => (
             <button key={l.id} type="button" role="radio" aria-checked={lens === l.id} className={lens === l.id ? "active" : ""} onClick={() => setLens(l.id)} disabled={planView !== null} title={planView ? "Close the issue to choose what the arrows show" : undefined}>
               {l.label}
-              {l.id !== "structure" && ` (${counts[l.id]})`}
+              {(l.id === "data" || l.id === "control") && ` (${counts[l.id]})`}
             </button>
           ))}
           {graph.scenarios.length > 0 && (
@@ -436,7 +499,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         </div>
       )}
       {lens !== "scenario" && (
-        <p className="legend" data-testid="legend">
+        <div className="legend" data-testid="legend">
           {lens === "plan" && plan && planView && (
             <>
               <strong>The plan of {issueKey(plan.issue)}.</strong> Its parts are painted, the rest steps back
@@ -455,6 +518,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
             </>
           )}
           {lens === "structure" && "Each arrow points from the part that depends to the part it depends on."}
+          {lens === "traffic" && <TrafficLegendText traffic={traffic} />}
           {lens === "data" && (
             <>
               <svg width="34" height="8" aria-hidden="true">
@@ -471,7 +535,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               <i className="key-mark control" aria-hidden="true" /> Control runs along a dashed arrow as rings: one side tells the other to act. A faint seam declares no control flow.
             </>
           )}
-        </p>
+        </div>
       )}
     </div>
   );
@@ -504,7 +568,12 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
             }}
             elementsSelectable
             onNodeClick={(_e, n) => onSelect({ kind: "node", id: n.id })}
-            onEdgeClick={(_e, edge) => onSelect({ kind: "seam", id: edge.data?.seam.id ?? edge.id })}
+            onEdgeClick={(_e, edge) => {
+              // A territory edge is not a seam: there is nothing to select.
+              if (edge.type !== "territory") {
+                onSelect({ kind: "seam", id: (edge as SeamFlowEdge).data?.seam.id ?? edge.id });
+              }
+            }}
             onPaneClick={() => onSelect(null)}
             proOptions={{ hideAttribution: true }}
             minZoom={0.2}
@@ -515,6 +584,28 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         )}
       </div>
     </div>
+  );
+}
+
+/** The Traffic lens's legend: why nothing is shown, or what chevrons, hollow seams and dotted lines mean (design §5.5, §5.6). */
+function TrafficLegendText({ traffic }: { traffic: NonNullable<Graph["traffic"]> }) {
+  const unknown = unknownSentence(traffic);
+  if (unknown) {
+    return <>{unknown}</>;
+  }
+  const l = trafficLegend(traffic);
+  return (
+    <>
+      <i className="key-mark chevron" aria-hidden="true" /> {l.text}
+      {l.unmappedCount > 0 && (
+        <details className="unmapped">
+          <summary>
+            {l.unmappedCount} service{l.unmappedCount === 1 ? " is" : "s are"} not on the map
+          </summary>
+          {l.unmapped.join(", ")}
+        </details>
+      )}
+    </>
   );
 }
 
