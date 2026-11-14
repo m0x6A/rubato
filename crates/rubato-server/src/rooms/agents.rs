@@ -101,7 +101,7 @@ fn agent(r: &SqliteRow) -> Result<AgentRow> {
 
 const AGENT_COLUMNS: &str = "id, repo, number, branch, launch_id, owner, called_by, joined_at, left_at, left_reason, last_turn_at, fork_session_id";
 
-/// The agent joins. False when the owner's agent is in this room already.
+/// The agent joins: its row, or None when the owner's agent is in this room already.
 pub async fn join(db: &SqlitePool, room: &RoomKey, a: &RoomAgent) -> Result<Option<AgentRow>> {
     let id = Uuid::new_v4();
     let n = sqlx::query(
