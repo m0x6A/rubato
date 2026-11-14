@@ -4,7 +4,7 @@ import { CompanionsPanel } from "./features/companions/index.ts";
 import { DraftPanel, draftMarks, draftsApi, seamOpFor, withDraft } from "./features/drafts/index.ts";
 import { Findings } from "./features/findings/index.ts";
 import { IssuePanel, TeamTrack } from "./features/issues/index.ts";
-import { launchApi, launchNotice } from "./features/launch/index.ts";
+import { launchApi, launchFailureText, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe, takeForgottenWorkspace } from "./features/live/index.ts";
 import { NewIssueForm } from "./features/new_issue/index.ts";
 import { Inspector, MapView, PlanInspector, buildGraph, mapApi } from "./features/map/index.ts";
@@ -213,7 +213,7 @@ export function App() {
         if (e instanceof ApiError && e.status === 401) {
           return;
         }
-        setNotice(`No session was started for ${issueKey(issue)}; it stays queued: ${failureText(e)}`);
+        setNotice(`No session was started for ${issueKey(issue)}; it stays queued: ${launchFailureText(e)}`);
       }
     },
     [refresh, setNotice],
@@ -236,13 +236,14 @@ export function App() {
     }
   };
 
-  const onLaunch = async (issue: IssueRef) => {
+  /** Start a session; `branch` resumes one of your drafts on it (ADR 0053). */
+  const onLaunch = async (issue: IssueRef, branch?: string) => {
     try {
-      const r = await launchApi.launch({ issue });
+      const r = await launchApi.launch(branch ? { issue, branch } : { issue });
       setNotice(launchNotice(r, issue));
       await refresh();
     } catch (e) {
-      setNotice(`No session was started for ${issueKey(issue)}: ${failureText(e)}`);
+      setNotice(`No session was started for ${issueKey(issue)}: ${launchFailureText(e)}`);
     }
   };
 
