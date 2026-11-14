@@ -12,6 +12,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// How many pasted texts an entry keeps for matching its next prompts.
+pub const PASTED_KEPT: usize = 5;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub session_id: Option<String>,
@@ -54,6 +57,10 @@ pub struct Entry {
     /// A launch restored after a restart whose hook port could not be taken back: its hooks
     /// go nowhere, so chat needs a relaunch (`SessionState.hooks_lost`).
     pub hooks_lost: bool,
+    /// Session messages typed into the session that no prompt has carried yet, oldest first, at
+    /// most [`PASTED_KEPT`]. The next `UserPromptSubmit` ending with one is tagged with its id
+    /// (plan 122 PR 4). In memory only; it follows the launch across a `/clear`.
+    pub pasted: Vec<(Uuid, String)>,
 }
 
 impl Entry {
@@ -252,6 +259,7 @@ mod tests {
             last_hook_at: None,
             input_sent_at: None,
             hooks_lost: false,
+            pasted: Vec::new(),
         });
         let counts = r.counts_by_source();
         assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");

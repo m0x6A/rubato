@@ -104,3 +104,17 @@ async fn then_payload_keeps(w: &mut RubatoWorld, key: String) {
     let p = last_forwarded_payload(w).await;
     assert!(p.get(&key).is_some(), "{key} was cut: {p}");
 }
+
+#[then("the forwarded hook names no launch")]
+async fn then_no_launch(w: &mut RubatoWorld) {
+    let h = w
+        .server()
+        .wait_for(Duration::from_secs(10), |m| match m {
+            CompanionMessage::Hook(h) => Some(h.clone()),
+            _ => None,
+        })
+        .await
+        .expect("a forwarded hook");
+    assert_eq!(h.launch_id, None, "{h:?}");
+    assert_eq!((h.message_id, h.truncated), (None, false), "{h:?}");
+}

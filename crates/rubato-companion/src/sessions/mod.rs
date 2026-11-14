@@ -11,5 +11,5 @@ mod tasks;
 
 pub use identity::recheck;
 pub use launches::{LaunchRecord, launches_path, load_launches, save_launches_if_changed};
-pub use registry::{Entry, Identity, Registry, identify};
+pub use registry::{Entry, Identity, PASTED_KEPT, Registry, identify};
 pub use tasks::{reconcile, watch_events};

@@ -128,10 +128,12 @@ impl SessionInputTask {
                     // answered `interrupted`: never typed twice.
                     tracing::error!(id = %msg.id, error = %format!("{e:#}"), "delivered, but not recorded as delivered");
                 }
-                self.registry
-                    .lock()
-                    .await
-                    .mark_input_sent(msg.launch_id, at);
+                self.registry.lock().await.mark_input_sent(
+                    msg.launch_id,
+                    at,
+                    msg.id,
+                    msg.kind.text(),
+                );
                 Handled {
                     outcome: SessionMessageOutcome::Delivered,
                     repeat: false,
