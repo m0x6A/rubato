@@ -57,6 +57,10 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
         .route(&at(issue_routes::ISSUES), post(new_issue::create))
         .route(&at(approve_routes::PLAN_APPROVE), post(approve::approve))
         .route(
+            &at(approve_routes::PLAN_DRAFT_APPROVE),
+            post(approve::approve_draft),
+        )
+        .route(
             &at(layout_routes::LAYOUT),
             put(layout::put_layout).delete(layout::clear_layout),
         )
@@ -176,6 +180,7 @@ mod tests {
             (Method::POST, launch_routes::LAUNCH.into()),
             (Method::POST, issue_routes::ISSUES.into()),
             (Method::POST, approve_routes::PLAN_APPROVE.into()),
+            (Method::POST, approve_routes::PLAN_DRAFT_APPROVE.into()),
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
             (Method::POST, queue_routes::QUEUE.into()),
@@ -199,13 +204,13 @@ mod tests {
             .filter(|(_, p)| MAP_SCOPED.iter().any(|m| p.starts_with(m)))
             .map(|(m, p)| (m.clone(), workspace_routes::scoped("default", p)))
             .collect();
-        assert!(scoped.len() >= 17, "{scoped:?}");
+        assert!(scoped.len() >= 18, "{scoped:?}");
         routes.extend(scoped);
         routes
     }
 
     /// The paths served per workspace: map-scoped, never team-scoped.
-    const MAP_SCOPED: [&str; 7] = [
+    const MAP_SCOPED: [&str; 8] = [
         "/api/overview",
         "/api/map",
         "/api/pins",
@@ -213,6 +218,7 @@ mod tests {
         "/api/layout",
         "/api/issues",
         "/api/plans/approve",
+        "/api/plans/drafts/approve",
     ];
 
     /// Refusals are counted by route and reason, and logged with who (design O3, O12).

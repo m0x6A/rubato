@@ -146,9 +146,17 @@
       ]
     },
     "ApprovalRecord": {
-      "description": "A person's approval of a plan, first line `Approved: plan <sha>` or\n`Approved: plan <sha> on <branch>` (ADR 0027). Only a trusted author's approval counts.",
+      "description": "A person's approval of a plan (ADR 0054): an issue comment whose first line is\n`Approved: plan <sha>` or `Approved: plan <sha> on <branch>` (ADR 0027), from a trusted\nauthor only; or an approval given in Rubato, with its `approval_id` and no comment.",
       "type": "object",
       "properties": {
+        "approval_id": {
+          "description": "The `rubato_approvals` row, for an approval given in Rubato.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
         "author": {
           "type": "string"
         },
@@ -160,7 +168,11 @@
           ]
         },
         "comment_id": {
-          "type": "integer",
+          "description": "The comment's id, for a comment approval.",
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "uint64",
           "minimum": 0
         },
@@ -184,16 +196,35 @@
             "null"
           ]
         },
+        "source": {
+          "description": "Absent for a comment, which is all an approval was before ADR 0054.",
+          "$ref": "#/$defs/ApprovalSource"
+        },
         "url": {
+          "description": "The comment's URL; empty for an approval given in Rubato.",
           "type": "string"
         }
       },
       "required": [
         "issue",
-        "comment_id",
         "author",
         "created_at",
         "url"
+      ]
+    },
+    "ApprovalSource": {
+      "description": "Where an approval was given (ADR 0054).",
+      "oneOf": [
+        {
+          "description": "An `Approved:` comment on the issue (ADR 0027). Counted only when posted before the\ncutover, `RUBATO_COMMENT_APPROVALS_UNTIL`.",
+          "type": "string",
+          "const": "comment"
+        },
+        {
+          "description": "An approval given in Rubato, recorded in `rubato_approvals`.",
+          "type": "string",
+          "const": "rubato"
+        }
       ]
     },
     "ApprovalState": {
@@ -958,6 +989,32 @@
           "required": [
             "kind",
             "issue"
+          ]
+        },
+        {
+          "description": "An `Approved:` comment posted at or after the cutover: not counted, since plans are\napproved in Rubato (ADR 0054).",
+          "type": "object",
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "comment_approval_ignored"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "author",
+            "created_at"
           ]
         },
         {
