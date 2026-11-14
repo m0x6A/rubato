@@ -156,6 +156,7 @@ mod tests {
             otel_resource: BTreeMap::new(),
             map_version: None,
             plan_path: None,
+            draft: None,
             planning: Default::default(),
         }
     }

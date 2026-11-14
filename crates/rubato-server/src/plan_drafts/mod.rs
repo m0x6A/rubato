@@ -13,7 +13,8 @@ mod tests;
 use crate::kernel::state::App;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rubato_protocol::{DraftSummary, IssueRef, Plan};
+use rubato_protocol::{DraftRestore, DraftSummary, IssueRef, Plan};
+use uuid::Uuid;
 
 pub use handlers::{draft, revision};
 pub use intake::on_draft;
@@ -43,6 +44,17 @@ pub struct LatestDraft {
     pub plan: Option<Plan>,
     /// The last bundle refused because someone else owns the draft, and when.
     pub conflict: Option<(String, DateTime<Utc>)>,
+}
+
+/// A draft's newest settled revision as a launch carries it (ADR 0053, plan 122 §D5).
+pub async fn restore_of(app: &App, draft_id: Uuid) -> Result<Option<DraftRestore>> {
+    Ok(store::latest(&app.db, draft_id)
+        .await?
+        .map(|r| DraftRestore {
+            draft_id,
+            rev: r.info.rev,
+            files: r.files,
+        }))
 }
 
 /// Every draft with at least one revision.

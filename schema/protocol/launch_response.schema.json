@@ -16,6 +16,50 @@
     "companion_id"
   ],
   "$defs": {
+    "DraftFile": {
+      "description": "One file of a bundle, as it is in the worktree.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Repository path, as `bundle_paths` gives it.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "text"
+      ]
+    },
+    "DraftRestore": {
+      "description": "Server → companion, in `LaunchCommand.draft`: a parked draft's newest settled revision.",
+      "type": "object",
+      "properties": {
+        "draft_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "files": {
+          "description": "Repository paths, relative, as `bundle_paths` gives them; the plan first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DraftFile"
+          }
+        },
+        "rev": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "draft_id",
+        "rev",
+        "files"
+      ]
+    },
     "IssueRef": {
       "description": "A GitHub issue, addressed as `owner/name#number`.",
       "type": "object",
@@ -58,6 +102,17 @@
         "branch": {
           "description": "`issue/<n>-<slug>`.",
           "type": "string"
+        },
+        "draft": {
+          "description": "The newest settled revision of the launcher's parked draft on this branch, for the\ncompanion to write into a worktree this launch creates (ADR 0053, plan 122 §D5). Sent\nonly to a companion that announced `draft_restore`, and only while no plan is on the branch.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftRestore"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "id": {
           "type": "string",

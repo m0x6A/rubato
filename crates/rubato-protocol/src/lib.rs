@@ -81,7 +81,8 @@ pub use plan::{
     ORow, PartStatus, Plan, PlanApprovalRecord, PlanDecision, PlanFit, PlanFlow, plan_fit,
 };
 pub use plan_draft::{
-    DraftBundle, DraftFile, DraftRefusal, DraftRevision, DraftRevisionInfo, DraftSummary, DraftView,
+    DraftBundle, DraftFile, DraftRefusal, DraftRestore, DraftRevision, DraftRevisionInfo,
+    DraftSummary, DraftView, RestoreSkipped,
 };
 pub use plan_hash::{
     APPROVAL_KEYS, AdrPin, adr_pins, approval_hash, approval_names, bundle_hash, bundle_paths,

@@ -32,6 +32,8 @@ pub mod capability {
     pub const PLAN_HANDOFF: &str = "plan_handoff";
     /// The server takes `CompanionMessage::HandoffReport`.
     pub const HANDOFF_REPORTS: &str = "handoff_reports";
+    /// The companion writes `LaunchCommand.draft` into a worktree the launch creates (ADR 0053).
+    pub const DRAFT_RESTORE: &str = "draft_restore";
     /// Prefix of the installed skill's version, `skill:0.2.0`.
     pub const SKILL_PREFIX: &str = "skill:";
 }

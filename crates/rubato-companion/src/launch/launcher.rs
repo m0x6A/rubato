@@ -131,6 +131,9 @@ impl Launcher {
                     worktree: started.worktree.to_string_lossy().into_owned(),
                     tmux_session: started.tmux_session.clone(),
                     at: Utc::now(),
+                    // Restoring a draft is PR 8's companion half; until then nothing is written.
+                    draft_restored: false,
+                    restore_skipped: None,
                 },
                 Some(started),
             ),

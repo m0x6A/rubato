@@ -1145,6 +1145,8 @@ async fn web_events_follow_every_action() {
             worktree: "/w".into(),
             tmux_session: "t".into(),
             at: chrono::Utc::now(),
+            draft_restored: false,
+            restore_skipped: None,
         }),
     };
     let _ = send(&mut ws, &started).await;
@@ -1382,6 +1384,8 @@ fn started(seq: u64, launched: &rubato_protocol::LaunchResponse) -> CompanionEnv
             worktree: "/w".into(),
             tmux_session: "t".into(),
             at: chrono::Utc::now(),
+            draft_restored: false,
+            restore_skipped: None,
         }),
     }
 }
@@ -2533,6 +2537,8 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
             worktree: "/w".into(),
             tmux_session: "s".into(),
             at: chrono::Utc::now(),
+            draft_restored: false,
+            restore_skipped: None,
         }),
     };
     send(&mut ws, &started).await;
@@ -5181,4 +5187,179 @@ async fn spend_history_sums_two_sessions_on_the_issue() {
     let line = spend_line(&[&[1.0, 0.5], &[2.5, 0.5], &[4.0, 1.0]]).await;
     let usd: Vec<f64> = line.iter().map(|p| p.usd).collect();
     assert_eq!(usd, [1.5, 3.0, 5.0], "{line:?}");
+}
+
+/// Plan 122 §D5: a draft revision stored for `owner` on `branch` of issue #3, with caps in its
+/// front matter.
+async fn draft_on(h: &Harness, owner: &str, branch: &str, cap: f64) {
+    let plan = format!(
+        "---\nissue: m0x6A/rubato#3\nspend_cap_usd: {cap}\nattempt_limit: 7\n---\n## Affected parts\n| Node | Status | What changes | Seams |\n| --- | --- | --- | --- |\n| skill-rubato | affected | x | |\n"
+    );
+    let bundle = rubato_protocol::DraftBundle {
+        launch_id: Uuid::new_v4(),
+        session_id: None,
+        issue: IssueRef::new("m0x6A/rubato", 3),
+        branch: branch.into(),
+        files: vec![rubato_protocol::DraftFile {
+            path: "docs/plans/3.md".into(),
+            text: plan,
+        }],
+        missing: vec![],
+        bundle_hash: format!("h-{branch}-{cap}"),
+        refused: None,
+        at: chrono::Utc::now(),
+    };
+    rubato_server::plan_drafts::on_draft(&h.app, &bundle, owner).await;
+}
+
+/// A connected companion of `user` that announced `caps`, and issue #3 pinned.
+async fn launcher(
+    h: &Harness,
+    user: &str,
+    caps: &[&str],
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    let (companion_id, token) = h.pair(user).await;
+    let mut ws = h.connect(&token).await;
+    let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    if let CompanionMessage::Hello {
+        capabilities,
+        user: u,
+        ..
+    } = &mut hello.message
+    {
+        *capabilities = caps.iter().map(|c| (*c).to_owned()).collect();
+        *u = user.into();
+    }
+    let _ = send(&mut ws, &hello).await;
+    ws
+}
+
+async fn pin_3(h: &Harness) {
+    h.http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 3),
+            target: MapRef::node("skill-rubato"),
+        })
+        .send()
+        .await
+        .unwrap();
+}
+
+async fn launch_3(h: &Harness, user: &str, extra: serde_json::Value) -> reqwest::Response {
+    let mut body = serde_json::json!({ "issue": IssueRef::new("m0x6A/rubato", 3) });
+    if let (Some(b), Some(e)) = (body.as_object_mut(), extra.as_object()) {
+        b.extend(e.clone());
+    }
+    h.http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .header("x-rubato-dev-user", user)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// ADR 0053, §D5: the owner's launch resumes their draft's branch, whatever the title says now;
+/// the draft's newest revision sets the caps, comes along for a companion that restores, and
+/// each resumption counts as an attempt.
+#[tokio::test]
+async fn the_owner_resumes_a_parked_draft_on_its_branch() {
+    let h = harness().await;
+    let _ws = launcher(&h, "m0x6A", &["draft_restore"]).await;
+    pin_3(&h).await;
+    draft_on(&h, "m0x6A", "issue/3-first-title", 4.5).await;
+
+    let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let first: rubato_protocol::LaunchResponse = r.json().await.unwrap();
+    let cmd = first.command;
+    assert_eq!(cmd.branch, "issue/3-first-title", "not a slug of the title");
+    assert_eq!(cmd.plan_path.as_deref(), Some("docs/plans/3.md"));
+    assert_eq!(
+        cmd.spend_cap_usd, 4.5,
+        "caps from the draft's newest revision"
+    );
+    assert_eq!(cmd.attempt_limit, 7);
+    let draft = cmd
+        .draft
+        .expect("the draft travels to a companion that restores");
+    assert_eq!(draft.rev, 1);
+    assert_eq!(draft.files[0].path, "docs/plans/3.md");
+
+    // A second resumption is the next attempt.
+    let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+    let again: rubato_protocol::LaunchResponse = r.json().await.unwrap();
+    assert_eq!(again.command.attempt, cmd.attempt + 1);
+}
+
+/// ADR 0053, §D5: an older companion gets no draft in the command (it would drop the field
+/// silently); the launch still goes on the draft's branch.
+#[tokio::test]
+async fn a_companion_that_does_not_restore_gets_no_draft() {
+    let h = harness().await;
+    let _ws = launcher(&h, "m0x6A", &[]).await;
+    pin_3(&h).await;
+    draft_on(&h, "m0x6A", "issue/3-first-title", 4.5).await;
+    let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+    let cmd = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(cmd.branch, "issue/3-first-title");
+    assert_eq!(cmd.draft, None);
+}
+
+/// ADR 0053, §D5: two drafts of the caller's and no branch named is 409 pass_branch; naming one
+/// launches on it, and a branch outside the issue's prefix is refused.
+#[tokio::test]
+async fn several_drafts_need_the_branch_named() {
+    let h = harness().await;
+    let _ws = launcher(&h, "m0x6A", &["draft_restore"]).await;
+    pin_3(&h).await;
+    draft_on(&h, "m0x6A", "issue/3-one", 1.0).await;
+    draft_on(&h, "m0x6A", "issue/3-two", 2.0).await;
+    let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+    assert_eq!(r.status(), 409);
+    let text = r.text().await.unwrap();
+    assert!(text.starts_with("pass_branch: "), "{text}");
+    assert!(
+        text.contains("issue/3-one") && text.contains("issue/3-two"),
+        "{text}"
+    );
+
+    let r = launch_3(&h, "m0x6A", serde_json::json!({ "branch": "issue/3-two" })).await;
+    assert_eq!(r.status(), 200);
+    let cmd = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(cmd.branch, "issue/3-two");
+    assert_eq!(cmd.spend_cap_usd, 2.0);
+    assert_eq!(cmd.draft.map(|d| d.files.len()), Some(1));
+
+    let r = launch_3(&h, "m0x6A", serde_json::json!({ "branch": "issue/4-two" })).await;
+    assert_eq!(r.status(), 422, "a branch of another issue");
+}
+
+/// ADR 0053, §D5: a teammate's draft stays theirs: another person's launch goes on a branch of
+/// their own and carries no draft (taking a draft over is Import).
+#[tokio::test]
+async fn a_teammates_draft_is_not_resumed_by_someone_else() {
+    let h = harness().await;
+    let _mine = launcher(&h, "m0x6A", &["draft_restore"]).await;
+    let _theirs = launcher(&h, "alice", &["draft_restore"]).await;
+    pin_3(&h).await;
+    draft_on(&h, "m0x6A", "issue/3-first-title", 4.5).await;
+    let r = launch_3(&h, "alice", serde_json::json!({ "slug": "alices" })).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let cmd = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(cmd.branch, "issue/3-alices");
+    assert_eq!(cmd.draft, None);
 }

@@ -5,11 +5,12 @@ use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
-use crate::{github_poll, pairing, pins, plans};
+use crate::{github_poll, pairing, pins, plan_drafts, plans};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::Utc;
+use rubato_protocol::launch::reason as launch_reason;
 use rubato_protocol::otel::{attr, event, span};
 use rubato_protocol::{
     CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, PlanningMode,
@@ -111,17 +112,51 @@ pub async fn launch(
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .unwrap_or_default();
-    let plan = plans::all(&app.db)
+    let plan_row = plans::all(&app.db)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
-        .find(|p| p.issue == req.issue)
-        .and_then(|p| p.plan);
-    let slug = req
-        .slug
-        .clone()
-        .unwrap_or_else(|| slugify(meta.title.as_deref().unwrap_or("")));
-    let branch = format!("issue/{}-{}", req.issue.number, slug);
+        .find(|p| p.issue == req.issue);
+    // A draft of the caller's on this issue decides the branch (ADR 0053, plan 122 §D5), so
+    // editing the title never orphans it. A teammate's draft stays theirs: taking it over is Import.
+    let mine: Vec<plan_drafts::LatestDraft> = plan_drafts::latest_drafts(&app)
+        .await
+        .map_err(|e| (internal(SLICE, e), String::new()))?
+        .into_iter()
+        .filter(|d| d.issue == req.issue && d.summary.owner.eq_ignore_ascii_case(&user))
+        .collect();
+    let branch = choose_branch(
+        &req,
+        meta.title.as_deref().unwrap_or(""),
+        &mine
+            .iter()
+            .map(|d| d.summary.branch.as_str())
+            .collect::<Vec<_>>(),
+    )?;
+    let slug = branch[branch_prefix(&req.issue).len()..].to_owned();
+    let draft = mine.into_iter().find(|d| d.summary.branch == branch);
+    // The plan on this branch, when there is one. With none, the draft's newest revision sets
+    // the caps (A14); with no draft either, the issue's plan as before.
+    let branch_plan = plan_row
+        .as_ref()
+        .filter(|p| p.branch == branch)
+        .and_then(|p| p.plan.clone());
+    let plan = match &draft {
+        Some(d) if branch_plan.is_none() => d.plan.clone(),
+        _ => plan_row.and_then(|p| p.plan),
+    };
+    // The draft comes back only into a worktree this launch creates; the companion decides that.
+    let restore = match &draft {
+        Some(d)
+            if branch_plan.is_none()
+                && app.announced(companion.companion_id, capability::DRAFT_RESTORE) =>
+        {
+            plan_drafts::restore_of(&app, d.summary.draft_id)
+                .await
+                .map_err(|e| (internal(SLICE, e), String::new()))?
+        }
+        _ => None,
+    };
     let attempt = store::launch_count(&app.db, &req.issue)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
@@ -180,6 +215,7 @@ pub async fn launch(
         otel_resource: otel,
         map_version: Some(map.version.clone()),
         plan_path: Some(plan_path),
+        draft: restore,
         planning: planning_mode(
             app.config.comment_approvals_until.is_some(),
             &app.capabilities(companion.companion_id),
@@ -248,6 +284,47 @@ mod tests {
             Some("m0x6A/rubato#30")
         );
         assert!(e.fields.contains_key("error"));
+    }
+}
+
+fn branch_prefix(issue: &IssueRef) -> String {
+    format!("issue/{}-", issue.number)
+}
+
+/// The branch a launch goes on: the one named, else one from the slug named, else the caller's
+/// only draft of the issue, else a slug of the title. Several drafts and none named is 409
+/// `pass_branch` (ADR 0053): guessing would resume the wrong one.
+fn choose_branch(
+    req: &LaunchRequest,
+    title: &str,
+    drafts: &[&str],
+) -> Result<String, (StatusCode, String)> {
+    let prefix = branch_prefix(&req.issue);
+    match (&req.branch, &req.slug, drafts) {
+        (Some(b), _, _) => match b.strip_prefix(&prefix) {
+            Some(s)
+                if !s.is_empty()
+                    && !s.contains(|c: char| c.is_whitespace() || c == '~' || c == ':') =>
+            {
+                Ok(b.clone())
+            }
+            _ => Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("branch must be {prefix}<slug>"),
+            )),
+        },
+        (None, Some(slug), _) => Ok(format!("{prefix}{slug}")),
+        (None, None, [one]) => Ok((*one).to_owned()),
+        (None, None, []) => Ok(format!("{prefix}{}", slugify(title))),
+        (None, None, several) => Err((
+            StatusCode::CONFLICT,
+            format!(
+                "{}: you own drafts of {} on {}; pass branch",
+                launch_reason::PASS_BRANCH,
+                req.issue,
+                several.join(", ")
+            ),
+        )),
     }
 }
 

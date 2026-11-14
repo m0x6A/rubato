@@ -12,6 +12,13 @@
       "format": "uint32",
       "minimum": 0
     },
+    "branch": {
+      "description": "The branch to launch on, `issue/<n>-<slug>`: one of the caller's drafts of the issue\nwhen they own several (ADR 0053); otherwise the only one, or a slug.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "companion_id": {
       "description": "One of the caller's companions; the only connected one when omitted.",
       "type": [
