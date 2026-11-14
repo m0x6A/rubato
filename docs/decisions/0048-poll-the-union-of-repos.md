@@ -1,8 +1,8 @@
 # 0048. Poll each distinct repo of all workspaces once per tick
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** agent (Claude Code, issue #89 design session); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-14 by approval comment https://github.com/m0x6A/rubato/issues/89#issuecomment-6876029281 (self); drafted by agent (Claude Code, issue #89 design session)
 - **Seam:** server-github
 - **Issue:** m0x6A/rubato#89
 
