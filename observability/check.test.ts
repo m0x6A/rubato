@@ -120,3 +120,8 @@ test("a Map age panel on a metric with a unit suffix is rejected", () => {
   const r = check(rules, tests, withUnit);
   assert.deepEqual(r.problems, ['the dashboard has no "Map age" panel that queries rubato_map_loaded_at']);
 });
+
+test("a dashboard without the Blocked, by station left from panel is rejected (#106, ADR 0043)", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Blocked, by station left from")));
+  assert.deepEqual(r.problems, ['the dashboard has no "Blocked, by station left from" panel that queries rubato_issues_blocked_from']);
+});

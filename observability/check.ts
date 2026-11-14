@@ -33,6 +33,8 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Map lines", "rubato_backlog_map_lines_total"],
   ["Issues created", "rubato_issues_created_total"],
   ["Issues created", "rubato_issues_opening"],
+  // Issue #106 (ADR 0043): both O-rows name this panel.
+  ["Blocked, by station left from", "rubato_issues_blocked_from"],
 ];
 
 type Panel = { title: string; type?: string; targets?: { expr?: string }[] };

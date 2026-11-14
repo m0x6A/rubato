@@ -79,6 +79,8 @@ pub fn init(service_name: &'static str, endpoint: Option<&str>) -> Result<Guard>
 pub struct Metrics {
     pub sessions_by_state: Gauge<u64>,
     pub issues_by_state: Gauge<u64>,
+    /// Blocked issues by the station they left from (ADR 0043).
+    pub issues_blocked_from: Gauge<u64>,
     pub events_dropped: Counter<u64>,
     pub rate_limit_remaining: Gauge<u64>,
     pub rate_limit_limit: Gauge<u64>,
@@ -122,6 +124,7 @@ impl Metrics {
         Self {
             sessions_by_state: m.u64_gauge(otel::metric::SESSIONS_BY_STATE).build(),
             issues_by_state: m.u64_gauge(otel::metric::ISSUES_BY_STATE).build(),
+            issues_blocked_from: m.u64_gauge(otel::metric::ISSUES_BLOCKED_FROM).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
             rate_limit_remaining: m
                 .u64_gauge(otel::metric::GITHUB_RATE_LIMIT_REMAINING)
