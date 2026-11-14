@@ -186,13 +186,23 @@ mod tests {
     async fn a_restart_keeps_the_port_and_token_when_it_can() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let (dtx, _drx) = mpsc::unbounded_channel();
-        let first = HookServer::bind(tx.clone(), dtx.clone()).await.unwrap();
-        let previous = first.endpoint.clone();
-        drop(first);
-        let again = HookServer::bind_reusing(Some(&previous), tx.clone(), dtx.clone())
-            .await
-            .unwrap();
-        assert_eq!(again.endpoint, previous);
+        // Between the drop and the rebind another test may take the freed ephemeral port, which
+        // is the taken-port case below, not a failure of this one: try a few fresh ports.
+        let mut kept = None;
+        for _ in 0..5 {
+            let first = HookServer::bind(tx.clone(), dtx.clone()).await.unwrap();
+            let previous = first.endpoint.clone();
+            drop(first);
+            let again = HookServer::bind_reusing(Some(&previous), tx.clone(), dtx.clone())
+                .await
+                .unwrap();
+            if again.endpoint.port == previous.port {
+                assert_eq!(again.endpoint, previous, "a kept port keeps its token");
+                kept = Some((again, previous));
+                break;
+            }
+        }
+        let (again, previous) = kept.expect("the freed port was taken five times in a row");
 
         // `again` still holds the port.
         let moved = HookServer::bind_reusing(Some(&previous), tx.clone(), dtx.clone())
