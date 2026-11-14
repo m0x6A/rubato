@@ -255,16 +255,17 @@ mod tests {
             StateSource::TmuxIde,
             StateSource::Launch,
             StateSource::Scraped,
+            StateSource::Headless,
         ];
         let counts = r.counts_by_source();
-        assert_eq!(counts.len(), 4, "{counts:?}");
+        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
         for source in all {
             assert_eq!(counts.get(&source), Some(&0), "{source:?}");
         }
         let f = Fleet::parse(include_str!("../../features/fixtures/team.json")).unwrap();
         r.apply_fleet(&f, now());
         let counts = r.counts_by_source();
-        assert_eq!(counts.len(), 4, "{counts:?}");
+        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
         assert_eq!(counts[&StateSource::TmuxIde], 1);
         assert!(counts[&StateSource::Scraped] > 0);
         assert_eq!(counts[&StateSource::Hook], 0);

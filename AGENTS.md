@@ -124,18 +124,19 @@ web_link        websocket fan-out to browsers                   (none)
 `crates/rubato-companion/src/`: composition root `lib.rs`, `main.rs`, `runtime.rs` (channels,
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
 state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline,
-the `SessionInput` port whose first adapter is the tmux paste);
+the `SessionInput` port whose first adapter is the tmux paste, `claude` for headless `claude -p` turns as
+process groups, ADR 0059);
 slices:
 
 ```text
 pairing        device-code pairing with a GitHub login                            pair
 server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
-sessions       Registry, identity, discovery, launches.json with plan_path        reconcile (essential), events watcher (best-effort)
+sessions       Registry, identity, discovery, launches.json, headless turns        reconcile (essential, not headless), events watcher (best-effort)
 hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
-launch         LaunchCommand: own user only, worktree, tmux, exec                 launch task (essential)
+launch         LaunchCommand: own user only, worktree, tmux or a headless turn    launch task (essential)
 spend          transcript cost, spend cap, CapHit                                 after each hook
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
-session_input  SessionMessage: own user, launched here, idle, typed once          session input task (essential)
+session_input  SessionMessage: own user, launched here, idle, typed once; stop    session input task (essential)
 plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
 ```
 <!-- /slices -->
@@ -150,10 +151,10 @@ plan_mirror    plan bundle of a launched session at settle points               
 ```text
 live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
-chat        talk to your own session, message states, the log    GET, POST /api/launches/:id/messages, GET /api/launches/:id/log
+chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player  PUT, DELETE /api/layout
 issues      issue list, not-pinned backlog, detail, start gate   (none)
-companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
+companions  pair with a code, lanes (sessions, queue, headless badge), revoke  POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
 queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
 launch      start a session through your own companion           POST /api/launch
