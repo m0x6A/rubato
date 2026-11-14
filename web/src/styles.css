@@ -547,6 +547,14 @@ button.link:hover { text-decoration: underline; }
 .provides summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .provides ul { margin: 6px 0; }
 .provides p { margin: 4px 0; }
+/* workspaces (issue #89): the switcher in the top bar, and badges for elsewhere. The bar wraps
+   rather than push the page wider than a narrow window (look.spec at 600 px). */
+.topbar { flex-wrap: wrap; }
+.brand { flex-wrap: wrap; min-width: 0; }
+.workspace-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.workspace-switch select { font: inherit; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+.workspace-switch select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.badge.elsewhere { color: var(--new-ink); background: var(--new-wash); }
 /* the By repo grouping (issue #89): a box behind each repo's parts */
 .repo-box { width: 100%; height: 100%; border: 1px dashed var(--line-strong); border-radius: 14px; background: rgb(255 255 255 / 0.015); pointer-events: none; }
 .repo-box-name { display: inline-block; margin: 12px 0 0 16px; font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--muted); }

@@ -133,7 +133,8 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 <!-- /slices -->
 <!-- slices: web -->
 `web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, selection, handlers);
-`shared/` (`api.ts` request, `ApiError` and needs-login; `format.ts`; `dnd.ts` the dragged issue;
+`shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
+`scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
 `features/features.test.ts`:
@@ -152,6 +153,7 @@ findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 plans       proposed and open plans, where they fit, Accept plan  POST /api/plans/approve
 repos       connected repos, what each provides, loose sessions  (none)
+workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->
