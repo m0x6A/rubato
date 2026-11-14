@@ -17,6 +17,7 @@
 //! come back `hooks_lost`, and `hook port changed` is logged at warn.
 
 use crate::hooks::HookServer;
+use crate::kernel::claude::Claude;
 use crate::kernel::config::{HookEndpoint, State, Workspace};
 use crate::kernel::telemetry::Metrics;
 use crate::kernel::tmux::Tmux;
@@ -24,7 +25,7 @@ use crate::kernel::tmux_ide::TmuxIde;
 use crate::launch::Launcher;
 use crate::plan_mirror::PlanMirrorTask;
 use crate::server_link::{Client, Identity, Reservation};
-use crate::session_input::{Deliveries, SessionInputTask};
+use crate::session_input::{Deliveries, ForkCtx, Forks, SessionInputTask};
 use crate::sessions::Registry;
 use crate::{hooks, launch, plan_mirror, server_link, session_input, sessions, spend, stale};
 use anyhow::{Context, Result, anyhow};
@@ -283,6 +284,18 @@ async fn run(
                 metrics: metrics.clone(),
                 deliveries,
                 skill_dir,
+                forks: Forks::new(ForkCtx {
+                    claude: Claude {
+                        command: cfg.workspace.companion.claude_command.clone(),
+                        timeout: std::time::Duration::from_secs(
+                            cfg.workspace.companion.fork_timeout_secs,
+                        ),
+                    },
+                    registry: registry.clone(),
+                    out: out_tx.clone(),
+                    limits: limits.clone(),
+                    spent: Default::default(),
+                }),
             },
         ),
     );
@@ -325,7 +338,7 @@ async fn run(
 
 /// What this companion announces in Hello (ADR 0051). The trim has shipped since #122 PR 1
 /// (ADR 0052), session input since PR 3, the plan mirror since PR 5, the handoff since PR 7
-/// (draft restore since PR 8):
+/// (draft restore since PR 8, room turns since PR 11):
 /// `plan_handoff` with the `/handoff` route that forwards `HandoffReport`, and `skill:<version>`
 /// when the installed skill names its version.
 pub fn hello_capabilities(skill: Option<&str>) -> Vec<String> {
@@ -335,6 +348,7 @@ pub fn hello_capabilities(skill: Option<&str>) -> Vec<String> {
         capability::DRAFT_MIRROR.to_owned(),
         capability::PLAN_HANDOFF.to_owned(),
         capability::DRAFT_RESTORE.to_owned(),
+        capability::ROOM_TURNS.to_owned(),
     ];
     if let Some(v) = skill {
         caps.push(format!("{}{v}", capability::SKILL_PREFIX));
@@ -533,6 +547,7 @@ mod tests {
             capability::DRAFT_MIRROR,
             capability::PLAN_HANDOFF,
             capability::DRAFT_RESTORE,
+            capability::ROOM_TURNS,
             "skill:0.2.0",
         ] {
             assert!(with.iter().any(|x| x == c), "{c} in {with:?}");
