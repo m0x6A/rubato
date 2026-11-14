@@ -1,4 +1,5 @@
 import { ApiError, failureText, request } from "../../shared/api.ts";
+import type { LaunchLog } from "../../protocol.ts";
 import type { LaunchMessages, SessionMessageRequest, SessionMessageView } from "./types.ts";
 
 /** A team route: launches are not one workspace's, so the path is never `scoped()`. */
@@ -6,8 +7,14 @@ export function messagesPath(launchId: string): string {
   return `/api/launches/${encodeURIComponent(launchId)}/messages`;
 }
 
+/** The launch's log, also a team route (ADR 0052): everyone who may log in reads it. */
+export function logPath(launchId: string): string {
+  return `/api/launches/${encodeURIComponent(launchId)}/log`;
+}
+
 export const chatApi = {
   messages: (launchId: string) => request<LaunchMessages>("GET", messagesPath(launchId)),
+  log: (launchId: string) => request<LaunchLog>("GET", logPath(launchId)),
   /** Always a new message: "Send again" posts the text, never an old id (ADR 0051). */
   send: (launchId: string, text: string) => request<SessionMessageView>("POST", messagesPath(launchId), { text } satisfies SessionMessageRequest),
 };
