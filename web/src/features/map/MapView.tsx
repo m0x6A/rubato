@@ -9,7 +9,7 @@ import { type XY, placePart, positionsToSave } from "./layout.ts";
 import { lit } from "./explain.ts";
 import { type Arrow, LENSES, type Lens, arrowsFor, flowCounts } from "./flows.ts";
 import type { OnPin } from "./drop.ts";
-import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, layout } from "./graph.ts";
+import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, type RepoGroup, layout, layoutByRepo } from "./graph.ts";
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 import { FlowParticles, type ParticleMode, particleBudget, particleMode } from "./particles.tsx";
@@ -20,6 +20,9 @@ import { useReducedMotion } from "../../shared/motion.ts";
 
 type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
 type MapFlowNode = Node<MapNodeData, "map">;
+/** A repo's box in the By repo grouping (issue #89): a label behind its parts, never selected or moved. */
+type RepoFlowNode = Node<{ repo: string }, "repo">;
+type AnyFlowNode = MapFlowNode | RepoFlowNode;
 type SeamEdgeData = {
   seam: GraphEdge;
   arrow: Arrow;
@@ -121,7 +124,15 @@ function TerritoryEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, tar
   );
 }
 
-const nodeTypes = { map: MapNodeCard };
+function RepoBox({ data }: NodeProps<RepoFlowNode>) {
+  return (
+    <div className="repo-box" data-testid={`repo-box-${data.repo}`}>
+      <span className="repo-box-name">{data.repo}</span>
+    </div>
+  );
+}
+
+const nodeTypes = { map: MapNodeCard, repo: RepoBox };
 const edgeTypes = { seam: SeamEdge, territory: TerritoryEdge };
 
 interface Props {
@@ -181,6 +192,35 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     // Re-layout only when the set of nodes or edges changes, not on every refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shape]);
+
+  // The By repo grouping (issue #89): each repo's parts in one box. Laid out by ELK only; the
+  // team's saved positions are for the flat map, so parts do not move while it is on.
+  const [byRepo, setByRepo] = useState(false);
+  const [grouped, setGrouped] = useState<{ groups: RepoGroup[]; parts: Map<string, XY & { parent?: string }> } | null>(null);
+  useEffect(() => {
+    if (!byRepo) {
+      setGrouped(null);
+      return;
+    }
+    let cancelled = false;
+    layoutByRepo(graph)
+      .then((g) => {
+        if (!cancelled) {
+          setGrouped(g);
+          setTimeout(() => fitView({ padding: 0.15 }), 0);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setByRepo(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shape, byRepo]);
+  const grouping = byRepo && grouped !== null && !editing;
 
   const [chosenLens, setLens] = useState<Exclude<Lens, "plan">>("structure");
   const planView = useMemo(() => (plan ? planLens(plan.plan, graph.edges) : null), [plan, graph]);
@@ -250,24 +290,35 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   const [heldRevision, setHeldRevision] = useState(0);
   // Where each part sits for the team (stored, else ELK): what a move is compared with.
   const settled = useMemo(() => new Map(graph.nodes.map((n) => [n.id, placePart({ auto: positions?.get(n.id), stored: stored?.positions?.[n.id], held: undefined })])), [graph, positions, stored]);
-  const wanted: MapFlowNode[] = useMemo(
-    () =>
-      graph.nodes.map((n) => ({
+  const wanted: AnyFlowNode[] = useMemo(
+    () => [
+      // Boxes first: React Flow draws a parent before its children.
+      ...(grouping ? grouped.groups : []).map(
+        (g): RepoFlowNode => ({ id: g.id, type: "repo", position: { x: g.x, y: g.y }, data: { repo: g.repo }, style: { width: g.width, height: g.height }, selectable: false, draggable: false, focusable: false, zIndex: -1 }),
+      ),
+      ...graph.nodes.map((n): MapFlowNode => {
+        const box = grouping ? grouped.parts.get(n.id) : undefined;
+        return {
         id: n.id,
         type: "map",
-        position: held.current.get(n.id) ?? settled.get(n.id) ?? { x: 0, y: 0 },
+        position: box ? { x: box.x, y: box.y } : (held.current.get(n.id) ?? settled.get(n.id) ?? { x: 0, y: 0 }),
+        ...(box?.parent ? { parentId: box.parent } : {}),
         // In the plan lens a part is painted by this plan only, not by every open plan.
         data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id), draft: draftMarks?.get(n.id), editing },
-      })),
+        };
+      }),
+    ],
     // `heldRevision` stands for `held`, a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing],
+    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing, grouping, grouped],
   );
   // React Flow draws an edge only between parts it has measured, and it reports a measurement
   // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
   // overview updates them in place: a part that is rebuilt from scratch loses its measurement
   // and its seams (and their chips) disappear until something resizes it.
-  const [nodes, setNodes] = useState<MapFlowNode[]>([]);
+  const [nodes, setNodes] = useState<AnyFlowNode[]>([]);
+  const groupingRef = useRef(grouping);
+  groupingRef.current = grouping;
   useEffect(() => setNodes((current) => mergeNodes(current, wanted)), [wanted]);
   const toSave = useRef<Record<string, XY>>({});
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -304,8 +355,12 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     [],
   );
   const onNodesChange = useCallback(
-    (changes: NodeChange<MapFlowNode>[]) => {
+    (changes: NodeChange<AnyFlowNode>[]) => {
       setNodes((current) => applyNodeChanges(changes, current));
+      // Grouped positions are ELK's, relative to a box: never the team's layout.
+      if (groupingRef.current) {
+        return;
+      }
       for (const c of changes) {
         if (c.type === "position" && c.position && c.dragging) {
           held.current.set(c.id, c.position);
@@ -421,6 +476,11 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               Scenarios ({graph.scenarios.length})
             </button>
           )}
+        </div>
+        <div className="map-actions">
+          <button type="button" className={grouping ? "map-action active" : "map-action"} aria-pressed={byRepo} onClick={() => setByRepo((on) => !on)} disabled={editing} title={editing ? "Leave edit mode to group the map by repo" : "Box each repo's parts together: what each repo provides to the whole"}>
+            By repo
+          </button>
         </div>
         {(onAutoArrange || onToggleEdit) && (
           <div className="map-actions">
@@ -555,7 +615,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
             onNodesChange={onNodesChange}
             onNodeDragStart={() => setDragging(true)}
             onNodeDragStop={() => setDragging(false)}
-            nodesDraggable={Boolean(onMove)}
+            nodesDraggable={Boolean(onMove) && !grouping}
             nodesConnectable={editing}
             onConnect={(c) => onConnectParts?.(c.source, c.target)}
             zoomOnDoubleClick={!editing}
@@ -567,7 +627,11 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               }
             }}
             elementsSelectable
-            onNodeClick={(_e, n) => onSelect({ kind: "node", id: n.id })}
+            onNodeClick={(_e, n) => {
+              if (n.type === "map") {
+                onSelect({ kind: "node", id: n.id });
+              }
+            }}
             onEdgeClick={(_e, edge) => {
               // A territory edge is not a seam: there is nothing to select.
               if (edge.type !== "territory") {

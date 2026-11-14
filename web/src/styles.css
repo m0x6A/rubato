@@ -541,6 +541,15 @@ button.link:hover { text-decoration: underline; }
 .rack-bar.open_pulls b { background: var(--warn); }
 .rack-bar em { font-style: normal; font-weight: 600; color: var(--ink); }
 :root[data-motion="full"] .rack-bar b { transition: height var(--dur-fill) var(--ease-out); }
+/* what a repo provides (issue #89): folded under its rack unit */
+.provides { font-size: 12px; color: var(--chip-ink); }
+.provides summary { cursor: pointer; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.provides summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.provides ul { margin: 6px 0; }
+.provides p { margin: 4px 0; }
+/* the By repo grouping (issue #89): a box behind each repo's parts */
+.repo-box { width: 100%; height: 100%; border: 1px dashed var(--line-strong); border-radius: 14px; background: rgb(255 255 255 / 0.015); pointer-events: none; }
+.repo-box-name { display: inline-block; margin: 12px 0 0 16px; font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--muted); }
 /* companions: a connection light and a freshness bar draining towards stale */
 .lane .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--bad); vertical-align: 0; }
 .lane .led.live { position: relative; border-color: var(--ok); background: var(--ok); box-shadow: 0 0 6px var(--ok); }
