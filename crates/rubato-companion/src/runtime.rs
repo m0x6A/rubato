@@ -3,12 +3,17 @@
 //! tasks (design D6, D12):
 //!
 //! - essential (server link, hook server, heartbeat, reconcile, stale sweep, dropped counter,
-//!   launch task, which handles launch commands one at a time off the dispatch loop, plan 40):
+//!   launch task, which handles launch commands one at a time off the dispatch loop, plan 40,
+//!   and session input task, which types session messages one at a time, plan 122):
 //!   ending while shutdown is not requested logs `rubato.task.exited` and makes `run` return
 //!   `Err`, which `main` turns into a non-zero exit;
 //! - best-effort (tmux-ide events watcher): ending is normal on a machine with no adopted
 //!   session; discovery runs on the timer;
 //! - on shutdown every task is aborted and `Cancelled` is clean, so `run` returns `Ok` at once.
+//!
+//! At start (plan 122 §D1) the hook receiver binds the port and token the last run published
+//! when it can, and the launches kept in `launches.json` come back; when the port changed they
+//! come back `hooks_lost`, and `hook port changed` is logged at warn.
 
 use crate::hooks::HookServer;
 use crate::kernel::config::{HookEndpoint, State, Workspace};
@@ -17,12 +22,16 @@ use crate::kernel::tmux::Tmux;
 use crate::kernel::tmux_ide::TmuxIde;
 use crate::launch::Launcher;
 use crate::server_link::{Client, Identity, Reservation};
+use crate::session_input::{Deliveries, SessionInputTask};
 use crate::sessions::Registry;
-use crate::{hooks, launch, server_link, sessions, spend, stale};
-use anyhow::{Result, anyhow};
+use crate::{hooks, launch, server_link, session_input, sessions, spend, stale};
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use rubato_protocol::otel::event;
-use rubato_protocol::{CompanionMessage, HookEvent, LaunchCommand, ServerMessage, SessionStatus};
+use rubato_protocol::{
+    CompanionMessage, HookEvent, LaunchCommand, ServerMessage, SessionMessage, SessionStatus,
+    capability,
+};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
@@ -56,20 +65,59 @@ pub async fn start(
         reserved_to = seq.reserved_to(),
         "sequence reserved"
     );
+    // Before any task starts too: a delivery record that cannot be read could type a message
+    // twice, so it stops the companion with the path in the error.
+    let deliveries = Deliveries::open(&cfg.state_dir)?;
     let (hook_tx, hook_rx) = mpsc::unbounded_channel::<HookEvent>();
     let (dropped_tx, dropped_rx) = mpsc::unbounded_channel::<&'static str>();
-    let server = HookServer::bind(hook_tx, dropped_tx).await?;
+    let previous = HookEndpoint::load(&cfg.state_dir);
+    let server = HookServer::bind_reusing(previous.as_ref(), hook_tx, dropped_tx).await?;
     let hook_endpoint = server.endpoint.clone();
     hook_endpoint.save(&cfg.state_dir)?;
+    let kept = previous.as_ref() == Some(&hook_endpoint);
     tracing::info!(
         port = hook_endpoint.port,
+        kept,
         "hook receiver listening on 127.0.0.1"
     );
 
-    let registry = Arc::new(Mutex::new(Registry::new(
-        cfg.state.companion_id,
-        cfg.state.user.clone(),
-    )));
+    let mut reg = Registry::new(cfg.state.companion_id, cfg.state.user.clone());
+    let records = sessions::load_launches(&cfg.state_dir);
+    if !kept && (previous.is_some() || !records.is_empty()) {
+        tracing::warn!(
+            old_port = previous.as_ref().map(|p| p.port),
+            new_port = hook_endpoint.port,
+            launches = records.len(),
+            "hook port changed"
+        );
+    }
+    if !records.is_empty() {
+        let tmux = Tmux::new(
+            cfg.workspace.companion.tmux_command.clone(),
+            cfg.workspace.companion.tmux_tmpdir.clone(),
+        );
+        let panes = tokio::task::spawn_blocking(move || tmux.panes())
+            .await
+            .context("listing tmux panes")?;
+        let panes = match panes {
+            Ok(p) => Some(p),
+            // A wedged tmux is not "no panes" (plan 40 N7): keep the launches, unchecked.
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "tmux did not answer; launches restored unchecked");
+                None
+            }
+        };
+        let found = records.len();
+        let restored = reg.restore_launches(records, panes.as_deref(), !kept, Utc::now());
+        tracing::info!(
+            restored,
+            dropped = found - restored,
+            hooks_lost = !kept,
+            "launches restored"
+        );
+        sessions::save_launches_if_changed(&mut reg, &cfg.state_dir);
+    }
+    let registry = Arc::new(Mutex::new(reg));
     let (connected_tx, connected_rx) = watch::channel(false);
     let handles = Handles {
         connected: connected_rx,
@@ -80,6 +128,7 @@ pub async fn start(
         cfg,
         seq,
         server,
+        deliveries,
         hook_rx,
         dropped_rx,
         registry,
@@ -94,6 +143,7 @@ async fn run(
     cfg: Arc<DaemonConfig>,
     seq: Reservation,
     server: HookServer,
+    deliveries: Deliveries,
     hook_rx: mpsc::UnboundedReceiver<HookEvent>,
     dropped_rx: mpsc::UnboundedReceiver<&'static str>,
     registry: Arc<Mutex<Registry>>,
@@ -113,6 +163,8 @@ async fn run(
     )
     .with_timeout(cfg.workspace.companion.command_timeout());
     let limits = Arc::new(std::sync::Mutex::new(cfg.workspace.companion.limits));
+    // What the server announced in its last Welcome (ADR 0051).
+    let server_capabilities = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
 
     let (out_tx, out_rx) = mpsc::unbounded_channel::<CompanionMessage>();
     let (in_tx, in_rx) = mpsc::unbounded_channel::<ServerMessage>();
@@ -124,8 +176,11 @@ async fn run(
             user: cfg.state.user.clone(),
             version: crate::kernel::VERSION.to_owned(),
             token: cfg.state.pairing_token.clone(),
-            // The trim has shipped since #122 PR 1 (ADR 0052).
-            capabilities: vec![rubato_protocol::capability::HOOK_ALLOWLIST.to_owned()],
+            // The trim has shipped since #122 PR 1 (ADR 0052); session input since PR 3.
+            capabilities: vec![
+                capability::HOOK_ALLOWLIST.to_owned(),
+                capability::SESSION_INPUT.to_owned(),
+            ],
         },
         seq,
         cfg.state.last_server_seq,
@@ -206,6 +261,24 @@ async fn run(
             poll_tx.clone(),
         ),
     );
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<SessionMessage>();
+    tasks.spawn(
+        "session_input",
+        Kind::Essential,
+        session_input::run(
+            input_rx,
+            SessionInputTask {
+                paired_user: cfg.state.user.clone(),
+                registry: registry.clone(),
+                out: out_tx.clone(),
+                limits: limits.clone(),
+                server_capabilities: server_capabilities.clone(),
+                input: Arc::new(tmux.clone()),
+                metrics: metrics.clone(),
+                deliveries,
+            },
+        ),
+    );
     let dispatch = Dispatch {
         cfg: &cfg,
         registry: &registry,
@@ -213,7 +286,9 @@ async fn run(
         metrics: &metrics,
         tmux: &tmux,
         limits: &limits,
+        server_capabilities: &server_capabilities,
         launch: &launch_tx,
+        session_input: &input_tx,
     };
     let supervised = supervise(tasks, shutdown.clone());
     tokio::pin!(supervised);
@@ -232,8 +307,11 @@ struct Dispatch<'a> {
     metrics: &'a Metrics,
     tmux: &'a Tmux,
     limits: &'a std::sync::Mutex<rubato_protocol::Limits>,
+    server_capabilities: &'a std::sync::Mutex<Vec<String>>,
     /// The launch task's queue (plan 40 S1).
     launch: &'a mpsc::UnboundedSender<LaunchCommand>,
+    /// The session input task's queue (plan 122 §D1).
+    session_input: &'a mpsc::UnboundedSender<SessionMessage>,
 }
 
 impl Dispatch<'_> {
@@ -247,14 +325,20 @@ impl Dispatch<'_> {
             tokio::select! {
                 _ = shutdown.changed() => break,
                 Some(ev) = hook_rx.recv() => {
-                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id).await;
+                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id, &self.cfg.state_dir).await;
                     spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
                 }
                 Some(msg) = in_rx.recv() => match msg {
-                    ServerMessage::Welcome { limits, .. } => server_link::on_welcome(limits, self.limits),
+                    ServerMessage::Welcome { limits, capabilities, .. } => {
+                        server_link::on_welcome(limits, capabilities, self.limits, self.server_capabilities);
+                    }
                     // Queued, not awaited: hooks keep flowing while it runs.
                     ServerMessage::Launch(cmd) => {
                         let _ = self.launch.send(cmd);
+                    }
+                    // Queued too: one paste at a time, after the Welcome that came before it.
+                    ServerMessage::SessionMessage(m) => {
+                        let _ = self.session_input.send(m);
                     }
                     ServerMessage::Error { code, .. } if code == "auth" => {
                         tracing::error!("pairing token rejected; re-pair with `rubato-companion pair`");

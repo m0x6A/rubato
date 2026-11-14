@@ -120,17 +120,19 @@ web_link        websocket fan-out to browsers                   (none)
 <!-- slices: rubato-companion -->
 `crates/rubato-companion/src/`: composition root `lib.rs`, `main.rs`, `runtime.rs` (channels,
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
-state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline);
+state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline,
+the `SessionInput` port whose first adapter is the tmux paste);
 slices:
 
 ```text
-pairing      device-code pairing with a GitHub login            pair
-server_link  outbound websocket, outbox, acks, Welcome limits   client task (essential)
-sessions     Registry, identity from the branch, discovery      reconcile (essential), events watcher (best-effort)
-hooks        loopback hook receiver, hooks template, apply_hook  hook server, dropped counter (essential)
-launch       LaunchCommand: own user only, worktree, tmux, exec  launch task (essential)
-spend        transcript cost, spend cap, CapHit                  after each hook
-stale        heartbeat, stale sessions                           heartbeat, sweep (essential)
+pairing        device-code pairing with a GitHub login                            pair
+server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
+sessions       Registry, identity from the branch, discovery, launches.json       reconcile (essential), events watcher (best-effort)
+hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
+launch         LaunchCommand: own user only, worktree, tmux, exec                 launch task (essential)
+spend          transcript cost, spend cap, CapHit                                 after each hook
+stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
+session_input  SessionMessage: own user, launched here, idle, typed once          session input task (essential)
 ```
 <!-- /slices -->
 <!-- slices: web -->
