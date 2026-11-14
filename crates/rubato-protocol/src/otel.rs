@@ -56,6 +56,10 @@ pub mod attr {
     pub const APPROVAL_ID: &str = "rubato.approval_id";
     /// A plan's room, `repo#number@branch` (ADR 0057).
     pub const ROOM: &str = "rubato.room";
+    /// A command's exit code (`rubato.room.fork_turn`).
+    pub const EXIT_CODE: &str = "rubato.exit_code";
+    /// What a model call cost in USD (`rubato.room.fork_turn`).
+    pub const COST_USD: &str = "rubato.cost_usd";
 }
 
 /// Metric instrument names.
@@ -277,6 +281,8 @@ pub fn all_names() -> Vec<&'static str> {
         attr::DRAFT_REV,
         attr::APPROVAL_ID,
         attr::ROOM,
+        attr::EXIT_CODE,
+        attr::COST_USD,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,

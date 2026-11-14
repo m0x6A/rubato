@@ -13,15 +13,18 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "dev", testIgnore: /(app-login|shots|motion|perf)\.spec\.ts/, use: { browserName: "chromium" } },
+    { name: "dev", testIgnore: /(app-login|room|shots|motion|perf)\.spec\.ts/, use: { browserName: "chromium" } },
     {
       name: "app",
       testMatch: /app-login\.spec\.ts/,
       use: { browserName: "chromium", baseURL: process.env["RUBATO_E2E_APP_URL"] ?? "http://127.0.0.1:18091" },
     },
+    // Issue #122: two people in a plan's room, with a companion that launches #916. Its launch
+    // reorders the issue list under other tests' pointers, so it runs after them, alone.
+    { name: "room", testMatch: /room\.spec\.ts/, dependencies: ["dev", "app"], use: { browserName: "chromium" } },
     // Issue #81: these change or watch shared state (they pin #901, which other tests expect
     // unpinned; they compare frames), so each runs alone, after every other test, in this order.
-    { name: "shots", testMatch: /shots\.spec\.ts/, dependencies: ["dev", "app"], use: { browserName: "chromium" } },
+    { name: "shots", testMatch: /shots\.spec\.ts/, dependencies: ["room"], use: { browserName: "chromium" } },
     { name: "motion", testMatch: /motion\.spec\.ts/, dependencies: ["shots"], use: { browserName: "chromium" } },
     { name: "perf", testMatch: /perf\.spec\.ts/, dependencies: ["motion"], use: { browserName: "chromium" } },
   ],

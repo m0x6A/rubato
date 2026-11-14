@@ -223,6 +223,9 @@ The *Companions* tab shows your machine as connected. Leave it running; it recon
 - for sessions started from Rubato only, the plan the session writes: the plan file at its
   path, the design note it links and the ADRs it proposes, up to `Limits.draft_max_bytes`, as a
   draft the team reads in Rubato (ADR 0053). Nothing else in the worktree is read.
+- for sessions started from Rubato only, the agent's answers to turns in the plan's room, when
+  you called it in: typed into the session while planning, or from a read-only fork while
+  building, with the fork's cost. Everyone who reads the room reads them (ADR 0057).
 
 Tool input and output stay on your machine, and so do the prompts and replies of sessions you
 start yourself. The companion cuts every hook payload to an allowlist before it leaves, and the

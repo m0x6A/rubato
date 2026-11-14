@@ -63,6 +63,7 @@ impl TestServer {
                 rubato_protocol::capability::SESSION_MESSAGES.into(),
                 rubato_protocol::capability::DRAFTS.into(),
                 rubato_protocol::capability::HANDOFF_REPORTS.into(),
+                rubato_protocol::capability::ROOM_REPLIES.into(),
             ])),
         };
         let st = srv.clone();
@@ -226,8 +227,16 @@ impl RubatoWorld {
         let real = fake_bin.join("real");
         std::fs::create_dir_all(&real).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_rubato-companion"), real.join("claude")).unwrap();
+        // A headless `-p` run (a room's fork turn, ADR 0057) records its args, its Rubato and tmux
+        // environment and its stdin in .claude-fork.log, then prints stream-json: an init and a
+        // result whose session is `fork-of-<resumed>` with --fork-session, else the resumed one,
+        // at the cost in <root>/fork-cost (0.05 when absent).
+        let fork = format!(
+            "case \" $* \" in *\" -p \"*)\n  resume=''; fork=''; prev=''\n  for a in \"$@\"; do [ \"$prev\" = --resume ] && resume=\"$a\"; [ \"$a\" = --fork-session ] && fork=1; prev=\"$a\"; done\n  if [ -n \"$fork\" ]; then sid=\"fork-of-$resume\"; else sid=\"$resume\"; fi\n  {{ echo \"ARGS: $*\"; env | grep -E '^(RUBATO_|TMUX=)'; echo 'STDIN:'; cat; echo; echo 'END'; }} >> \"$PWD/.claude-fork.log\"\n  cost=$(cat '{}' 2>/dev/null || echo 0.05)\n  printf '%s\\n' \"{{\\\"type\\\":\\\"system\\\",\\\"subtype\\\":\\\"init\\\",\\\"session_id\\\":\\\"$sid\\\"}}\"\n  printf '%s\\n' \"{{\\\"type\\\":\\\"result\\\",\\\"subtype\\\":\\\"success\\\",\\\"is_error\\\":false,\\\"result\\\":\\\"b keeps it in one place\\\",\\\"session_id\\\":\\\"$sid\\\",\\\"total_cost_usd\\\":$cost}}\"\n  exit 0;;\nesac\n",
+            root.join("fork-cost").display()
+        );
         let script = format!(
-            "#!/bin/sh\n{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log\" 2>&1\nexec '{}' idle --record \"$PWD/.claude-standin.typed\"\n",
+            "#!/bin/sh\n{fork}{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log\" 2>&1\nexec '{}' idle --record \"$PWD/.claude-standin.typed\"\n",
             real.join("claude").display()
         );
         let claude = fake_bin.join("claude");

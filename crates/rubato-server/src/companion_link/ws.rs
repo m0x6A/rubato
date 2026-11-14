@@ -5,7 +5,8 @@ use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
 use crate::{
-    approve, launch, pairing, plan_drafts, queue, session_log, session_messages, spend_history,
+    approve, launch, pairing, plan_drafts, queue, rooms, session_log, session_messages,
+    spend_history,
 };
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -242,6 +243,7 @@ async fn on_envelope(
                         rubato_protocol::capability::SESSION_MESSAGES.to_owned(),
                         rubato_protocol::capability::DRAFTS.to_owned(),
                         rubato_protocol::capability::HANDOFF_REPORTS.to_owned(),
+                        rubato_protocol::capability::ROOM_REPLIES.to_owned(),
                     ],
                 })
             }
@@ -259,6 +261,8 @@ async fn on_envelope(
                 tracing::info!(rubato.session_id = %h.session_id, rubato.hook_event = ?h.hook_event_name, "hook");
                 session_messages::on_hook(app, companion_id, &h).await;
                 session_log::on_hook(app, companion_id, &h).await;
+                // After the log has the Stop: a session-mode room turn's reply (ADR 0057).
+                rooms::on_hook(app, companion_id, &h).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {
@@ -355,9 +359,8 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::RoomReply(r) => {
-                // The rooms slice takes it once PR 11's server half lands; until then it is
-                // recorded as an envelope and logged, so the reply is never silent.
-                tracing::info!(turn_id = %r.turn_id, message_id = %r.message_id, chars = r.text.chars().count(), error = ?r.error, "room reply");
+                // Taken only from the companion the turn was sent to (ADR 0057).
+                rooms::on_room_reply(app, companion_id, &r).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::SessionMessageResult(r) => {

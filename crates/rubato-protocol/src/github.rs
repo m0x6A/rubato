@@ -176,6 +176,9 @@ pub struct ApprovalRecord {
     /// The `rubato_approvals` row, for an approval given in Rubato.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_id: Option<Uuid>,
+    /// The bundle an approval given in Rubato covers (the plan, its design note, its ADRs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_hash: Option<String>,
     pub author: String,
     /// The plan hash approved (checkboxes cleared, git blob sha). Absent when the comment names
     /// none: the approval then shows as "version not named".
@@ -477,6 +480,7 @@ mod tests {
             source: ApprovalSource::Rubato,
             comment_id: None,
             approval_id: Some(id),
+            bundle_hash: None,
             url: String::new(),
             ..a.clone()
         };
@@ -498,6 +502,7 @@ mod tests {
             source,
             comment_id: Some(1),
             approval_id: None,
+            bundle_hash: None,
             author: "m0x6A".into(),
             sha: None,
             branch: None,
