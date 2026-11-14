@@ -12,8 +12,8 @@ It is a lab to verify a set of theses about agent orchestration, not a product. 
 | --- | --- | --- |
 | `rubato-server` | one instance per team | holds the map and the issue pins, takes signals from companions and GitHub, derives progress per issue, fans changes out to browsers, serves the web view |
 | `rubato-companion` | one per developer machine | pairs with one GitHub login, connects outbound, launches Claude Code on an issue in a git worktree inside the developer's own tmux, forwards Claude Code hook events and tmux-ide session state, stops a session at its spend cap |
-| `web` | served by the server | the map with issues, sessions and plans painted on nodes and seams; pin an issue; start a session in your own tmux |
-| `skills/rubato` | installed on each developer machine | the Claude Code skill a session uses to read the map and the ADRs, write its plan at the agreed path and record decisions |
+| `web` | served by the server | the map with issues, sessions and plans painted on nodes and seams; pin an issue; start a session in your own tmux; talk to your own session; read every revision of a plan draft and approve it; the plan's room |
+| `skills/rubato` | installed on each developer machine | the Claude Code skill a session uses to read the map and the ADRs, write its plan at the agreed path, record decisions in it, and hand the approved plan off to Git in one commit |
 | `actions/plan-check` | GitHub Action | fails a PR whose plan names an id the map does not declare or touches a seam without an O-row |
 | `rubato-protocol` | shared crate | the contract between all of the above: serde types, exported JSON Schemas, the progress derivation, the `rubato.*` telemetry names |
 
@@ -60,7 +60,7 @@ CI runs all of the above plus Playwright against the server and `promtool test r
 
 ## Status and limits of v0
 
-- Plans travel as Markdown files on the issue branch; the server reads them from GitHub.
+- Plans are drafted in Rubato, mirrored from the session's worktree, and travel as Markdown files on the issue branch once approved; the server reads them from GitHub at the branch head.
 - The join between issues and map nodes lives in the server's SQLite. GitHub Projects v2 is the later candidate.
 - Spend is summed from the session transcript with prices you configure; nothing is guessed.
 - GitHub itself has only been exercised against recorded responses in tests. The quickstart is the first real run.
