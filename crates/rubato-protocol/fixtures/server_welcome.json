@@ -12,7 +12,11 @@
       "companion_silent_secs": 600,
       "team_poll_interval_secs": 30,
       "plan_poll_interval_secs": 60,
-      "github_poll_interval_secs": 60
-    }
+      "github_poll_interval_secs": 60,
+      "session_message_max_chars": 8000
+    },
+    "capabilities": [
+      "session_messages"
+    ]
   }
 }

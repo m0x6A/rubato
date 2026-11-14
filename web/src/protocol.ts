@@ -10,6 +10,10 @@ export type CapKind = ("spend" | "attempts")
  * Companion → server.
  */
 export type CompanionMessage = ({
+/**
+ * What this companion can take (`capability`). Absent from an older companion.
+ */
+capabilities?: string[]
 companion_id: string
 companion_version: string
 /**
@@ -22,7 +26,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | {
 seq: number
 type: "ack"
 })
@@ -59,6 +63,28 @@ error: string
 outcome: "failed"
 })
 export type RefusalReason = ("attempt_limit_reached" | "not_paired_user" | "already_running" | "missing_dependency")
+/**
+ * The answer to one `SessionMessage` (ADR 0051).
+ */
+export type SessionMessageResult = ({
+type: "session_message_result"
+} & ({
+outcome: "delivered"
+} | {
+outcome: "not_idle"
+} | {
+outcome: "refused"
+reason: MessageRefusal
+} | {
+outcome: "interrupted"
+} | {
+error: string
+outcome: "failed"
+}))
+/**
+ * Why the companion did not type a message.
+ */
+export type MessageRefusal = ("not_paired_user" | "not_launched_here" | "unknown_session" | "too_long" | "no_pane")
 /**
  * Body of `POST /api/map/draft/ops`. `op_id` is made by the browser, so a retry of the same
  * request does not add the operation twice.
@@ -298,6 +324,10 @@ status: "expired"
  */
 export type ServerMessage = ({
 /**
+ * What this server can take (`capability`). Absent from an older server.
+ */
+capabilities?: string[]
+/**
  * Last companion sequence the server has; the companion replays newer events.
  */
 last_seen_companion_seq: number
@@ -305,7 +335,7 @@ limits: Limits
 protocol_version: number
 server_version: string
 type: "welcome"
-} | LaunchCommand1 | {
+} | LaunchCommand1 | SessionMessage | {
 seq: number
 type: "ack"
 } | {
@@ -314,9 +344,19 @@ message: string
 type: "error"
 })
 /**
+ * Text for one session the paired user launched (ADR 0051).
+ */
+export type SessionMessage = ({
+type: "session_message"
+} & {
+author: string
+kind: "chat"
+text: string
+})
+/**
  * Pushed to browsers over `/ws/web`. Clients refetch the overview on `Changed`.
  */
-export type WebEvent = {
+export type WebEvent = ({
 at: string
 reason: string
 type: "changed"
@@ -325,6 +365,17 @@ type: "changed"
  * load; ADR 0049). Absent: every workspace may have changed, so every client refetches.
  */
 workspace?: (string | null)
+} | {
+at: string
+resource: WebResource
+type: "updated"
+})
+/**
+ * A resource a view can refetch on its own.
+ */
+export type WebResource = {
+kind: "launch_messages"
+launch_id: string
 }
 
 export interface RubatoProtocol {
@@ -450,10 +501,19 @@ branch_drift?: (string | null)
 companion_id: string
 cwd: string
 /**
+ * The companion restarted and could not take its old hook port back, so this launched
+ * session's hooks go nowhere: chat and mirroring need a relaunch (plan 122 §D1).
+ */
+hooks_lost?: boolean
+/**
  * Resolved from the branch, or from the launch when the branch does not follow the convention.
  */
 issue?: (IssueRef | null)
 last_seen: string
+/**
+ * The Rubato launch this session belongs to, when Rubato launched it (ADR 0051).
+ */
+launch_id?: (string | null)
 /**
  * `owner/name` from `origin`.
  */
@@ -589,6 +649,12 @@ export interface HookEvent1 {
  */
 cwd: string
 hook_event_name: HookEventKind
+/**
+ * The launch the hook came from, from the `X-Rubato-Launch` header the launched session's
+ * hook command sends (plan 122 §D1). Keeps a launch across a `/clear` that changes the
+ * session id. Absent for a session not launched from Rubato and from an older companion.
+ */
+launch_id?: (string | null)
 /**
  * `notification_type` for `Notification` events, such as `permission_prompt` or `idle_prompt`.
  */
@@ -1004,6 +1070,10 @@ heartbeat_interval_secs?: number
  * How often the server looks for a plan file on a live branch.
  */
 plan_poll_interval_secs?: number
+/**
+ * The longest session message the companion types (ADR 0051); longer ones are refused.
+ */
+session_message_max_chars?: number
 /**
  * A *working* session with no hook event for longer than this renders *unknown*.
  */

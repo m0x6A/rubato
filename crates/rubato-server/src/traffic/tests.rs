@@ -46,6 +46,7 @@ fn drain(rx: &mut tokio::sync::broadcast::Receiver<WebEvent>) -> Vec<String> {
     loop {
         match rx.try_recv() {
             Ok(WebEvent::Changed { reason, .. }) => out.push(reason),
+            Ok(WebEvent::Updated { .. }) => {}
             Err(TryRecvError::Empty) => return out,
             Err(e) => panic!("{e}"),
         }

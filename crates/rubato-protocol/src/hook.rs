@@ -76,6 +76,11 @@ pub struct HookEvent {
     pub tool_name: Option<String>,
     /// When the companion received it.
     pub received_at: DateTime<Utc>,
+    /// The launch the hook came from, from the `X-Rubato-Launch` header the launched session's
+    /// hook command sends (plan 122 §D1). Keeps a launch across a `/clear` that changes the
+    /// session id. Absent for a session not launched from Rubato and from an older companion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_id: Option<uuid::Uuid>,
     /// The raw hook payload, for traces and for fields this version does not lift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
@@ -99,6 +104,7 @@ impl HookEvent {
             notification_type: s("notification_type"),
             tool_name: s("tool_name"),
             received_at,
+            launch_id: None,
             payload: Some(payload),
         })
     }

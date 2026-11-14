@@ -124,6 +124,8 @@ async fn run(
             user: cfg.state.user.clone(),
             version: crate::kernel::VERSION.to_owned(),
             token: cfg.state.pairing_token.clone(),
+            // The trim has shipped since #122 PR 1 (ADR 0052).
+            capabilities: vec![rubato_protocol::capability::HOOK_ALLOWLIST.to_owned()],
         },
         seq,
         cfg.state.last_server_seq,
@@ -286,6 +288,8 @@ impl Handles {
                 spend_usd: None,
                 branch_drift: None,
                 blocked_by: None,
+                launch_id: None,
+                hooks_lost: false,
             };
             st.effective_status(Utc::now(), stale_secs)
         })

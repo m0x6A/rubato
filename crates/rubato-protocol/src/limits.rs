@@ -18,6 +18,8 @@ pub struct Limits {
     pub plan_poll_interval_secs: u64,
     /// How often the server polls GitHub for PRs, checks and decision comments per live issue.
     pub github_poll_interval_secs: u64,
+    /// The longest session message the companion types (ADR 0051); longer ones are refused.
+    pub session_message_max_chars: u64,
 }
 
 impl Default for Limits {
@@ -29,6 +31,7 @@ impl Default for Limits {
             team_poll_interval_secs: 30,
             plan_poll_interval_secs: 60,
             github_poll_interval_secs: 60,
+            session_message_max_chars: 8000,
         }
     }
 }

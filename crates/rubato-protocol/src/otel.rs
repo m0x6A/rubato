@@ -41,6 +41,11 @@ pub mod attr {
     /// How something ended, or which state it is in: `opened`, `failed`, `withdrawn`, `merged`,
     /// `closed` for a map proposal; `opening`, `proposed`, `merged` for its state.
     pub const OUTCOME: &str = "rubato.outcome";
+    /// A session message (ADR 0051): its id, and its kind (`chat`, …).
+    pub const SESSION_MESSAGE_ID: &str = "rubato.session_message.id";
+    pub const SESSION_MESSAGE_KIND: &str = "rubato.session_message.kind";
+    /// A capability a companion announced (`rubato.companions.by_capability`).
+    pub const CAPABILITY: &str = "rubato.capability";
 }
 
 /// Metric instrument names.
@@ -134,6 +139,17 @@ pub mod metric {
     /// The companion stale threshold N in seconds, from config, recorded every poll tick.
     /// `CompanionSilent` compares heartbeats against it, with 600 when it is missing (#105).
     pub const COMPANION_SILENT_SECS: &str = "rubato.companion.silent_secs";
+    /// Session messages by outcome and kind as they settle (ADR 0051): `delivered`, `not_idle`,
+    /// `refused`, `failed`, `interrupted`, `delivery_unknown`.
+    pub const SESSION_MESSAGES: &str = "rubato.session_messages";
+    /// Age of the oldest message queued for a launch whose session waits for input: a queue that
+    /// should drain and does not (alert `SessionMessageStuck`, plan 122 PR 7).
+    pub const SESSION_MESSAGES_OLDEST_IDLE_QUEUED: &str =
+        "rubato.session_messages.oldest_idle_queued_seconds";
+    /// Connected companions per announced capability, so the cutover waits for all of them.
+    pub const COMPANIONS_BY_CAPABILITY: &str = "rubato.companions.by_capability";
+    /// Companion: pastes that failed, by reason.
+    pub const SESSION_INPUT_FAILED: &str = "rubato.session_input.failed";
     /// Workspaces configured (ADR 0044), recorded at start and every poll tick.
     pub const WORKSPACES_CONFIGURED: &str = "rubato.workspaces.configured";
     /// Repos named by more than one workspace's map (ADR 0048), recorded every poll tick.
@@ -160,6 +176,10 @@ pub mod span {
     pub const PLAN_APPROVE: &str = "rubato.plan.approve";
     /// One fetch of the traffic report (ADR 0039), with `rubato.outcome`.
     pub const TRAFFIC_FETCH: &str = "rubato.traffic.fetch";
+    /// Server: one dispatch of a launch's queue (ADR 0051).
+    pub const SESSION_MESSAGE_DISPATCH: &str = "rubato.session_message.dispatch";
+    /// Companion: one session message handled, with its outcome.
+    pub const SESSION_INPUT_DELIVER: &str = "rubato.session_input.deliver";
 }
 
 /// Event (log record) names.
@@ -206,6 +226,9 @@ pub fn all_names() -> Vec<&'static str> {
         attr::ROUTE,
         attr::OUTCOME,
         attr::WORKSPACE,
+        attr::SESSION_MESSAGE_ID,
+        attr::SESSION_MESSAGE_KIND,
+        attr::CAPABILITY,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -252,6 +275,10 @@ pub fn all_names() -> Vec<&'static str> {
         metric::WORKSPACE_ORPHAN_ROWS,
         metric::WORKSPACE_ID_COLLISIONS,
         metric::PLANS_FIT_NONE,
+        metric::SESSION_MESSAGES,
+        metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
+        metric::COMPANIONS_BY_CAPABILITY,
+        metric::SESSION_INPUT_FAILED,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
@@ -261,6 +288,8 @@ pub fn all_names() -> Vec<&'static str> {
         span::HANDOFF,
         span::PLAN_APPROVE,
         span::TRAFFIC_FETCH,
+        span::SESSION_MESSAGE_DISPATCH,
+        span::SESSION_INPUT_DELIVER,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,

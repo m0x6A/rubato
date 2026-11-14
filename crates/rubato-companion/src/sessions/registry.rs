@@ -141,6 +141,8 @@ impl Registry {
                 branch_drift: e.branch_drift.clone(),
                 // The cause only travels with the status it explains.
                 blocked_by: e.blocked_by.filter(|_| e.status == SessionStatus::Blocked),
+                launch_id: e.launch_id,
+                hooks_lost: false,
             })
             .collect()
     }

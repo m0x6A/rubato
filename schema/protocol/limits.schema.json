@@ -31,6 +31,13 @@
       "default": 60,
       "minimum": 0
     },
+    "session_message_max_chars": {
+      "description": "The longest session message the companion types (ADR 0051); longer ones are refused.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 8000,
+      "minimum": 0
+    },
     "session_stale_secs": {
       "description": "A *working* session with no hook event for longer than this renders *unknown*.",
       "type": "integer",

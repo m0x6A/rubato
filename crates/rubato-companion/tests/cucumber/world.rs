@@ -90,7 +90,7 @@ impl TestServer {
                                         st.notify.notify_waiters();
                                         if is_hello {
                                             let seq = st.seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                                            let welcome = ServerEnvelope { seq, sent_at: chrono::Utc::now(), message: ServerMessage::Welcome { server_version: "test".into(), protocol_version: 1, last_seen_companion_seq: 0, limits: *st.limits.lock().unwrap() } };
+                                            let welcome = ServerEnvelope { seq, sent_at: chrono::Utc::now(), message: ServerMessage::Welcome { capabilities: vec![rubato_protocol::capability::SESSION_MESSAGES.into()], server_version: "test".into(), protocol_version: 1, last_seen_companion_seq: 0, limits: *st.limits.lock().unwrap() } };
                                             let _ = sink.send(Message::Text(serde_json::to_string(&welcome).unwrap().into())).await;
                                         }
                                     }

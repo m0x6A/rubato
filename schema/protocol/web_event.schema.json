@@ -30,6 +30,53 @@
         "at",
         "reason"
       ]
+    },
+    {
+      "description": "One resource changed that the overview does not carry (plan 122): only a view showing it\nrefetches it. The overview is not refetched.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "resource": {
+          "$ref": "#/$defs/WebResource"
+        },
+        "type": {
+          "type": "string",
+          "const": "updated"
+        }
+      },
+      "required": [
+        "type",
+        "at",
+        "resource"
+      ]
     }
-  ]
+  ],
+  "$defs": {
+    "WebResource": {
+      "description": "A resource a view can refetch on its own.",
+      "oneOf": [
+        {
+          "description": "`GET` `session_message::routes::LAUNCH_MESSAGES` for this launch.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "launch_messages"
+            },
+            "launch_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "launch_id"
+          ]
+        }
+      ]
+    }
+  }
 }

@@ -478,6 +478,8 @@ mod tests {
             spend_usd: None,
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         }
     }
 

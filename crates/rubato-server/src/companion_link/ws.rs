@@ -165,6 +165,7 @@ async fn on_envelope(
         CompanionMessage::Launch(_) => "launch",
         CompanionMessage::CapHit(_) => "cap_hit",
         CompanionMessage::Stale(_) => "stale",
+        CompanionMessage::SessionMessageResult(_) => "session_message_result",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
@@ -222,6 +223,7 @@ async fn on_envelope(
                     protocol_version: PROTOCOL_VERSION,
                     last_seen_companion_seq: pairing.last_companion_seq,
                     limits: app.config.limits,
+                    capabilities: vec![rubato_protocol::capability::SESSION_MESSAGES.to_owned()],
                 })
             }
             CompanionMessage::Heartbeat(h) => {
@@ -291,6 +293,8 @@ async fn on_envelope(
                 app.notify("stale");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
+            // Settled by the session_messages slice (plan 122 PR 3, server side).
+            CompanionMessage::SessionMessageResult(_) => None,
             CompanionMessage::Ack { .. } => None,
         }
     }
@@ -448,6 +452,8 @@ mod tests {
             spend_usd: None,
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         }
     }
 

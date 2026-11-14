@@ -189,6 +189,8 @@ mod tests {
             spend_usd: usd,
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         }
     }
 
