@@ -865,6 +865,44 @@ async fn bad_and_revoked_tokens_are_refused() {
     assert!(tokio_tungstenite::connect_async(revoked).await.is_err());
 }
 
+/// ADR 0059: a headless companion says so in its Hello; its lane keeps the badge offline, and an
+/// older Hello without `client` reads as interactive.
+#[tokio::test]
+async fn the_pairing_shows_a_headless_companion_even_offline() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let list = || async {
+        h.http
+            .get(format!("{}{}", h.url, pr::PAIRINGS))
+            .send()
+            .await
+            .unwrap()
+            .json::<Vec<rubato_protocol::PairingInfo>>()
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        list().await[0].client,
+        rubato_protocol::ClientKind::Interactive
+    );
+    let mut ws = h.connect(&token).await;
+    let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    if let CompanionMessage::Hello { client, .. } = &mut hello.message {
+        assert_eq!(
+            *client,
+            rubato_protocol::ClientKind::Interactive,
+            "the old fixture"
+        );
+        *client = rubato_protocol::ClientKind::Headless;
+    }
+    let _ = send(&mut ws, &hello).await;
+    drop(ws);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let got = list().await;
+    assert_eq!(got[0].client, rubato_protocol::ClientKind::Headless);
+    assert!(!got[0].connected, "offline, still headless");
+}
+
 /// ADR 0059: revoking a connected companion sends `Error { auth }` and closes its socket, so no
 /// envelope it sends afterwards is applied. Before, the socket stayed open (`ws.rs` only stopped
 /// sending), and this fails there.

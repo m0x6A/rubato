@@ -3,6 +3,10 @@
   "title": "PairingInfo",
   "type": "object",
   "properties": {
+    "client": {
+      "description": "Interactive or headless (ADR 0059): what the web shows on the lane. Older servers omit it.",
+      "$ref": "#/$defs/ClientKind"
+    },
     "companion_id": {
       "type": "string",
       "format": "uuid"
@@ -42,5 +46,22 @@
     "hostname",
     "created_at",
     "connected"
-  ]
+  ],
+  "$defs": {
+    "ClientKind": {
+      "description": "What kind of client a companion is (ADR 0059). Every client has one owner and never approves.",
+      "oneOf": [
+        {
+          "description": "Sessions in the developer's tmux, input pasted into the pane.",
+          "type": "string",
+          "const": "interactive"
+        },
+        {
+          "description": "No terminal: each turn is a `claude -p` child process the companion holds.",
+          "type": "string",
+          "const": "headless"
+        }
+      ]
+    }
+  }
 }

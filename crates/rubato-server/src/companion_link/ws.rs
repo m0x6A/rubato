@@ -218,6 +218,7 @@ async fn on_envelope(
                 protocol_version,
                 user,
                 capabilities,
+                client,
                 ..
             } => {
                 if claimed != companion_id || user != pairing.user {
@@ -238,6 +239,12 @@ async fn on_envelope(
                     });
                 }
                 app.set_capabilities(companion_id, capabilities);
+                observe(
+                    "set_client",
+                    companion_id,
+                    env.seq,
+                    pairing::set_client(&app.db, companion_id, client).await,
+                );
                 // Queued here before the Welcome is answered: the socket sends the Welcome first.
                 session_messages::on_hello(app, companion_id).await;
                 Some(ServerMessage::Welcome {
@@ -667,6 +674,7 @@ mod tests {
             last_seen: None,
             server_seq: 0,
             last_companion_seq: 0,
+            client: rubato_protocol::ClientKind::Interactive,
         };
         (app, reader, pairing, tmp)
     }

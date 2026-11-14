@@ -69,4 +69,28 @@ mod tests {
         assert_eq!(cookie_value(&h, COOKIE).as_deref(), Some("x.y"));
         assert_eq!(cookie_value(&h, "zzz"), None);
     }
+
+    /// ADR 0059: a client, interactive or headless, never approves. A companion's pairing token
+    /// is not a web session: every web route, the plan approval among them, answers 401.
+    #[tokio::test]
+    async fn a_companions_token_is_not_a_web_session() {
+        use crate::kernel::config::Config;
+        use crate::kernel::github::FakeGitHub;
+        use crate::kernel::state::AppState;
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let mut cfg = Config::for_tests(url, "m0x6A");
+        cfg.dev_user = None;
+        let app = AppState::new(pool, cfg, std::sync::Arc::new(FakeGitHub::new()));
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri(rubato_protocol::approve::routes::PLAN_DRAFT_APPROVE)
+            .header("authorization", "Bearer a-companion-pairing-token")
+            .body(())
+            .unwrap();
+        let (mut parts, ()) = req.into_parts();
+        let got = CurrentUser::from_request_parts(&mut parts, &app).await;
+        assert_eq!(got.unwrap_err(), StatusCode::UNAUTHORIZED);
+    }
 }

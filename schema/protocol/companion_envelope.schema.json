@@ -87,6 +87,21 @@
         "attempts"
       ]
     },
+    "ClientKind": {
+      "description": "What kind of client a companion is (ADR 0059). Every client has one owner and never approves.",
+      "oneOf": [
+        {
+          "description": "Sessions in the developer's tmux, input pasted into the pane.",
+          "type": "string",
+          "const": "interactive"
+        },
+        {
+          "description": "No terminal: each turn is a `claude -p` child process the companion holds.",
+          "type": "string",
+          "const": "headless"
+        }
+      ]
+    },
     "CompanionMessage": {
       "description": "Companion → server.",
       "oneOf": [
@@ -100,6 +115,10 @@
               "items": {
                 "type": "string"
               }
+            },
+            "client": {
+              "description": "Interactive (tmux) or headless (ADR 0059). An older companion is interactive.",
+              "$ref": "#/$defs/ClientKind"
             },
             "companion_id": {
               "type": "string",
@@ -1109,6 +1128,11 @@
           "description": "The companion just launched it; no event yet.",
           "type": "string",
           "const": "launch"
+        },
+        {
+          "description": "A headless companion holds the session's turn as its own child process (ADR 0059): the\nturn's end, reply and liveness come from that process, not from tmux or hooks. Sent only\nto a server that announced `session_stop`.",
+          "type": "string",
+          "const": "headless"
         }
       ]
     },
