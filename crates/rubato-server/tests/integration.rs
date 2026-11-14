@@ -865,6 +865,71 @@ async fn bad_and_revoked_tokens_are_refused() {
     assert!(tokio_tungstenite::connect_async(revoked).await.is_err());
 }
 
+/// ADR 0053, plan 122 §D7: a session plans in Rubato only after the cutover and through a
+/// companion that announced every part of it; otherwise it plans in Git, and the command says so.
+#[tokio::test]
+async fn a_launch_plans_in_rubato_only_after_the_cutover_with_a_capable_companion() {
+    async fn planning_of(cutover: bool, caps: &[&str]) -> rubato_protocol::PlanningMode {
+        let h = harness_with(|c| {
+            if cutover {
+                c.comment_approvals_until = Some(chrono::Utc::now());
+            }
+        })
+        .await;
+        let (companion_id, token) = h.pair("m0x6A").await;
+        let mut ws = h.connect(&token).await;
+        let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+        if let CompanionMessage::Hello { capabilities, .. } = &mut hello.message {
+            *capabilities = caps.iter().map(|c| (*c).to_owned()).collect();
+        }
+        let _ = send(&mut ws, &hello).await;
+        let issue = IssueRef::new("m0x6A/rubato", 3);
+        h.http
+            .post(format!("{}{}", h.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: issue.clone(),
+                target: MapRef::node("skill-rubato"),
+            })
+            .send()
+            .await
+            .unwrap();
+        let r = h
+            .http
+            .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+            .json(&serde_json::json!({ "issue": issue, "slug": "skill" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+        let launched: rubato_protocol::LaunchResponse = r.json().await.unwrap();
+        launched.command.planning
+    }
+    use rubato_protocol::PlanningMode::{Git, Rubato};
+    let all = [
+        "session_input",
+        "draft_mirror",
+        "plan_handoff",
+        "skill:0.2.0",
+    ];
+    assert_eq!(planning_of(true, &all).await, Rubato);
+    assert_eq!(planning_of(false, &all).await, Git, "before the cutover");
+    assert_eq!(
+        planning_of(
+            true,
+            &[
+                "session_input",
+                "draft_mirror",
+                "plan_handoff",
+                "skill:0.1.0"
+            ]
+        )
+        .await,
+        Git,
+        "a skill without plan.ts handoff"
+    );
+    assert_eq!(planning_of(true, &[]).await, Git, "an older companion");
+}
+
 #[tokio::test]
 async fn launch_goes_only_to_the_callers_own_connected_companion() {
     let h = harness().await;

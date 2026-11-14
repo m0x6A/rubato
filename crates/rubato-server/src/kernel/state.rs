@@ -226,6 +226,16 @@ impl AppState {
             .insert(companion_id, caps);
     }
 
+    /// Everything the companion announced the last time it said Hello.
+    pub fn capabilities(&self, companion_id: Uuid) -> Vec<String> {
+        self.companion_caps
+            .lock()
+            .unwrap()
+            .get(&companion_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// The companion announced `cap` the last time it said Hello.
     pub fn announced(&self, companion_id: Uuid, cap: &str) -> bool {
         self.companion_caps
