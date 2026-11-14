@@ -89,6 +89,8 @@ pub struct Metrics {
     /// Session messages the companion could not type, or stopped while typing, by
     /// `rubato.reason` (ADR 0051).
     pub session_input_failed: Counter<u64>,
+    /// Handoff reports forwarded to the server, by `rubato.outcome` (ADR 0055).
+    pub handoff_reports: Counter<u64>,
 }
 
 impl Metrics {
@@ -113,6 +115,10 @@ impl Metrics {
             session_input_failed: m
                 .u64_counter(otel::metric::SESSION_INPUT_FAILED)
                 .with_description("session messages not typed, or stopped while typing, by reason")
+                .build(),
+            handoff_reports: m
+                .u64_counter(otel::metric::HANDOFF_REPORTS)
+                .with_description("handoff reports forwarded to the server, by outcome")
                 .build(),
         }
     }

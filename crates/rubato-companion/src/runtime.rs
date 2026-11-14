@@ -31,8 +31,8 @@ use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use rubato_protocol::otel::event;
 use rubato_protocol::{
-    CompanionMessage, HookEvent, LaunchCommand, ServerMessage, SessionMessage, SessionStatus,
-    capability,
+    CompanionMessage, HandoffReport, HookEvent, LaunchCommand, ServerMessage, SessionMessage,
+    SessionStatus, capability,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -73,7 +73,10 @@ pub async fn start(
     let (hook_tx, hook_rx) = mpsc::unbounded_channel::<HookEvent>();
     let (dropped_tx, dropped_rx) = mpsc::unbounded_channel::<&'static str>();
     let previous = HookEndpoint::load(&cfg.state_dir);
-    let server = HookServer::bind_reusing(previous.as_ref(), hook_tx, dropped_tx).await?;
+    let (handoff_tx, handoff_rx) = mpsc::unbounded_channel::<HandoffReport>();
+    let server = HookServer::bind_reusing(previous.as_ref(), hook_tx, dropped_tx)
+        .await?
+        .with_handoff(handoff_tx);
     let hook_endpoint = server.endpoint.clone();
     hook_endpoint.save(&cfg.state_dir)?;
     let kept = previous.as_ref() == Some(&hook_endpoint);
@@ -133,6 +136,7 @@ pub async fn start(
         deliveries,
         hook_rx,
         dropped_rx,
+        handoff_rx,
         registry,
         connected_tx,
         shutdown,
@@ -148,6 +152,7 @@ async fn run(
     deliveries: Deliveries,
     hook_rx: mpsc::UnboundedReceiver<HookEvent>,
     dropped_rx: mpsc::UnboundedReceiver<&'static str>,
+    handoff_rx: mpsc::UnboundedReceiver<HandoffReport>,
     registry: Arc<Mutex<Registry>>,
     connected_tx: watch::Sender<bool>,
     shutdown: watch::Receiver<bool>,
@@ -171,6 +176,9 @@ async fn run(
     let (out_tx, out_rx) = mpsc::unbounded_channel::<CompanionMessage>();
     let (in_tx, in_rx) = mpsc::unbounded_channel::<ServerMessage>();
     let (poll_tx, poll_rx) = mpsc::unbounded_channel::<()>();
+    let skill_dir = cfg.workspace.companion.skill_dir();
+    let skill = crate::kernel::skill::installed_version(&skill_dir);
+    tracing::info!(skill_dir = %skill_dir.display(), skill = ?skill, "rubato skill");
     let client = Client::new(
         cfg.state.server_url.clone(),
         Identity {
@@ -178,13 +186,7 @@ async fn run(
             user: cfg.state.user.clone(),
             version: crate::kernel::VERSION.to_owned(),
             token: cfg.state.pairing_token.clone(),
-            // The trim has shipped since #122 PR 1 (ADR 0052), session input since PR 3, the plan
-            // mirror since PR 5.
-            capabilities: vec![
-                capability::HOOK_ALLOWLIST.to_owned(),
-                capability::SESSION_INPUT.to_owned(),
-                capability::DRAFT_MIRROR.to_owned(),
-            ],
+            capabilities: hello_capabilities(skill.as_deref()),
         },
         seq,
         cfg.state.last_server_seq,
@@ -280,6 +282,7 @@ async fn run(
                 input: Arc::new(tmux.clone()),
                 metrics: metrics.clone(),
                 deliveries,
+                skill_dir,
             },
         ),
     );
@@ -315,9 +318,26 @@ async fn run(
     tokio::pin!(supervised);
     tokio::select! {
         r = &mut supervised => return r,
-        () = dispatch.run(hook_rx, in_rx, shutdown) => {}
+        () = dispatch.run(hook_rx, in_rx, handoff_rx, shutdown) => {}
     }
     supervised.await
+}
+
+/// What this companion announces in Hello (ADR 0051). The trim has shipped since #122 PR 1
+/// (ADR 0052), session input since PR 3, the plan mirror since PR 5, the handoff since PR 7:
+/// `plan_handoff` with the `/handoff` route that forwards `HandoffReport`, and `skill:<version>`
+/// when the installed skill names its version.
+pub fn hello_capabilities(skill: Option<&str>) -> Vec<String> {
+    let mut caps = vec![
+        capability::HOOK_ALLOWLIST.to_owned(),
+        capability::SESSION_INPUT.to_owned(),
+        capability::DRAFT_MIRROR.to_owned(),
+        capability::PLAN_HANDOFF.to_owned(),
+    ];
+    if let Some(v) = skill {
+        caps.push(format!("{}{v}", capability::SKILL_PREFIX));
+    }
+    caps
 }
 
 /// The select arms, each one call into a slice (design §9.1 keeps their order).
@@ -342,6 +362,7 @@ impl Dispatch<'_> {
         &self,
         mut hook_rx: mpsc::UnboundedReceiver<HookEvent>,
         mut in_rx: mpsc::UnboundedReceiver<ServerMessage>,
+        mut handoff_rx: mpsc::UnboundedReceiver<HandoffReport>,
         mut shutdown: watch::Receiver<bool>,
     ) {
         loop {
@@ -351,6 +372,10 @@ impl Dispatch<'_> {
                     let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id, &self.cfg.state_dir, self.limits).await;
                     spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
                     plan_mirror::on_hook(&ev, self.plan_mirror);
+                }
+                // A `plan.ts handoff` report from `/handoff` (ADR 0055).
+                Some(report) = handoff_rx.recv() => {
+                    hooks::on_handoff(report, self.registry, self.out, self.metrics, self.server_capabilities).await;
                 }
                 Some(msg) = in_rx.recv() => match msg {
                     ServerMessage::Welcome { limits, capabilities, .. } => {
@@ -493,6 +518,29 @@ mod tests {
             .iter()
             .filter(|e| e.message == event::TASK_EXITED)
             .count()
+    }
+
+    /// ADR 0055: `plan_handoff` always (the `/handoff` route forwards reports), the skill only
+    /// when its version is known.
+    #[test]
+    fn hello_announces_the_handoff_and_the_skill_when_known() {
+        let with = hello_capabilities(Some("0.2.0"));
+        for c in [
+            capability::HOOK_ALLOWLIST,
+            capability::SESSION_INPUT,
+            capability::DRAFT_MIRROR,
+            capability::PLAN_HANDOFF,
+            "skill:0.2.0",
+        ] {
+            assert!(with.iter().any(|x| x == c), "{c} in {with:?}");
+        }
+        let without = hello_capabilities(None);
+        assert!(without.iter().any(|x| x == capability::PLAN_HANDOFF));
+        assert!(
+            without
+                .iter()
+                .all(|x| !x.starts_with(capability::SKILL_PREFIX))
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

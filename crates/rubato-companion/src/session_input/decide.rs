@@ -1,11 +1,16 @@
 //! Whether to type a session message, checked in the order plan 122 §D1 gives: the paired user,
 //! a session launched here, the length, the delivery record, then idle. Only a hook proves
-//! idle, and only a hook newer than the companion's own last input.
+//! idle, and only a hook newer than the companion's own last input. A `plan_approved` is typed
+//! as the handoff command (`handoff_prompt`, ADR 0055), and only when the installed skill has
+//! `plan.ts handoff`; the length check is on the text that would be typed.
 
 use super::deliveries::{Deliveries, Delivery};
 use crate::sessions::{PASTED_KEPT, Registry};
 use chrono::{DateTime, Utc};
-use rubato_protocol::{HookEventKind, MessageRefusal, SessionMessage, SessionMessageOutcome};
+use rubato_protocol::session_message::handoff_prompt;
+use rubato_protocol::{
+    HookEventKind, MessageRefusal, SessionMessage, SessionMessageOutcome, skill_has_handoff,
+};
 use uuid::Uuid;
 
 /// What to do with one message.
@@ -13,8 +18,12 @@ use uuid::Uuid;
 pub enum Decision {
     /// Answer without typing.
     Answer(SessionMessageOutcome),
-    /// Type it into `target`, a pane id or a tmux session name.
-    Paste { target: String, session_id: String },
+    /// Type `text` into `target`, a pane id or a tmux session name.
+    Paste {
+        target: String,
+        session_id: String,
+        text: String,
+    },
 }
 
 /// Why a message waits, for the `not idle` log line: the last hook, if any.
@@ -28,6 +37,7 @@ pub fn decide(
     reg: &Registry,
     max_chars: u64,
     deliveries: &Deliveries,
+    skill_version: Option<&str>,
 ) -> Decision {
     use Decision::Answer;
     let refused = |reason| Answer(SessionMessageOutcome::Refused { reason });
@@ -40,7 +50,16 @@ pub fn decide(
     let Some(session_id) = e.session_id.clone().filter(|_| e.is_live()) else {
         return refused(MessageRefusal::UnknownSession);
     };
-    if msg.kind.text().chars().count() as u64 > max_chars {
+    let text = match handoff_prompt(&msg.issue, &msg.kind) {
+        Some(prompt) => {
+            if !skill_version.is_some_and(skill_has_handoff) {
+                return refused(MessageRefusal::SkillOutdated);
+            }
+            prompt
+        }
+        None => msg.kind.text(),
+    };
+    if text.chars().count() as u64 > max_chars {
         return refused(MessageRefusal::TooLong);
     }
     match deliveries.get(msg.id) {
@@ -54,7 +73,11 @@ pub fn decide(
     let Some(target) = e.pane_id.clone().or_else(|| e.tmux_session.clone()) else {
         return refused(MessageRefusal::NoPane);
     };
-    Decision::Paste { target, session_id }
+    Decision::Paste {
+        target,
+        session_id,
+        text,
+    }
 }
 
 impl Registry {
@@ -156,11 +179,79 @@ mod tests {
         let mut r = registry(Some("%7"));
         hook(&mut r, "Stop", t(1));
         assert_eq!(
-            decide(&message(1, "hi"), USER, &r, 8000, &d),
+            decide(&message(1, "hi"), USER, &r, 8000, &d, None),
             Decision::Paste {
                 target: "%7".into(),
-                session_id: "s7".into()
+                session_id: "s7".into(),
+                text: "hi".into(),
             }
+        );
+    }
+
+    fn plan_approved(id: u128) -> SessionMessage {
+        let mut m = message(id, "");
+        m.kind = rubato_protocol::SessionMessageKind::PlanApproved {
+            approval_id: Uuid::from_u128(5),
+            approved_by: USER.into(),
+            approved_at: t(0),
+            approved_sha: "22e89bdc981e97d34dc7057747332a8e23cdf0e9".into(),
+            bundle_hash: "0123abcd".into(),
+            branch: "issue/7-restock".into(),
+            plan_path: "docs/plans/7.md".into(),
+            self_approved: false,
+            url: "https://rubato.example/approvals/5".into(),
+        };
+        m
+    }
+
+    /// ADR 0055: `plan_approved` is typed as the handoff command, never as its summary text, and
+    /// only when the installed skill has `plan.ts handoff`. The owner and launch checks come first,
+    /// as for chat, and the length check measures the command.
+    #[test]
+    fn plan_approved_types_the_handoff_command_with_a_skill_that_has_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = Deliveries::open(dir.path()).unwrap();
+        let mut r = registry(Some("%7"));
+        hook(&mut r, "Stop", t(1));
+        let m = plan_approved(1);
+        let prompt = handoff_prompt(&m.issue, &m.kind).unwrap();
+        match decide(&m, USER, &r, 8000, &d, Some("0.2.0")) {
+            Decision::Paste { text, .. } => {
+                assert_eq!(text, prompt);
+                assert!(text.contains("plan.ts handoff --approval"), "{text}");
+                assert_ne!(text, m.kind.text());
+            }
+            o => panic!("expected a paste, got {o:?}"),
+        }
+        for skill in [None, Some("0.1.9"), Some("dev")] {
+            assert_eq!(
+                reason(decide(&m, USER, &r, 8000, &d, skill)),
+                MessageRefusal::SkillOutdated,
+                "{skill:?}"
+            );
+        }
+        // Chat does not need the skill.
+        assert!(matches!(
+            decide(&message(2, "hi"), USER, &r, 8000, &d, None),
+            Decision::Paste { .. }
+        ));
+        // The owner check comes first.
+        let mut other = plan_approved(3);
+        other.user = "someone-else".into();
+        assert_eq!(
+            reason(decide(&other, USER, &r, 8000, &d, None)),
+            MessageRefusal::NotPairedUser
+        );
+        // The length is the typed command's, not the short summary's.
+        let max = prompt.chars().count() as u64;
+        assert!(m.kind.text().chars().count() < 60);
+        assert!(matches!(
+            decide(&m, USER, &r, max, &d, Some("0.2.0")),
+            Decision::Paste { .. }
+        ));
+        assert_eq!(
+            reason(decide(&m, USER, &r, max - 1, &d, Some("0.2.0"))),
+            MessageRefusal::TooLong
         );
     }
 
@@ -176,24 +267,24 @@ mod tests {
         let mut other = message(1, "hi");
         other.user = "someone-else".into();
         assert_eq!(
-            reason(decide(&other, USER, &r, 8000, &d)),
+            reason(decide(&other, USER, &r, 8000, &d, None)),
             MessageRefusal::NotPairedUser
         );
 
         let mut elsewhere = message(1, "hi");
         elsewhere.launch_id = Uuid::from_u128(99);
         assert_eq!(
-            reason(decide(&elsewhere, USER, &r, 8000, &d)),
+            reason(decide(&elsewhere, USER, &r, 8000, &d, None)),
             MessageRefusal::NotLaunchedHere
         );
 
         assert_eq!(
-            reason(decide(&message(1, "héllo"), USER, &r, 4, &d)),
+            reason(decide(&message(1, "héllo"), USER, &r, 4, &d, None)),
             MessageRefusal::TooLong,
         );
         // Counted in characters, not bytes.
         assert!(matches!(
-            decide(&message(1, "héllo"), USER, &r, 5, &d),
+            decide(&message(1, "héllo"), USER, &r, 5, &d, None),
             Decision::Paste { .. }
         ));
 
@@ -204,15 +295,15 @@ mod tests {
         // A delivered or interrupted id is answered from the record even when not idle.
         hook(&mut r, "UserPromptSubmit", t(2));
         assert_eq!(
-            outcome(decide(&message(2, "hi"), USER, &r, 8000, &d)),
+            outcome(decide(&message(2, "hi"), USER, &r, 8000, &d, None)),
             SessionMessageOutcome::Delivered
         );
         assert_eq!(
-            outcome(decide(&message(3, "hi"), USER, &r, 8000, &d)),
+            outcome(decide(&message(3, "hi"), USER, &r, 8000, &d, None)),
             SessionMessageOutcome::Interrupted
         );
         assert_eq!(
-            outcome(decide(&message(4, "hi"), USER, &r, 8000, &d)),
+            outcome(decide(&message(4, "hi"), USER, &r, 8000, &d, None)),
             SessionMessageOutcome::NotIdle
         );
     }
@@ -225,17 +316,17 @@ mod tests {
         let m = message(1, "hi");
         // Restored, no hook yet: nothing proves the turn ended.
         assert_eq!(
-            outcome(decide(&m, USER, &r, 8000, &d)),
+            outcome(decide(&m, USER, &r, 8000, &d, None)),
             SessionMessageOutcome::NotIdle
         );
         hook(&mut r, "Stop", t(1));
         assert!(matches!(
-            decide(&m, USER, &r, 8000, &d),
+            decide(&m, USER, &r, 8000, &d, None),
             Decision::Paste { .. }
         ));
         r.mark_input_sent(Uuid::from_u128(7), t(2), Uuid::from_u128(1), "hi");
         assert_eq!(
-            outcome(decide(&m, USER, &r, 8000, &d)),
+            outcome(decide(&m, USER, &r, 8000, &d, None)),
             SessionMessageOutcome::NotIdle,
             "a second message waits for the turn the first began"
         );
@@ -247,14 +338,14 @@ mod tests {
         .unwrap();
         r.apply_hook(&idle);
         assert!(matches!(
-            decide(&m, USER, &r, 8000, &d),
+            decide(&m, USER, &r, 8000, &d, None),
             Decision::Paste { .. }
         ));
         idle.notification_type = Some("permission_prompt".into());
         idle.received_at = t(4);
         r.apply_hook(&idle);
         assert_eq!(
-            outcome(decide(&m, USER, &r, 8000, &d)),
+            outcome(decide(&m, USER, &r, 8000, &d, None)),
             SessionMessageOutcome::NotIdle,
             "typing into a permission prompt would answer it"
         );
@@ -267,14 +358,14 @@ mod tests {
         let mut r = registry(None);
         hook(&mut r, "Stop", t(1));
         assert_eq!(
-            reason(decide(&message(1, "hi"), USER, &r, 8000, &d)),
+            reason(decide(&message(1, "hi"), USER, &r, 8000, &d, None)),
             MessageRefusal::NoPane
         );
         let mut r = registry(Some("%7"));
         hook(&mut r, "Stop", t(1));
         r.apply_panes(&[], t(2));
         assert_eq!(
-            reason(decide(&message(1, "hi"), USER, &r, 8000, &d)),
+            reason(decide(&message(1, "hi"), USER, &r, 8000, &d, None)),
             MessageRefusal::UnknownSession,
             "the pane vanished"
         );
@@ -290,7 +381,7 @@ mod tests {
         hook(&mut r, "Stop", t(1));
         hook(&mut r, "SessionEnd", t(2));
         assert_eq!(
-            outcome(decide(&message(1, "hi"), USER, &r, 8000, &d)),
+            outcome(decide(&message(1, "hi"), USER, &r, 8000, &d, None)),
             SessionMessageOutcome::NotIdle
         );
         assert_eq!(

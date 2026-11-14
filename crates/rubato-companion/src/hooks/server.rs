@@ -12,7 +12,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use chrono::Utc;
 use rand::RngCore;
-use rubato_protocol::HookEvent;
+use rubato_protocol::otel::event;
+use rubato_protocol::{HandoffLine, HandoffReport, HookEvent};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -21,11 +22,17 @@ use uuid::Uuid;
 /// The header a launched session's hook command sends with its launch id.
 pub const LAUNCH_HEADER: &str = "x-rubato-launch";
 
+/// Where `plan.ts handoff` posts its `rubato.plan.handoff` line: `$RUBATO_HOOK_URL/handoff`,
+/// with `Authorization: Bearer $RUBATO_HOOK_TOKEN` and `X-Rubato-Launch: $RUBATO_LAUNCH_ID`.
+pub const HANDOFF_ROUTE: &str = "/handoff";
+
 #[derive(Clone)]
 struct AppState {
     token: Arc<String>,
     tx: mpsc::UnboundedSender<HookEvent>,
     dropped: mpsc::UnboundedSender<&'static str>,
+    /// Where `/handoff` posts go (`with_handoff`); without it the route answers 503.
+    handoff: Option<mpsc::UnboundedSender<HandoffReport>>,
 }
 
 pub struct HookServer {
@@ -94,13 +101,22 @@ impl HookServer {
                 token: Arc::new(token),
                 tx,
                 dropped,
+                handoff: None,
             },
         })
+    }
+
+    /// Take `plan.ts handoff` reports on `/handoff` (ADR 0055) and hand them to `tx`, each with
+    /// the launch its `X-Rubato-Launch` header names.
+    pub fn with_handoff(mut self, tx: mpsc::UnboundedSender<HandoffReport>) -> Self {
+        self.state.handoff = Some(tx);
+        self
     }
 
     pub async fn serve(self) -> anyhow::Result<()> {
         let app = Router::new()
             .route("/hook", post(receive))
+            .route(HANDOFF_ROUTE, post(receive_handoff))
             .route("/healthz", get(|| async { "ok" }))
             .with_state(self.state);
         axum::serve(self.listener, app).await?;
@@ -118,12 +134,55 @@ fn launch_id(headers: &HeaderMap) -> Option<Uuid> {
     Uuid::parse_str(v).ok()
 }
 
-async fn receive(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> StatusCode {
+/// The bearer token matches this receiver's.
+fn authorized(st: &AppState, headers: &HeaderMap) -> bool {
     let auth = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if auth.strip_prefix("Bearer ").map(str::trim) != Some(st.token.as_str()) {
+    auth.strip_prefix("Bearer ").map(str::trim) == Some(st.token.as_str())
+}
+
+/// `POST /handoff`: the skill's handoff line, for the launch its header names. Never a launch
+/// from the body: the line carries none, and the companion adds its own. A body that is not a
+/// `rubato.plan.handoff` line, or a post with no launch, is 400 and counted on
+/// `rubato.events.dropped`.
+async fn receive_handoff(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> StatusCode {
+    if !authorized(&st, &headers) {
+        let _ = st.dropped.send("auth");
+        return StatusCode::UNAUTHORIZED;
+    }
+    let Some(launch_id) = launch_id(&headers) else {
+        let _ = st.dropped.send("handoff_no_launch");
+        return StatusCode::BAD_REQUEST;
+    };
+    let line = match serde_json::from_slice::<HandoffLine>(&body) {
+        Ok(l) if l.event == event::PLAN_HANDOFF => l,
+        _ => {
+            let _ = st.dropped.send("handoff_schema");
+            return StatusCode::BAD_REQUEST;
+        }
+    };
+    let report = HandoffReport {
+        launch_id,
+        line,
+        at: Utc::now(),
+    };
+    match &st.handoff {
+        Some(tx) if tx.send(report).is_ok() => StatusCode::ACCEPTED,
+        _ => {
+            let _ = st.dropped.send("overflow");
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+    }
+}
+
+async fn receive(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> StatusCode {
+    if !authorized(&st, &headers) {
         let _ = st.dropped.send("auth");
         return StatusCode::UNAUTHORIZED;
     }
