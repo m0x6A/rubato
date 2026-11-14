@@ -4,6 +4,13 @@
   "description": "A room and its messages (`GET` `routes::ROOM`).",
   "type": "object",
   "properties": {
+    "agents": {
+      "description": "Agents called in, present ones first (PR 11).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RoomAgent"
+      }
+    },
     "branch": {
       "type": "string"
     },
@@ -20,6 +27,13 @@
     },
     "repo": {
       "type": "string"
+    },
+    "requests": {
+      "description": "Requests to call an agent in, pending ones first.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RoomRequest"
+      }
     }
   },
   "required": [
@@ -49,6 +63,90 @@
         "number"
       ]
     },
+    "LeftReason": {
+      "description": "Why an agent left a room.",
+      "oneOf": [
+        {
+          "description": "Its owner, or whoever called it in, dismissed it.",
+          "type": "string",
+          "const": "dismissed"
+        },
+        {
+          "description": "Not addressed for `Limits.room_agent_idle_secs`.",
+          "type": "string",
+          "const": "timed_out"
+        },
+        {
+          "description": "Its session ended.",
+          "type": "string",
+          "const": "session_ended"
+        }
+      ]
+    },
+    "RequestState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "accepted",
+        "declined",
+        "withdrawn"
+      ]
+    },
+    "RoomAgent": {
+      "description": "An agent called into a room (ADR 0057): who is in, called by whom, since when.",
+      "type": "object",
+      "properties": {
+        "called_by": {
+          "type": "string"
+        },
+        "handle": {
+          "description": "`<owner>-agent`, what a message names to address it.",
+          "type": "string"
+        },
+        "joined_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_turn_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "left_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "left_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeftReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "owner",
+        "launch_id",
+        "called_by",
+        "joined_at"
+      ]
+    },
     "RoomAuthorKind": {
       "description": "Who wrote a room message.",
       "oneOf": [
@@ -73,6 +171,13 @@
       "description": "One message of a room, oldest first in a `RoomView`.",
       "type": "object",
       "properties": {
+        "addressed": {
+          "description": "Agent handles this message addresses (`@<owner>-agent`), PR 11.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "at": {
           "type": "string",
           "format": "date-time"
@@ -101,6 +206,14 @@
         },
         "text": {
           "type": "string"
+        },
+        "turn_id": {
+          "description": "The turn this message made, or the turn an agent's message answers.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
         }
       },
       "required": [
@@ -109,6 +222,48 @@
         "author",
         "text",
         "at"
+      ]
+    },
+    "RoomRequest": {
+      "description": "A teammate's request to call someone else's agent in, pending until the owner answers.",
+      "type": "object",
+      "properties": {
+        "answered_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "requested_by": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/RequestState"
+        }
+      },
+      "required": [
+        "id",
+        "owner",
+        "launch_id",
+        "requested_by",
+        "at",
+        "state"
       ]
     },
     "SeamNotice": {

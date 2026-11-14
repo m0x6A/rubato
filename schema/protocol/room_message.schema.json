@@ -4,6 +4,13 @@
   "description": "One message of a room, oldest first in a `RoomView`.",
   "type": "object",
   "properties": {
+    "addressed": {
+      "description": "Agent handles this message addresses (`@<owner>-agent`), PR 11.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "at": {
       "type": "string",
       "format": "date-time"
@@ -32,6 +39,14 @@
     },
     "text": {
       "type": "string"
+    },
+    "turn_id": {
+      "description": "The turn this message made, or the turn an agent's message answers.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
     }
   },
   "required": [

@@ -170,6 +170,7 @@ async fn on_envelope(
         CompanionMessage::SessionMessageResult(_) => "session_message_result",
         CompanionMessage::Draft(_) => "draft",
         CompanionMessage::HandoffReport(_) => "handoff_report",
+        CompanionMessage::RoomReply(_) => "room_reply",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
@@ -351,6 +352,12 @@ async fn on_envelope(
             CompanionMessage::HandoffReport(r) => {
                 // Recorded on the approval only for this companion's own launch of its issue.
                 approve::on_handoff_report(app, companion_id, &r).await;
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::RoomReply(r) => {
+                // The rooms slice takes it once PR 11's server half lands; until then it is
+                // recorded as an envelope and logged, so the reply is never silent.
+                tracing::info!(turn_id = %r.turn_id, message_id = %r.message_id, chars = r.text.chars().count(), error = ?r.error, "room reply");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::SessionMessageResult(r) => {
