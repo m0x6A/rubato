@@ -1,6 +1,6 @@
 //! `POST /api/launch`: start a session on an issue through one of the caller's own companions.
 
-use super::prompt::{PROMPT_TEMPLATE, render_prompt, slugify};
+use super::prompt::{PROMPT_TEMPLATE, RUBATO_PROMPT_TEMPLATE, render_prompt, slugify};
 use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
@@ -161,6 +161,14 @@ pub async fn launch(
     ]
     .into_iter()
     .collect();
+    let planning = planning_mode(
+        app.config.comment_approvals_until.is_some(),
+        &app.capabilities(companion.companion_id),
+    );
+    let template = match planning {
+        PlanningMode::Rubato => RUBATO_PROMPT_TEMPLATE,
+        PlanningMode::Git => PROMPT_TEMPLATE,
+    };
     let command = LaunchCommand {
         id: Uuid::new_v4(),
         user: user.clone(),
@@ -176,14 +184,11 @@ pub async fn launch(
         prompt: req
             .prompt
             .clone()
-            .unwrap_or_else(|| render_prompt(PROMPT_TEMPLATE, &vars)),
+            .unwrap_or_else(|| render_prompt(template, &vars)),
         otel_resource: otel,
         map_version: Some(map.version.clone()),
         plan_path: Some(plan_path),
-        planning: planning_mode(
-            app.config.comment_approvals_until.is_some(),
-            &app.capabilities(companion.companion_id),
-        ),
+        planning,
     };
     store::store_launch(&app.db, ws.as_str(), companion.companion_id, &command)
         .await

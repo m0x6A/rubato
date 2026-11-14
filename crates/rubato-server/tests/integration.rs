@@ -902,6 +902,16 @@ async fn a_launch_plans_in_rubato_only_after_the_cutover_with_a_capable_companio
             .unwrap();
         assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
         let launched: rubato_protocol::LaunchResponse = r.json().await.unwrap();
+        // The prompt matches the mode: a Rubato session is told to draft, not to commit.
+        assert_eq!(
+            launched
+                .command
+                .prompt
+                .contains("This session plans in Rubato"),
+            launched.command.planning == rubato_protocol::PlanningMode::Rubato,
+            "{}",
+            launched.command.prompt
+        );
         launched.command.planning
     }
     use rubato_protocol::PlanningMode::{Git, Rubato};
@@ -1495,12 +1505,19 @@ async fn welcome_carries_last_seen_seq_after_reconnect() {
     let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
     let ServerMessage::Welcome {
         last_seen_companion_seq,
+        capabilities,
         ..
     } = send(&mut ws, &hello).await
     else {
         panic!("no welcome")
     };
     assert_eq!(last_seen_companion_seq, 0, "a new pairing has seen nothing");
+    // What this server takes: a companion sends a message kind only to a server that said so.
+    assert_eq!(
+        capabilities,
+        ["session_messages", "drafts", "handoff_reports"],
+        "the Welcome names every message kind the server takes"
+    );
     let mut beat = with_companion(Harness::fixture("companion_heartbeat.json"), companion_id);
     beat.seq = 7;
     assert!(matches!(
@@ -4151,10 +4168,7 @@ async fn an_untracked_plan_branch_is_discovered_and_stays_not_pinned() {
         .collect();
     assert_eq!(
         for_90,
-        [(
-            "file",
-            "m0x6A/rubato docs/plans/90.md s90".to_owned()
-        )],
+        [("file", "m0x6A/rubato docs/plans/90.md s90".to_owned())],
         "discovery reads the plan file and nothing else for an untracked issue"
     );
 

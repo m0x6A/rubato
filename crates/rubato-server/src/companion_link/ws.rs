@@ -240,6 +240,7 @@ async fn on_envelope(
                     capabilities: vec![
                         rubato_protocol::capability::SESSION_MESSAGES.to_owned(),
                         rubato_protocol::capability::DRAFTS.to_owned(),
+                        rubato_protocol::capability::HANDOFF_REPORTS.to_owned(),
                     ],
                 })
             }
