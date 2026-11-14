@@ -3,7 +3,7 @@
  * sessions; seams badged with open plans and collisions. Pure, so it is tested without a DOM.
  */
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
-import type { Finding, Flow, IssueRef, IssueSummary, MapNode, Overview, PartStatus, ProgressState, Scenario, Seam, SessionState, SessionStatus } from "../../protocol.ts";
+import type { Finding, Flow, IssueRef, IssueSummary, MapNode, ObservedTraffic, Overview, PartStatus, ProgressState, Scenario, Seam, SeamTraffic, SessionState, SessionStatus, UndeclaredEdge } from "../../protocol.ts";
 import { issueKey } from "../../shared/format.ts";
 
 export type Paint = PartStatus | null;
@@ -35,6 +35,10 @@ export interface GraphEdge {
   issues: IssueSummary[];
   /** Findings that are about this seam: a plan's flow that the seam does not join. */
   findings: Finding[];
+  /** Observed calls in the report's window, from a fresh report only (ADR 0039). */
+  traffic?: SeamTraffic | undefined;
+  /** Finding `SeamQuiet`: no calls in this many seconds while both parts show traffic. Amber, not a plan's finding. */
+  quietFor?: number | undefined;
 }
 
 /** What the shared map draft does to a part or a seam, and who did it (ADR 0018). */
@@ -48,6 +52,10 @@ export interface Graph {
   edges: GraphEdge[];
   /** Journeys over the declared flows, for the scenario lens (ADR 0024). */
   scenarios: Scenario[];
+  /** What the traffic source says, as the server sent it (ADR 0039). */
+  traffic?: ObservedTraffic | undefined;
+  /** Calls between two parts of the map that no seam joins: drawn in the Traffic lens only, from a fresh report. */
+  territory?: UndeclaredEdge[] | undefined;
 }
 
 const PAINT_RANK: Record<PartStatus, number> = { quiet: 1, affected: 2, new: 3 };
@@ -132,8 +140,24 @@ export function buildGraph(ov: Overview): Graph {
       }
     }
   }
+  // Unknown is never quiet: only a fresh report puts calls, quiet seams or territory on the map.
+  const traffic: ObservedTraffic = ov.traffic ?? { state: "not_configured" };
+  const fresh = traffic.state === "fresh";
+  if (fresh) {
+    for (const t of traffic.seams ?? []) {
+      const e = edgeById.get(t.seam);
+      if (e) {
+        e.traffic = t;
+      }
+    }
+  }
   for (const f of ov.findings) {
-    if (f.kind === "seam_collision") {
+    if (f.kind === "seam_quiet") {
+      const e = fresh ? edgeById.get(f.seam) : undefined;
+      if (e) {
+        e.quietFor = f.window_secs;
+      }
+    } else if (f.kind === "seam_collision") {
       const e = edgeById.get(f.seam);
       if (e) {
         e.collision = true;
@@ -149,7 +173,8 @@ export function buildGraph(ov: Overview): Graph {
       }
     }
   }
-  return { nodes, edges, scenarios: ov.map.map.scenarios ?? [] };
+  const territory = fresh ? (traffic.undeclared ?? []).filter((u) => byId.has(u.from) && byId.has(u.to)) : [];
+  return { nodes, edges, scenarios: ov.map.map.scenarios ?? [], traffic, territory };
 }
 
 export function countBy<T, K extends string>(items: T[], key: (t: T) => K): Partial<Record<K, number>> {

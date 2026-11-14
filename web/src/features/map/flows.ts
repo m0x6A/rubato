@@ -11,12 +11,14 @@ import type { Flow, FlowKind } from "../../protocol.ts";
 
 /** `plan` is not offered by the switch: it is on while an issue with a plan is selected. */
 /** `scenario` shows every flow, both kinds, while one step of a scenario pulses (ADR 0024). */
-export type Lens = "structure" | FlowKind | "plan" | "scenario";
+/** `traffic` shows observed calls on each seam's own arrow, never declared flows (ADR 0039). */
+export type Lens = "structure" | FlowKind | "plan" | "scenario" | "traffic";
 
 export const LENSES: { id: Exclude<Lens, "plan" | "scenario">; label: string }[] = [
   { id: "structure", label: "Structure" },
   { id: "data", label: "Data flow" },
   { id: "control", label: "Control flow" },
+  { id: "traffic", label: "Traffic" },
 ];
 
 /** Pixels between two parallel arrows of one seam. */
@@ -50,7 +52,8 @@ interface SeamLike {
 
 export function arrowsFor(seam: SeamLike, lens: Lens): Arrow[] {
   const plain: Arrow = { id: seam.id, seam: seam.id, kind: "structure", reversed: false, label: undefined, offset: 0, dashed: false, faint: false, moving: false };
-  if (lens === "structure") {
+  // Traffic draws each seam once, solid: what moves on it is observed calls (design §5.1).
+  if (lens === "structure" || lens === "traffic") {
     return [plain];
   }
   // The plan lens shows everything the plan sends, both kinds at once.

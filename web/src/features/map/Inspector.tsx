@@ -1,6 +1,7 @@
 import type { Flow, IssueRef, IssueSummary, MapRef, Overview } from "../../protocol.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
 import { type FlowLine, type Touching, explain } from "./explain.ts";
+import { SeamTrafficRows } from "./traffic.tsx";
 
 interface Props {
   overview: Overview;
@@ -173,6 +174,7 @@ export function Inspector({ overview, selection, onSelect, onSelectIssue, onNewI
         </dl>
         <h3>Flows</h3>
         {x.flows.length ? <SeamFlows flows={x.flows} onSelect={onSelect} /> : <p className="gap">What crosses this seam is {NOT_DESCRIBED}.</p>}
+        <SeamTrafficRows traffic={overview.traffic ?? undefined} findings={overview.findings} seam={s} />
         <h3>If it breaks at 3 am</h3>
         {x.oRows.length ? (
           <ul className="plain">

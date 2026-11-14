@@ -5,7 +5,7 @@ import type { IssueSummary, Overview, Seam, SessionState } from "../../src/proto
  * parts in a grid of chains, `seams` seams with one data flow each, and a working session on
  * every fourth part. Typed as the generated `Overview`, so typecheck catches drift.
  */
-export function bigMap(parts = 40, seams = 60): Overview {
+export function bigMap(parts = 40, seams = 60, traffic = false): Overview {
   const now = new Date().toISOString();
   const ids = Array.from({ length: parts }, (_, i) => `part-${String(i).padStart(2, "0")}`);
   const edges: Seam[] = [];
@@ -31,5 +31,7 @@ export function bigMap(parts = 40, seams = 60): Overview {
     companions: [],
     unpinned_sessions: [],
     generated_at: now,
+    // Issue #104: 60 calls a minute each way on every seam, 6 chevrons a seam, so the cap of 120 bites.
+    ...(traffic ? { traffic: { state: "fresh" as const, observed_at: now, window_secs: 3600, seams: edges.map((e) => ({ seam: e.id, forward_calls: 3600, reverse_calls: 3600, errors: 0 })), observed_parts: ids } } : {}),
   };
 }

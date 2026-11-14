@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { issue, overview } from "../../../test/fixtures.ts";
-import type { MapRef, Overview } from "../../protocol.ts";
+import type { MapRef, Overview, SeamTraffic } from "../../protocol.ts";
 import { Inspector, PlanInspector } from "./Inspector.tsx";
 
 const REPO = "m0x6A/rubato";
@@ -142,5 +142,33 @@ describe("the inspector explains what is selected (S9, S26)", () => {
   it("a selection the map no longer has says so", () => {
     const { box } = show({ kind: "node", id: "gone" });
     expect(box).toHaveTextContent("gone is not in map abc1234.");
+  });
+});
+
+describe("a seam's observed traffic in the inspector (#104, design §5.3)", () => {
+  const fresh = (o: Overview, seams: SeamTraffic[], findings: Overview["findings"] = []): Overview => ({
+    ...o,
+    traffic: { state: "fresh", window_secs: 3600, observed_at: new Date().toISOString(), seams },
+    findings: [...o.findings, ...findings],
+  });
+
+  it("shows calls each way and the errors, over the report's window", () => {
+    const { box } = show({ kind: "seam", id: "web-server" }, fresh(overview(), [{ seam: "web-server", forward_calls: 1200, reverse_calls: 30, errors: 36 }]));
+    const section = within(box).getByRole("heading", { name: "Observed traffic" }).nextElementSibling as HTMLElement;
+    expect(section).toHaveTextContent("web → rubato-server: 1200 calls (20/min)");
+    expect(section).toHaveTextContent("rubato-server → web: 30 calls (0.5/min)");
+    expect(section).toHaveTextContent("36 failed (3 %), in the last 1 h");
+  });
+
+  it("a quiet seam says so; an unknown source says why, and no quiet", () => {
+    const quiet = show({ kind: "seam", id: "companion-server" }, fresh(overview(), [], [{ kind: "seam_quiet", seam: "companion-server", window_secs: 3600 }]));
+    expect(within(quiet.box).getByRole("heading", { name: "Observed traffic" }).nextElementSibling).toHaveTextContent("No calls in the last 1 h, though both its parts show traffic.");
+    cleanup();
+    const stale = show({ kind: "seam", id: "companion-server" }, { ...overview(), traffic: { state: "failing", error: "refused" } });
+    expect(within(stale.box).getByRole("heading", { name: "Observed traffic" }).nextElementSibling).toHaveTextContent("Traffic unknown: the source failed: refused.");
+    cleanup();
+    // No source: the section is not there at all.
+    const none = show({ kind: "seam", id: "web-server" });
+    expect(within(none.box).queryByRole("heading", { name: "Observed traffic" })).toBeNull();
   });
 });
