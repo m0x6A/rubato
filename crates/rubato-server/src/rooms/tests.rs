@@ -352,10 +352,10 @@ async fn no_notice_when_the_seams_differ_or_one_plan_has_merged() {
 // ---- PR 11: calling an agent in, addressed turns, replies, limits (ADR 0057, plan 122 §D8) ----
 
 mod call_in_tests {
-    use super::super::{
+    use super::*;
+    use crate::rooms::{
         TURN_LIMIT_TEXT, answer, call_in, dismiss, on_hook, on_room_reply, sweep_agents,
     };
-    use super::*;
     use crate::session_messages::{self, RoomTurnRef};
     use axum::extract::Path;
     use rubato_protocol::{
