@@ -89,6 +89,9 @@ Fill it:
 - **Assumed, not yet approved**: every decision nothing settled. Scope `node` means assume and
   proceed, labelled. Scope `seam` blocks until a human answers; raise it as a numbered question
   with 2–4 options, not prose.
+- **Decisions**: a table `# | Decision | Chosen | Why | Decided by`, one row per decision made
+  while the plan is drafted in Rubato (ADR 0056), so the approval covers it and the handoff
+  commits it. Until then, write "None." and record decisions as `Decision:` comments (§7).
 - **O-rows**: one per seam in Affected parts. If this breaks at 3 am, which span, metric or
   log line leads back to it, on which dashboard panel, and which side of the seam is woken.
   Name `rubato.*` attributes. "We'll see it in the logs" is not an answer.

@@ -715,6 +715,12 @@ reasons?: FitReason[]
 }
 export interface Plan {
 affected_parts: AffectedPart[]
+/**
+ * The approval record in the front matter, written at handoff (ADR 0054). Absent when the
+ * plan has none of its keys; a record with a key missing is kept as it is, so the check can
+ * report it.
+ */
+approval?: (PlanApprovalRecord | null)
 assumed?: Assumption[]
 attempt_limit?: (number | null)
 /**
@@ -722,6 +728,11 @@ attempt_limit?: (number | null)
  * from its `## Data models` table (ADR 0031). Optional; empty when absent or "None."
  */
 data_models?: DataModel[]
+/**
+ * The decisions recorded while the plan was drafted, from its `## Decisions` table
+ * (ADR 0056). Optional; empty when absent or "None."
+ */
+decisions?: PlanDecision[]
 /**
  * What the plan will send across seams, from its `## Flows` table (ADR 0021). Optional.
  */
@@ -758,6 +769,15 @@ seams?: string[]
 status: PartStatus
 }
 /**
+ * The approval record a handoff writes into the front matter (ADR 0054): who approved, when, and
+ * the approval hash of the plan they approved. Left out of that hash.
+ */
+export interface PlanApprovalRecord {
+approved_at?: (string | null)
+approved_by?: (string | null)
+approved_sha?: (string | null)
+}
+/**
  * A decision the plan had to make that nothing settled.
  */
 export interface Assumption {
@@ -787,6 +807,16 @@ note?: (string | null)
  * Node id of the part that owns the model. Must be in Affected parts.
  */
 part: string
+}
+/**
+ * One row of the plan's `## Decisions` table (ADR 0056).
+ */
+export interface PlanDecision {
+chosen: string
+decided_by?: (string | null)
+decision: string
+id: string
+why?: (string | null)
 }
 /**
  * One row of the plan's Flows table: something the change sends from one part to another over

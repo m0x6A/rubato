@@ -103,6 +103,12 @@ See the O-rows.
 | --- | --- | --- | --- | --- |
 | A1 | | | | node |
 
+## Decisions
+
+<!-- Each decision made while planning, recorded as it is made (ADR 0056), so the approval covers it and the handoff commits it: | # | Decision | Chosen | Why | Decided by |. Write "None." when there are none. -->
+
+None.
+
 ## O-rows
 
 <!-- One per seam in Affected parts: if it breaks at 3 am, which signal leads back, on which panel, who is woken. -->

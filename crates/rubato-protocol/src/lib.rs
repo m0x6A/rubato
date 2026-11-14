@@ -21,6 +21,7 @@ pub mod otel;
 pub mod pairing;
 pub mod pins;
 pub mod plan;
+pub mod plan_hash;
 pub mod progress;
 pub mod pulls;
 pub mod queue;
@@ -65,7 +66,11 @@ pub use pairing::{
 pub use pins::{IssuePin, PinRequest};
 pub use plan::{
     AffectedPart, Assumption, AssumptionScope, DataModel, DataModelKind, FitReason, ModelChange,
-    ORow, PartStatus, Plan, PlanFit, PlanFlow, plan_fit,
+    ORow, PartStatus, Plan, PlanApprovalRecord, PlanDecision, PlanFit, PlanFlow, plan_fit,
+};
+pub use plan_hash::{
+    APPROVAL_KEYS, approval_hash, approval_names, bundle_hash, bundle_paths, clear_checkboxes,
+    git_blob_sha, normalise_plan, strip_approval_record,
 };
 pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,

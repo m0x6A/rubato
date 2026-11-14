@@ -1859,6 +1859,17 @@
             "$ref": "#/$defs/AffectedPart"
           }
         },
+        "approval": {
+          "description": "The approval record in the front matter, written at handoff (ADR 0054). Absent when the\nplan has none of its keys; a record with a key missing is kept as it is, so the check can\nreport it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanApprovalRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "assumed": {
           "type": "array",
           "items": {
@@ -1878,6 +1889,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/DataModel"
+          }
+        },
+        "decisions": {
+          "description": "The decisions recorded while the plan was drafted, from its `## Decisions` table\n(ADR 0056). Optional; empty when absent or \"None.\"",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanDecision"
           }
         },
         "flows": {
@@ -1925,6 +1943,62 @@
         "issue",
         "path",
         "affected_parts"
+      ]
+    },
+    "PlanApprovalRecord": {
+      "description": "The approval record a handoff writes into the front matter (ADR 0054): who approved, when, and\nthe approval hash of the plan they approved. Left out of that hash.",
+      "type": "object",
+      "properties": {
+        "approved_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "PlanDecision": {
+      "description": "One row of the plan's `## Decisions` table (ADR 0056).",
+      "type": "object",
+      "properties": {
+        "chosen": {
+          "type": "string"
+        },
+        "decided_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "why": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "decision",
+        "chosen"
       ]
     },
     "PlanFit": {
