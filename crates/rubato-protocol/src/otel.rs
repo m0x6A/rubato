@@ -52,7 +52,7 @@ pub mod attr {
     pub const LOG_KIND: &str = "rubato.log.kind";
     /// A draft revision number (ADR 0053).
     pub const DRAFT_REV: &str = "rubato.draft.rev";
-    /// A Rubato approval id (ADR 0054).
+    /// A `rubato_approvals` row (ADR 0054).
     pub const APPROVAL_ID: &str = "rubato.approval_id";
 }
 
@@ -173,6 +173,9 @@ pub mod metric {
     pub const PLANS_LINK_COMMENT_MISSING: &str = "rubato.plans.link_comment_missing";
     /// Plans on a branch whose approval record differs from Rubato's (alert `ApprovalRecordMismatch`).
     pub const PLANS_APPROVAL_RECORD_MISMATCH: &str = "rubato.plans.approval_record_mismatch";
+    /// `Approved:` comments first read at or after the cutover, which do not count (ADR 0054,
+    /// finding `CommentApprovalIgnored`).
+    pub const PLANS_COMMENT_AFTER_CUTOVER: &str = "rubato.plans.comment_after_cutover";
     /// Workspaces configured (ADR 0044), recorded at start and every poll tick.
     pub const WORKSPACES_CONFIGURED: &str = "rubato.workspaces.configured";
     /// Repos named by more than one workspace's map (ADR 0048), recorded every poll tick.
@@ -319,6 +322,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::PLANS_HANDOFF_OVERDUE,
         metric::PLANS_LINK_COMMENT_MISSING,
         metric::PLANS_APPROVAL_RECORD_MISMATCH,
+        metric::PLANS_COMMENT_AFTER_CUTOVER,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

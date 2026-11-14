@@ -4,6 +4,7 @@ use crate::ids::IssueRef;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -142,12 +143,39 @@ pub struct ReviewBody {
     pub left_open: Option<String>,
 }
 
-/// A person's approval of a plan, first line `Approved: plan <sha>` or
-/// `Approved: plan <sha> on <branch>` (ADR 0027). Only a trusted author's approval counts.
+/// Where an approval was given (ADR 0054).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalSource {
+    /// An `Approved:` comment on the issue (ADR 0027). Counted only when posted before the
+    /// cutover, `RUBATO_COMMENT_APPROVALS_UNTIL`.
+    #[default]
+    Comment,
+    /// An approval given in Rubato, recorded in `rubato_approvals`.
+    Rubato,
+}
+
+impl ApprovalSource {
+    pub fn is_comment(&self) -> bool {
+        *self == Self::Comment
+    }
+}
+
+/// A person's approval of a plan (ADR 0054): an issue comment whose first line is
+/// `Approved: plan <sha>` or `Approved: plan <sha> on <branch>` (ADR 0027), from a trusted
+/// author only; or an approval given in Rubato, with its `approval_id` and no comment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ApprovalRecord {
     pub issue: IssueRef,
-    pub comment_id: u64,
+    /// Absent for a comment, which is all an approval was before ADR 0054.
+    #[serde(default, skip_serializing_if = "ApprovalSource::is_comment")]
+    pub source: ApprovalSource,
+    /// The comment's id, for a comment approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_id: Option<u64>,
+    /// The `rubato_approvals` row, for an approval given in Rubato.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<Uuid>,
     pub author: String,
     /// The plan hash approved (checkboxes cleared, git blob sha). Absent when the comment names
     /// none: the approval then shows as "version not named".
@@ -159,7 +187,14 @@ pub struct ApprovalRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// The comment's URL; empty for an approval given in Rubato.
     pub url: String,
+}
+
+/// Whether an approval comment posted at `created_at` counts (ADR 0054): with no cutover every
+/// comment does; with one, only those posted before it. An approval given in Rubato always does.
+pub fn comment_counts(created_at: DateTime<Utc>, cutover: Option<DateTime<Utc>>) -> bool {
+    cutover.is_none_or(|c| created_at < c)
 }
 
 /// The parsed parts of an `Approved:` comment body.
@@ -258,6 +293,14 @@ impl ReviewRecord {
 
 impl ApprovalRecord {
     pub const PREFIX: &str = "Approved:";
+
+    /// Whether this approval counts under the cutover (ADR 0054).
+    pub fn counts(&self, cutover: Option<DateTime<Utc>>) -> bool {
+        match self.source {
+            ApprovalSource::Rubato => true,
+            ApprovalSource::Comment => comment_counts(self.created_at, cutover),
+        }
+    }
 
     /// Parse a comment body. `None` unless the first line starts with `Approved:`. The words
     /// after it are `plan <sha>` and optionally `on <branch>`; a missing or malformed sha leaves
@@ -411,6 +454,65 @@ mod tests {
         assert_eq!(short.sha, None, "too short to be a sha");
         assert!(ApprovalRecord::parse_body("Not Approved: plan 9f2c1d3e").is_none());
         assert!(ApprovalRecord::parse_body("Decision: x").is_none());
+    }
+
+    /// A record stored before ADR 0054 (a comment id, no source) still decodes, as a comment;
+    /// a comment record is written as it was, so stored rows and the golden overview stay as
+    /// they are; a Rubato record has no comment id.
+    #[test]
+    fn approval_records_before_and_after_rubato_approvals() {
+        let old = r#"{"issue":{"repo":"m0x6A/rubato","number":71},"comment_id":5,"author":"m0x6A","sha":"f3c5e84","created_at":"2026-11-14T08:00:00Z","url":"u"}"#;
+        let a: ApprovalRecord = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            (a.source, a.comment_id, a.approval_id),
+            (ApprovalSource::Comment, Some(5), None)
+        );
+        let again: serde_json::Value = serde_json::to_value(&a).unwrap();
+        assert_eq!(
+            again,
+            serde_json::from_str::<serde_json::Value>(old).unwrap()
+        );
+        let id = Uuid::from_u128(7);
+        let r = ApprovalRecord {
+            source: ApprovalSource::Rubato,
+            comment_id: None,
+            approval_id: Some(id),
+            url: String::new(),
+            ..a.clone()
+        };
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["source"], "rubato");
+        assert!(v.get("comment_id").is_none());
+        let back: ApprovalRecord = serde_json::from_value(v).unwrap();
+        assert_eq!(back, r);
+    }
+
+    /// A comment at or after the cutover does not count; one before it does; with no cutover
+    /// every comment does; a Rubato approval always does (ADR 0054).
+    #[test]
+    fn comments_count_only_before_the_cutover() {
+        let at = |h: u32| chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 11, 14, h, 0, 0).unwrap();
+        let cutover = Some(at(12));
+        let a = |h: u32, source: ApprovalSource| ApprovalRecord {
+            issue: IssueRef::new("m0x6A/rubato", 71),
+            source,
+            comment_id: Some(1),
+            approval_id: None,
+            author: "m0x6A".into(),
+            sha: None,
+            branch: None,
+            note: None,
+            created_at: at(h),
+            url: String::new(),
+        };
+        assert!(a(11, ApprovalSource::Comment).counts(cutover));
+        assert!(
+            !a(12, ApprovalSource::Comment).counts(cutover),
+            "at the cutover"
+        );
+        assert!(!a(13, ApprovalSource::Comment).counts(cutover));
+        assert!(a(13, ApprovalSource::Comment).counts(None), "no cutover");
+        assert!(a(13, ApprovalSource::Rubato).counts(cutover));
     }
 
     #[test]

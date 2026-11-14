@@ -35,11 +35,14 @@ pub mod traffic;
 pub mod web_link;
 pub mod workspace;
 
-pub use approve::{ApproveRequest, ApproveResponse, ApproveState};
+pub use approve::{
+    ApproveRequest, ApproveResponse, ApproveState, DraftApproveRequest, DraftApproveResponse,
+};
 pub use auth::Me;
 pub use github::{
-    ApprovalBody, ApprovalRecord, ApprovalState, ApprovalVersion, ChecksStatus, DecisionBody,
-    DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, trusted_author,
+    ApprovalBody, ApprovalRecord, ApprovalSource, ApprovalState, ApprovalVersion, ChecksStatus,
+    DecisionBody, DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, comment_counts,
+    trusted_author,
 };
 pub use handoff::{
     HandoffLine, HandoffOutcome, HandoffReport, PlanningMode, SKILL_HANDOFF_VERSION,
@@ -81,8 +84,8 @@ pub use plan_draft::{
     DraftBundle, DraftFile, DraftRefusal, DraftRevision, DraftRevisionInfo, DraftSummary, DraftView,
 };
 pub use plan_hash::{
-    APPROVAL_KEYS, approval_hash, approval_names, bundle_hash, bundle_paths, clear_checkboxes,
-    git_blob_sha, normalise_plan, strip_approval_record,
+    APPROVAL_KEYS, AdrPin, adr_pins, approval_hash, approval_names, bundle_hash, bundle_paths,
+    clear_checkboxes, git_blob_sha, normalise_plan, strip_approval_record,
 };
 pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,

@@ -3,6 +3,7 @@ import type { DraftRevision, DraftSummary, IssueSummary, Me } from "../../protoc
 import { ApiError } from "../../shared/api.ts";
 import { relative } from "../../shared/format.ts";
 import { useWebResource } from "../live/index.ts";
+import { ApproveDraft } from "./ApproveDraft.tsx";
 import { draftFailureText, planDraftsApi } from "./api.ts";
 import { type FileChange, bundleOrder, diffBundles, hunks } from "./diff.ts";
 import { readSeen, writeSeen } from "./seen.ts";
@@ -15,10 +16,10 @@ const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
  * the owner's session is working on it, what changed since you last looked (on this device), and
  * every revision's files. Everyone reads drafts; nothing here writes one.
  */
-export function DraftSection({ issue, me }: { issue: IssueSummary; me: Me | null }) {
+export function DraftSection({ issue, me, approvalsInRubato = false }: { issue: IssueSummary; me: Me | null; approvalsInRubato?: boolean }) {
   const d = issue.draft;
   // Keyed by the draft, so another issue's draft starts with its own "last looked at".
-  return d ? <Draft key={d.draft_id} d={d} me={me} /> : null;
+  return d ? <Draft key={d.draft_id} issue={issue} d={d} me={me} approvalsInRubato={approvalsInRubato} /> : null;
 }
 
 interface RevisionState {
@@ -50,7 +51,7 @@ function useRevision(read: (rev: number) => Promise<DraftRevision>, rev: number 
   return rev !== null && state?.rev === rev ? state : null;
 }
 
-function Draft({ d, me }: { d: DraftSummary; me: Me | null }) {
+function Draft({ issue, d, me, approvalsInRubato }: { issue: IssueSummary; d: DraftSummary; me: Me | null; approvalsInRubato: boolean }) {
   const heading = useId();
   const id = d.draft_id;
   // The server says `updated` for this draft when a revision is stored.
@@ -131,6 +132,8 @@ function Draft({ d, me }: { d: DraftSummary; me: Me | null }) {
           ) : (
             <Changes since={since} newest={newest} changes={changes} error={before?.error ?? after?.error ?? null} />
           )}
+          {/* Approval names the newest settled revision, the one the overview carries (ADR 0054). */}
+          {approvalsInRubato && newest === d.rev && <ApproveDraft key={d.rev} issue={issue} d={d} me={me} rev={d.rev} />}
           <h4>Revisions</h4>
           <ol className="plain draft-revisions" aria-label="Revisions of this draft">
             {[...revisions].reverse().map((r) => (

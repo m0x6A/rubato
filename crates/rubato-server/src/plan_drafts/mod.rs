@@ -17,6 +17,21 @@ use rubato_protocol::{DraftSummary, IssueRef, Plan};
 
 pub use handlers::{draft, revision};
 pub use intake::on_draft;
+pub use store::{DraftRow, RevisionRow};
+
+/// The draft on `branch` of `issue`, with its newest revision (files included) when it has one:
+/// the version an approval names (ADR 0054).
+pub async fn on_branch(
+    app: &App,
+    issue: &IssueRef,
+    branch: &str,
+) -> Result<Option<(DraftRow, Option<RevisionRow>)>> {
+    let Some(d) = store::find(&app.db, issue, branch).await? else {
+        return Ok(None);
+    };
+    let latest = store::latest(&app.db, d.id).await?;
+    Ok(Some((d, latest)))
+}
 
 /// One draft and its newest settled revision, for the overview.
 #[derive(Debug, Clone, PartialEq)]

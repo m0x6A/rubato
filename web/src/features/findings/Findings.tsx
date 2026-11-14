@@ -31,6 +31,8 @@ export function findingText(f: Finding): string {
       return `${f.repo} is not covered by the GitHub App installation; its branches, plans and pull requests cannot be read`;
     case "approved_without_fit":
       return `${issueKey(f.issue)} was approved, but its plan does not fit the map, so the approval does not count`;
+    case "comment_approval_ignored":
+      return `${issueKey(f.issue)}: ${f.author}'s Approved: comment was posted after the cutover, so it does not count; plans are approved in Rubato`;
     case "unattributed_session":
       return `a session${f.repo ? ` in ${f.repo}` : ""} on ${f.branch ? `branch ${f.branch}` : "no branch"} is not tied to an issue; name its branch issue/<n>-…`;
     case "seam_quiet":

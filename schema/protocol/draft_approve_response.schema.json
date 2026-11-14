@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DraftApproveResponse",
+  "description": "A recorded approval. A second press of the same version answers the first one, with\n`created: false`.",
+  "type": "object",
+  "properties": {
+    "approval_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approved_by": {
+      "type": "string"
+    },
+    "bundle_hash": {
+      "description": "The hash of the whole bundle approved: the plan, its design note, its ADRs (§D3).",
+      "type": "string"
+    },
+    "created": {
+      "description": "False when this press found an approval of the same version already recorded.",
+      "type": "boolean"
+    },
+    "plan_sha": {
+      "type": "string"
+    },
+    "self_approved": {
+      "description": "The person approved their own agent's plan: allowed, and said (ADR 0054).",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "approval_id",
+    "approved_by",
+    "approved_at",
+    "self_approved",
+    "plan_sha",
+    "bundle_hash",
+    "created"
+  ]
+}

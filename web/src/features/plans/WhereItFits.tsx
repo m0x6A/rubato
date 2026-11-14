@@ -5,7 +5,20 @@ import { fitReasonText, modelsByPart } from "./group.ts";
 /** Where a plan fits the system (issue #80): the whole map in small with the plan's parts and
  * seams lit, the parts it affects and what changes in each, the data models it introduces, and
  * whether it fits (ADR 0029). The big map shows the same plan in its plan lens. */
-export function WhereItFits({ issue, map, me, onNotice }: { issue: IssueSummary; map: SystemMap; me: Me | null; onNotice: (text: string) => void }) {
+export function WhereItFits({
+  issue,
+  map,
+  me,
+  onNotice,
+  approvalsInRubato = false,
+}: {
+  issue: IssueSummary;
+  map: SystemMap;
+  me: Me | null;
+  onNotice: (text: string) => void;
+  /** The cutover is set: plans are approved in Rubato, on the draft, not by comment (ADR 0054). */
+  approvalsInRubato?: boolean;
+}) {
   const plan = issue.plan;
   const fit = issue.fit;
   const status = new Map((plan?.affected_parts ?? []).map((p) => [p.node, p.status]));
@@ -93,7 +106,11 @@ export function WhereItFits({ issue, map, me, onNotice }: { issue: IssueSummary;
           )}
         </>
       )}
-      <AcceptPlan issue={issue} me={me} onDone={onNotice} />
+      {approvalsInRubato ? (
+        issue.approval?.version !== "current" && <p className="muted" data-testid="approve-in-rubato">Plans are approved in Rubato on this server: approve the draft above.</p>
+      ) : (
+        <AcceptPlan issue={issue} me={me} onDone={onNotice} />
+      )}
     </section>
   );
 }
