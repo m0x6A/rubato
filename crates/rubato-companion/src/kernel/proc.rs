@@ -139,7 +139,7 @@ fn read_all(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>>
 const KILL_GRACE: Duration = Duration::from_secs(2);
 
 /// `kill -<sig> -- -<pgid>`: the group the child leads. No `libc` dependency.
-fn signal_group(sig: &str, pgid: u32) {
+pub fn signal_group(sig: &str, pgid: u32) {
     let _ = Command::new("kill")
         .args([sig, "--", &format!("-{pgid}")])
         .stdout(Stdio::null())
