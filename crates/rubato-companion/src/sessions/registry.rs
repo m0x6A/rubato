@@ -64,6 +64,9 @@ pub struct Entry {
     /// Where the launch's plan lives in the worktree (`LaunchCommand.plan_path`): what
     /// `plan_mirror` reads at settle points (ADR 0053). None from an older server.
     pub plan_path: Option<String>,
+    /// The bundle hash of a draft this launch restored (plan 122 §D5): the plan mirror's
+    /// first settle does not send it back as new. In memory only.
+    pub restored_hash: Option<String>,
 }
 
 impl Entry {
@@ -264,6 +267,7 @@ mod tests {
             hooks_lost: false,
             pasted: Vec::new(),
             plan_path: None,
+            restored_hash: None,
         });
         let counts = r.counts_by_source();
         assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");

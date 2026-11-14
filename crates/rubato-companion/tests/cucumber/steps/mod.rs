@@ -6,6 +6,7 @@ mod launch_refusal;
 mod launch_timeout;
 mod pairing;
 mod restart;
+mod restore;
 mod session_log;
 mod session_messages;
 mod stale;

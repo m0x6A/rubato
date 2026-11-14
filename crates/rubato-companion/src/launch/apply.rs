@@ -34,6 +34,13 @@ impl Registry {
         self.live_for_issue(issue)
     }
 
+    /// The launch restored a draft whose bundle hashes to `hash`: the plan mirror starts from it.
+    pub fn set_restored_hash(&mut self, launch_id: uuid::Uuid, hash: Option<String>) {
+        if let Some(e) = self.find_by_launch(launch_id) {
+            e.restored_hash = hash;
+        }
+    }
+
     /// The launch returned, whatever its result: discovery sees the issue's panes again.
     pub fn end_launch(&mut self) {
         self.launching = None;
@@ -122,6 +129,7 @@ impl Registry {
             hooks_lost: false,
             pasted: Vec::new(),
             plan_path: cmd.plan_path.clone(),
+            restored_hash: None,
         };
         match discovered {
             Some(i) => self.entries[i] = launched,

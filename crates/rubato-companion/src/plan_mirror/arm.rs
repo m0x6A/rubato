@@ -45,6 +45,8 @@ pub struct Target {
     pub branch: String,
     pub worktree: PathBuf,
     pub plan_path: String,
+    /// The bundle a restored draft put in the worktree: the first settle compares with it.
+    pub restored_hash: Option<String>,
 }
 
 impl Registry {
@@ -58,6 +60,7 @@ impl Registry {
             branch: e.branch.clone()?,
             worktree: e.worktree.clone().unwrap_or_else(|| e.cwd.clone()),
             plan_path: e.plan_path.clone()?,
+            restored_hash: e.restored_hash.clone(),
         })
     }
 }
@@ -151,7 +154,13 @@ impl PlanMirrorTask {
                 bytes,
             ),
         };
-        if self.last_sent.get(&t.launch_id) == Some(&bundle.bundle_hash) {
+        // Before anything was sent for this launch, the bundle a restored draft wrote counts as
+        // sent: the server already holds it as the draft's newest revision.
+        let last = self
+            .last_sent
+            .get(&t.launch_id)
+            .or(t.restored_hash.as_ref());
+        if last == Some(&bundle.bundle_hash) {
             tracing::debug!(rubato.issue = %t.issue, "draft bundle unchanged");
             return;
         }
