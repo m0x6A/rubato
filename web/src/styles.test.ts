@@ -186,6 +186,8 @@ describe("colour tokens reach their contrast", () => {
       [".warn", "color: var(--warn-ink)"],
       [".map-node .warn", "color: var(--warn-ink)"],
       [".banner.error", "color: var(--bad-ink)"],
+      // #106: the station a blocked issue left from names itself in small red text.
+      [".stage-rail .station.left .label", "color: var(--bad-ink)"],
       [".muted", "color: var(--muted)"],
       [".seam-chip", "color: var(--chip-ink)"],
       [".seam-chip", "background: var(--raised)"],

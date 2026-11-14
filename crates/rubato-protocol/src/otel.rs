@@ -13,6 +13,12 @@ pub mod attr {
     pub const SESSION_STATE: &str = "rubato.session.state";
     /// The derived progress state on `rubato.issues.by_state`.
     pub const ISSUE_STATE: &str = "rubato.issue.state";
+    /// The station a blocked issue left from on `rubato.issues.blocked_from` (ADR 0043):
+    /// `started`, `designing`, `designed`, `building` or `off_rail`.
+    pub const ISSUE_BLOCKED_FROM: &str = "rubato.issue.blocked_from";
+    /// Which hook blocked a session (ADR 0043), on `rubato.hook.forward` and
+    /// `rubato.hook.forwarded`: `permission_prompt`, `idle_prompt`, `stop_failure`.
+    pub const SESSION_BLOCKED_BY: &str = "rubato.session.blocked_by";
     pub const COMPANION_ID: &str = "rubato.companion_id";
     pub const USER: &str = "rubato.user";
     pub const HOOK_EVENT: &str = "rubato.hook_event";
@@ -46,6 +52,10 @@ pub mod metric {
     /// `rubato.companion_id`. Only the server records it (#43), so a sum counts each session once.
     pub const SESSIONS_BY_STATE: &str = "rubato.sessions.by_state";
     pub const ISSUES_BY_STATE: &str = "rubato.issues.by_state";
+    /// Server gauge: blocked issues by `rubato.issue.blocked_from`, all five values recorded
+    /// on every refresh, zeros included (ADR 0043). Its sum equals the blocked series of
+    /// `rubato.issues.by_state`.
+    pub const ISSUES_BLOCKED_FROM: &str = "rubato.issues.blocked_from";
     pub const EVENTS_DROPPED: &str = "rubato.events.dropped";
     pub const GITHUB_RATE_LIMIT_REMAINING: &str = "rubato.github.rate_limit.remaining";
     pub const GITHUB_RATE_LIMIT_LIMIT: &str = "rubato.github.rate_limit.limit";
@@ -105,6 +115,9 @@ pub mod metric {
     /// spend changed and the issue's point was written), `unchanged` (same or older value),
     /// `rejected` (not finite, or negative), `failed` (the write returned an error).
     pub const SPEND_POINTS: &str = "rubato.spend.points";
+    /// The companion stale threshold N in seconds, from config, recorded every poll tick.
+    /// `CompanionSilent` compares heartbeats against it, with 600 when it is missing (#105).
+    pub const COMPANION_SILENT_SECS: &str = "rubato.companion.silent_secs";
 }
 
 /// Span names.
@@ -145,6 +158,8 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SESSION_SOURCE,
         attr::SESSION_STATE,
         attr::ISSUE_STATE,
+        attr::ISSUE_BLOCKED_FROM,
+        attr::SESSION_BLOCKED_BY,
         attr::COMPANION_ID,
         attr::USER,
         attr::HOOK_EVENT,
@@ -166,6 +181,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSIONS_DISCOVERED,
         metric::SESSIONS_BY_STATE,
         metric::ISSUES_BY_STATE,
+        metric::ISSUES_BLOCKED_FROM,
         metric::EVENTS_DROPPED,
         metric::GITHUB_RATE_LIMIT_REMAINING,
         metric::GITHUB_RATE_LIMIT_LIMIT,
@@ -193,6 +209,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GITHUB_CALLS,
         metric::PLANS_NOT_FITTING,
         metric::PLANS_APPROVALS_OPENING,
+        metric::COMPANION_SILENT_SECS,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

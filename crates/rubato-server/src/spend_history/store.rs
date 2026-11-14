@@ -188,6 +188,7 @@ mod tests {
             last_seen: t0(),
             spend_usd: usd,
             branch_drift: None,
+            blocked_by: None,
         }
     }
 

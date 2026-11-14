@@ -414,6 +414,7 @@ mod tests {
             last_seen: Utc::now(),
             spend_usd: None,
             branch_drift: None,
+            blocked_by: None,
         }
     }
 

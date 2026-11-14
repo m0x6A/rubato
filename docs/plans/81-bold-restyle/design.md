@@ -329,7 +329,8 @@ the viewport.
    endpoint; today `spend_usd` is a snapshot.
 2. **Observed traffic on seams** (particles that mean traffic, map-versus-territory findings
    drawn on conduits) — needs the server to summarise observed calls.
-3. **The stale threshold N in the overview**, so the freshness bar matches the alert.
+3. **The stale threshold N in the overview**, so the freshness bar matches the alert. Done by
+   #105: `Overview.companion_silent_secs`, and the gauge `rubato.companion.silent_secs` for the alert.
 4. **Which stage a blocked issue left from** — `Progress` gives the state, not the previous one.
 
 ## 10. Failure

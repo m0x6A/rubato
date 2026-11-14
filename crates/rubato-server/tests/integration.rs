@@ -769,6 +769,17 @@ async fn derived_state_is_never_stored() {
     );
 }
 
+/// #105: the web's freshness bar drains over the server's N, not a constant of its own. Fails
+/// on purpose if the handler writes `Limits::default()` instead of the configured value.
+#[tokio::test]
+async fn the_overview_carries_the_configured_companion_threshold() {
+    let h = harness_with(|c| c.limits.companion_silent_secs = 300).await;
+    assert_eq!(h.overview("m0x6A").await.companion_silent_secs, 300);
+    let d = harness().await;
+    assert_eq!(d.overview("m0x6A").await.companion_silent_secs, 600);
+    println!("checked the threshold on 2 overviews");
+}
+
 #[tokio::test]
 async fn bad_and_revoked_tokens_are_refused() {
     let h = harness().await;
@@ -1212,6 +1223,7 @@ async fn attempt_limit_does_not_block_a_running_issue() {
                 last_seen: chrono::Utc::now(),
                 spend_usd: None,
                 branch_drift: None,
+                blocked_by: None,
             }],
         },
     };

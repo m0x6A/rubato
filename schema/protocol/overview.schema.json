@@ -14,6 +14,13 @@
       "type": "boolean",
       "default": false
     },
+    "companion_silent_secs": {
+      "description": "The companion stale threshold N in seconds, from the server's config\n(`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and\n`CompanionSilent` fires past it (#105). An older server's overview reads as 600.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 600,
+      "minimum": 0
+    },
     "companions": {
       "type": "array",
       "items": {
@@ -315,6 +322,26 @@
       },
       "required": [
         "repo"
+      ]
+    },
+    "BlockCause": {
+      "description": "Which hook blocked a session (ADR 0043): the current cause of the current status, set with\na *blocked* status and cleared by the next hook that implies a status.",
+      "oneOf": [
+        {
+          "description": "`Notification` with `permission_prompt`: waiting for a permission, mid-turn.",
+          "type": "string",
+          "const": "permission_prompt"
+        },
+        {
+          "description": "`Notification` with `idle_prompt`: waiting for input after the turn ended.",
+          "type": "string",
+          "const": "idle_prompt"
+        },
+        {
+          "description": "`StopFailure`: the turn failed, mid-turn.",
+          "type": "string",
+          "const": "stop_failure"
+        }
       ]
     },
     "ChecksStatus": {
@@ -1712,6 +1739,17 @@
       "description": "Derived progress of one issue, with the time of the newest signal behind it.",
       "type": "object",
       "properties": {
+        "blocked_from": {
+          "description": "The rail station a *Blocked* issue left from (ADR 0043): `started`, `designing`,\n`designed` or `building`. Absent for every other state, and when nothing ran (off the\nrail). Derived by [`blocked_from`] from the same inputs as `state`; never stored.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProgressState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "issue": {
           "$ref": "#/$defs/IssueRef"
         },
@@ -2183,6 +2221,17 @@
       "description": "One session as the companion sees it. Identity comes from the branch (ADR 0006).",
       "type": "object",
       "properties": {
+        "blocked_by": {
+          "description": "Which hook blocked the session, with `status = blocked` (ADR 0043). Absent from an\nolder companion and for a block tmux-ide reported: read as mid-turn.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlockCause"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "branch": {
           "type": [
             "string",
