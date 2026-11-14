@@ -1121,6 +1121,13 @@
             "$ref": "#/$defs/SessionState"
           }
         },
+        "spend_history": {
+          "description": "Spend over time, oldest first, at most 24 points: each the issue's total over every\nsession it has had, ended ones included (ADR 0037). Not an input to progress.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SpendPoint"
+          }
+        },
         "spend_usd": {
           "description": "Sum over this issue's sessions.",
           "type": [
@@ -2285,6 +2292,24 @@
           "type": "string",
           "const": "unknown"
         }
+      ]
+    },
+    "SpendPoint": {
+      "description": "One point of an issue's spend over time: the total over every session it has had, at the\nstart of a 15-minute span (ADR 0037).",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "usd": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "at",
+        "usd"
       ]
     },
     "StateSource": {

@@ -101,6 +101,10 @@ pub mod metric {
     /// Approvals Rubato posted as a person that GitHub has not confirmed for two minutes
     /// (ADR 0030), recorded every full poll tick.
     pub const PLANS_APPROVALS_OPENING: &str = "rubato.plans.approvals_opening";
+    /// Writes of an issue's spend history (ADR 0037), by `rubato.outcome`: `stored` (a session's
+    /// spend changed and the issue's point was written), `unchanged` (same or older value),
+    /// `rejected` (not finite, or negative), `failed` (the write returned an error).
+    pub const SPEND_POINTS: &str = "rubato.spend.points";
 }
 
 /// Span names.

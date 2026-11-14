@@ -183,6 +183,18 @@ pub struct IssueSummary {
     /// Sum over this issue's sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_usd: Option<f64>,
+    /// Spend over time, oldest first, at most 24 points: each the issue's total over every
+    /// session it has had, ended ones included (ADR 0037). Not an input to progress.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spend_history: Vec<SpendPoint>,
+}
+
+/// One point of an issue's spend over time: the total over every session it has had, at the
+/// start of a 15-minute span (ADR 0037).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SpendPoint {
+    pub at: DateTime<Utc>,
+    pub usd: f64,
 }
 
 /// An open issue of a repo the map names that Rubato does not track yet: not pinned, launched,
@@ -486,5 +498,39 @@ mod tests {
         let (s, reason) = derive_progress(&inputs(&none, &[], None));
         assert_eq!(s, ProgressState::Unknown);
         assert!(reason.unwrap().contains("not pinned"));
+    }
+
+    /// ADR 0037: `spend_history` is additive. An older payload without it reads as empty, and
+    /// an empty history is not written, so the overview of an issue with no spend is unchanged.
+    #[test]
+    fn an_issue_summary_without_spend_history_reads_and_writes_as_before() {
+        let old = serde_json::json!({
+            "issue": { "repo": "o/r", "number": 1 },
+            "pins": [],
+            "progress": {
+                "issue": { "repo": "o/r", "number": 1 },
+                "state": "planned",
+                "last_seen": "2026-11-13T12:00:00Z"
+            },
+            "spend_usd": 2.5
+        });
+        let s: IssueSummary = serde_json::from_value(old).unwrap();
+        assert!(s.spend_history.is_empty());
+        assert_eq!(s.spend_usd, Some(2.5), "spend_usd unchanged");
+        let back = serde_json::to_value(&s).unwrap();
+        assert!(back.get("spend_history").is_none(), "{back}");
+
+        let mut with = s.clone();
+        with.spend_history = vec![SpendPoint {
+            at: Utc.with_ymd_and_hms(2026, 11, 13, 12, 0, 0).unwrap(),
+            usd: 4.0,
+        }];
+        let v = serde_json::to_value(&with).unwrap();
+        assert_eq!(
+            v["spend_history"],
+            serde_json::json!([{ "at": "2026-11-13T12:00:00Z", "usd": 4.0 }])
+        );
+        let round: IssueSummary = serde_json::from_value(v).unwrap();
+        assert_eq!(round, with);
     }
 }

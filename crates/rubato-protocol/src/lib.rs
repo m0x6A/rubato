@@ -65,7 +65,7 @@ pub use plan::{
 };
 pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,
-    ProgressInputs, ProgressState, derive_progress,
+    ProgressInputs, ProgressState, SpendPoint, derive_progress,
 };
 pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};

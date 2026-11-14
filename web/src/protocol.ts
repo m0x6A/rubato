@@ -599,6 +599,11 @@ pull_request?: (PullRequestState | null)
 review?: (ReviewRecord | null)
 sessions?: SessionState[]
 /**
+ * Spend over time, oldest first, at most 24 points: each the issue's total over every
+ * session it has had, ended ones included (ADR 0037). Not an input to progress.
+ */
+spend_history?: SpendPoint[]
+/**
  * Sum over this issue's sessions.
  */
 spend_usd?: (number | null)
@@ -801,6 +806,14 @@ plan_sha?: (string | null)
  */
 track: string
 url: string
+}
+/**
+ * One point of an issue's spend over time: the total over every session it has had, at the
+ * start of a 15-minute span (ADR 0037).
+ */
+export interface SpendPoint {
+at: string
+usd: number
 }
 /**
  * Server → companion: start a session. Addressed to exactly one pairing; the companion refuses
