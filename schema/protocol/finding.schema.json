@@ -268,6 +268,54 @@
         "to",
         "calls"
       ]
+    },
+    {
+      "description": "Two workspaces whose maps name a repo give it different plan paths (ADR 0045). The\nfirst in config order is used.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "plan_path_conflict"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "repo",
+        "workspaces"
+      ]
+    },
+    {
+      "description": "An id in a repo shared by two workspaces names parts with different repos in their maps\n(ADR 0045): it may mean two things. Shown, never refused.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "const": "id_collision"
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "workspaces"
+      ]
     }
   ],
   "$defs": {

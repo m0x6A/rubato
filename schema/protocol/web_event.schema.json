@@ -16,6 +16,13 @@
         "type": {
           "type": "string",
           "const": "changed"
+        },
+        "workspace": {
+          "description": "The workspace the change belongs to, for changes of one map only (layout, draft, map\nload; ADR 0049). Absent: every workspace may have changed, so every client refetches.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

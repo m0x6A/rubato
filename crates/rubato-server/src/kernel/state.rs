@@ -108,6 +108,7 @@ impl AppState {
         let _ = self.web_tx.send(WebEvent::Changed {
             at: Utc::now(),
             reason: reason.to_owned(),
+            workspace: None,
         });
     }
 

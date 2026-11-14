@@ -298,6 +298,8 @@ pub fn build(
             plan_sha: plan_row.and_then(|p| p.approval_sha.clone()),
             spend_usd: spend,
             spend_history: inputs.spend.get(issue).cloned().unwrap_or_default(),
+            fits_in: vec![],
+            pinned_in: vec![],
         });
     }
     for s in &mut out {

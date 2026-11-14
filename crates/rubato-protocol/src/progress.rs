@@ -231,6 +231,13 @@ pub struct IssueSummary {
     /// session it has had, ended ones included (ADR 0037). Not an input to progress.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spend_history: Vec<SpendPoint>,
+    /// Names of the workspaces whose map the plan fits (ADR 0045). The approval counts when this
+    /// is not empty; in a workspace not named here the issue reads "counts in <name>".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fits_in: Vec<String>,
+    /// Names of the other workspaces where the issue is pinned (ADR 0047): "pinned in <name>".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_in: Vec<String>,
 }
 
 /// One point of an issue's spend over time: the total over every session it has had, at the
@@ -254,7 +261,7 @@ pub struct OpenIssue {
     /// The place its body's `Map:` line names, when its author is not trusted to place it
     /// (ADR 0026); a trusted line pins the issue and it leaves this list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub map_line: Option<MapRef>,
+    pub map_line: Option<crate::issue_body::MapPlacement>,
     /// Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<PinSuggestion>,
@@ -344,6 +351,15 @@ pub enum Finding {
         to: String,
         calls: u64,
     },
+    /// Two workspaces whose maps name a repo give it different plan paths (ADR 0045). The
+    /// first in config order is used.
+    PlanPathConflict {
+        repo: String,
+        workspaces: Vec<String>,
+    },
+    /// An id in a repo shared by two workspaces names parts with different repos in their maps
+    /// (ADR 0045): it may mean two things. Shown, never refused.
+    IdCollision { id: String, workspaces: Vec<String> },
 }
 
 /// One repo the map names, and what Rubato sees of it: whether the App covers it, and its open
@@ -412,7 +428,17 @@ pub struct Overview {
     /// `CompanionSilent` fires past it (#105). An older server's overview reads as 600.
     #[serde(default = "default_companion_silent_secs")]
     pub companion_silent_secs: u64,
+    /// The workspace this overview is of (ADR 0049). An older server's overview reads as `default`.
+    #[serde(default = "default_workspace")]
+    pub workspace: String,
+    /// Every configured workspace, in switcher order. Empty from an older server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspaces: Vec<crate::workspace::WorkspaceInfo>,
     pub generated_at: DateTime<Utc>,
+}
+
+fn default_workspace() -> String {
+    crate::workspace::DEFAULT_WORKSPACE.to_string()
 }
 
 fn default_companion_silent_secs() -> u64 {

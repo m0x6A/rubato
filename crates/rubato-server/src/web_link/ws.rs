@@ -49,6 +49,7 @@ async fn handle(app: App, socket: WebSocket) {
                     let catch_up = WebEvent::Changed {
                         at: chrono::Utc::now(),
                         reason: LAGGED.into(),
+                        workspace: None,
                     };
                     let text = serde_json::to_string(&catch_up).unwrap_or_default();
                     if sink.send(Message::Text(text.into())).await.is_err() {

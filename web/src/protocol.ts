@@ -139,6 +139,14 @@ calls: number
 from: string
 kind: "undeclared_traffic"
 to: string
+} | {
+kind: "plan_path_conflict"
+repo: string
+workspaces: string[]
+} | {
+id: string
+kind: "id_collision"
+workspaces: string[]
 })
 /**
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
@@ -216,6 +224,23 @@ outcome: "failed"
  * Where a creation stands.
  */
 export type CreationState = (("created" | "failed") | "opening")
+/**
+ * Where a `Map:` line places an issue: the part or seam, and the workspace it names, if any
+ * (ADR 0046). On the wire it is a `MapRef` with an optional `workspace`, so an old value reads.
+ */
+export type MapPlacement = ({
+/**
+ * A workspace id: the line places the issue in this workspace only.
+ */
+workspace?: (string | null)
+} & MapPlacement1)
+export type MapPlacement1 = ({
+id: string
+kind: "node"
+} | {
+id: string
+kind: "seam"
+})
 /**
  * An operation in the draft, with who made it and when.
  */
@@ -295,6 +320,11 @@ export type WebEvent = {
 at: string
 reason: string
 type: "changed"
+/**
+ * The workspace the change belongs to, for changes of one map only (layout, draft, map
+ * load; ADR 0049). Absent: every workspace may have changed, so every client refetches.
+ */
+workspace?: (string | null)
 }
 
 export interface RubatoProtocol {
@@ -607,7 +637,16 @@ decisions?: DecisionRecord[]
  * Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.
  */
 fit?: (PlanFit | null)
+/**
+ * Names of the workspaces whose map the plan fits (ADR 0045). The approval counts when this
+ * is not empty; in a workspace not named here the issue reads "counts in <name>".
+ */
+fits_in?: string[]
 issue: IssueRef
+/**
+ * Names of the other workspaces where the issue is pinned (ADR 0047): "pinned in <name>".
+ */
+pinned_in?: string[]
 pins: MapRef[]
 plan?: (Plan | null)
 /**
@@ -1152,6 +1191,14 @@ traffic?: ObservedTraffic
  * Sessions not attached to any issue (branch outside the convention).
  */
 unpinned_sessions?: SessionState[]
+/**
+ * The workspace this overview is of (ADR 0049). An older server's overview reads as `default`.
+ */
+workspace?: string
+/**
+ * Every configured workspace, in switcher order. Empty from an older server.
+ */
+workspaces?: WorkspaceInfo[]
 }
 /**
  * Open issues not tracked yet (ADR 0019).
@@ -1174,7 +1221,7 @@ labels?: string[]
  * The place its body's `Map:` line names, when its author is not trusted to place it
  * (ADR 0026); a trusted line pins the issue and it leaves this list.
  */
-map_line?: (MapRef | null)
+map_line?: (MapPlacement | null)
 /**
  * Where Rubato suggests it belongs. Confirmed by a person, never applied on its own.
  */
@@ -1453,6 +1500,28 @@ from: string
  * The called part.
  */
 to: string
+}
+/**
+ * One workspace as the switcher shows it.
+ */
+export interface WorkspaceInfo {
+/**
+ * `[a-z0-9-]{1,32}`: in URLs (`?w=`, `/api/w/{id}`), rows and the `rubato.workspace` attribute.
+ */
+id: string
+loaded_at?: (string | null)
+/**
+ * `owner/name` of the repo holding this workspace's map.
+ */
+map_repo: string
+/**
+ * What people call it: the entry's `name`, else the map's.
+ */
+name: string
+/**
+ * Git sha of the map as loaded. Absent until it has loaded once.
+ */
+version?: (string | null)
 }
 export interface PairApproveRequest {
 user_code: string

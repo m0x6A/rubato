@@ -8,7 +8,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WebEvent {
-    Changed { at: DateTime<Utc>, reason: String },
+    Changed {
+        at: DateTime<Utc>,
+        reason: String,
+        /// The workspace the change belongs to, for changes of one map only (layout, draft, map
+        /// load; ADR 0049). Absent: every workspace may have changed, so every client refetches.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<String>,
+    },
 }
 
 /// Route path for the browser websocket.
