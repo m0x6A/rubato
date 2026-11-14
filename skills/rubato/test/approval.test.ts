@@ -324,11 +324,16 @@ describe("install ships the wait (ADR 0035)", () => {
     install(to, false);
     const shipped = (d: string): string[] =>
       readdirSync(join(skill, d), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? shipped(join(d, e.name)) : [join(d, e.name)]));
-    const files = ["SKILL.md", "hooks.json", "prompt.md", "decision-template.md", "review-template.md", "review-checklist.md", "local.example.yml", ...shipped("scripts")];
+    const files = ["SKILL.md", "hooks.json", "prompt.md", "prompt-rubato.md", "decision-template.md", "review-template.md", "review-checklist.md", "local.example.yml", ...shipped("scripts")];
     for (const f of files) {
       expect(readFileSync(join(to, f)).equals(readFileSync(join(skill, f))), f).toBe(true);
     }
     expect(files).toContain(join("scripts", "lib", "comments.ts"));
+    expect(files).toContain(join("scripts", "lib", "handoff.ts"));
+    // The companion reads the installed version for `skill:<version>` (ADR 0055).
+    const installed = JSON.parse(readFileSync(join(to, "package.json"), "utf8")) as { version?: string };
+    expect(installed.version).toBe((JSON.parse(readFileSync(join(skill, "package.json"), "utf8")) as { version: string }).version);
+    expect(readFileSync(join(to, "vendor", "plan-check", "bundle.ts")).equals(readFileSync(join(root, "actions/plan-check/src/bundle.ts")))).toBe(true);
     symlinkSync(join(skill, "node_modules"), join(to, "node_modules"));
 
     const w = makeWorld();
