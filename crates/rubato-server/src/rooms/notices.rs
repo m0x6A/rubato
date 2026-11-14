@@ -83,6 +83,8 @@ pub async fn post_seam_notices(app: &App) -> Result<usize> {
                         other: (*other).clone(),
                         other_branch: (*other_branch).clone(),
                     }),
+                    addressed: vec![],
+                    turn_id: None,
                 };
                 if store::insert(&app.db, &room, &m).await? {
                     posted += 1;

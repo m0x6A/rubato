@@ -36,6 +36,8 @@ fn message(r: &SqliteRow) -> Result<RoomMessage> {
         text: r.get("text"),
         at: parse_ts(&r.get::<String, _>("at")),
         notice,
+        addressed: vec![],
+        turn_id: None,
     })
 }
 

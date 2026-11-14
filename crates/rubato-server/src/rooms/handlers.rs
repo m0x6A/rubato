@@ -58,6 +58,8 @@ pub async fn room(
         number: key.number,
         branch: key.branch,
         messages,
+        agents: vec![],
+        requests: vec![],
     }))
 }
 
@@ -98,6 +100,8 @@ pub async fn post(
         text: text.to_owned(),
         at: app.clock.now(),
         notice: None,
+        addressed: vec![],
+        turn_id: None,
     };
     store::insert(&app.db, &key, &m).await.map_err(internal)?;
     tracing::info!(
