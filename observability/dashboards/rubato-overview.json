@@ -1775,6 +1775,39 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 94,
+      "title": "Headless turns",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 116
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Headless companions (agent-only clients, ADR 0059): turns ended per minute by outcome (ok, failed, no_result, timeout, killed) and turns the companion killed by reason (stop, cap, revoke, timeout, quiet, companion_restarted). A kill by timeout, quiet or companion_restarted fires HeadlessTurnsKilled; no_result rising means turns end without a stream-json result.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (rate(rubato_headless_turns_total[5m]) * 60)",
+          "legendFormat": "ended {{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_reason) (increase(rubato_headless_killed_total[30m]))",
+          "legendFormat": "killed {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

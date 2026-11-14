@@ -142,3 +142,16 @@ groups:
         annotations:
           summary: "{{ $value }} plan(s) carry an approval record that differs from Rubato's"
           panel: Approval records that differ
+
+      # #138, ADR 0059: a headless turn was killed by its total or quiet bound, or was found still
+      # running after a companion restart. A cap or a stop is already an event (CapHit, Ended),
+      # so those reasons do not page.
+      - alert: HeadlessTurnsKilled
+        expr: sum(increase(rubato_headless_killed_total{rubato_reason=~"timeout|quiet|companion_restarted"}[30m])) > 0
+        labels:
+          severity: ticket
+          seam: companion-claude-code
+          owner: rubato-companion
+        annotations:
+          summary: "Headless turns were killed by a time bound or at a companion restart in the last 30 minutes"
+          panel: Headless turns

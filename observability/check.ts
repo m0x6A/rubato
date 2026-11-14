@@ -28,6 +28,8 @@ const REQUIRED = [
   "ApprovalNoHandoff",
   "HandoffNoLinkComment",
   "ApprovalRecordMismatch",
+  // Issue #138 (ADR 0059).
+  "HeadlessTurnsKilled",
 ];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
