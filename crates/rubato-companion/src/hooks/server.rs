@@ -202,7 +202,8 @@ mod tests {
                 break;
             }
         }
-        let (again, previous) = kept.expect("the freed port was taken five times in a row");
+        // `_again` keeps the kept port bound for the taken-port case below.
+        let (_again, previous) = kept.expect("the freed port was taken five times in a row");
 
         // `again` still holds the port.
         let moved = HookServer::bind_reusing(Some(&previous), tx.clone(), dtx.clone())
