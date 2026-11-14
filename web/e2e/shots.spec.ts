@@ -31,6 +31,9 @@ async function atWork(page: Page): Promise<void> {
       const status = n === 0 ? "working" : n === 1 ? "unknown" : "idle";
       issue.sessions = [{ companion_id: n === 1 ? "c-mac" : "c-desk", user: "m0x6A", cwd: `/work/rubato-${issue.issue.number}`, branch: `issue/${issue.issue.number}-x`, issue: issue.issue, repo: issue.issue.repo, source: "hook", status, last_seen: now(), spend_usd: 4.2 }];
       issue.spend_usd = 4.2 + n;
+      // Issue #103: a day's spend over every session, 15 minutes apart, ending above the gauge.
+      const steps = [0.4, 0.9, 1.1, 1.8, 2.6, 2.9, 3.7, 4.4, 5.6];
+      issue.spend_history = steps.map((usd, i) => ({ at: new Date(Date.now() - (steps.length - 1 - i) * 15 * 60_000).toISOString(), usd: usd + n }));
       n += 1;
     }
     await route.fulfill({ response: res, json: o });
