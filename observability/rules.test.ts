@@ -33,6 +33,12 @@ const mutants: Mutant[] = [
     to: 'sum by (rubato_companion_id) (rubato_sessions_by_state{rubato_session_state="working"})',
     caughtBy: "alertname: SessionWorkingNoHooks, time: 10m",
   },
+  {
+    why: "#104: a report at 300 s is not stale; the bar is 600 s",
+    from: "max(rubato_traffic_report_age) > 600",
+    to: "max(rubato_traffic_report_age) > 200",
+    caughtBy: "alertname: TrafficReportStale, time: 3m",
+  },
 ];
 
 /** Run the committed rule tests against `rules`, in a scratch copy of the alerts folder. */

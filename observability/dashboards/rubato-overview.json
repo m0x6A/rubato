@@ -1234,6 +1234,145 @@
       },
       "options": {},
       "description": "GitHub REST calls per minute, one per page (ADR 0032). The budget is 5000 per hour."
+    },
+    {
+      "id": 80,
+      "type": "row",
+      "title": "Map versus territory",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 81,
+      "title": "Traffic report age",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 78
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Seconds since the latest good traffic report was observed (ADR 0039). The first question at 3 am: is it fresh? Past 3 × RUBATO_TRAFFIC_FETCH_SECS (default 180 s) the overview says stale and the Traffic lens draws unknown; alert TrafficReportStale fires past 600 s. No value means no source is configured (RUBATO_DEV_TRAFFIC unset), which is not a fault. If it climbs, look for the log lines 'traffic source failing' and 'traffic report rejected' (with rubato.reason) and the span rubato.traffic.fetch.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_traffic_report_age)",
+          "legendFormat": "report age"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 180
+              },
+              {
+                "color": "red",
+                "value": 600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 82,
+      "title": "Quiet seams and undeclared edges",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 6,
+        "y": 78
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Map versus territory (AGENTS.md): declared seams with no calls while both parts show traffic (finding SeamQuiet), calls between parts no seam joins (UndeclaredTraffic), and services in the report that match no map part by id. Only meaningful while the report is fresh: a stale or failing source yields 0 quiet seams. Unmapped services above 0 with nothing lit means the service names do not equal the part ids (plan #104, Q2 (a)). Findings are shown, never acted on.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_traffic_seams_quiet)",
+          "legendFormat": "quiet seams"
+        },
+        {
+          "refId": "B",
+          "expr": "max(rubato_traffic_undeclared_edges)",
+          "legendFormat": "undeclared edges"
+        },
+        {
+          "refId": "C",
+          "expr": "max(rubato_traffic_unmapped_services)",
+          "legendFormat": "unmapped services"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 83,
+      "title": "Traffic fetches",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 78
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Traffic report fetches per hour by outcome: ok, rejected (outside the limits: too_many_edges, bad_window, name_too_long, parse; the previous report is kept) and failed (the source did not answer; the state turns failing). One fetch every RUBATO_TRAFFIC_FETCH_SECS.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_traffic_fetches_total[1h]))",
+          "legendFormat": "{{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }
