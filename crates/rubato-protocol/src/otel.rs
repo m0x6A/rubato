@@ -166,6 +166,9 @@ pub mod metric {
     pub const DRAFTS_REVISIONS: &str = "rubato.drafts.revisions";
     /// Draft bundles not stored, by reason (`too_large`, `owner_conflict`, `unknown_launch`).
     pub const DRAFTS_REFUSED: &str = "rubato.drafts.refused";
+    /// Companion: handoff reports from `plan.ts handoff` forwarded to the server, by
+    /// `rubato.outcome` (ADR 0055).
+    pub const HANDOFF_REPORTS: &str = "rubato.handoff.reports";
     /// Approvals delivered more than 30 minutes ago, still current, with no matching commit and
     /// no `committed` handoff report (alert `ApprovalNoHandoff`, ADR 0055).
     pub const PLANS_HANDOFF_OVERDUE: &str = "rubato.plans.handoff_overdue";
@@ -316,6 +319,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
         metric::DRAFTS_REFUSED,
+        metric::HANDOFF_REPORTS,
         metric::PLANS_HANDOFF_OVERDUE,
         metric::PLANS_LINK_COMMENT_MISSING,
         metric::PLANS_APPROVAL_RECORD_MISMATCH,
