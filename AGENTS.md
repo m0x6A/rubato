@@ -265,6 +265,10 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A plan whose affected nodes are not in the map.
 - Two open plans touching the same seam.
 - GitHub API rate limit under 10%.
+- A message for a session that waits for input, queued for more than 10 minutes.
+- An approval in Rubato that has not reached its branch 30 minutes after it was delivered.
+- A handoff commit whose link comment is not on the issue.
+- A plan whose committed approval record differs from Rubato's.
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

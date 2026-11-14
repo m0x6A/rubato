@@ -276,3 +276,92 @@ tests:
       - eval_time: 8m
         alertname: TrafficReportStale
         exp_alerts: []
+
+  # #122: the oldest message waiting for an idle session grows a minute a minute; past 600 s
+  # for 5 minutes it fires. A queue that drains stays quiet.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_session_messages_oldest_idle_queued_seconds'
+        values: "0+60x30"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: SessionMessageStuck
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: SessionMessageStuck
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: companion-server
+              owner: rubato-server
+            exp_annotations:
+              summary: "A session message has waited 20m 0s for a session that waits for input"
+              panel: Oldest message waiting for an idle session
+  - interval: 1m
+    input_series:
+      - series: 'rubato_session_messages_oldest_idle_queued_seconds'
+        values: "0+60x5 0x25"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: SessionMessageStuck
+        exp_alerts: []
+
+  # #122: one approval overdue from minute 5; it pages only after 30 minutes of it.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_plans_handoff_overdue'
+        values: "0x5 1x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ApprovalNoHandoff
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: ApprovalNoHandoff
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-plan-file
+              owner: plan-file
+            exp_annotations:
+              summary: "1 approval(s) in Rubato have not reached their branch"
+              panel: Approvals waiting for handoff
+
+  # #122: one link comment missing from minute 5; it pages only after 30 minutes of it.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_plans_link_comment_missing'
+        values: "0x5 1x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: HandoffNoLinkComment
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: HandoffNoLinkComment
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "1 handoff commit(s) have no link comment on their issue"
+              panel: Link comments missing
+
+  # #122: two mismatched records from minute 3; it fires after 5 minutes of them.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_plans_approval_record_mismatch'
+        values: "0x3 2x20"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ApprovalRecordMismatch
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ApprovalRecordMismatch
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-plan-file
+              owner: plan-file
+            exp_annotations:
+              summary: "2 plan(s) carry an approval record that differs from Rubato's"
+              panel: Approval records that differ

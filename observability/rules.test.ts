@@ -45,6 +45,30 @@ const mutants: Mutant[] = [
     to: "",
     caughtBy: "alertname: CompanionSilent, time: 11m",
   },
+  {
+    why: "#122: a message is stuck past 600 s, not past 200 s",
+    from: "max(rubato_session_messages_oldest_idle_queued_seconds) > 600",
+    to: "max(rubato_session_messages_oldest_idle_queued_seconds) > 200",
+    caughtBy: "alertname: SessionMessageStuck, time: 14m",
+  },
+  {
+    why: "#122: a handoff gets 30 minutes before ApprovalNoHandoff pages",
+    from: "max(rubato_plans_handoff_overdue) > 0\n        for: 30m",
+    to: "max(rubato_plans_handoff_overdue) > 0\n        for: 5m",
+    caughtBy: "alertname: ApprovalNoHandoff, time: 30m",
+  },
+  {
+    why: "#122: the link comment gets 30 minutes before HandoffNoLinkComment pages",
+    from: "max(rubato_plans_link_comment_missing) > 0\n        for: 30m",
+    to: "max(rubato_plans_link_comment_missing) > 0\n        for: 5m",
+    caughtBy: "alertname: HandoffNoLinkComment, time: 30m",
+  },
+  {
+    why: "#122: a mismatched record holds for 5 minutes before ApprovalRecordMismatch fires",
+    from: "max(rubato_plans_approval_record_mismatch) > 0\n        for: 5m",
+    to: "max(rubato_plans_approval_record_mismatch) > 0\n        for: 0m",
+    caughtBy: "alertname: ApprovalRecordMismatch, time: 6m",
+  },
 ];
 
 /** Run the committed rule tests against `rules`, in a scratch copy of the alerts folder. */
