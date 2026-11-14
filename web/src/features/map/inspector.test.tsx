@@ -33,7 +33,7 @@ describe("the inspector explains what is selected (S9, S26)", () => {
     // In and out, from the team's own map: the overview goes out to web, pins come in.
     const receives = within(box).getByRole("heading", { name: "Receives" }).nextElementSibling as HTMLElement;
     const sends = within(box).getByRole("heading", { name: "Sends" }).nextElementSibling as HTMLElement;
-    expect(receives).toHaveTextContent("PinRequest, MapLayout, PairApproveRequest, map draft operations from web over web-server");
+    expect(receives).toHaveTextContent("PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages from web over web-server");
     expect(sends).toHaveTextContent(/Overview: map, issues.* to web over web-server/);
     expect(sends).toHaveTextContent("LaunchCommand, for the paired user only to rubato-companion over companion-server");
     // Dependencies from seam direction.
@@ -72,7 +72,7 @@ describe("the inspector explains what is selected (S9, S26)", () => {
     expect(box).toHaveTextContent("generated web/src/protocol.ts diffed in CI");
     const flows = within(box).getByRole("heading", { name: "Flows" }).nextElementSibling as HTMLElement;
     expect(within(flows).getAllByRole("listitem")).toHaveLength(4);
-    expect(flows).toHaveTextContent("control WebEvent Changed over /ws/web: fetch the overview again: rubato-server → web");
+    expect(flows).toHaveTextContent("control WebEvent Changed over /ws/web: fetch the overview again; Updated: fetch one draft, log or room: rubato-server → web");
     expect(box).toHaveTextContent("m0x6A/rubato#48: rubato.layout.writes on panel Layout writes, wakes rubato-server");
     expect(box).toHaveTextContent("m0x6A/rubato#51 Pin by drag Planned");
     expect(within(box).getByRole("heading", { name: "Open plans" }).nextElementSibling).toHaveTextContent("m0x6A/rubato#48");
