@@ -86,6 +86,9 @@ pub struct CompanionConfig {
     /// Where the rubato skill is installed; None means `~/.claude/skills/rubato`. Its version
     /// decides whether `plan_approved` can be typed (ADR 0055).
     pub skill_dir: Option<PathBuf>,
+    /// Deadline for one read-only fork turn of a room agent (ADR 0057). Its first turn re-reads
+    /// the whole session uncached, so it gets longer than other commands.
+    pub fork_timeout_secs: u64,
 }
 
 impl CompanionConfig {
@@ -114,6 +117,7 @@ impl Default for CompanionConfig {
             permission_mode: "acceptEdits".into(),
             command_timeout_secs: crate::kernel::tmux_ide::DEFAULT_TIMEOUT.as_secs(),
             skill_dir: None,
+            fork_timeout_secs: 600,
         }
     }
 }
