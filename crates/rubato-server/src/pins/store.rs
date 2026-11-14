@@ -62,6 +62,18 @@ pub async fn list_pins(db: &SqlitePool, ws: &str) -> Result<Vec<IssuePin>> {
         .collect())
 }
 
+/// Every pin of every workspace, for the poll: an issue pinned anywhere is read (ADR 0048).
+pub async fn list_all_pins(db: &SqlitePool) -> Result<Vec<IssuePin>> {
+    let ws: Vec<String> = sqlx::query_scalar("SELECT DISTINCT workspace_id FROM pins")
+        .fetch_all(db)
+        .await?;
+    let mut out = Vec::new();
+    for w in ws {
+        out.extend(list_pins(db, &w).await?);
+    }
+    Ok(out)
+}
+
 /// Whether the issue is pinned to anything.
 pub async fn is_pinned(db: &SqlitePool, ws: &str, issue: &IssueRef) -> Result<bool> {
     Ok(

@@ -100,12 +100,12 @@ impl Poller {
             tracing::warn!("no map loaded; skipping poll");
             return Ok(());
         };
-        let mut issues: BTreeSet<IssueRef> =
-            pins::list(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
-                .await?
-                .into_iter()
-                .map(|p| p.issue)
-                .collect();
+        // Pinned in any workspace: each issue is read once, whatever views show it (ADR 0048).
+        let mut issues: BTreeSet<IssueRef> = pins::list_all(&app.db)
+            .await?
+            .into_iter()
+            .map(|p| p.issue)
+            .collect();
         issues.extend(launch::launched_issues(&app.db).await?);
         let sessions = companion_link::all_sessions(&app.db).await?;
         let live: HashSet<IssueRef> = sessions
@@ -118,7 +118,19 @@ impl Poller {
 
         // Before the per-issue reads: every open issue of the map's repos (one listing per
         // repo), then, as an installation only, which repos it covers.
-        let listed = github_poll::list_open_issues(app, &map.map).await;
+        // Every loaded workspace map, in id order: the listing is over their union (ADR 0048).
+        let maps: Vec<(String, crate::kernel::state::LoadedMap)> = app
+            .maps
+            .read()
+            .await
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let systems: Vec<(String, rubato_protocol::SystemMap)> = maps
+            .iter()
+            .map(|(k, v)| (k.clone(), v.map.clone()))
+            .collect();
+        let listed = github_poll::list_open_issues(app, &systems).await;
         // Creations GitHub did not confirm, found by their `Rubato-Request:` line (ADR 0025).
         let found: Vec<new_issue::Found> = listed
             .requests()
@@ -132,16 +144,19 @@ impl Poller {
         new_issue::reconcile(app, &found, listed.fresh_repos()).await;
         // `Map:` lines of trusted authors pin their issues (ADR 0026). No GitHub call: the
         // bodies came with the listing. A newly pinned issue is read from the next tick on.
-        let lines: Vec<pins::Line> = listed
-            .map_lines()
-            .iter()
-            .map(|l| pins::Line {
-                issue: l.issue.clone(),
-                target: l.target.clone(),
-                author: l.author.clone(),
-            })
-            .collect();
-        pins::apply_map_lines(app, &map.map, &map.version, &lines).await;
+        for (ws, m) in &maps {
+            let lines: Vec<pins::Line> = listed
+                .map_lines()
+                .iter()
+                .filter(|l| &l.workspace == ws)
+                .map(|l| pins::Line {
+                    issue: l.issue.clone(),
+                    target: l.target.clone(),
+                    author: l.author.clone(),
+                })
+                .collect();
+            pins::apply_map_lines(app, ws, &m.map, &m.version, &lines).await;
+        }
         // Every distinct repo of every workspace, once (ADR 0048), and the repos of tracked work.
         let mut repos: BTreeSet<String> = app.union_repos().await.into_iter().collect();
         repos.extend(issues.iter().map(|i| i.repo.clone()));
@@ -240,7 +255,7 @@ impl Poller {
         map_draft::record_gauges(app).await;
         queue::record_depth(app).await;
         github_poll::record_rate_limit(app).await;
-        overview::refresh_gauges(app, &map).await?;
+        overview::refresh_gauges(app).await?;
         app.notify("poll");
         Ok(())
     }

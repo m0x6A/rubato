@@ -143,6 +143,23 @@ impl AppState {
         });
     }
 
+    /// Tell every browser one workspace's map, layout or draft changed (ADR 0049): only clients
+    /// of that workspace refetch. Changes that show in other workspaces too use `notify`.
+    pub fn notify_ws(&self, reason: &str, ws: &str) {
+        let subscribers = self.web_tx.receiver_count();
+        tracing::info!(
+            reason,
+            rubato.workspace = ws,
+            rubato.subscribers = subscribers,
+            "web fan-out"
+        );
+        let _ = self.web_tx.send(WebEvent::Changed {
+            at: Utc::now(),
+            reason: reason.to_owned(),
+            workspace: Some(ws.to_owned()),
+        });
+    }
+
     /// A web request refused by a rule: counted by route and reason, and logged with who.
     pub fn reject(&self, route: &str, reason: &str, user: &str) {
         self.metrics.web_rejected.add(

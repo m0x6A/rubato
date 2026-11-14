@@ -9,6 +9,8 @@ use sqlx::{Row, SqlitePool};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Creation {
+    /// Where it was started, and where it is pinned once created (ADR 0047).
+    pub workspace: String,
     pub request_id: String,
     pub repo: String,
     pub target: MapRef,
@@ -38,6 +40,7 @@ fn row(r: &sqlx::sqlite::SqliteRow) -> Creation {
     let kind: String = r.get("kind");
     let target: String = r.get("target");
     Creation {
+        workspace: r.get("workspace_id"),
         request_id: r.get("request_id"),
         repo: r.get("repo"),
         target: if kind == "seam" {

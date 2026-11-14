@@ -20,22 +20,23 @@ pub mod reason {
     pub const BAD_POSITION: &str = "bad_position";
 }
 
-fn written(app: &App) {
+fn written(app: &App, ws: &str) {
     app.metrics.layout_writes.add(1, &[]);
-    app.notify("layout");
+    app.notify_ws("layout", ws);
 }
 
 pub async fn put_layout(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
     Json(moved): Json<MapLayout>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let map = app
-        .default_map()
+        .map_of(ws.as_str())
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     // Parts of the merged map, and parts that exist only in the shared draft (ADR 0016).
-    let draft = map_draft::snapshot(&app.db, rubato_protocol::DEFAULT_WORKSPACE, &map.map)
+    let draft = map_draft::snapshot(&app.db, ws.as_str(), &map.map)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?;
     let mut known = map.map.node_ids();
@@ -60,30 +61,24 @@ pub async fn put_layout(
         }
     }
     let known: Vec<&str> = known.into_iter().collect();
-    store::put(
-        &app.db,
-        rubato_protocol::DEFAULT_WORKSPACE,
-        &moved,
-        &known,
-        &user,
-        Utc::now(),
-    )
-    .await
-    .map_err(|e| (internal(SLICE, e), String::new()))?;
+    store::put(&app.db, ws.as_str(), &moved, &known, &user, Utc::now())
+        .await
+        .map_err(|e| (internal(SLICE, e), String::new()))?;
     tracing::debug!(rubato.user = %user, parts = moved.positions.len(), "layout written");
-    written(&app);
+    written(&app, ws.as_str());
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn clear_layout(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<MapLayout>, StatusCode> {
-    let removed = store::clear(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+    let removed = store::clear(&app.db, ws.as_str())
         .await
         .map_err(|e| internal(SLICE, e))?;
     // Clearing moves every part for the whole team, so it is said at info with who did it.
     tracing::info!(rubato.user = %user, parts = removed.positions.len(), "layout cleared");
-    written(&app);
+    written(&app, ws.as_str());
     Ok(Json(removed))
 }

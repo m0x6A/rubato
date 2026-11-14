@@ -1,18 +1,37 @@
-//! Load the system map (ADR 0010): from GitHub, or a local file, falling back to the cached copy.
+//! Load each workspace's map (ADRs 0010, 0044): from GitHub, or a local file, falling back to the
+//! cached copy. One workspace failing keeps its last good map and never stops the others.
 
 use super::store;
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::workspaces::WorkspaceEntry;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::SystemMap;
 use rubato_protocol::otel::attr;
 
-/// Fetch, validate and cache the map. Falls back to the cached copy when GitHub fails.
+/// Reload every workspace's map, in config order. Answers with `default`'s, which unprefixed
+/// routes serve; another workspace that fails is logged (`workspace map load failed`), counted
+/// and keeps its last good map.
 pub async fn reload(app: &App) -> Result<LoadedMap> {
-    let cfg = &app.config;
+    let (entries, _) = app.config.workspace_entries();
+    let mut default = None;
+    for w in &entries {
+        let got = reload_ws(app, w).await;
+        if w.id == rubato_protocol::DEFAULT_WORKSPACE {
+            default = Some(got);
+        } else if let Err(e) = got {
+            tracing::error!(rubato.workspace = %w.id, error = %format!("{e:#}"), "workspace map load failed");
+        }
+    }
+    default.unwrap_or_else(|| Err(anyhow::anyhow!("no workspace default configured")))
+}
+
+/// Fetch, validate and cache one workspace's map. Falls back to the cached copy when GitHub fails.
+pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<LoadedMap> {
+    let cfg = w;
     if let Some(file) = &cfg.map_file {
-        return load_from_file(app, file).await;
+        return load_from_file(app, w, file).await;
     }
     let fetched = async {
         let sha = app
@@ -34,14 +53,12 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
     let (version, yaml, fallback) = match fetched {
         Ok((version, yaml)) => (version, yaml, None),
         Err(e) => {
-            app.metrics.map_load_failures.add(1, &[]);
-            if let Some(m) = app.default_map().await {
+            app.metrics.map_load_failures.add(1, &ws_attr(w));
+            if let Some(m) = app.map_of(&w.id).await {
                 tracing::warn!(error = %e, "map fetch failed; keeping cached version {}", m.version);
                 return Ok(m);
             }
-            if let Some((version, yaml, loaded_at)) =
-                store::load_map(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?
-            {
+            if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.id).await? {
                 tracing::warn!(error = %e, %loaded_at, "map fetch failed; using the database copy {version}");
                 (version, yaml, Some((loaded_at, e)))
             } else {
@@ -50,8 +67,8 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
         }
     };
     let map = match &fallback {
-        None => parse(app, &yaml, true)?,
-        Some((_, fetch_error)) => parse(app, &yaml, false).with_context(|| {
+        None => parse(app, w, &yaml, true)?,
+        Some((_, fetch_error)) => parse(app, w, &yaml, false).with_context(|| {
             format!("map fetch failed: {fetch_error:#}; the database copy {version} is unusable")
         })?,
     };
@@ -63,32 +80,32 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
         yaml: yaml.clone(),
     };
     if stored_at.is_none() {
-        store::store_map(
-            &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
-            &version,
-            &yaml,
-            loaded.loaded_at,
-        )
-        .await?;
+        store::store_map(&app.db, &w.id, &version, &yaml, loaded.loaded_at).await?;
     }
-    app.set_map(rubato_protocol::DEFAULT_WORKSPACE, loaded.clone())
-        .await;
-    app.metrics
-        .map_loaded
-        .record(1, &[KeyValue::new(attr::MAP_VERSION, version.clone())]);
-    record_loaded_at(app, loaded.loaded_at);
-    tracing::info!(version = %version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
+    app.set_map(&w.id, loaded.clone()).await;
+    app.metrics.map_loaded.record(
+        1,
+        &[
+            KeyValue::new(attr::MAP_VERSION, version.clone()),
+            KeyValue::new(attr::WORKSPACE, w.id.clone()),
+        ],
+    );
+    record_loaded_at(app, w, loaded.loaded_at);
+    tracing::info!(rubato.workspace = %w.id, version = %version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
     Ok(loaded)
 }
 
 /// Local-file mode (`RUBATO_MAP_FILE`): the version is a content hash, since there may be no git.
-async fn load_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> {
+async fn load_from_file(
+    app: &App,
+    w: &WorkspaceEntry,
+    file: &std::path::Path,
+) -> Result<LoadedMap> {
     let yaml = tokio::fs::read_to_string(file)
         .await
         .with_context(|| format!("reading {}", file.display()))
-        .inspect_err(|_| app.metrics.map_load_failures.add(1, &[]))?;
-    let map = parse(app, &yaml, true)?;
+        .inspect_err(|_| app.metrics.map_load_failures.add(1, &ws_attr(w)))?;
+    let map = parse(app, w, &yaml, true)?;
     use sha2::Digest;
     let digest = sha2::Sha256::digest(yaml.as_bytes());
     let version = format!(
@@ -105,30 +122,26 @@ async fn load_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> 
         loaded_at: Utc::now(),
         yaml: yaml.clone(),
     };
-    store::store_map(
-        &app.db,
-        rubato_protocol::DEFAULT_WORKSPACE,
-        &version,
-        &yaml,
-        loaded.loaded_at,
-    )
-    .await?;
-    app.set_map(rubato_protocol::DEFAULT_WORKSPACE, loaded.clone())
-        .await;
-    app.metrics
-        .map_loaded
-        .record(1, &[KeyValue::new(attr::MAP_VERSION, version.clone())]);
-    record_loaded_at(app, loaded.loaded_at);
-    tracing::info!(version = %version, file = %file.display(), "map loaded from file");
+    store::store_map(&app.db, &w.id, &version, &yaml, loaded.loaded_at).await?;
+    app.set_map(&w.id, loaded.clone()).await;
+    app.metrics.map_loaded.record(
+        1,
+        &[
+            KeyValue::new(attr::MAP_VERSION, version.clone()),
+            KeyValue::new(attr::WORKSPACE, w.id.clone()),
+        ],
+    );
+    record_loaded_at(app, w, loaded.loaded_at);
+    tracing::info!(rubato.workspace = %w.id, version = %version, file = %file.display(), "map loaded from file");
     Ok(loaded)
 }
 
 /// Parse and validate a map. `count` is false when the reload has already counted its failure,
 /// so one reload adds at most one to `rubato.map.load_failures`.
-fn parse(app: &App, yaml: &str, count: bool) -> Result<SystemMap> {
+fn parse(app: &App, w: &WorkspaceEntry, yaml: &str, count: bool) -> Result<SystemMap> {
     let failed = || {
         if count {
-            app.metrics.map_load_failures.add(1, &[]);
+            app.metrics.map_load_failures.add(1, &ws_attr(w));
         }
     };
     let map: SystemMap = serde_yaml_ng::from_str(yaml)
@@ -148,34 +161,40 @@ fn parse(app: &App, yaml: &str, count: bool) -> Result<SystemMap> {
     Ok(map)
 }
 
-/// Load the map from the database at startup so the server answers before the first fetch.
+/// Load each workspace's map from the database at startup so the server answers before the
+/// first fetch.
 pub async fn warm(app: &App) -> Result<()> {
-    if let Some((version, yaml, loaded_at)) =
-        store::load_map(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?
-    {
-        let map: SystemMap = serde_yaml_ng::from_str(&yaml)?;
-        app.set_map(
-            rubato_protocol::DEFAULT_WORKSPACE,
-            LoadedMap {
-                map,
-                version,
-                loaded_at,
-                yaml,
-            },
-        )
-        .await;
-        // The stored time, so a restart during a GitHub outage shows the real age.
-        record_loaded_at(app, loaded_at);
+    let (entries, _) = app.config.workspace_entries();
+    for w in &entries {
+        if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.id).await? {
+            let map: SystemMap = serde_yaml_ng::from_str(&yaml)?;
+            app.set_map(
+                &w.id,
+                LoadedMap {
+                    map,
+                    version,
+                    loaded_at,
+                    yaml,
+                },
+            )
+            .await;
+            // The stored time, so a restart during a GitHub outage shows the real age.
+            record_loaded_at(app, w, loaded_at);
+        }
     }
     Ok(())
 }
 
 /// `rubato.map.loaded_at`: unix seconds of the load. A failed reload records nothing, so the
 /// gauge keeps its value and "Map age" keeps growing.
-fn record_loaded_at(app: &App, at: DateTime<Utc>) {
+fn record_loaded_at(app: &App, w: &WorkspaceEntry, at: DateTime<Utc>) {
     app.metrics
         .map_loaded_at
-        .record(u64::try_from(at.timestamp()).unwrap_or(0), &[]);
+        .record(u64::try_from(at.timestamp()).unwrap_or(0), &ws_attr(w));
+}
+
+fn ws_attr(w: &WorkspaceEntry) -> [KeyValue; 1] {
+    [KeyValue::new(attr::WORKSPACE, w.id.clone())]
 }
 
 #[cfg(test)]
@@ -292,14 +311,19 @@ mod tests {
         });
         let cfg = Config::for_tests(db_url.clone(), "m0x6A");
 
-        // (a) A load records its time, in unix seconds, with no unit and no attributes.
+        // (a) A load records its time, in unix seconds, with no unit, for its workspace (ADR 0044).
         let (a, reader) = app(cfg.clone(), github.clone()).await;
         let loaded = reload(&a).await.unwrap();
         let at = u64::try_from(loaded.loaded_at.timestamp()).unwrap();
         let point = only(&reader, metric::MAP_LOADED_AT);
         assert_eq!(point.value, at);
         assert_eq!(point.unit, "");
-        assert!(point.attrs.is_empty(), "{point:?}");
+        assert_eq!(
+            point.attrs.get(attr::WORKSPACE).map(String::as_str),
+            Some("default"),
+            "{point:?}"
+        );
+        assert_eq!(point.attrs.len(), 1, "{point:?}");
         assert!(reader.points(metric::MAP_LOAD_FAILURES).is_empty());
 
         // (b) The ref goes away: the cached map stays, the gauge keeps its value on the next

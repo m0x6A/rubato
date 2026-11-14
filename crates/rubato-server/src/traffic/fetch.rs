@@ -130,7 +130,41 @@ impl<S: Source> Fetcher<S> {
         app.metrics
             .traffic_report_age
             .record(u64::try_from(age).unwrap_or(0), &[]);
-        let Some(map) = app.default_map().await else {
+        // Judged against each workspace's map (ADR 0039 per workspace); the browsers are told
+        // once, from `default`'s, which unprefixed overviews show.
+        let maps: Vec<(String, crate::kernel::state::LoadedMap)> = app
+            .maps
+            .read()
+            .await
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        for (ws, m) in maps
+            .iter()
+            .filter(|(w, _)| w != rubato_protocol::DEFAULT_WORKSPACE)
+        {
+            let (t, f) = derive_traffic(&m.map, latest.report.as_ref(), &latest.source, now);
+            let w = [KeyValue::new(
+                rubato_protocol::otel::attr::WORKSPACE,
+                ws.clone(),
+            )];
+            let quiet = f
+                .iter()
+                .filter(|f| matches!(f, Finding::SeamQuiet { .. }))
+                .count();
+            app.metrics.traffic_seams_quiet.record(quiet as u64, &w);
+            app.metrics
+                .traffic_undeclared_edges
+                .record(t.undeclared.len() as u64, &w);
+            app.metrics
+                .traffic_unmapped_services
+                .record(u64::from(t.unmapped_services), &w);
+        }
+        let Some(map) = maps
+            .iter()
+            .find(|(w, _)| w == rubato_protocol::DEFAULT_WORKSPACE)
+            .map(|(_, m)| m.clone())
+        else {
             return;
         };
         let (traffic, findings) =

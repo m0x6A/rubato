@@ -7,6 +7,7 @@
 use super::propose::{count, log_state};
 use super::store::{self, ProposalRow, state_name};
 use crate::kernel::state::App;
+use crate::kernel::workspaces::WorkspaceEntry;
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::map_draft::ProposalState;
@@ -21,11 +22,20 @@ const STATES: [ProposalState; 3] = [
 /// Both gauges on every tick, zeros included: a gauge recorded only on change keeps its last
 /// value, so a past state would linger and a restart would go silent.
 pub async fn record_gauges(app: &App) {
-    match store::live_count(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
-        Ok(n) => app.metrics.map_draft_ops.record(n, &[]),
+    for w in app.config.workspace_entries().0 {
+        record_gauges_ws(app, &w).await;
+    }
+}
+
+async fn record_gauges_ws(app: &App, w: &WorkspaceEntry) {
+    match store::live_count(&app.db, &w.id).await {
+        Ok(n) => app
+            .metrics
+            .map_draft_ops
+            .record(n, &[KeyValue::new(attr::WORKSPACE, w.id.clone())]),
         Err(e) => tracing::error!(error = %e, "reading the draft size failed"),
     }
-    let now = match store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
+    let now = match store::proposal(&app.db, &w.id).await {
         Ok(p) => p,
         Err(e) => {
             tracing::error!(error = %e, "reading the proposal failed");
@@ -38,9 +48,13 @@ pub async fn record_gauges(app: &App) {
             .filter(|p| p.state == s)
             .and_then(|p| u64::try_from(p.state_since.timestamp()).ok())
             .unwrap_or(0);
-        app.metrics
-            .map_proposal_state_since
-            .record(since, &[KeyValue::new(attr::OUTCOME, state_name(s))]);
+        app.metrics.map_proposal_state_since.record(
+            since,
+            &[
+                KeyValue::new(attr::OUTCOME, state_name(s)),
+                KeyValue::new(attr::WORKSPACE, w.id.clone()),
+            ],
+        );
     }
 }
 
@@ -48,7 +62,13 @@ pub async fn record_gauges(app: &App) {
 /// the merge shows the merged map: then the draft's operations are in it, and they and the
 /// proposal go. Until such a load the draft stays as it is.
 pub async fn clear_merged(app: &App) {
-    let row = match store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
+    for w in app.config.workspace_entries().0 {
+        clear_merged_ws(app, &w).await;
+    }
+}
+
+async fn clear_merged_ws(app: &App, w: &WorkspaceEntry) {
+    let row = match store::proposal(&app.db, &w.id).await {
         Ok(Some(row)) if row.state == ProposalState::Merged => row,
         Ok(_) => return,
         Err(e) => {
@@ -56,29 +76,23 @@ pub async fn clear_merged(app: &App) {
             return;
         }
     };
-    let loaded_at: Option<DateTime<Utc>> = app.default_map().await.as_ref().map(|m| m.loaded_at);
+    let loaded_at: Option<DateTime<Utc>> = app.map_of(&w.id).await.as_ref().map(|m| m.loaded_at);
     if !loaded_at.is_some_and(|at| at > row.state_since) {
         return;
     }
-    if let Err(e) =
-        store::clear_merged(&app.db, rubato_protocol::DEFAULT_WORKSPACE, row.last_seq).await
-    {
+    if let Err(e) = store::clear_merged(&app.db, &w.id, row.last_seq).await {
         tracing::error!(error = %e, "clearing the merged draft failed");
         return;
     }
     log_state("merged", "empty", &row, None);
-    if let Err(e) = app
-        .github
-        .delete_ref(&app.config.map_repo, &row.branch)
-        .await
-    {
+    if let Err(e) = app.github.delete_ref(&w.map_repo, &row.branch).await {
         tracing::warn!(branch = %row.branch, error = %format!("{e:#}"), "the merged proposal's branch was not deleted");
     }
-    app.notify("draft");
+    app.notify_ws("draft", &w.id);
 }
 
-async fn follow(app: &App, row: &ProposalRow) -> anyhow::Result<()> {
-    let repo = &app.config.map_repo;
+async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Result<()> {
+    let repo = &w.map_repo;
     let now = Utc::now();
     if row.state == ProposalState::Merged {
         return Ok(());
@@ -89,39 +103,25 @@ async fn follow(app: &App, row: &ProposalRow) -> anyhow::Result<()> {
     let from = state_name(row.state);
     let known = Some((pr.number, pr.url.as_str()));
     if pr.merged_at.is_some() {
-        store::set_state(
-            &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
-            ProposalState::Merged,
-            now,
-            known,
-        )
-        .await?;
+        store::set_state(&app.db, &w.id, ProposalState::Merged, now, known).await?;
         log_state(from, "merged", row, Some(pr.number));
         count(app, "merged");
-        app.notify("draft");
+        app.notify_ws("draft", &w.id);
     } else if !pr.open {
         // Closed without merging: the draft is editable again, every operation kept.
-        store::drop_proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?;
+        store::drop_proposal(&app.db, &w.id).await?;
         log_state(from, "drafting", row, Some(pr.number));
         count(app, "closed");
         if let Err(e) = app.github.delete_ref(repo, &row.branch).await {
             tracing::warn!(branch = %row.branch, error = %format!("{e:#}"), "the closed proposal's branch was not deleted");
         }
-        app.notify("draft");
+        app.notify_ws("draft", &w.id);
     } else if row.state == ProposalState::Opening {
         // The pull request exists though the row never learned it: a call that timed out.
-        store::set_state(
-            &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
-            ProposalState::Proposed,
-            now,
-            known,
-        )
-        .await?;
+        store::set_state(&app.db, &w.id, ProposalState::Proposed, now, known).await?;
         log_state(from, "proposed", row, Some(pr.number));
         count(app, "opened");
-        app.notify("draft");
+        app.notify_ws("draft", &w.id);
     }
     Ok(())
 }
@@ -129,10 +129,19 @@ async fn follow(app: &App, row: &ProposalRow) -> anyhow::Result<()> {
 /// Called from the poll tick, after the per-issue reads and before the rate-limit read. True
 /// when the proposal is merged and the draft waits for a map load that follows the merge: the
 /// caller reloads the map and then calls `clear_merged`.
+/// Over every workspace: true when any proposal is merged and waits for a map load.
 pub async fn check_proposal(app: &App) -> bool {
-    match store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
+    let mut merged = false;
+    for w in app.config.workspace_entries().0 {
+        merged |= check_proposal_ws(app, &w).await;
+    }
+    merged
+}
+
+async fn check_proposal_ws(app: &App, w: &WorkspaceEntry) -> bool {
+    match store::proposal(&app.db, &w.id).await {
         Ok(Some(row)) => {
-            if let Err(e) = follow(app, &row).await {
+            if let Err(e) = follow(app, w, &row).await {
                 tracing::warn!(error = %format!("{e:#}"), "following the map proposal failed");
             }
         }
@@ -143,7 +152,7 @@ pub async fn check_proposal(app: &App) -> bool {
         }
     }
     matches!(
-        store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await,
+        store::proposal(&app.db, &w.id).await,
         Ok(Some(row)) if row.state == ProposalState::Merged
     )
 }

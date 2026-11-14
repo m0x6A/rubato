@@ -40,6 +40,7 @@ fn answer(i: &Intent) -> Answer {
 
 pub async fn approve(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(login): CurrentUser,
     Json(req): Json<ApproveRequest>,
 ) -> Result<Answer, Refused> {
@@ -58,7 +59,7 @@ pub async fn approve(
             Json(json!({ "reason": "internal" })),
         )
     };
-    let Some(map) = app.default_map().await else {
+    let Some(map) = app.map_of(ws.as_str()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     let issue = req.issue.clone();
@@ -78,7 +79,15 @@ pub async fn approve(
         ));
     }
     let fit = plan_fit(row.plan.as_ref(), row.parse_error.as_deref(), &map.map);
-    if let Some(f) = fit.filter(|f| !f.fits) {
+    // Not fitting here: it may fit another workspace that holds the issue, where the approval
+    // counts (ADR 0045). Refused only when it fits none of them.
+    let fits_elsewhere = match fit.as_ref().filter(|f| !f.fits) {
+        Some(_) => fits_another(&app, ws.as_str(), &issue, &row)
+            .await
+            .map_err(internal)?,
+        None => false,
+    };
+    if let Some(f) = fit.filter(|f| !f.fits && !fits_elsewhere) {
         return Err(refuse(
             StatusCode::CONFLICT,
             reason::PLAN_DOES_NOT_FIT,
@@ -164,4 +173,39 @@ pub async fn approve(
             Ok(answer(&intent))
         }
     }
+}
+
+/// Whether the plan fits the map of a workspace other than `here` that holds the issue: its map
+/// names the issue's repo, or the issue is pinned or launched there (ADR 0045).
+async fn fits_another(
+    app: &App,
+    here: &str,
+    issue: &rubato_protocol::IssueRef,
+    row: &plans::PlanRow,
+) -> anyhow::Result<bool> {
+    let (entries, _) = app.config.workspace_entries();
+    for w in entries.iter().filter(|w| w.id != here) {
+        let Some(m) = app.map_of(&w.id).await else {
+            continue;
+        };
+        let holds = m
+            .map
+            .repos_named()
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case(&issue.repo))
+            || crate::pins::list(&app.db, &w.id)
+                .await?
+                .iter()
+                .any(|p| &p.issue == issue)
+            || crate::launch::launched_issues_in(&app.db, &w.id)
+                .await?
+                .contains(issue);
+        if holds
+            && plan_fit(row.plan.as_ref(), row.parse_error.as_deref(), &m.map)
+                .is_some_and(|f| f.fits)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
