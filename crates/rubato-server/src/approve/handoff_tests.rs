@@ -738,3 +738,48 @@ async fn the_reconcile_records_the_handoff_gauges() {
         "a plan_changed is not current"
     );
 }
+
+/// A handoff that refused because the bundle or a pinned ADR changed wrote nothing and leaves an
+/// approval of an earlier version: not overdue, nothing to page. An approval superseded by a
+/// newer one of the same branch is never overdue either; only the newer one can be.
+#[test]
+fn a_refused_or_superseded_approval_is_not_overdue() {
+    let now = Utc.with_ymd_and_hms(2026, 11, 20, 12, 0, 0).unwrap();
+    let bundle = approval(1, "s1", Some("bundle_changed"));
+    let adr = approval(2, "s2", Some("adr_changed"));
+    // Two approvals of one branch: the first, then a newer one of the same plan.
+    let older = approval(3, "s3", None);
+    let mut newer = approval(3, "s3", None);
+    newer.id = Uuid::from_u128(99);
+    newer.approved_at = older.approved_at + Duration::minutes(5);
+    let all = [bundle.clone(), adr.clone(), older.clone(), newer.clone()];
+    let newest: HashMap<Uuid, String> = all
+        .iter()
+        .map(|a| (a.draft_id, a.plan_sha.clone()))
+        .collect();
+    let delivered: HashMap<Uuid, DateTime<Utc>> = all
+        .iter()
+        .map(|a| (a.id, now - Duration::minutes(31)))
+        .collect();
+    let got = assess(&LinkFacts {
+        approvals: &all,
+        newest: &newest,
+        plans: &[],
+        links: &HashMap::new(),
+        delivered: &delivered,
+        can_act: &HashSet::new(),
+        now,
+    });
+    assert_eq!(got.overdue, 1, "only the newer approval of branch 3");
+    // Without the newer one, the older one is the newest of its branch, and overdue.
+    let got = assess(&LinkFacts {
+        approvals: &all[..3],
+        newest: &newest,
+        plans: &[],
+        links: &HashMap::new(),
+        delivered: &delivered,
+        can_act: &HashSet::new(),
+        now,
+    });
+    assert_eq!(got.overdue, 1);
+}
