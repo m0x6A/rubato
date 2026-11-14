@@ -141,7 +141,7 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 ```text
 live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
-map         the system map: graph, shared layout over ELK, MapView, scenario player  PUT, DELETE /api/layout
+map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player  PUT, DELETE /api/layout
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
@@ -151,7 +151,7 @@ drafts      edit the map as one shared draft, propose it         POST /api/map/d
 findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 plans       proposed and open plans, where they fit, Accept plan  POST /api/plans/approve
-repos       connected repos, sessions not tied to an issue       (none)
+repos       connected repos, what each provides, loose sessions  (none)
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->

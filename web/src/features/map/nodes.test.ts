@@ -22,4 +22,14 @@ describe("mergeNodes", () => {
     expect(merged[0]?.measured).toBeUndefined();
     expect(merged[1]?.measured).toEqual({ width: 1, height: 1 });
   });
+
+  it("a part takes its box from what is wanted, and leaves it when the grouping is turned off", () => {
+    type P = N & { parentId?: string };
+    const inBox: P = { ...node("a", 1, "n"), parentId: "repo:acme/auth" };
+    const merged = mergeNodes<P>([node("a", 0, "old", { width: 1, height: 1 })], [inBox]);
+    expect(merged[0]?.parentId).toBe("repo:acme/auth");
+    const out = mergeNodes<P>(merged, [node("a", 2, "n")]);
+    expect(out[0]?.parentId).toBeUndefined();
+    expect(out[0]?.measured).toEqual({ width: 1, height: 1 });
+  });
 });

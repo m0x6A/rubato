@@ -1,4 +1,5 @@
 import type { ConnectedRepo, Overview } from "../../protocol.ts";
+import { type RepoFeatures, repoFeatures } from "./provides.ts";
 
 type Max = { open_issues: number; plans: number; sessions: number; open_pulls: number };
 
@@ -9,7 +10,7 @@ export function rackScale(repos: ConnectedRepo[]): Max {
 }
 
 /** One repo as a rack unit (issue #81, design §6): two lights (in the map, covered by the App) and four bars. */
-export function RackUnit({ repo: r, max }: { repo: ConnectedRepo; max: Max }) {
+export function RackUnit({ repo: r, max, provides }: { repo: ConnectedRepo; max: Max; provides?: RepoFeatures | undefined }) {
   const bars: [keyof Max, number, string][] = [
     ["open_issues", r.open_issues, "open issues"],
     ["plans", r.plans, r.plans === 1 ? "plan" : "plans"],
@@ -34,7 +35,57 @@ export function RackUnit({ repo: r, max }: { repo: ConnectedRepo; max: Max }) {
         ))}
       </div>
       {r.unattributed > 0 && <span className="badge approval-stale">{r.unattributed} not tied to an issue</span>}
+      {provides && <Provides repo={r.repo} f={provides} />}
     </div>
+  );
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** What the repo provides to the whole application, from the map (issue #89): folded to one line of counts. */
+function Provides({ repo, f }: { repo: string; f: RepoFeatures }) {
+  if (f.parts.length === 0) {
+    return (
+      <p className="muted provides" data-testid={`provides-${repo}`}>
+        No part of the map lives in this repo.
+      </p>
+    );
+  }
+  return (
+    <details className="provides" data-testid={`provides-${repo}`}>
+      <summary>
+        {plural(f.parts.length, "part", "parts")} · owns {plural(f.owns.length, "seam", "seams")} · uses {f.uses.length} · in {plural(f.scenarios.length, "journey", "journeys")}
+      </summary>
+      <ul className="plain">
+        {f.parts.map((p) => (
+          <li key={p.id}>
+            <code>{p.id}</code>
+            {p.description ? ` — ${p.description}` : ""}
+          </li>
+        ))}
+      </ul>
+      {f.owns.length > 0 && (
+        <p>
+          Owns {f.owns.map((s, i) => (
+            <span key={s.id}>
+              {i > 0 && ", "}
+              <code>{s.id}</code>
+            </span>
+          ))}
+        </p>
+      )}
+      {f.uses.length > 0 && (
+        <p>
+          Uses {f.uses.map((s, i) => (
+            <span key={s.id}>
+              {i > 0 && ", "}
+              <code>{s.id}</code>
+            </span>
+          ))}
+        </p>
+      )}
+      {f.scenarios.length > 0 && <p>In {f.scenarios.map((s) => s.name).join(", ")}</p>}
+    </details>
   );
 }
 
@@ -50,7 +101,7 @@ export function ConnectedRepos({ overview }: { overview: Overview }) {
       <ul className="plain racks">
         {repos.map((r) => (
           <li key={r.repo}>
-            <RackUnit repo={r} max={max} />
+            <RackUnit repo={r} max={max} provides={repoFeatures(overview.map.map, r.repo)} />
           </li>
         ))}
         {repos.length === 0 && <li className="muted">The map names no repos.</li>}

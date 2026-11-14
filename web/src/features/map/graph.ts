@@ -12,6 +12,8 @@ export interface GraphNode {
   id: string;
   kind: MapNode["kind"];
   description: string | undefined;
+  /** `owner/name` of the repo holding its code, if the map says (issue #89: the By repo grouping). */
+  repo: string | undefined;
   issues: IssueSummary[];
   sessions: SessionState[];
   paint: Paint;
@@ -77,6 +79,7 @@ export function buildGraph(ov: Overview): Graph {
     id: n.id,
     kind: n.kind,
     description: n.description ?? undefined,
+    repo: n.repo ?? undefined,
     issues: ov.issues.filter((i) => i.pins.some((p) => p.kind === "node" && p.id === n.id)),
     sessions: [],
     paint: null,
@@ -228,4 +231,65 @@ export async function layout(graph: Graph): Promise<Map<string, { x: number; y: 
     pos.set(c.id, { x: c.x ?? 0, y: c.y ?? 0 });
   }
   return pos;
+}
+
+/** A repo's box in the By repo grouping, at its place on the canvas. */
+export interface RepoGroup {
+  id: string;
+  repo: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The node id of a repo's box; never a map id, since map ids hold no colon. */
+export function repoGroupId(repo: string): string {
+  return `repo:${repo}`;
+}
+
+/**
+ * ELK with one compound node per repo (issue #89): each repo's parts are laid out inside its box,
+ * parts with no repo (externals) beside the boxes. A part in a box gets a position relative to
+ * the box and its id as `parent`, which is how React Flow draws a child (`parentId`).
+ */
+export async function layoutByRepo(graph: Graph): Promise<{ groups: RepoGroup[]; parts: Map<string, { x: number; y: number; parent?: string }> }> {
+  const elk = new ELK();
+  const repos = [...new Set(graph.nodes.map((n) => n.repo).filter((r): r is string => Boolean(r)))];
+  const leaf = (id: string): ElkNode => ({ id, width: NODE_WIDTH, height: NODE_HEIGHT });
+  const root: ElkNode = {
+    id: "root",
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": "RIGHT",
+      "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+      "elk.spacing.nodeNode": "40",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "200",
+      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+    },
+    children: [
+      ...repos.map((repo) => ({
+        id: repoGroupId(repo),
+        // Room at the top for the repo's name.
+        layoutOptions: { "elk.padding": "[top=48,left=24,bottom=24,right=24]" },
+        children: graph.nodes.filter((n) => n.repo === repo).map((n) => leaf(n.id)),
+      })),
+      ...graph.nodes.filter((n) => !n.repo).map((n) => leaf(n.id)),
+    ],
+    edges: graph.edges.map((e) => ({ id: e.id, sources: [e.from], targets: [e.to] })),
+  };
+  const out = await elk.layout(root);
+  const groups: RepoGroup[] = [];
+  const parts = new Map<string, { x: number; y: number; parent?: string }>();
+  for (const c of out.children ?? []) {
+    if (c.id.startsWith("repo:")) {
+      groups.push({ id: c.id, repo: c.id.slice("repo:".length), x: c.x ?? 0, y: c.y ?? 0, width: c.width ?? 0, height: c.height ?? 0 });
+      for (const k of c.children ?? []) {
+        parts.set(k.id, { x: k.x ?? 0, y: k.y ?? 0, parent: c.id });
+      }
+    } else {
+      parts.set(c.id, { x: c.x ?? 0, y: c.y ?? 0 });
+    }
+  }
+  return { groups, parts };
 }

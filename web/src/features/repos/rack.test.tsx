@@ -25,3 +25,26 @@ describe("a repo as a rack unit (issue #81)", () => {
     expect(Object.values(empty)).toEqual([1, 1, 1, 1]);
   });
 });
+
+describe("what a repo provides, on its rack unit (issue #89)", () => {
+  it("lists parts with their descriptions, seams owned and used, and journeys", () => {
+    const provides = {
+      parts: [{ id: "auth-api", kind: "context" as const, repo: "acme/auth", description: "Issues and checks tokens" }],
+      owns: [{ id: "shop-auth", from: "shop-web", to: "auth-api", owner: "auth-api" }],
+      uses: [{ id: "auth-db", from: "auth-api", to: "db", owner: "db" }],
+      scenarios: [{ id: "buy", name: "Buy something", steps: [] }],
+    };
+    render(<RackUnit repo={repo("acme/auth", {})} max={rackScale([])} provides={provides} />);
+    const unit = screen.getByTestId("provides-acme/auth");
+    expect(unit).toHaveTextContent("1 part · owns 1 seam · uses 1 · in 1 journey");
+    expect(unit).toHaveTextContent("auth-api — Issues and checks tokens");
+    expect(unit).toHaveTextContent("Owns shop-auth");
+    expect(unit).toHaveTextContent("Uses auth-db");
+    expect(unit).toHaveTextContent("Buy something");
+  });
+
+  it("a repo outside the map says so instead of an empty list", () => {
+    render(<RackUnit repo={repo("acme/loose", { in_map: false })} max={rackScale([])} provides={{ parts: [], owns: [], uses: [], scenarios: [] }} />);
+    expect(screen.getByTestId("provides-acme/loose")).toHaveTextContent("No part of the map lives in this repo.");
+  });
+});
