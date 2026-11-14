@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { companion, issue, overview } from "../../../test/fixtures.ts";
 import { IssuePanel, ownConnectedCompanions } from "./IssuePanel.tsx";
@@ -198,6 +198,24 @@ describe("the draft of an issue (ADR 0053)", () => {
     const without = issue(13, "web");
     renderPanel(overview({ issues: [without] }), without);
     expect(screen.queryByTestId("draft")).toBeNull();
+    fetch.mockRestore();
+  });
+});
+
+describe("the plan's room on the issue (ADR 0057)", () => {
+  it("shows the room for an issue with a draft, and none for an issue with neither draft nor plan", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ repo: "m0x6A/rubato", number: 30, branch: "issue/30-x", messages: [] }), { status: 200 }));
+    const draft = { draft_id: "d0000000-0000-4000-8000-000000000030", branch: "issue/30-x", owner: "alice", rev: 1, at: new Date().toISOString(), plan_sha: "p", bundle_hash: "h", live: false };
+    const withDraft = issue(30, "web", { draft });
+    const { unmount } = render(<IssuePanel overview={overview({ issues: [withDraft] })} me={me} selected={withDraft} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(screen.getByTestId("room")).toHaveTextContent("issue/30-x");
+    await waitFor(() => expect(fetch.mock.calls.some((c) => String(c[0]).startsWith("/api/room?"))).toBe(true));
+    unmount();
+    fetch.mockClear();
+    const neither = issue(31, "web");
+    renderPanel(overview({ issues: [neither] }), neither);
+    expect(screen.queryByTestId("room")).toBeNull();
+    expect(fetch.mock.calls.some((c) => String(c[0]).startsWith("/api/room"))).toBe(false);
     fetch.mockRestore();
   });
 });

@@ -4,6 +4,7 @@ import { SessionChat } from "../chat/index.ts";
 import { PinMenu } from "../pins/index.ts";
 import { DraftSection, WhereItFits } from "../plans/index.ts";
 import { QueueMenu } from "../queue/index.ts";
+import { RoomSection, roomLimit } from "../room/index.ts";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
 import { setIssueDrag } from "../../shared/dnd.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
@@ -27,6 +28,8 @@ interface Props {
   onQueue?: ((issue: IssueRef, companionId: string) => void) | undefined;
   /** Says what *Accept plan* did. */
   onNotice?: ((text: string) => void) | undefined;
+  /** Show a seam on the map, from a room's seam notice. */
+  onShowSeam?: ((seam: string) => void) | undefined;
 }
 
 /** Companions the current user may queue issues on: their own, paired, not revoked (ADR 0020). */
@@ -47,7 +50,7 @@ export function ownConnectedCompanions(overview: Overview, me: Me | null) {
 
 const ORDER = ["blocked", "unknown", "building", "designing", "designed", "started", "in_review", "planned", "done"] as const;
 
-export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice }: Props) {
+export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice, onShowSeam }: Props) {
   const own = ownConnectedCompanions(overview, me);
   // The name of this workspace, when there are several: what "counts in" is told apart from.
   const hereName = (overview.workspaces ?? []).find((w) => w.id === overview.workspace)?.name;
@@ -155,6 +158,15 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             )}
           </>
         )}
+        {/* The plan's room: the draft's branch, else the plan's; nothing without either (ADR 0057). */}
+        <RoomSection
+          issue={selected}
+          me={me}
+          maxChars={roomLimit(overview)}
+          onOpenIssue={onSelect}
+          canOpen={(i) => overview.issues.some((x) => x.issue.repo === i.repo && x.issue.number === i.number)}
+          onShowSeam={onShowSeam}
+        />
         {selected.pull_request && (
           <p>
             PR{" "}
