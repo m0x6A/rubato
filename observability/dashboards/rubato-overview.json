@@ -1467,7 +1467,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Map versus territory (AGENTS.md): declared seams with no calls while both parts show traffic (finding SeamQuiet), calls between parts no seam joins (UndeclaredTraffic), and services in the report that match no map part by id. Only meaningful while the report is fresh: a stale or failing source yields 0 quiet seams. Unmapped services above 0 with nothing lit means the service names do not equal the part ids (plan #104, Q2 (a)). Findings are shown, never acted on.",
+      "description": "Map versus territory (AGENTS.md): declared seams with no calls while both parts show traffic (finding SeamQuiet), calls between parts no seam joins (UndeclaredTraffic), ghost parts: services that emit a namespace but no part names (ObservedOnlyPart, ADR 0059), discrepancies a person dismissed for the workspace (ADR 0060), and unidentified ends: no namespace and no part declaring that name. Only meaningful while the report is fresh: a stale or failing source yields 0 of each. Ghosts above 0 with nothing lit usually means the parts do not declare `service` yet; unidentified ends above 0 mean a caller's peer.service names something no part declares. Dismissals are logged with who: 'traffic dismissal added' / 'removed'.",
       "targets": [
         {
           "refId": "A",
@@ -1482,7 +1482,17 @@
         {
           "refId": "C",
           "expr": "max(rubato_traffic_unmapped_services)",
-          "legendFormat": "unmapped services"
+          "legendFormat": "unidentified ends"
+        },
+        {
+          "refId": "D",
+          "expr": "max(rubato_traffic_ghost_parts)",
+          "legendFormat": "ghost parts"
+        },
+        {
+          "refId": "E",
+          "expr": "max(rubato_traffic_dismissals)",
+          "legendFormat": "dismissed"
         }
       ],
       "fieldConfig": {

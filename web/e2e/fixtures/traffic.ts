@@ -43,3 +43,30 @@ export async function routeOverview(page: Page, edit: (o: Overview) => Overview)
 
 /** Directions with calls in `freshTraffic`: web-server both ways, server-github, the territory edge. */
 export const FRESH_DIRECTIONS = 4;
+
+/**
+ * Issue #140: the fresh report with two services the map does not name, their calls, and one
+ * dismissal. Ghosts sit right of the declared map; the Discrepancies list offers the actions.
+ */
+export function ghostTraffic(o: Overview): Overview {
+  const base = freshTraffic(o);
+  const checkout = { namespace: "shop", name: "checkout" };
+  const payments = { namespace: "shop", name: "payments" };
+  return {
+    ...base,
+    traffic: {
+      ...base.traffic,
+      state: "fresh",
+      ghosts: [
+        { service: checkout, calls_in: 0, calls_out: 480, errors: 3 },
+        { service: payments, calls_in: 60, calls_out: 0, errors: 0 },
+      ],
+      ghost_edges: [
+        { from: { kind: "ghost", service: checkout }, to: { kind: "part", id: "rubato-server" }, calls: 420, errors: 3 },
+        { from: { kind: "ghost", service: checkout }, to: { kind: "ghost", service: payments }, calls: 60, errors: 0 },
+      ],
+      dismissed: [{ id: 1, target: { kind: "quiet_seam", seam: "server-plan-file" }, author: "m0x6A", at: new Date(Date.now() - 3_600_000).toISOString() }],
+    },
+    findings: [...base.findings, { kind: "observed_only_part", service: checkout, calls: 480 }, { kind: "observed_only_part", service: payments, calls: 60 }],
+  };
+}
