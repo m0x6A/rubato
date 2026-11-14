@@ -3,6 +3,7 @@
  * spend gauge and its line over time (issue #103) on the selected issue, and the team's issues as one segmented track in the topbar.
  * The text beside them still says the state; these lead, they do not replace it.
  */
+import type { CSSProperties } from "react";
 import type { IssueSummary, ProgressState, SpendPoint } from "../../protocol.ts";
 import { STATE_LABEL } from "../../shared/format.ts";
 
@@ -41,19 +42,30 @@ export function ProgressRing({ state }: { state: ProgressState }) {
   );
 }
 
-/** Seven stations, the current one lit; blocked is a notch on the rail, unknown lights nothing. */
-export function StageRail({ state }: { state: ProgressState }) {
-  const at = station(state);
-  const label = at >= 0 ? `Progress: ${STATE_LABEL[state]}, station ${at + 1} of ${RAIL.length}` : `Progress: ${STATE_LABEL[state]}`;
+/**
+ * Seven stations, the current one lit; unknown lights nothing. Blocked is a notch: over the
+ * station it left from when `blockedFrom` says (ADR 0043), the stations before it filled and that
+ * one red and named; without it, off the rail as before.
+ */
+export function StageRail({ state, blockedFrom }: { state: ProgressState; blockedFrom?: ProgressState | null | undefined }) {
+  const left = state === "blocked" && blockedFrom ? station(blockedFrom) : -1;
+  const at = left >= 0 ? left : station(state);
+  const label =
+    left >= 0
+      ? `Progress: ${STATE_LABEL[state]}, left from ${STATE_LABEL[blockedFrom as ProgressState]}, station ${left + 1} of ${RAIL.length}`
+      : at >= 0
+        ? `Progress: ${STATE_LABEL[state]}, station ${at + 1} of ${RAIL.length}`
+        : `Progress: ${STATE_LABEL[state]}`;
+  const mark = left >= 0 ? "left" : "now";
   return (
     <div className={`stage-rail ${state}`} data-testid="stage-rail" role="img" aria-label={label}>
       {RAIL.map((r, i) => (
-        <span key={r.state} className={["station", i < at ? "past" : i === at ? "now" : ""].filter(Boolean).join(" ")}>
+        <span key={r.state} className={["station", i < at ? "past" : i === at ? mark : ""].filter(Boolean).join(" ")}>
           <i aria-hidden="true" />
           <span className="label">{r.label}</span>
         </span>
       ))}
-      {state === "blocked" && <span className="notch" aria-hidden="true" />}
+      {state === "blocked" && <span className="notch" aria-hidden="true" style={left >= 0 ? ({ "--at": left } as CSSProperties) : undefined} />}
     </div>
   );
 }

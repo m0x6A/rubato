@@ -12,6 +12,7 @@ impl Registry {
         if let Some(e) = self.find_by_session(&ev.session_id) {
             if let Some(s) = implied {
                 e.status = s;
+                e.blocked_by = ev.implied_block_cause();
             }
             e.source = StateSource::Hook;
             e.last_seen = now;
@@ -48,6 +49,7 @@ impl Registry {
             head: None,
             head_mtime: None,
             branch_drift: None,
+            blocked_by: ev.implied_block_cause(),
         };
         self.entries.push(entry);
         id.issue
@@ -92,5 +94,38 @@ mod tests {
         r.apply_hook(&ev);
         assert_eq!(r.by_session("s1").unwrap().status, SessionStatus::Blocked);
         assert_eq!(ev.hook_event_name, HookEventKind::Notification);
+    }
+
+    /// Every status-implying hook sets or clears the cause; a typeless `Notification` leaves
+    /// status and cause alone (ADR 0043).
+    #[test]
+    fn hook_sets_and_clears_the_block_cause() {
+        use rubato_protocol::BlockCause;
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        r.apply_hook(&hook("s1", "StopFailure", "/nowhere", now()));
+        let e = r.by_session("s1").unwrap();
+        assert_eq!(
+            (e.status, e.blocked_by),
+            (SessionStatus::Blocked, Some(BlockCause::StopFailure))
+        );
+        r.apply_hook(&hook("s1", "Notification", "/nowhere", now()));
+        let e = r.by_session("s1").unwrap();
+        assert_eq!(
+            (e.status, e.blocked_by),
+            (SessionStatus::Blocked, Some(BlockCause::StopFailure)),
+            "a typeless Notification implies nothing"
+        );
+        let mut idle = hook("s1", "Notification", "/nowhere", now());
+        idle.notification_type = Some("idle_prompt".into());
+        r.apply_hook(&idle);
+        assert_eq!(
+            r.by_session("s1").unwrap().blocked_by,
+            Some(BlockCause::IdlePrompt)
+        );
+        assert_eq!(r.snapshot()[0].blocked_by, Some(BlockCause::IdlePrompt));
+        r.apply_hook(&hook("s1", "UserPromptSubmit", "/nowhere", now()));
+        let e = r.by_session("s1").unwrap();
+        assert_eq!((e.status, e.blocked_by), (SessionStatus::Working, None));
+        assert_eq!(r.snapshot()[0].blocked_by, None);
     }
 }

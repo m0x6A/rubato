@@ -43,13 +43,26 @@ describe("the stage rail", () => {
     expect(rail).toHaveAttribute("aria-label", "Progress: Building, station 5 of 7");
   });
 
-  it("puts blocked as a notch, not a station, and unknown lights nothing", () => {
+  it("puts the notch at the station a blocked issue left from (#106)", () => {
+    render(<StageRail state="blocked" blockedFrom="building" />);
+    const rail = screen.getByTestId("stage-rail");
+    const stations = [...rail.querySelectorAll(".station")];
+    expect(stations.map((s) => s.className.replace("station", "").trim())).toEqual(["past", "past", "past", "past", "left", "", ""]);
+    expect(rail.querySelector<HTMLElement>(".notch")!.style.getPropertyValue("--at")).toBe("4");
+    expect(rail).toHaveAttribute("aria-label", "Progress: Blocked, left from Building, station 5 of 7");
+  });
+
+  it("keeps the notch off the rail when nothing says where it left from, and unknown lights nothing", () => {
     const { unmount } = render(<StageRail state="blocked" />);
-    expect(screen.getByTestId("stage-rail").querySelectorAll(".station.now")).toHaveLength(0);
-    expect(screen.getByTestId("stage-rail").querySelector(".notch")).not.toBeNull();
+    const rail = screen.getByTestId("stage-rail");
+    expect(rail.querySelectorAll(".station.now, .station.past, .station.left")).toHaveLength(0);
+    const notch = rail.querySelector<HTMLElement>(".notch");
+    expect(notch).not.toBeNull();
+    expect(notch!.style.getPropertyValue("--at")).toBe("");
+    expect(rail).toHaveAttribute("aria-label", "Progress: Blocked");
     unmount();
-    render(<StageRail state="unknown" />);
-    expect(screen.getByTestId("stage-rail").querySelectorAll(".station.now, .station.past")).toHaveLength(0);
+    render(<StageRail state="unknown" blockedFrom="building" />);
+    expect(screen.getByTestId("stage-rail").querySelectorAll(".station.now, .station.past, .station.left")).toHaveLength(0);
   });
 });
 

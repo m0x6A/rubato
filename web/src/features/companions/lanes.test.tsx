@@ -62,6 +62,18 @@ describe("companion lanes (S13)", () => {
     expect(row).toHaveTextContent("$1.50");
   });
 
+  it("the freshness bar drains over the server's N, 600 s when the overview has none (#105)", () => {
+    const off = companion("m0x6A", false, { companion_id: MINE_OFF, hostname: "my-desktop", last_seen: minutesAgo(6) });
+    const bar = () => screen.getByTestId(`fresh-${MINE_OFF}`);
+    const { unmount } = render(<Lanes overview={overview({ companions: [off], companion_silent_secs: 300 })} me={me} onQueue={vi.fn()} onReorder={vi.fn()} onUnqueue={vi.fn()} onStart={vi.fn()} onRevoke={vi.fn()} />);
+    expect(bar()).toHaveAttribute("data-share", "0.00");
+    expect(bar().querySelector("b")).toHaveClass("stale");
+    unmount();
+    show(overview({ companions: [off] }));
+    expect(bar()).toHaveAttribute("data-share", "0.40");
+    expect(bar().querySelector("b")).toHaveClass("fading");
+  });
+
   it("sessions without an issue are listed", () => {
     show(overview({ companions: [mine, alices], unpinned_sessions: [session(MINE, { branch: "scratch", status: "idle" })] }));
     const row = within(lane(MINE)).getByTestId("lane-session");

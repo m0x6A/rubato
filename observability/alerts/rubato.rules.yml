@@ -4,15 +4,17 @@
 groups:
   - name: rubato
     rules:
+      # N is the server's configured threshold (#105), exported as rubato.companion.silent_secs;
+      # without that series the rule falls back to the AGENTS.md default of 600 s, never silent.
       - alert: CompanionSilent
-        expr: time() - max by (rubato_companion_id, rubato_user) (rubato_companion_heartbeat) > 600
+        expr: time() - max by (rubato_companion_id, rubato_user) (rubato_companion_heartbeat) > on() group_left() (max(rubato_companion_silent_secs) or vector(600))
         for: 0m
         labels:
           severity: page
           seam: companion-server
           owner: rubato-server
         annotations:
-          summary: "Companion {{ $labels.rubato_companion_id }} ({{ $labels.rubato_user }}) has not reported for over 10 minutes"
+          summary: "Companion {{ $labels.rubato_companion_id }} ({{ $labels.rubato_user }}) has not reported for {{ $value | humanizeDuration }}"
           panel: Companions
 
       - alert: SessionWorkingNoHooks

@@ -472,8 +472,12 @@ button.link:hover { text-decoration: underline; }
 /* the panel is too narrow for seven labels: only the current station names itself (the rail says the rest) */
 .stage-rail .station:not(.now) .label { visibility: hidden; }
 .stage-rail .station.now { overflow: visible; }
+/* #106: the station a blocked issue left from: a red dot, its label named in small red text (after the rule above, which it overrides) */
+.stage-rail .station.left i { background: var(--bad); box-shadow: 0 0 10px var(--bad); }
+.stage-rail .station.left .label { color: var(--bad-ink); font-weight: 600; visibility: visible; }
+.stage-rail .station.left { overflow: visible; }
 .stage-rail.unknown .station i { background: transparent; border: 1px dashed var(--quiet); }
-.stage-rail .notch { position: absolute; left: calc(100% / 7 * 1.5); top: -3px; width: 4px; height: 12px; border-radius: 2px; background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+.stage-rail .notch { position: absolute; left: calc(100% / 7 * (var(--at, 1) + 0.5)); top: -3px; width: 4px; height: 12px; border-radius: 2px; background: var(--bad); box-shadow: 0 0 8px var(--bad); }
 :root[data-motion="full"] .stage-rail .station i { transition: background-color var(--dur-fill) var(--ease-out), box-shadow var(--dur-fill) var(--ease-out); }
 .gauge { position: relative; width: 132px; height: 80px; flex: none; }
 .gauge .gauge-track { fill: none; stroke: var(--conduit); stroke-width: 9; stroke-linecap: round; }

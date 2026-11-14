@@ -77,7 +77,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
         </h2>
         {selected.title && <p>{selected.title}</p>}
         <div className="instruments">
-          <StageRail state={selected.progress.state} />
+          <StageRail state={selected.progress.state} blockedFrom={selected.progress.blocked_from} />
           <SpendGauge spend={selected.spend_usd ?? 0} cap={selected.plan?.spend_cap_usd} />
           <SpendSparkline points={selected.spend_history ?? []} />
         </div>
