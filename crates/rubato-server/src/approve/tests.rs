@@ -589,6 +589,7 @@ fn the_branch_of_the_newest_rubato_approval_is_preferred() {
                 source: ApprovalSource::Comment,
                 comment_id: Some(id),
                 approval_id: None,
+                bundle_hash: None,
                 author: "teammate".into(),
                 sha: Some("f3c5e84".into()),
                 branch: Some(branch.into()),
@@ -648,4 +649,70 @@ fn the_branch_of_the_newest_rubato_approval_is_preferred() {
         Some("issue/71-c"),
         "the newest Rubato approval"
     );
+}
+
+/// A version is the plan and its whole bundle: a revision that changes only the design note is a
+/// new version. Its approval is a new row (not the first one with the old bundle, which the
+/// handoff would refuse as bundle_changed), and until then the first approval reads as for an
+/// earlier version, so the new one can be approved at all.
+#[tokio::test]
+async fn a_revision_that_changes_only_the_design_note_is_a_new_version_to_approve() {
+    let h = harness(cut()).await;
+    let text = pinned("one");
+    mirror(&h, &text, &[]).await;
+    let (_, first) = press(&h, "teammate", &text).await.unwrap();
+    // The same plan, another design note.
+    let mut b = bundle(&text, &[]);
+    for f in &mut b.files {
+        if f.path == DESIGN {
+            f.text = "design, revised\n".into();
+        }
+    }
+    let pairs: Vec<(String, String)> = b
+        .files
+        .iter()
+        .map(|f| (f.path.clone(), f.text.clone()))
+        .collect();
+    b.bundle_hash = bundle_hash(PLAN, &pairs);
+    plan_drafts::on_draft(&h.app, &b, OWNER).await;
+    let (_, rev) = plan_drafts::on_branch(&h.app, &issue(), BRANCH)
+        .await
+        .unwrap()
+        .unwrap();
+    let rev = rev.unwrap();
+    assert_eq!(rev.info.rev, 2, "a new revision");
+    assert_eq!(rev.info.plan_sha, first.plan_sha, "with the same plan");
+
+    // Before it is approved, the first approval is for an earlier version.
+    let list = approvals(&h.app).await.unwrap();
+    let (rec, target) = list
+        .counted
+        .iter()
+        .find(|(a, _)| a.approval_id == Some(first.approval_id))
+        .unwrap();
+    assert_eq!(rec.bundle_hash.as_deref(), Some(first.bundle_hash.as_str()));
+    assert_eq!(
+        target.as_deref(),
+        Some(b.bundle_hash.as_str()),
+        "compared with the new bundle"
+    );
+    assert_ne!(
+        target.as_deref(),
+        rec.sha.as_deref(),
+        "so it is not current"
+    );
+
+    let (status, second) = press(&h, "teammate", &text).await.unwrap();
+    assert_eq!((status, second.created), (StatusCode::CREATED, true));
+    assert_ne!(second.approval_id, first.approval_id);
+    assert_eq!(second.bundle_hash, b.bundle_hash);
+    assert_eq!(rows(&h).await, 2);
+    // The new approval is current: its target is the plan's hash again.
+    let list = approvals(&h.app).await.unwrap();
+    let (rec, target) = list
+        .counted
+        .iter()
+        .find(|(a, _)| a.approval_id == Some(second.approval_id))
+        .unwrap();
+    assert_eq!(target.as_deref(), rec.sha.as_deref());
 }
