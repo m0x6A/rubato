@@ -175,6 +175,13 @@
             "null"
           ]
         },
+        "bundle_hash": {
+          "description": "The bundle an approval given in Rubato covers (the plan, its design note, its ADRs).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "comment_id": {
           "description": "The comment's id, for a comment approval.",
           "type": [

@@ -43,20 +43,23 @@ fn row(r: &SqliteRow) -> Result<RubatoApproval> {
     })
 }
 
-/// The approval of this version, if one is recorded.
+/// The approval of this version, if one is recorded. A version is the plan and its whole bundle:
+/// a revision that changes only the design note or an ADR is a new version to approve.
 pub async fn find(
     db: &SqlitePool,
     issue: &IssueRef,
     branch: &str,
     plan_sha: &str,
+    bundle_hash: &str,
 ) -> Result<Option<RubatoApproval>> {
     let r = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM rubato_approvals WHERE repo = ? AND number = ? AND branch = ? AND plan_sha = ?"
+        "SELECT {COLUMNS} FROM rubato_approvals WHERE repo = ? AND number = ? AND branch = ? AND plan_sha = ? AND bundle_hash = ?"
     ))
     .bind(&issue.repo)
     .bind(issue.number as i64)
     .bind(branch)
     .bind(plan_sha)
+    .bind(bundle_hash)
     .fetch_optional(db)
     .await?;
     r.as_ref().map(row).transpose()

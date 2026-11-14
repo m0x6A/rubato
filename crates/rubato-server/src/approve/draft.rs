@@ -143,9 +143,15 @@ pub async fn approve_draft(
         ));
     }
     // This version approved already: the first approval stands, whatever the session does now.
-    if let Some(existing) = records::find(&app.db, &issue, &draft.branch, &rev.info.plan_sha)
-        .await
-        .map_err(internal)?
+    if let Some(existing) = records::find(
+        &app.db,
+        &issue,
+        &draft.branch,
+        &rev.info.plan_sha,
+        &rev.info.bundle_hash,
+    )
+    .await
+    .map_err(internal)?
     {
         return Ok(answer(&existing, false));
     }
@@ -215,10 +221,16 @@ pub async fn approve_draft(
     let created = records::insert(&app.db, &approval)
         .await
         .map_err(internal)?;
-    let stored = records::find(&app.db, &issue, &draft.branch, &rev.info.plan_sha)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| internal(anyhow::anyhow!("approval row vanished")))?;
+    let stored = records::find(
+        &app.db,
+        &issue,
+        &draft.branch,
+        &rev.info.plan_sha,
+        &rev.info.bundle_hash,
+    )
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| internal(anyhow::anyhow!("approval row vanished")))?;
     if created {
         tracing::info!(
             rubato.issue = %issue,

@@ -376,6 +376,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
                 source: ApprovalSource::Comment,
                 comment_id: Some(c.id),
                 approval_id: None,
+                bundle_hash: None,
                 author: c.author.clone(),
                 sha: a.sha,
                 branch: a.branch,
