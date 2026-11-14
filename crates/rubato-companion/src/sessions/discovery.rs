@@ -93,6 +93,7 @@ impl Registry {
                 head: None,
                 head_mtime: None,
                 branch_drift: None,
+                blocked_by: None,
             });
         }
         let live: std::collections::HashSet<&str> =
@@ -128,6 +129,10 @@ impl Registry {
                     || e.source == StateSource::Hook && e.last_seen < seen
                 {
                     if trusted {
+                        if e.status != status {
+                            // tmux-ide does not say which hook blocked a session.
+                            e.blocked_by = None;
+                        }
                         e.status = status;
                         e.last_seen = seen.max(e.last_seen);
                         e.source = if e.source == StateSource::Hook {
@@ -172,6 +177,7 @@ impl Registry {
                 head: None,
                 head_mtime: None,
                 branch_drift: None,
+                blocked_by: None,
             });
         }
     }

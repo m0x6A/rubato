@@ -38,6 +38,7 @@ pub async fn on_event(
         span::HOOK_FORWARD,
         rubato.session_id = %ev.session_id,
         rubato.hook_event = ?ev.hook_event_name,
+        rubato.session.blocked_by = ev.implied_block_cause().map(|c| c.name()),
     );
     forward(ev, registry, out, metrics, companion_id)
         .instrument(span)
@@ -51,15 +52,17 @@ async fn forward(
     metrics: &Metrics,
     companion_id: Uuid,
 ) -> HookOutcome {
-    metrics.hook_forwarded.add(
-        1,
-        &[
-            // No session id: one series per session would grow for the life of the process
-            // (#43). The `rubato.hook.forward` span around this carries it.
-            KeyValue::new(attr::HOOK_EVENT, format!("{:?}", ev.hook_event_name)),
-            KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
-        ],
-    );
+    let mut attrs = vec![
+        // No session id: one series per session would grow for the life of the process
+        // (#43). The `rubato.hook.forward` span around this carries it.
+        KeyValue::new(attr::HOOK_EVENT, format!("{:?}", ev.hook_event_name)),
+        KeyValue::new(attr::COMPANION_ID, companion_id.to_string()),
+    ];
+    // Three values at most: the hook that blocked the session (ADR 0043).
+    if let Some(c) = ev.implied_block_cause() {
+        attrs.push(KeyValue::new(attr::SESSION_BLOCKED_BY, c.name()));
+    }
+    metrics.hook_forwarded.add(1, &attrs);
     let (issue, transcript, cap, snapshot) = {
         let mut reg = registry.lock().await;
         let issue = reg.apply_hook(ev);
@@ -152,6 +155,30 @@ mod tests {
             .find(|p| p.attrs.contains_key(attr::HOOK_EVENT))
             .unwrap();
         assert_eq!(hook.value, 2);
+
+        // A blocking hook carries its cause on the counter (ADR 0043); others do not.
+        assert!(
+            !hook.attrs.contains_key(attr::SESSION_BLOCKED_BY),
+            "{hook:?}"
+        );
+        let blocked = HookEvent::from_payload(
+            serde_json::json!({"session_id": "s1", "hook_event_name": "Notification",
+                "notification_type": "permission_prompt", "cwd": "/x"}),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        on_event(&blocked, &registry, &out, &metrics, id).await;
+        let points = reader.points(metric::HOOK_FORWARDED);
+        let cause = points
+            .iter()
+            .find(|p| p.attrs.contains_key(attr::SESSION_BLOCKED_BY))
+            .expect("a series with the cause");
+        assert_eq!(cause.attrs[attr::SESSION_BLOCKED_BY], "permission_prompt");
+        assert_eq!(cause.attrs[attr::HOOK_EVENT], "Notification");
+        // Skip the first two hooks' messages; the order check below reads the third.
+        for _ in 0..4 {
+            let _ = sent.recv().await;
+        }
 
         // The arm's order is unchanged: `Hook`, then `Sessions`.
         assert!(matches!(sent.recv().await, Some(CompanionMessage::Hook(_))));
