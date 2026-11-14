@@ -91,9 +91,9 @@ capability.
 Each deployable's block appears here with the PR that slices it:
 
 <!-- slices: rubato-server -->
-`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, 404 for
-unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces, telemetry, db connection, `AppState` with a map per workspace, signer, `http::internal`, GitHub port); slices:
+`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
+`/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
+(config, workspaces, telemetry, db connection, `AppState` with a map per workspace, signer, `http::internal` and `http::Ws`, GitHub port); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -102,7 +102,7 @@ companion_link  companion websocket, envelopes, acks            companion_events
 pins            pin an issue to a node or seam, Map: lines      pins, map_line_pins
 launch          start a session through your own companion      launches, cap_hits
 layout          where each part sits on the shared map          map_layout
-map             load, validate, cache and serve the map         map_cache
+map             load and serve each workspace's map, the list    map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
 new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans

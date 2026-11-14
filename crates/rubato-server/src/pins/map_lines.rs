@@ -77,13 +77,14 @@ pub async fn apply_map_lines(app: &App, map: &SystemMap, version: &str, lines: &
 /// as applied, so a person's later unpin sticks. Running it twice changes nothing.
 pub async fn pin_created(
     app: &App,
+    ws: &str,
     issue: &IssueRef,
     target: &MapRef,
     by: &str,
 ) -> anyhow::Result<()> {
     store::add_pin(
         &app.db,
-        rubato_protocol::DEFAULT_WORKSPACE,
+        ws,
         &IssuePin {
             issue: issue.clone(),
             target: target.clone(),

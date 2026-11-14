@@ -25,42 +25,55 @@ use rubato_protocol::pins::routes as pin_routes;
 use rubato_protocol::progress::routes as overview_routes;
 use rubato_protocol::queue::routes as queue_routes;
 use rubato_protocol::web_link::routes as web_routes;
+use rubato_protocol::workspace::routes as workspace_routes;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 /// The body of the 404 answer for an unknown API path.
 pub const UNKNOWN_API_PATH: &str = r#"{"error":"unknown api path"}"#;
 
+/// The map-scoped routes (ADR 0049), at the paths `at` gives: as they are for `default`, and
+/// under `/api/w/{ws}` for any configured workspace.
+fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
+    Router::new()
+        .route(&at(overview_routes::OVERVIEW), get(overview::overview))
+        .route(&at(map_routes::MAP), get(map::map))
+        .route(&at(map_routes::MAP_RELOAD), post(map::map_reload))
+        .route(&at(draft_routes::DRAFT_OPS), post(map_draft::add_op))
+        .route(
+            &at(&format!("{}/{{seq}}", draft_routes::DRAFT_OPS)),
+            delete(map_draft::remove_op),
+        )
+        .route(&at(draft_routes::DRAFT_DISCARD), post(map_draft::discard))
+        .route(&at(draft_routes::DRAFT_RESTORE), post(map_draft::restore))
+        .route(&at(draft_routes::DRAFT_YAML), get(map_draft::proposed_yaml))
+        .route(&at(draft_routes::DRAFT_PROPOSE), post(map_draft::propose))
+        .route(&at(draft_routes::DRAFT_WITHDRAW), post(map_draft::withdraw))
+        .route(
+            &at(pin_routes::PINS),
+            post(pins::add_pin).delete(pins::remove_pin),
+        )
+        .route(&at(launch_routes::LAUNCH), post(launch::launch))
+        .route(&at(issue_routes::ISSUES), post(new_issue::create))
+        .route(&at(approve_routes::PLAN_APPROVE), post(approve::approve))
+        .route(
+            &at(layout_routes::LAYOUT),
+            put(layout::put_layout).delete(layout::clear_layout),
+        )
+}
+
 pub fn router(app: App) -> Router {
     let dist = app.config.web_dist.clone();
     let index = dist.join("index.html");
+    let scoped = map_scoped(|p| workspace_routes::scoped("{ws}", p)).route_layer(
+        axum::middleware::from_fn_with_state(app.clone(), crate::kernel::http::check_workspace),
+    );
     let api = Router::new()
         .route("/api/health", get(health))
         .route(auth_routes::ME, get(auth::me))
-        .route(overview_routes::OVERVIEW, get(overview::overview))
-        .route(map_routes::MAP, get(map::map))
-        .route(map_routes::MAP_RELOAD, post(map::map_reload))
-        .route(draft_routes::DRAFT_OPS, post(map_draft::add_op))
-        .route(
-            &format!("{}/{{seq}}", draft_routes::DRAFT_OPS),
-            delete(map_draft::remove_op),
-        )
-        .route(draft_routes::DRAFT_DISCARD, post(map_draft::discard))
-        .route(draft_routes::DRAFT_RESTORE, post(map_draft::restore))
-        .route(draft_routes::DRAFT_YAML, get(map_draft::proposed_yaml))
-        .route(draft_routes::DRAFT_PROPOSE, post(map_draft::propose))
-        .route(draft_routes::DRAFT_WITHDRAW, post(map_draft::withdraw))
-        .route(
-            pin_routes::PINS,
-            post(pins::add_pin).delete(pins::remove_pin),
-        )
-        .route(launch_routes::LAUNCH, post(launch::launch))
-        .route(issue_routes::ISSUES, post(new_issue::create))
-        .route(approve_routes::PLAN_APPROVE, post(approve::approve))
-        .route(
-            layout_routes::LAYOUT,
-            put(layout::put_layout).delete(layout::clear_layout),
-        )
+        .route(workspace_routes::WORKSPACES, get(map::workspaces))
+        .merge(map_scoped(str::to_string))
+        .merge(scoped)
         .route(
             queue_routes::QUEUE,
             post(queue::add).put(queue::reorder).delete(queue::remove),
@@ -129,7 +142,7 @@ mod tests {
     /// line above goes missing, because the path then reaches the 404 fallback.
     fn known_routes() -> Vec<(Method, String)> {
         let revoke = format!("{}/{}", pr::PAIRINGS, uuid::Uuid::new_v4());
-        vec![
+        let mut routes = vec![
             (Method::GET, "/api/health".into()),
             (Method::GET, auth_routes::ME.into()),
             (Method::GET, overview_routes::OVERVIEW.into()),
@@ -145,6 +158,8 @@ mod tests {
             (Method::POST, pin_routes::PINS.into()),
             (Method::DELETE, pin_routes::PINS.into()),
             (Method::POST, launch_routes::LAUNCH.into()),
+            (Method::POST, issue_routes::ISSUES.into()),
+            (Method::POST, approve_routes::PLAN_APPROVE.into()),
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
             (Method::POST, queue_routes::QUEUE.into()),
@@ -160,8 +175,29 @@ mod tests {
             (Method::GET, auth_routes::LOGIN.into()),
             (Method::GET, auth_routes::CALLBACK.into()),
             (Method::POST, auth_routes::LOGOUT.into()),
-        ]
+            (Method::GET, workspace_routes::WORKSPACES.into()),
+        ];
+        // Every map-scoped route again under `/api/w/{ws}` for a configured workspace (ADR 0049).
+        let scoped: Vec<(Method, String)> = routes
+            .iter()
+            .filter(|(_, p)| MAP_SCOPED.iter().any(|m| p.starts_with(m)))
+            .map(|(m, p)| (m.clone(), workspace_routes::scoped("default", p)))
+            .collect();
+        assert!(scoped.len() >= 17, "{scoped:?}");
+        routes.extend(scoped);
+        routes
     }
+
+    /// The paths served per workspace: map-scoped, never team-scoped.
+    const MAP_SCOPED: [&str; 7] = [
+        "/api/overview",
+        "/api/map",
+        "/api/pins",
+        "/api/launch",
+        "/api/layout",
+        "/api/issues",
+        "/api/plans/approve",
+    ];
 
     /// Refusals are counted by route and reason, and logged with who (design O3, O12).
     #[tokio::test(flavor = "current_thread")]
@@ -447,6 +483,41 @@ mod tests {
             );
         }
         println!("probed {} routes", routes.len());
+    }
+
+    #[tokio::test]
+    async fn team_routes_are_not_scoped_and_an_unknown_workspace_is_404() {
+        let (url, _tmp) = serve(None).await;
+        let http = reqwest::Client::new();
+        // Team routes exist only unprefixed: under a workspace they are unknown paths.
+        for path in [
+            "/api/w/default/queue",
+            "/api/w/default/pair/start",
+            "/api/w/default/me",
+            "/api/w/default/workspaces",
+        ] {
+            let r = http.post(format!("{url}{path}")).send().await.unwrap();
+            assert_eq!(r.status(), 404, "{path}");
+            assert_eq!(r.text().await.unwrap(), UNKNOWN_API_PATH, "{path}");
+        }
+        // A workspace this server does not hold: 404, never a fallback to `default`.
+        for (method, path) in [
+            (Method::GET, "/api/w/nope/overview"),
+            (Method::PUT, "/api/w/nope/layout"),
+            (Method::POST, "/api/w/Default/pins"),
+        ] {
+            let r = http
+                .request(method.clone(), format!("{url}{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 404, "{method} {path}");
+            assert_eq!(
+                r.text().await.unwrap(),
+                crate::kernel::http::UNKNOWN_WORKSPACE,
+                "{method} {path}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -65,6 +65,7 @@ pub(super) fn count(app: &App, outcome: &'static str) {
 
 pub async fn create(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
     Json(req): Json<NewIssueRequest>,
 ) -> Result<Answer, Refused> {
@@ -81,7 +82,7 @@ pub async fn create(
         ));
     }
     let map = app
-        .default_map()
+        .map_of(ws.as_str())
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".to_owned()))?;
     if let Err((_, msg)) = pins::check_target(&map.map, &map.version, &req.target) {
@@ -116,7 +117,7 @@ pub async fn create(
     // At most once per request id: a second submit answers with what the first got.
     if !store::begin(
         &app.db,
-        rubato_protocol::DEFAULT_WORKSPACE,
+        ws.as_str(),
         &req.request_id,
         &req.repo,
         &req.target,
@@ -145,7 +146,7 @@ pub async fn create(
             store::created(&app.db, &req.request_id, number, &url)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?;
-            pins::pin_created(&app, &issue, &req.target, &user)
+            pins::pin_created(&app, ws.as_str(), &issue, &req.target, &user)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?;
             count(&app, "created");

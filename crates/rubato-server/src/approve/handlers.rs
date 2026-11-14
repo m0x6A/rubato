@@ -40,6 +40,7 @@ fn answer(i: &Intent) -> Answer {
 
 pub async fn approve(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(login): CurrentUser,
     Json(req): Json<ApproveRequest>,
 ) -> Result<Answer, Refused> {
@@ -58,7 +59,7 @@ pub async fn approve(
             Json(json!({ "reason": "internal" })),
         )
     };
-    let Some(map) = app.default_map().await else {
+    let Some(map) = app.map_of(ws.as_str()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     let issue = req.issue.clone();

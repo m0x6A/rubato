@@ -28,8 +28,8 @@ pub(super) type Refusal = (StatusCode, String);
 pub(super) const FROZEN: &str =
     "The draft is being proposed and takes no changes. Withdraw the proposal to edit it again.";
 
-pub(super) async fn loaded_map(app: &App) -> Result<SystemMap, Refusal> {
-    app.default_map()
+pub(super) async fn loaded_map(app: &App, ws: &str) -> Result<SystemMap, Refusal> {
+    app.map_of(ws)
         .await
         .map(|m| m.map)
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))
@@ -41,10 +41,11 @@ pub(super) fn fault(e: anyhow::Error) -> Refusal {
 
 pub async fn add_op(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
     Json(req): Json<DraftOpRequest>,
 ) -> Result<StatusCode, Refusal> {
-    let map = loaded_map(&app).await?;
+    let map = loaded_map(&app, ws.as_str()).await?;
     // Removing what issues are pinned to would leave those pins pointing at nothing.
     let removed = match &req.op {
         MapOp::RemoveNode { id } => Some(MapRef::node(id.clone())),
@@ -52,7 +53,7 @@ pub async fn add_op(
         _ => None,
     };
     if let Some(target) = removed {
-        let pinned: Vec<String> = pins::list(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+        let pinned: Vec<String> = pins::list(&app.db, ws.as_str())
             .await
             .map_err(fault)?
             .into_iter()
@@ -73,7 +74,7 @@ pub async fn add_op(
     }
     let outcome = store::append(
         &app.db,
-        rubato_protocol::DEFAULT_WORKSPACE,
+        ws.as_str(),
         &map,
         &req,
         &user,
@@ -88,7 +89,7 @@ pub async fn add_op(
     };
     match outcome {
         Appended::Yes(_) => {
-            app.notify("draft");
+            app.notify_ws("draft", ws.as_str());
             Ok(StatusCode::CREATED)
         }
         Appended::Duplicate => Ok(StatusCode::CREATED),
@@ -104,17 +105,24 @@ pub async fn add_op(
     }
 }
 
+/// The `{seq}` of `DELETE …/draft/ops/{seq}`, by name: under `/api/w/{ws}` the path holds both.
+#[derive(serde::Deserialize)]
+pub struct SeqParam {
+    seq: u64,
+}
+
 pub async fn remove_op(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
-    Path(seq): Path<u64>,
+    Path(SeqParam { seq }): Path<SeqParam>,
 ) -> Result<StatusCode, Refusal> {
-    match store::remove_op(&app.db, rubato_protocol::DEFAULT_WORKSPACE, seq)
+    match store::remove_op(&app.db, ws.as_str(), seq)
         .await
         .map_err(fault)?
     {
         Changed::Yes(_) => {
-            app.notify("draft");
+            app.notify_ws("draft", ws.as_str());
             Ok(StatusCode::NO_CONTENT)
         }
         Changed::Nothing => Err((
@@ -130,16 +138,17 @@ pub async fn remove_op(
 
 pub async fn discard(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
-    match store::discard(&app.db, rubato_protocol::DEFAULT_WORKSPACE, Utc::now())
+    match store::discard(&app.db, ws.as_str(), Utc::now())
         .await
         .map_err(fault)?
     {
         Changed::Yes(n) => {
             // It empties the draft for the whole team, so it is said with who did it.
             tracing::info!(rubato.user = %user, operations = n, "map draft discarded");
-            app.notify("draft");
+            app.notify_ws("draft", ws.as_str());
             Ok(StatusCode::OK)
         }
         Changed::Nothing => Ok(StatusCode::OK),
@@ -152,15 +161,13 @@ pub async fn discard(
 
 pub async fn restore(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
-    match store::restore(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
-        .await
-        .map_err(fault)?
-    {
+    match store::restore(&app.db, ws.as_str()).await.map_err(fault)? {
         Changed::Yes(n) => {
             tracing::info!(rubato.user = %user, operations = n, "map draft restored");
-            app.notify("draft");
+            app.notify_ws("draft", ws.as_str());
             Ok(StatusCode::OK)
         }
         Changed::Nothing | Changed::Frozen => {

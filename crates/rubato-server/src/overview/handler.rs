@@ -16,13 +16,14 @@ const SLICE: &str = "overview";
 
 pub async fn overview(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     _user: CurrentUser,
 ) -> Result<Json<Overview>, StatusCode> {
     let map = app
-        .default_map()
+        .map_of(ws.as_str())
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let inputs = build_overview_inputs(&app)
+    let inputs = build_overview_inputs(&app, ws.as_str())
         .await
         .map_err(|e| internal(SLICE, e))?;
     let built = build::build(&inputs, Some(&map), &app.config.limits, Utc::now());
@@ -44,7 +45,7 @@ pub async fn overview(
         })
         .cloned()
         .collect();
-    let draft = map_draft::snapshot(&app.db, rubato_protocol::DEFAULT_WORKSPACE, &map.map)
+    let draft = map_draft::snapshot(&app.db, ws.as_str(), &map.map)
         .await
         .map_err(|e| internal(SLICE, e))?;
     // A part that exists only in the draft may have a position too (ADR 0016).
@@ -75,9 +76,13 @@ pub async fn overview(
         pulls: built.pulls,
         traffic: built.traffic,
         companion_silent_secs: app.config.limits.companion_silent_secs,
-        // One workspace until the server holds several (ADR 0044, plan 89 PR 4).
-        workspace: rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-        workspaces: vec![],
+        workspace: ws.as_str().to_string(),
+        // Only when there is a choice: one workspace shows no switcher, and its overview stays as
+        // it was before workspaces (the golden test).
+        workspaces: {
+            let all = crate::map::list_workspaces(&app).await;
+            if all.len() > 1 { all } else { vec![] }
+        },
         generated_at: Utc::now(),
     }))
 }

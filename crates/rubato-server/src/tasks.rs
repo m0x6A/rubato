@@ -100,12 +100,12 @@ impl Poller {
             tracing::warn!("no map loaded; skipping poll");
             return Ok(());
         };
-        let mut issues: BTreeSet<IssueRef> =
-            pins::list(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
-                .await?
-                .into_iter()
-                .map(|p| p.issue)
-                .collect();
+        // Pinned in any workspace: each issue is read once, whatever views show it (ADR 0048).
+        let mut issues: BTreeSet<IssueRef> = pins::list_all(&app.db)
+            .await?
+            .into_iter()
+            .map(|p| p.issue)
+            .collect();
         issues.extend(launch::launched_issues(&app.db).await?);
         let sessions = companion_link::all_sessions(&app.db).await?;
         let live: HashSet<IssueRef> = sessions

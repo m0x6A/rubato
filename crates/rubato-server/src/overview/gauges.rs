@@ -10,7 +10,7 @@ use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
 
 pub async fn refresh_gauges(app: &App, map: &LoadedMap) -> Result<()> {
-    let built = build_overview_inputs(app).await?;
+    let built = build_overview_inputs(app, rubato_protocol::DEFAULT_WORKSPACE).await?;
     let built = build::build(&built, Some(map), &app.config.limits, Utc::now());
     let (by_state, by_seam) = build::counts(&built);
     for (state, n) in by_state {

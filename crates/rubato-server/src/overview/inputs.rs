@@ -5,9 +5,9 @@ use crate::kernel::state::App;
 use crate::{companion_link, github_poll, launch, layout, pins, plans, queue, spend_history};
 use anyhow::Result;
 
-pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
+pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs> {
     Ok(OverviewInputs {
-        pins: pins::list(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?,
+        pins: pins::list(&app.db, ws).await?,
         sessions: companion_link::all_sessions(&app.db).await?,
         plans: plans::all(&app.db).await?,
         prs: github_poll::all_prs(&app.db).await?,
@@ -17,14 +17,10 @@ pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
         launched: launch::launched_issues(&app.db).await?,
         cap_hits: launch::issues_with_live_cap_hit(&app.db).await?,
         meta: github_poll::all_issue_meta(&app.db).await?,
-        launch_map_versions: launch::launch_map_versions(
-            &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
-        )
-        .await?,
-        backlog: github_poll::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?,
+        launch_map_versions: launch::launch_map_versions(&app.db, ws).await?,
+        backlog: github_poll::backlog(&app.db, ws).await?,
         uncovered_repos: github_poll::uncovered(&app.db).await?,
-        layout: layout::all(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?,
+        layout: layout::all(&app.db, ws).await?,
         queue: queue::all(&app.db).await?,
         repo_pulls: github_poll::repo_pulls(&app.db).await?,
         traffic: app.traffic.read().await.clone(),
