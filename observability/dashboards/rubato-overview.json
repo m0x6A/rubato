@@ -88,6 +88,11 @@
           "refId": "A",
           "expr": "time() - max by (rubato_companion_id, rubato_user) (rubato_companion_heartbeat)",
           "legendFormat": "__auto"
+        },
+        {
+          "refId": "B",
+          "expr": "max(rubato_companion_silent_secs)",
+          "legendFormat": "N"
         }
       ],
       "fieldConfig": {

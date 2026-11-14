@@ -112,6 +112,9 @@ pub struct Metrics {
     pub issues_opening: Gauge<u64>,
     pub plans_not_fitting: Gauge<u64>,
     pub plans_approvals_opening: Gauge<u64>,
+    /// The configured companion stale threshold N in seconds (#105). No unit, so the series
+    /// stays `rubato_companion_silent_secs`, the name `CompanionSilent` reads.
+    pub companion_silent_secs: Gauge<u64>,
 }
 
 impl Metrics {
@@ -154,7 +157,16 @@ impl Metrics {
             issues_opening: m.u64_gauge(otel::metric::ISSUES_OPENING).build(),
             plans_not_fitting: m.u64_gauge(otel::metric::PLANS_NOT_FITTING).build(),
             plans_approvals_opening: m.u64_gauge(otel::metric::PLANS_APPROVALS_OPENING).build(),
+            companion_silent_secs: m.u64_gauge(otel::metric::COMPANION_SILENT_SECS).build(),
         }
+    }
+
+    /// What every poll tick records: one `rubato.poll.ticks`, so `ServerPollSilent` sees it
+    /// stop, and the configured N, so `CompanionSilent` has it on every export (#105).
+    pub fn record_poll_tick(&self, limits: &rubato_protocol::Limits) {
+        self.poll_ticks.add(1, &[]);
+        self.companion_silent_secs
+            .record(limits.companion_silent_secs, &[]);
     }
 }
 
@@ -391,5 +403,33 @@ pub mod capture {
             line();
             assert_eq!(messages(&events), ["reached twice"]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::metric_reader;
+    use rubato_protocol::{Limits, otel};
+
+    /// #105: every poll tick records the configured N, so `CompanionSilent` compares against
+    /// the server's threshold on every collection, whatever the exporter's temporality.
+    #[test]
+    fn a_poll_tick_records_the_companion_threshold() {
+        let (reader, metrics) = metric_reader::start();
+        let limits = Limits {
+            companion_silent_secs: 300,
+            ..Limits::default()
+        };
+        metrics.record_poll_tick(&limits);
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            let points = reader.points(otel::metric::COMPANION_SILENT_SECS);
+            assert_eq!(points.len(), 1, "{points:?}");
+            assert_eq!(points[0].value, 300);
+            assert!(points[0].attrs.is_empty(), "{points:?}");
+            seen.push(points[0].value);
+        }
+        assert_eq!(reader.points(otel::metric::POLL_TICKS)[0].value, 1);
+        println!("checked the threshold on {} collections", seen.len());
     }
 }

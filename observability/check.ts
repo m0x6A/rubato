@@ -3,7 +3,8 @@
  * Structural check of the observability files: every alert in the "never silent" list exists,
  * every rule has a unit test that expects it to fire, every alert names a panel that exists on
  * the dashboard, the "Map age" panel queries `rubato_map_loaded_at`, the "Interactive map" panels
- * of issue #48 exist and query their metrics, no expression groups by the
+ * of issue #48 exist and query their metrics, `CompanionSilent` and the "Companions" panel query
+ * the threshold `rubato_companion_silent_secs` (#105), no expression groups by the
  * bare label `state`, and the working-sessions line takes `max by`. Reports what it checked.
  * `promtool test rules` is the semantic check; `check.test.ts` makes this one fail on purpose.
  *
@@ -35,6 +36,8 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Issues created", "rubato_issues_opening"],
   // Issue #106 (ADR 0043): both O-rows name this panel.
   ["Blocked, by station left from", "rubato_issues_blocked_from"],
+  // Issue #105: the Companions panel shows the N that CompanionSilent compares against.
+  ["Companions", "rubato_companion_silent_secs"],
 ];
 
 type Panel = { title: string; type?: string; targets?: { expr?: string }[] };
@@ -69,6 +72,12 @@ export function check(rulesText: string, testsText: string, dashboardText: strin
       problems.push(`alert ${a.alert} names no dashboard panel`);
     } else if (!panelTitles.has(panel)) {
       problems.push(`alert ${a.alert} names panel ${JSON.stringify(panel)} which is not on the dashboard`);
+    }
+  }
+  // #105: CompanionSilent fires past the server's configured N, not a literal of its own.
+  for (const a of alerts.filter((x) => x.alert === "CompanionSilent")) {
+    if (!/\brubato_companion_silent_secs\b/.test(a.expr ?? "")) {
+      problems.push(`alert CompanionSilent must compare against rubato_companion_silent_secs: ${a.expr}`);
     }
   }
   // The exact name: a unit on the gauge would export it as rubato_map_loaded_at_seconds.

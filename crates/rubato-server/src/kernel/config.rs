@@ -8,6 +8,10 @@ use std::path::PathBuf;
 /// The longest poll interval: the `ServerPollSilent` window is 10 minutes (design D14).
 pub const MAX_POLL_SECS: u64 = 300;
 
+/// The shortest companion stale threshold N (#105): below it a typo would page for every
+/// companion and empty every freshness bar.
+pub const MIN_COMPANION_SILENT_SECS: u64 = 60;
+
 /// The GitHub App the server acts as (ADR 0022). All three settings or none.
 #[derive(Clone, PartialEq, Eq)]
 pub struct GitHubApp {
@@ -146,7 +150,7 @@ impl Config {
             limits.session_stale_secs = v;
         }
         if let Some(v) = env("RUBATO_COMPANION_SILENT_SECS").and_then(|v| v.parse().ok()) {
-            limits.companion_silent_secs = v;
+            limits.companion_silent_secs = floor_companion_silent_secs(v, &mut warnings);
         }
         if let Some(v) = env("RUBATO_GITHUB_POLL_SECS").and_then(|v| v.parse().ok()) {
             limits.github_poll_interval_secs = clamp_poll_secs(v, &mut warnings);
@@ -262,6 +266,20 @@ fn clamp_poll_secs(v: u64, warnings: &mut Vec<String>) -> u64 {
     }
 }
 
+/// Raise the companion stale threshold to `MIN_COMPANION_SILENT_SECS`, noting it once in
+/// `warnings`.
+fn floor_companion_silent_secs(v: u64, warnings: &mut Vec<String>) -> u64 {
+    if v < MIN_COMPANION_SILENT_SECS {
+        warnings.push(format!(
+            "RUBATO_COMPANION_SILENT_SECS={v} is below {MIN_COMPANION_SILENT_SECS}; \
+             a companion is stale after {MIN_COMPANION_SILENT_SECS} s"
+        ));
+        MIN_COMPANION_SILENT_SECS
+    } else {
+        v
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +330,19 @@ mod tests {
         let mut w = Vec::new();
         assert_eq!(clamp_poll_secs(300, &mut w), 300);
         assert_eq!(clamp_poll_secs(30, &mut w), 30);
+        assert!(w.is_empty(), "{w:?}");
+    }
+
+    /// #105: a typo cannot page for every companion or empty every bar.
+    #[test]
+    fn companion_threshold_below_60_is_raised_with_a_warning() {
+        let mut w = Vec::new();
+        assert_eq!(floor_companion_silent_secs(30, &mut w), 60);
+        assert_eq!(w.len(), 1);
+        assert!(w[0].contains("30"), "{w:?}");
+        let mut w = Vec::new();
+        assert_eq!(floor_companion_silent_secs(300, &mut w), 300);
+        assert_eq!(floor_companion_silent_secs(60, &mut w), 60);
         assert!(w.is_empty(), "{w:?}");
     }
 }
