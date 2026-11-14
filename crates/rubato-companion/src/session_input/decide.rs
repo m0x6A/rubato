@@ -3,7 +3,7 @@
 //! idle, and only a hook newer than the companion's own last input.
 
 use super::deliveries::{Deliveries, Delivery};
-use crate::sessions::Registry;
+use crate::sessions::{PASTED_KEPT, Registry};
 use chrono::{DateTime, Utc};
 use rubato_protocol::{HookEventKind, MessageRefusal, SessionMessage, SessionMessageOutcome};
 use uuid::Uuid;
@@ -58,11 +58,21 @@ pub fn decide(
 }
 
 impl Registry {
-    /// The companion typed into the launch's session at `at`: the next message waits for an
-    /// idle hook newer than this.
-    pub fn mark_input_sent(&mut self, launch_id: Uuid, at: DateTime<Utc>) {
+    /// The companion typed `text` (message `message_id`) into the launch's session at `at`: the
+    /// next message waits for an idle hook newer than this, and the next prompt ending with
+    /// `text` is tagged with `message_id`.
+    pub fn mark_input_sent(
+        &mut self,
+        launch_id: Uuid,
+        at: DateTime<Utc>,
+        message_id: Uuid,
+        text: &str,
+    ) {
         if let Some(e) = self.find_by_launch(launch_id) {
             e.input_sent_at = Some(at);
+            e.pasted.push((message_id, text.to_owned()));
+            let over = e.pasted.len().saturating_sub(PASTED_KEPT);
+            e.pasted.drain(..over);
         }
     }
 }
@@ -222,7 +232,7 @@ mod tests {
             decide(&m, USER, &r, 8000, &d),
             Decision::Paste { .. }
         ));
-        r.mark_input_sent(Uuid::from_u128(7), t(2));
+        r.mark_input_sent(Uuid::from_u128(7), t(2), Uuid::from_u128(1), "hi");
         assert_eq!(
             outcome(decide(&m, USER, &r, 8000, &d)),
             SessionMessageOutcome::NotIdle,

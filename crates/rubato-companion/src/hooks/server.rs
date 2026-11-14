@@ -202,9 +202,9 @@ mod tests {
                 break;
             }
         }
-        let (again, previous) = kept.expect("the freed port was taken five times in a row");
+        let (_again, previous) = kept.expect("the freed port was taken five times in a row");
 
-        // `again` still holds the port.
+        // `_again` still holds the port.
         let moved = HookServer::bind_reusing(Some(&previous), tx.clone(), dtx.clone())
             .await
             .unwrap();
