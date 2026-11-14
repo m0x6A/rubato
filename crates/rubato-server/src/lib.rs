@@ -25,6 +25,7 @@ pub mod pins;
 pub mod plan_drafts;
 pub mod plans;
 pub mod queue;
+pub mod rooms;
 pub mod session_log;
 pub mod session_messages;
 pub mod spend_history;
