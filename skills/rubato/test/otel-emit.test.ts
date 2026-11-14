@@ -1,7 +1,9 @@
 import { spawnSync, spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ATTR, call, config, parsePairs, parseTraceparent, Recorder, runCommand, SPAN } from "../scripts/otel-emit.ts";
 
@@ -211,5 +213,37 @@ describe("cli", () => {
     expect(missing.stdout).toBe("");
     expect(missing.stderr.trim().split("\n")).toHaveLength(1);
     expect((await runCli(["span"], {})).code).toBe(2);
+  });
+});
+
+describe("plan.ts check emits", () => {
+  it("one command span and plan-file and system-map client spans, with stdout identical to a run without an endpoint", async () => {
+    const repo = resolve(import.meta.dirname, "../../..");
+    const local = join(mkdtempSync(join(tmpdir(), "rubato-otel-")), "local.yml");
+    writeFileSync(
+      local,
+      `maps:\n  - repo: m0x6A/rubato\n    path: docs/design/rubato-map.yml\n    local: ${repo}\n    decisions: docs/decisions\nrepos:\n  - name: m0x6A/rubato\n    local: ${repo}\n`,
+    );
+    const plan = resolve(import.meta.dirname, "../scripts/plan.ts");
+    const run = (env: Record<string, string>) =>
+      new Promise<{ code: number | null; stdout: string }>((done) => {
+        const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", plan, "check", "docs/plans/140.md", "--cwd", repo], {
+          env: { PATH: process.env["PATH"] ?? "", HOME: process.env["HOME"] ?? "", RUBATO_LOCAL: local, ...env },
+        });
+        let stdout = "";
+        child.stdout.on("data", (c) => (stdout += c));
+        child.on("exit", (code) => done({ code, stdout }));
+      });
+    const c = await collector();
+    const bare = await run({});
+    const sent = await run({ RUBATO_OTEL_EXPORTER_OTLP_ENDPOINT: c.url });
+    expect(sent).toEqual(bare);
+    expect(bare.code).toBe(0);
+    expect(c.got).toHaveLength(1);
+    const s = spans(c.got[0] as Received);
+    expect(attrs(s.find((x) => x.name === SPAN.command))).toMatchObject({ [ATTR.subcommand]: "plan check", [ATTR.exitCode]: "0" });
+    const peers = s.filter((x) => x.name === SPAN.call).map((x) => attrs(x)[ATTR.peerService]);
+    expect(peers).toContain("plan-file");
+    expect(peers).toContain("system-map");
   });
 });

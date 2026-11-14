@@ -259,7 +259,7 @@ export class Recorder {
           resource: { attributes: otlpAttrs(resource) },
           scopeSpans: [
             {
-              scope: { name: "rubato.skill" },
+              scope: { name: "@rubato/skill" },
               spans: this.spans.map((s) => ({
                 traceId: s.traceId,
                 spanId: s.spanId,
