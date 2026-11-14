@@ -80,6 +80,7 @@ pub use pins::{IssuePin, PinRequest};
 pub use plan::{
     AffectedPart, Assumption, AssumptionScope, DataModel, DataModelKind, FitReason, ModelChange,
     ORow, PartStatus, Plan, PlanApprovalRecord, PlanDecision, PlanFit, PlanFlow, plan_fit,
+    seam_groups,
 };
 pub use plan_draft::{
     DraftBundle, DraftFile, DraftRefusal, DraftRestore, DraftRevision, DraftRevisionInfo,

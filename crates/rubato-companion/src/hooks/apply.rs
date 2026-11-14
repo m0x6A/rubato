@@ -113,6 +113,7 @@ impl Registry {
             hooks_lost: false,
             pasted: Vec::new(),
             plan_path: None,
+            restored_hash: None,
         };
         self.entries.push(entry);
         id.issue
