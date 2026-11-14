@@ -29,10 +29,8 @@ pub(super) const FROZEN: &str =
     "The draft is being proposed and takes no changes. Withdraw the proposal to edit it again.";
 
 pub(super) async fn loaded_map(app: &App) -> Result<SystemMap, Refusal> {
-    app.map
-        .read()
+    app.default_map()
         .await
-        .clone()
         .map(|m| m.map)
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))
 }
@@ -54,7 +52,7 @@ pub async fn add_op(
         _ => None,
     };
     if let Some(target) = removed {
-        let pinned: Vec<String> = pins::list(&app.db)
+        let pinned: Vec<String> = pins::list(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .map_err(fault)?
             .into_iter()
@@ -73,9 +71,17 @@ pub async fn add_op(
             ));
         }
     }
-    let outcome = store::append(&app.db, &map, &req, &user, Utc::now(), DRAFT_MAX_OPS)
-        .await
-        .map_err(fault)?;
+    let outcome = store::append(
+        &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        &map,
+        &req,
+        &user,
+        Utc::now(),
+        DRAFT_MAX_OPS,
+    )
+    .await
+    .map_err(fault)?;
     let refuse = |why: &'static str, status: StatusCode, text: String| {
         app.reject(routes::DRAFT_OPS, why, &user);
         Err((status, text))
@@ -103,7 +109,10 @@ pub async fn remove_op(
     CurrentUser(user): CurrentUser,
     Path(seq): Path<u64>,
 ) -> Result<StatusCode, Refusal> {
-    match store::remove_op(&app.db, seq).await.map_err(fault)? {
+    match store::remove_op(&app.db, rubato_protocol::DEFAULT_WORKSPACE, seq)
+        .await
+        .map_err(fault)?
+    {
         Changed::Yes(_) => {
             app.notify("draft");
             Ok(StatusCode::NO_CONTENT)
@@ -123,7 +132,10 @@ pub async fn discard(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
-    match store::discard(&app.db, Utc::now()).await.map_err(fault)? {
+    match store::discard(&app.db, rubato_protocol::DEFAULT_WORKSPACE, Utc::now())
+        .await
+        .map_err(fault)?
+    {
         Changed::Yes(n) => {
             // It empties the draft for the whole team, so it is said with who did it.
             tracing::info!(rubato.user = %user, operations = n, "map draft discarded");
@@ -142,7 +154,10 @@ pub async fn restore(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
-    match store::restore(&app.db).await.map_err(fault)? {
+    match store::restore(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+        .await
+        .map_err(fault)?
+    {
         Changed::Yes(n) => {
             tracing::info!(rubato.user = %user, operations = n, "map draft restored");
             app.notify("draft");

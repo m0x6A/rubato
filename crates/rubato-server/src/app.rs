@@ -183,12 +183,16 @@ mod tests {
         Arc::get_mut(&mut app).unwrap().metrics = metrics;
         let map: SystemMap =
             serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
-        *app.map.write().await = Some(crate::kernel::state::LoadedMap {
-            map,
-            version: "v".into(),
-            loaded_at: chrono::Utc::now(),
-            yaml: String::new(),
-        });
+        app.set_map(
+            rubato_protocol::DEFAULT_WORKSPACE,
+            crate::kernel::state::LoadedMap {
+                map,
+                version: "v".into(),
+                loaded_at: chrono::Utc::now(),
+                yaml: String::new(),
+            },
+        )
+        .await;
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();

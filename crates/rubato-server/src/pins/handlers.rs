@@ -20,10 +20,8 @@ pub async fn add_pin(
     Json(req): Json<PinRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let map = app
-        .map
-        .read()
+        .default_map()
         .await
-        .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     if let Err((reason, msg)) = check_target(&map.map, &map.version, &req.target) {
         app.reject(routes::PINS, reason, &user);
@@ -31,6 +29,7 @@ pub async fn add_pin(
     }
     store::add_pin(
         &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
         &IssuePin {
             issue: req.issue,
             target: req.target,
@@ -49,9 +48,14 @@ pub async fn remove_pin(
     _user: CurrentUser,
     Json(req): Json<PinRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    let removed = store::remove_pin(&app.db, &req.issue, &req.target)
-        .await
-        .map_err(|e| internal(SLICE, e))?;
+    let removed = store::remove_pin(
+        &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        &req.issue,
+        &req.target,
+    )
+    .await
+    .map_err(|e| internal(SLICE, e))?;
     app.notify("pin");
     Ok(if removed {
         StatusCode::NO_CONTENT

@@ -130,7 +130,7 @@ impl<S: Source> Fetcher<S> {
         app.metrics
             .traffic_report_age
             .record(u64::try_from(age).unwrap_or(0), &[]);
-        let Some(map) = app.map.read().await.clone() else {
+        let Some(map) = app.default_map().await else {
             return;
         };
         let (traffic, findings) =

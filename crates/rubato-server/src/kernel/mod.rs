@@ -9,5 +9,6 @@ pub mod http;
 pub mod signer;
 pub mod state;
 pub mod telemetry;
+pub mod workspaces;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -53,10 +53,8 @@ pub async fn launch(
     Json(req): Json<LaunchRequest>,
 ) -> Result<Json<LaunchResponse>, (StatusCode, String)> {
     let map = app
-        .map
-        .read()
+        .default_map()
         .await
-        .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     let mine: Vec<pairing::PairingRow> = pairing::list_pairings(&app.db, Some(&user))
         .await
@@ -94,7 +92,7 @@ pub async fn launch(
             }
         },
     };
-    let pins: Vec<String> = pins::list(&app.db)
+    let pins: Vec<String> = pins::list(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
@@ -180,9 +178,14 @@ pub async fn launch(
         otel_resource: otel,
         map_version: Some(map.version.clone()),
     };
-    store::store_launch(&app.db, companion.companion_id, &command)
-        .await
-        .map_err(|e| (internal(SLICE, e), String::new()))?;
+    store::store_launch(
+        &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        companion.companion_id,
+        &command,
+    )
+    .await
+    .map_err(|e| (internal(SLICE, e), String::new()))?;
     if !app.send_to_companion(
         companion.companion_id,
         ServerMessage::Launch(command.clone()),

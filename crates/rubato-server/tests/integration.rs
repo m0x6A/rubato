@@ -1480,7 +1480,7 @@ async fn first_tick_reloads_then_polls() {
     // Empty database: the first tick fetches the map, then polls.
     let h = harness().await;
     h.github.with(|g| g.calls.clear());
-    *h.app.map.write().await = None;
+    h.app.maps.write().await.clear();
     let (tx, rx) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(tasks::run(h.app.clone(), rx));
     let calls = until_tick_done(&h.github).await;
@@ -1501,7 +1501,7 @@ async fn first_tick_reloads_then_polls() {
     );
     map::warm(&warm).await.unwrap();
     assert!(
-        warm.map.read().await.is_some(),
+        warm.default_map().await.is_some(),
         "warm_map loads the stored map"
     );
     h.github.with(|g| g.calls.clear());
@@ -1925,7 +1925,7 @@ async fn pin_kind_must_match_id() {
 async fn old_mismatched_pin_still_listed() {
     let h = harness().await;
     // A pin stored before the kind check: a part's id kept as a seam.
-    sqlx::query("INSERT INTO pins (repo, number, kind, target, pinned_by, pinned_at) VALUES ('m0x6A/rubato', 5, 'seam', 'rubato-server', 'm0x6A', '2026-11-01T00:00:00Z')")
+    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'm0x6A/rubato', 5, 'seam', 'rubato-server', 'm0x6A', '2026-11-01T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -2127,7 +2127,7 @@ async fn layout_put_is_in_overview_and_notifies() {
     );
 
     // A row for a part the map no longer has is not served, and the next write removes it.
-    sqlx::query("INSERT INTO map_layout (node_id, x, y, updated_by, updated_at) VALUES ('gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+    sqlx::query("INSERT INTO map_layout (workspace_id, node_id, x, y, updated_by, updated_at) VALUES ('default', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -2857,7 +2857,7 @@ async fn discard_is_409_while_proposing() {
     )
     .await;
     // A proposal exists (written as the propose route writes it).
-    sqlx::query("INSERT INTO map_proposal (id, branch, base_sha, file_hash, last_seq, state, state_since, proposed_by) VALUES (1, 'map/draft-1', 'a', 'b', 1, 'opening', '2026-11-11T00:00:00Z', 'm0x6A')")
+    sqlx::query("INSERT INTO map_proposal (workspace_id, branch, base_sha, file_hash, last_seq, state, state_since, proposed_by) VALUES ('default', 'map/draft-1', 'a', 'b', 1, 'opening', '2026-11-11T00:00:00Z', 'm0x6A')")
         .execute(&h.app.db)
         .await
         .unwrap();

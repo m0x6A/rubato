@@ -83,6 +83,7 @@ pub async fn pin_created(
 ) -> anyhow::Result<()> {
     store::add_pin(
         &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
         &IssuePin {
             issue: issue.clone(),
             target: target.clone(),
@@ -91,7 +92,14 @@ pub async fn pin_created(
         },
     )
     .await?;
-    store::record_map_line(&app.db, issue, target, "pinned").await
+    store::record_map_line(
+        &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        issue,
+        target,
+        "pinned",
+    )
+    .await
 }
 
 /// `None` when the line was applied on an earlier tick (not counted again).
@@ -101,7 +109,14 @@ async fn apply_one(
     version: &str,
     line: &Line,
 ) -> anyhow::Result<Option<&'static str>> {
-    if store::map_line_applied(&app.db, &line.issue, &line.target).await? {
+    if store::map_line_applied(
+        &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        &line.issue,
+        &line.target,
+    )
+    .await?
+    {
         return Ok(None);
     }
     if let Err((reason, msg)) = check_target(map, version, &line.target) {
@@ -109,22 +124,31 @@ async fn apply_one(
         tracing::debug!(rubato.issue = %line.issue, reason, "{msg}");
         return Ok(Some(reason));
     }
-    let outcome = if store::is_pinned(&app.db, &line.issue).await? {
-        "already_pinned"
-    } else {
-        store::add_pin(
-            &app.db,
-            &IssuePin {
-                issue: line.issue.clone(),
-                target: line.target.clone(),
-                pinned_by: line.author.clone(),
-                pinned_at: Utc::now(),
-            },
-        )
-        .await?;
-        "pinned"
-    };
-    store::record_map_line(&app.db, &line.issue, &line.target, outcome).await?;
+    let outcome =
+        if store::is_pinned(&app.db, rubato_protocol::DEFAULT_WORKSPACE, &line.issue).await? {
+            "already_pinned"
+        } else {
+            store::add_pin(
+                &app.db,
+                rubato_protocol::DEFAULT_WORKSPACE,
+                &IssuePin {
+                    issue: line.issue.clone(),
+                    target: line.target.clone(),
+                    pinned_by: line.author.clone(),
+                    pinned_at: Utc::now(),
+                },
+            )
+            .await?;
+            "pinned"
+        };
+    store::record_map_line(
+        &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        &line.issue,
+        &line.target,
+        outcome,
+    )
+    .await?;
     Ok(Some(outcome))
 }
 
@@ -213,7 +237,9 @@ mod tests {
         let m = map();
         let lines = [line(1, MapRef::seam("web-server"))];
         assert_eq!(apply_map_lines(&app, &m, "v1", &lines).await, 1);
-        let pins = store::list_pins(&app.db).await.unwrap();
+        let pins = store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0].target, MapRef::seam("web-server"));
         assert_eq!(pins[0].pinned_by, "m0x6A");
@@ -221,12 +247,20 @@ mod tests {
         // The next tick lists the same line: nothing changes and nothing is counted again.
         assert_eq!(apply_map_lines(&app, &m, "v1", &lines).await, 0);
         // A person unpins it; the line is still in the body.
-        store::remove_pin(&app.db, &lines[0].issue, &lines[0].target)
-            .await
-            .unwrap();
+        store::remove_pin(
+            &app.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
+            &lines[0].issue,
+            &lines[0].target,
+        )
+        .await
+        .unwrap();
         assert_eq!(apply_map_lines(&app, &m, "v1", &lines).await, 0);
         assert!(
-            store::list_pins(&app.db).await.unwrap().is_empty(),
+            store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+                .await
+                .unwrap()
+                .is_empty(),
             "the unpin sticks"
         );
         assert_eq!(outcomes(&reader), [("pinned".to_string(), 1)]);
@@ -238,6 +272,7 @@ mod tests {
         let m = map();
         store::add_pin(
             &app.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
             &IssuePin {
                 issue: IssueRef::new("o/r", 4),
                 target: MapRef::node("web"),
@@ -253,7 +288,9 @@ mod tests {
             line(4, MapRef::node("rubato-server")),
         ];
         assert_eq!(apply_map_lines(&app, &m, "v1", &lines).await, 0);
-        let pins = store::list_pins(&app.db).await.unwrap();
+        let pins = store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         assert_eq!(pins.len(), 1, "#4 keeps the pin a person gave it");
         assert_eq!(pins[0].target, MapRef::node("web"));
         assert_eq!(

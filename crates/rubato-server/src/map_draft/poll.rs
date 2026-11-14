@@ -21,11 +21,11 @@ const STATES: [ProposalState; 3] = [
 /// Both gauges on every tick, zeros included: a gauge recorded only on change keeps its last
 /// value, so a past state would linger and a restart would go silent.
 pub async fn record_gauges(app: &App) {
-    match store::live_count(&app.db).await {
+    match store::live_count(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
         Ok(n) => app.metrics.map_draft_ops.record(n, &[]),
         Err(e) => tracing::error!(error = %e, "reading the draft size failed"),
     }
-    let now = match store::proposal(&app.db).await {
+    let now = match store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
         Ok(p) => p,
         Err(e) => {
             tracing::error!(error = %e, "reading the proposal failed");
@@ -48,7 +48,7 @@ pub async fn record_gauges(app: &App) {
 /// the merge shows the merged map: then the draft's operations are in it, and they and the
 /// proposal go. Until such a load the draft stays as it is.
 pub async fn clear_merged(app: &App) {
-    let row = match store::proposal(&app.db).await {
+    let row = match store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
         Ok(Some(row)) if row.state == ProposalState::Merged => row,
         Ok(_) => return,
         Err(e) => {
@@ -56,11 +56,13 @@ pub async fn clear_merged(app: &App) {
             return;
         }
     };
-    let loaded_at: Option<DateTime<Utc>> = app.map.read().await.as_ref().map(|m| m.loaded_at);
+    let loaded_at: Option<DateTime<Utc>> = app.default_map().await.as_ref().map(|m| m.loaded_at);
     if !loaded_at.is_some_and(|at| at > row.state_since) {
         return;
     }
-    if let Err(e) = store::clear_merged(&app.db, row.last_seq).await {
+    if let Err(e) =
+        store::clear_merged(&app.db, rubato_protocol::DEFAULT_WORKSPACE, row.last_seq).await
+    {
         tracing::error!(error = %e, "clearing the merged draft failed");
         return;
     }
@@ -87,13 +89,20 @@ async fn follow(app: &App, row: &ProposalRow) -> anyhow::Result<()> {
     let from = state_name(row.state);
     let known = Some((pr.number, pr.url.as_str()));
     if pr.merged_at.is_some() {
-        store::set_state(&app.db, ProposalState::Merged, now, known).await?;
+        store::set_state(
+            &app.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
+            ProposalState::Merged,
+            now,
+            known,
+        )
+        .await?;
         log_state(from, "merged", row, Some(pr.number));
         count(app, "merged");
         app.notify("draft");
     } else if !pr.open {
         // Closed without merging: the draft is editable again, every operation kept.
-        store::drop_proposal(&app.db).await?;
+        store::drop_proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?;
         log_state(from, "drafting", row, Some(pr.number));
         count(app, "closed");
         if let Err(e) = app.github.delete_ref(repo, &row.branch).await {
@@ -102,7 +111,14 @@ async fn follow(app: &App, row: &ProposalRow) -> anyhow::Result<()> {
         app.notify("draft");
     } else if row.state == ProposalState::Opening {
         // The pull request exists though the row never learned it: a call that timed out.
-        store::set_state(&app.db, ProposalState::Proposed, now, known).await?;
+        store::set_state(
+            &app.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
+            ProposalState::Proposed,
+            now,
+            known,
+        )
+        .await?;
         log_state(from, "proposed", row, Some(pr.number));
         count(app, "opened");
         app.notify("draft");
@@ -114,7 +130,7 @@ async fn follow(app: &App, row: &ProposalRow) -> anyhow::Result<()> {
 /// when the proposal is merged and the draft waits for a map load that follows the merge: the
 /// caller reloads the map and then calls `clear_merged`.
 pub async fn check_proposal(app: &App) -> bool {
-    match store::proposal(&app.db).await {
+    match store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
         Ok(Some(row)) => {
             if let Err(e) = follow(app, &row).await {
                 tracing::warn!(error = %format!("{e:#}"), "following the map proposal failed");
@@ -127,7 +143,7 @@ pub async fn check_proposal(app: &App) -> bool {
         }
     }
     matches!(
-        store::proposal(&app.db).await,
+        store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await,
         Ok(Some(row)) if row.state == ProposalState::Merged
     )
 }
@@ -175,10 +191,18 @@ mod tests {
 
         // Stuck in opening since 20 minutes ago: its time shows, so the panel turns yellow.
         let started = Utc::now() - chrono::Duration::minutes(20);
-        store::start_proposal(&app.db, "map/draft-1", "base", "hash", "m0x6A", started)
-            .await
-            .unwrap()
-            .unwrap();
+        store::start_proposal(
+            &app.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
+            "map/draft-1",
+            "base",
+            "hash",
+            "m0x6A",
+            started,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         record_gauges(&app).await;
         let opening = since("opening").unwrap().0;
         assert_eq!(opening, u64::try_from(started.timestamp()).unwrap());
@@ -186,16 +210,24 @@ mod tests {
         assert_eq!(since("proposed").unwrap().0, 0);
 
         // Proposed: opening goes quiet at once, and proposed may be as old as a review takes.
-        store::set_state(&app.db, ProposalState::Proposed, Utc::now(), Some((7, "u")))
-            .await
-            .unwrap();
+        store::set_state(
+            &app.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
+            ProposalState::Proposed,
+            Utc::now(),
+            Some((7, "u")),
+        )
+        .await
+        .unwrap();
         record_gauges(&app).await;
         assert_eq!(since("opening").unwrap().0, 0);
         assert!(since("proposed").unwrap().0 > 0);
         assert_eq!(since("merged").unwrap().0, 0);
 
         // Gone: all three back to 0.
-        store::drop_proposal(&app.db).await.unwrap();
+        store::drop_proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         record_gauges(&app).await;
         assert!(
             ["opening", "proposed", "merged"]
