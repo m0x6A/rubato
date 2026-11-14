@@ -1,9 +1,11 @@
 import type { WebEvent } from "../../protocol.ts";
 import { ApiError, request } from "../../shared/api.ts";
+import { emitWebEvent } from "./events.ts";
 
 /**
- * Subscribe to `/ws/web`. Calls `onChanged` for every `WebEvent`, `onState` on connect and
- * disconnect, reconnects with backoff. Returns an unsubscribe function.
+ * Subscribe to `/ws/web`. Calls `onChanged` for every `WebEvent`, and hands it to the views that
+ * listen with `onWebEvent`; `onState` on connect and disconnect; reconnects with backoff. Returns
+ * an unsubscribe function.
  *
  * A browser cannot see why an upgrade was refused, so every close probes `GET /api/me`: a 401
  * means the session needs a login (design S24), which `request` raises, and the retries stop.
@@ -24,10 +26,16 @@ export function subscribe(onChanged: (ev: WebEvent) => void, onState: (connected
       onState(true);
     };
     socket.onmessage = (m) => {
+      let ev: WebEvent;
       try {
-        onChanged(JSON.parse(String(m.data)) as WebEvent);
+        ev = JSON.parse(String(m.data)) as WebEvent;
       } catch {
-        // ignore undecodable frames
+        return; // ignore undecodable frames
+      }
+      try {
+        onChanged(ev);
+      } finally {
+        emitWebEvent(ev);
       }
     };
     socket.onclose = () => {

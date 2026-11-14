@@ -142,8 +142,9 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 `features/features.test.ts`:
 
 ```text
-live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
+live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
+chat        talk to your own launched session, message states    GET, POST /api/launches/:id/messages
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player  PUT, DELETE /api/layout
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
