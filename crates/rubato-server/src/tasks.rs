@@ -392,7 +392,7 @@ pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) {
         if let Err(e) = poller.tick(&app, lanes.next_lane()).await {
             tracing::error!(error = %e, "poll failed");
         }
-        app.metrics.poll_ticks.add(1, &[]);
+        app.metrics.record_poll_tick(&app.config.limits);
         let secs = app.config.limits.github_poll_interval_secs.max(5);
         map_age = (map_age + secs) % MAP_RELOAD_SECS;
         tokio::select! {

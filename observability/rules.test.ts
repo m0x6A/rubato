@@ -33,6 +33,12 @@ const mutants: Mutant[] = [
     to: 'sum by (rubato_companion_id) (rubato_sessions_by_state{rubato_session_state="working"})',
     caughtBy: "alertname: SessionWorkingNoHooks, time: 10m",
   },
+  {
+    why: "#105: without the threshold series CompanionSilent falls back to 600 s, never silent",
+    from: " or vector(600)",
+    to: "",
+    caughtBy: "alertname: CompanionSilent, time: 11m",
+  },
 ];
 
 /** Run the committed rule tests against `rules`, in a scratch copy of the alerts folder. */
