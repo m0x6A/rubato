@@ -19,7 +19,7 @@ paths.
 | hooks | `scripts/hooks.ts`, `hooks.json` | renders the hooks file for a companion endpoint (ADR 0013) |
 | install | `scripts/install.ts` | copies the skill, the vendored plan check and the schemas into a repo |
 
-`scripts/lib/` is the shared kernel (git, workspace config, vendoring). The files the
+`scripts/lib/` is the shared kernel (git, the local config `local.ts`, vendoring). The files the
 skill ships as is (`SKILL.md`, `prompt.md`, `decision-template.md`, `review-template.md`,
-`review-checklist.md`, `workspace.example.yml`)
+`review-checklist.md`, `local.example.yml`)
 must stay byte-identical across refactors; connected repos receive them on install.

@@ -138,17 +138,20 @@ node --experimental-strip-types skills/rubato/scripts/install.ts
 This puts the skill at `~/.claude/skills/rubato` with the plan-check code and the schemas
 vendored, and runs `npm install` there. Claude Code picks it up in every project.
 
-## 5. Describe your workspace
+## 5. Describe your machine
 
-Create `~/.config/rubato/workspace.yml` from `skills/rubato/workspace.example.yml`:
+Create `~/.config/rubato/local.yml` from `skills/rubato/local.example.yml`. (It was called
+`workspace.yml`; that name is still read, with a warning. Rename it only after upgrading the
+companion, since an older companion reads only `workspace.yml`.) A *workspace* is now one
+application's map on the server (ADR 0044); list each map you plan against under `maps:`.
 
 ```yaml
 server_url: http://127.0.0.1:8080
-map:
-  repo: m0x6A/rubato
-  path: docs/design/rubato-map.yml
-  local: /home/you/develop/rubato        # your clone; the skill reads the map from here
-  decisions: docs/decisions
+maps:
+  - repo: m0x6A/rubato
+    path: docs/design/rubato-map.yml
+    local: /home/you/develop/rubato      # your clone; the skill reads the map from here
+    decisions: docs/decisions
 repos:
   - name: m0x6A/rubato
     local: /home/you/develop/rubato
@@ -167,6 +170,26 @@ companion:
 Fill the prices from your plan's current price list; with zeros the companion still counts
 tokens but reports no cost. The companion only launches into repositories listed under
 `repos`, and the clone must have `origin` pointing at GitHub.
+
+### Several workspaces on one server
+
+A server holds one map by default (`RUBATO_MAP_*`). To hold several, list them in a file and
+set `RUBATO_WORKSPACES_FILE` instead (ADR 0044). One entry must be `default`: it keeps the rows
+from before and serves the plain `/api/...` routes.
+
+```yaml
+workspaces:
+  - id: default
+    map_repo: m0x6A/rubato
+    map_path: docs/design/rubato-map.yml
+  - id: shop
+    name: Shop
+    map_repo: acme/shop-map
+    map_path: system-map.yml
+```
+
+Migration 0013 is not additive: copy the database file before upgrading, so the previous
+version can be restored.
 
 ## 6. Pair and run the companion
 
@@ -238,7 +261,7 @@ appear in their title and body.
 ## 8. If it does not move
 
 - Nothing happens after *Start session*: read the companion log. A launch for the wrong user
-  is refused and reported; a missing repo in `workspace.yml` or a tmux-ide below 2.9 fails
+  is refused and reported; a missing repo in `local.yml` or a tmux-ide below 2.9 fails
   the launch with the reason.
 - The issue stays **Started**: no hook event has arrived. `rubato-companion status` prints the
   hook endpoint; `curl` it from the worktree with the token to prove the path, and check the
@@ -251,7 +274,7 @@ appear in their title and body.
 ## Observability
 
 Point `OTEL_EXPORTER_OTLP_ENDPOINT` at your collector for both binaries and set the same
-endpoint under `otel` in `workspace.yml` so launched sessions export too. The rules in
+endpoint under `otel` in `local.yml` so launched sessions export too. The rules in
 `observability/alerts/rubato.rules.yml` cover the "never silent" list from `AGENTS.md`;
 `promtool test rules observability/alerts/tests/rubato.test.yml` fires each on purpose.
 

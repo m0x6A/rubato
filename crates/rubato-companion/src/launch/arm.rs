@@ -137,12 +137,13 @@ mod tests {
         Arc::new(Launcher {
             workspace: Workspace {
                 server_url: None,
-                map: MapLocation {
+                map: Some(MapLocation {
                     repo: "m0x6A/rubato".into(),
                     path: "docs/design/rubato-map.yml".into(),
                     local: dir.to_path_buf(),
                     decisions: None,
-                },
+                }),
+                maps: vec![],
                 repos: Vec::new(),
                 otel: None,
                 companion: CompanionConfig {

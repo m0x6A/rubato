@@ -9,7 +9,7 @@
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { loadWorkspace, type Workspace } from "./lib/workspace.ts";
+import { loadWorkspace, type Workspace } from "./lib/local.ts";
 
 export interface Adr {
   file: string;
@@ -45,9 +45,11 @@ export function parseAdr(file: string, text: string): Adr | null {
   };
 }
 
+/** The ADRs of every listed map (ADR 0044): each workspace's map repo keeps its own decisions. */
 export function listAdrs(ws: Workspace): Adr[] {
-  const dir = join(ws.map.local, ws.map.decisions ?? "docs/decisions");
   const out: Adr[] = [];
+  const dirs = [...new Set(ws.maps.map((m) => join(m.local, m.decisions ?? "docs/decisions")))];
+  for (const dir of dirs) {
   for (const f of readdirSync(dir).sort()) {
     if (!/^\d{4}-.*\.md$/.test(f) || f.startsWith("0000-")) {
       continue;
@@ -56,6 +58,7 @@ export function listAdrs(ws: Workspace): Adr[] {
     if (adr) {
       out.push(adr);
     }
+  }
   }
   return out;
 }
@@ -167,7 +170,9 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
     return refuse("not_newest", { "rubato.issue": ref, newest: verdict.comment.html_url });
   }
   const rows = pinnedAdrs(pushed.text);
-  if ((originRepo(cwd) ?? "").toLowerCase() !== ws.map.repo.toLowerCase()) {
+  // Only inside a map repo's checkout: the one of the listed maps whose repo this is.
+  const mapClone = ws.maps.find((m) => m.repo.toLowerCase() === (originRepo(cwd) ?? "").toLowerCase());
+  if (!mapClone) {
     return refuse("not_map_repo", { "rubato.issue": ref, would_accept: rows.map((r) => r.adr) });
   }
   let me: string | null = null;
@@ -203,7 +208,7 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
     accepted.push(r.adr);
   }
   const pinned = new Set(rows.map((r) => r.file));
-  const dir = join(cwd, ws.map.decisions ?? "docs/decisions");
+  const dir = join(cwd, mapClone.decisions ?? "docs/decisions");
   const unpinned = (existsSync(dir) ? readdirSync(dir) : [])
     .filter((f) => /^\d{4}-.*\.md$/.test(f))
     .filter((f) => {

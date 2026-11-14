@@ -10,7 +10,7 @@ import { install } from "../scripts/install.ts";
 import { normalisePlan, planSha } from "../scripts/lib/plan-sha.ts";
 import { render, summarize } from "../scripts/map.ts";
 import { check, FRONT_MATTER_KEYS, init, planTemplate, SPEC_HEADINGS } from "../scripts/plan.ts";
-import { parseWorkspace, repoForCwd, workspaceCandidates, type Workspace } from "../scripts/lib/workspace.ts";
+import { loadWorkspace, matchedMaps, parseWorkspace, repoForCwd, selectLine, workspaceCandidates, type Workspace } from "../scripts/lib/local.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 
@@ -44,20 +44,49 @@ function tempMapRepo(): { dir: string; ws: Workspace } {
   git(dir, "init", "-q", "-b", "main");
   git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A");
   git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "map");
-  const ws: Workspace = { map: { repo: "acme/map", path: "system-map.yml", local: dir }, repos: [] };
+  const mapClone = { repo: "acme/map", path: "system-map.yml", local: dir };
+  const ws: Workspace = { map: mapClone, maps: [mapClone], repos: [] };
   return { dir, ws };
 }
 
 describe("workspace", () => {
-  it("looks in RUBATO_WORKSPACE, then XDG, then ~/.config", () => {
-    const c = workspaceCandidates({ RUBATO_WORKSPACE: "/x/w.yml", XDG_CONFIG_HOME: "/xdg" });
-    expect(c[0]).toBe("/x/w.yml");
-    expect(c[1]).toBe("/xdg/rubato/workspace.yml");
-    expect(c[2]).toMatch(/\.config\/rubato\/workspace\.yml$/);
+  it("looks for local.yml first (RUBATO_LOCAL, XDG, ~/.config), then the old workspace.yml", () => {
+    const c = workspaceCandidates({ RUBATO_LOCAL: "/x/l.yml", RUBATO_WORKSPACE: "/x/w.yml", XDG_CONFIG_HOME: "/xdg" });
+    expect(c[0]).toBe("/x/l.yml");
+    expect(c[1]).toBe("/xdg/rubato/local.yml");
+    expect(c[2]).toMatch(/\.config\/rubato\/local\.yml$/);
+    expect(c[3]).toBe("/x/w.yml");
+    expect(c[4]).toBe("/xdg/rubato/workspace.yml");
+    expect(c[5]).toMatch(/\.config\/rubato\/workspace\.yml$/);
+  });
+
+  it("reads an old workspace.yml with map: as one map, warning once", () => {
+    const dir = mkdtempSync(join(tmpdir(), "local-"));
+    writeFileSync(join(dir, "workspace.yml"), "map:\n  repo: a/m\n  path: m.yml\n  local: /m\nrepos: []\n");
+    const warned: string[] = [];
+    const ws = loadWorkspace({ RUBATO_WORKSPACE: join(dir, "workspace.yml"), HOME: dir }, (s) => warned.push(s));
+    expect(ws.maps.map((m) => m.repo)).toEqual(["a/m"]);
+    expect(ws.map).toEqual(ws.maps[0]);
+    expect(warned.length).toBe(1);
+    expect(warned[0]).toMatch(/now local\.yml/);
+  });
+
+  it("lists several maps, and a session gets the ones naming its repo", () => {
+    const ws = parseWorkspace("maps:\n  - { repo: a/admin-map, path: m.yml, local: /a }\n  - { repo: a/shop-map, path: m.yml, local: /s }\nrepos: []\n", "two");
+    const maps: Record<string, { repos?: { name: string }[]; nodes: { repo?: string }[] }> = {
+      "/a/m.yml": { repos: [{ name: "acme/auth" }], nodes: [{ repo: "acme/admin" }] },
+      "/s/m.yml": { nodes: [{ repo: "acme/auth" }, { repo: "acme/shop" }] },
+    };
+    const load = (f: string) => maps[f] as (typeof maps)[string];
+    expect(matchedMaps(ws, "acme/auth", load).map((m) => m.clone.repo)).toEqual(["a/admin-map", "a/shop-map"]);
+    expect(matchedMaps(ws, "ACME/shop", load).map((m) => m.clone.repo)).toEqual(["a/shop-map"]);
+    expect(matchedMaps(ws, "acme/other", load)).toEqual([]);
+    expect(JSON.parse(selectLine("acme/auth", 2, 2)).outcome).toBe("several");
+    expect(JSON.parse(selectLine("acme/other", 0, 2)).outcome).toBe("none");
   });
 
   it("parses the example and rejects a workspace without a map", () => {
-    const ws = parseWorkspace(readFileSync(join(root, "skills/rubato/workspace.example.yml"), "utf8"), "example");
+    const ws = parseWorkspace(readFileSync(join(root, "skills/rubato/local.example.yml"), "utf8"), "example");
     expect(ws.map.repo).toBe("m0x6A/rubato");
     expect(ws.otel?.protocol).toBe("http/protobuf");
     expect(() => parseWorkspace("repos: []\n", "bad")).toThrow(/map needs/);
@@ -130,6 +159,37 @@ describe("adrs.ts", () => {
 });
 
 describe("plan.ts", () => {
+  it("with two maps, a plan fits when it fits either; init leaves out map_version; paths must agree (ADR 0045)", async () => {
+    const { dir, ws } = tempMapRepo();
+    // A second map for the same repo that also has a part the first lacks.
+    const shop = readFileSync(join(dir, "system-map.yml"), "utf8")
+      .replace("nodes:\n", "nodes:\n  - id: rubato-orchestrator\n    kind: context\n    repo: m0x6A/rubato\n")
+      .replace("  - name: acme/pantry\n    plan_path: features/{issue}-{slug}/plan.md\n", "  - name: acme/pantry\n    plan_path: pantry/{issue}.md\n");
+    writeFileSync(join(dir, "shop.yml"), shop);
+    const second = { repo: "acme/shop-map", path: "shop.yml", local: dir };
+    const two: Workspace = { ...ws, maps: [ws.map, second] };
+    const a = tempRepo("m0x6A/rubato", "issue/13-two");
+    const path = await init(two, a, { issue: "m0x6A/rubato#13", slug: "two", title: "Two: maps" });
+    const text = readFileSync(join(a, path), "utf8");
+    expect(text).not.toContain("map_version:");
+    expect(text).toContain('title: "Two: maps"');
+    const oRowHead = "| Seam | Breaks like | Signal | Panel | Owner |\n| --- | --- | --- | --- | --- |\n";
+    writeFileSync(join(a, path), text
+      .replace("| | affected | | |", "| rubato-orchestrator | affected | orchestrates | companion-server |")
+      .replace(`${oRowHead}| | | | | |`, `${oRowHead}| companion-server | server drops it | counter \`rubato.events.dropped\` | Companions | rubato-server |`));
+    const r = await check(two, a);
+    expect(r.ok, JSON.stringify(r.line)).toBe(true);
+    expect(r.line["maps_checked"]).toBe(2);
+    expect(r.line["fits"]).toEqual(["acme/shop-map"]);
+    // The on-purpose failure: with the first map alone it names an unknown part.
+    const one = await check(ws, a);
+    expect(one.ok).toBe(false);
+    expect(one.line["maps_checked"]).toBeUndefined();
+    // The maps disagree on acme/pantry's plan path: refused, not guessed.
+    const b = tempRepo("acme/pantry", "issue/7-restock");
+    await expect(init(two, b, { issue: "acme/pantry#7", slug: "restock" })).rejects.toThrow(/different plan paths/);
+  });
+
   it("writes the plan at the default path and at a per-repo override, and the result passes the check once filled", async () => {
     const { ws } = tempMapRepo();
     const a = tempRepo("m0x6A/rubato", "issue/12-thing");
