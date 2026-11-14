@@ -21,6 +21,35 @@ pub async fn store_launch(
     Ok(())
 }
 
+/// What another slice needs to address a launch: its companion, its paired user, its issue and the
+/// session id it was started with (plan 122, ADR 0051).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchTarget {
+    pub launch_id: Uuid,
+    pub companion_id: Uuid,
+    pub user: String,
+    pub issue: IssueRef,
+    pub session_id: Option<String>,
+}
+
+/// The launch with this id, if Rubato started it.
+pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<LaunchTarget>> {
+    let row =
+        sqlx::query("SELECT companion_id, user, repo, number, command FROM launches WHERE id = ?")
+            .bind(launch_id.to_string())
+            .fetch_optional(db)
+            .await?;
+    let Some(r) = row else { return Ok(None) };
+    let command: Option<LaunchCommand> = serde_json::from_str(&r.get::<String, _>("command")).ok();
+    Ok(Some(LaunchTarget {
+        launch_id,
+        companion_id: r.get::<String, _>("companion_id").parse()?,
+        user: r.get("user"),
+        issue: IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64),
+        session_id: command.map(|c| c.session_id.to_string()),
+    }))
+}
+
 pub async fn store_launch_result(
     db: &SqlitePool,
     result: &LaunchResult,
