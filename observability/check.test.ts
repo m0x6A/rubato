@@ -113,6 +113,18 @@ test("a panel or rule that splits hooks forwarded by session is rejected", () =>
   ]);
 });
 
+test("a CompanionSilent rule back on the literal 600 is rejected (#105)", () => {
+  const literal = "time() - max by (rubato_companion_id, rubato_user) (rubato_companion_heartbeat) > 600";
+  const rule = rules.replace(/expr: time\(\) - max by \(rubato_companion_id, rubato_user\) \(rubato_companion_heartbeat\)[^\n]*/, `expr: ${literal}`);
+  assert.notEqual(rule, rules, "the committed rule changed shape; update this test");
+  assert.deepEqual(check(rule, tests, dashboard).problems, [`alert CompanionSilent must compare against rubato_companion_silent_secs: ${literal}`]);
+});
+
+test("a Companions panel without the threshold N is rejected (#105)", () => {
+  const heartbeat = "time() - max by (rubato_companion_id, rubato_user) (rubato_companion_heartbeat)";
+  assert.deepEqual(check(rules, tests, withExprs("Companions", [heartbeat])).problems, ['the dashboard has no "Companions" panel that queries rubato_companion_silent_secs']);
+});
+
 test("a Map age panel on a metric with a unit suffix is rejected", () => {
   const withUnit = changed((panels) =>
     panels.map((p) => (p.title === "Map age" ? { ...p, targets: [{ expr: "time() - max(rubato_map_loaded_at_seconds)" }] } : p)),
