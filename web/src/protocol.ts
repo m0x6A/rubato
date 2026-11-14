@@ -225,6 +225,11 @@ export type DataModelKind = ("table" | "type" | "schema" | "event" | "file")
 export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
 export type ChecksStatus = (("green" | "red" | "pending") | "none")
 /**
+ * Where a message is, as the server holds it. Derived from what happened; a row is never
+ * pushed again once it is `delivery_unknown`.
+ */
+export type SessionMessageState = (("delivered" | "refused" | "failed") | "queued" | "sent" | "delivery_unknown")
+/**
  * Companion → server: what happened to a launch command.
  */
 export type LaunchResult1 = ({
@@ -392,6 +397,7 @@ IssuePin?: IssuePin
 IssueRef?: IssueRef
 IssueSummary?: IssueSummary
 LaunchCommand?: LaunchCommand
+LaunchMessages?: LaunchMessages
 LaunchRequest?: LaunchRequest
 LaunchResponse?: LaunchResponse
 LaunchResult?: LaunchResult1
@@ -417,6 +423,8 @@ PullRequestState?: PullRequestState
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
 ServerEnvelope?: ServerEnvelope
+SessionMessageRequest?: SessionMessageRequest
+SessionMessageView?: SessionMessageView
 SessionState?: SessionState
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
@@ -1031,6 +1039,47 @@ spend_cap_usd: number
  * GitHub login the command is addressed to.
  */
 user: string
+}
+/**
+ * The messages of one launch, newest last, and whether its companion can take them.
+ */
+export interface LaunchMessages {
+/**
+ * The companion announced `session_input` the last time it said Hello. False for an older
+ * companion: the web says "upgrade the companion".
+ */
+companion_can_receive: boolean
+/**
+ * The companion is connected and heard from within two heartbeats.
+ */
+companion_live: boolean
+launch_id: string
+messages: SessionMessageView[]
+/**
+ * The launch's paired user: only they may send.
+ */
+owner: string
+}
+/**
+ * One message as the web shows it.
+ */
+export interface SessionMessageView {
+author: string
+created_at: string
+/**
+ * The refusal reason or the error, when there is one.
+ */
+detail?: (string | null)
+id: string
+/**
+ * `chat` for now.
+ */
+kind: string
+launch_id: string
+outcome_at?: (string | null)
+pushed_at?: (string | null)
+state: SessionMessageState
+text: string
 }
 /**
  * Start a session on an issue. Only the caller's own companions are eligible (ADR 0004).
@@ -1731,6 +1780,12 @@ spend_cap_usd: number
  * GitHub login the command is addressed to.
  */
 user: string
+}
+/**
+ * Web → server: send this text to the launch's session.
+ */
+export interface SessionMessageRequest {
+text: string
 }
 /**
  * Emitted once when a *working* session goes quiet for longer than the stale threshold.
