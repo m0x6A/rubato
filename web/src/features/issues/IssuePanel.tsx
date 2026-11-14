@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ProgressRing, SpendGauge, StageRail } from "./visuals.tsx";
+import { ProgressRing, SpendGauge, SpendSparkline, StageRail } from "./visuals.tsx";
 import { PinMenu } from "../pins/index.ts";
 import { WhereItFits } from "../plans/index.ts";
 import { QueueMenu } from "../queue/index.ts";
@@ -79,6 +79,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
         <div className="instruments">
           <StageRail state={selected.progress.state} blockedFrom={selected.progress.blocked_from} />
           <SpendGauge spend={selected.spend_usd ?? 0} cap={selected.plan?.spend_cap_usd} />
+          <SpendSparkline points={selected.spend_history ?? []} />
         </div>
         <p>
           <span className={`badge ${selected.progress.state}`}>{STATE_LABEL[selected.progress.state]}</span> <span className="muted">last signal {relative(selected.progress.last_seen)}</span>

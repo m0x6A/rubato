@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { issue } from "../../../test/fixtures.ts";
 import type { ProgressState } from "../../protocol.ts";
-import { ProgressRing, RAIL, SpendGauge, StageRail, TeamTrack } from "./visuals.tsx";
+import { ProgressRing, RAIL, SpendGauge, SpendSparkline, StageRail, TeamTrack } from "./visuals.tsx";
 
 // Issue #81, design §6: each surface opens with a picture of its state.
 
@@ -83,6 +83,43 @@ describe("the spend gauge", () => {
     unmount();
     render(<SpendGauge spend={18.4} cap={60} />);
     expect(screen.getByRole("img")).toHaveAttribute("aria-label", "spend $18.40 of a $60.00 cap");
+  });
+});
+
+describe("the spend sparkline (issue #103)", () => {
+  const at = (m: number) => new Date(Date.UTC(2026, 10, 13, 8, m)).toISOString();
+
+  it("shows nothing with no point or one point: one sample is no line", () => {
+    for (const points of [[], [{ at: at(0), usd: 1 }]]) {
+      const { container, unmount } = render(<SpendSparkline points={points} />);
+      expect(container).toBeEmptyDOMElement();
+      unmount();
+    }
+  });
+
+  it("draws a rising line, says it in words, and labels the last value all sessions, without a cap", () => {
+    const points = [
+      { at: at(0), usd: 1 },
+      { at: at(20), usd: 2.5 },
+      { at: at(40), usd: 4 },
+    ];
+    const { container } = render(<SpendSparkline points={points} />);
+    expect(screen.getByRole("img")).toHaveAttribute("aria-label", "spend over time, $1.00 to $4.00 across 3 points");
+    const ys = container
+      .querySelector("polyline")!
+      .getAttribute("points")!
+      .trim()
+      .split(/\s+/)
+      .map((p) => Number(p.split(",")[1]));
+    expect(ys).toHaveLength(3);
+    expect(ys[2]!).toBeLessThan(ys[0]!); // SVG y grows downward: the last point is higher
+    expect(screen.getByText("$4.00 all sessions")).toBeInTheDocument();
+  });
+
+  it("draws a flat series at mid-height", () => {
+    const { container } = render(<SpendSparkline points={[{ at: at(0), usd: 2 }, { at: at(15), usd: 2 }]} />);
+    const ys = container.querySelector("polyline")!.getAttribute("points")!.trim().split(/\s+/).map((p) => Number(p.split(",")[1]));
+    expect(new Set(ys).size).toBe(1);
   });
 });
 
