@@ -7,7 +7,7 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, launch, layout, map, map_draft, new_issue, overview, pairing,
-    pins, queue, session_log, session_messages, web_link,
+    pins, plan_drafts, queue, session_log, session_messages, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -91,6 +91,14 @@ pub fn router(app: App) -> Router {
         .route(
             rubato_protocol::session_log::routes::LAUNCH_LOG,
             get(session_log::log),
+        )
+        .route(
+            rubato_protocol::plan_draft::routes::DRAFT,
+            get(plan_drafts::draft),
+        )
+        .route(
+            rubato_protocol::plan_draft::routes::DRAFT_REVISION,
+            get(plan_drafts::revision),
         )
         .route(pr::PAIR_START, post(pairing::start))
         .route(pr::PAIR_POLL, post(pairing::poll))

@@ -23,6 +23,9 @@ pub struct Limits {
     /// The longest prompt or reply the companion forwards for the session log (ADR 0052); longer
     /// text is cut and marked truncated.
     pub session_log_max_chars: u64,
+    /// The largest plan bundle the companion mirrors (ADR 0053); a larger one is sent without
+    /// its files, refused as too large.
+    pub draft_max_bytes: u64,
 }
 
 impl Default for Limits {
@@ -36,6 +39,7 @@ impl Default for Limits {
             github_poll_interval_secs: 60,
             session_message_max_chars: 8000,
             session_log_max_chars: 16000,
+            draft_max_bytes: 1_048_576,
         }
     }
 }

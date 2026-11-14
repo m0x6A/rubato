@@ -21,6 +21,7 @@ pub mod otel;
 pub mod pairing;
 pub mod pins;
 pub mod plan;
+pub mod plan_draft;
 pub mod plan_hash;
 pub mod progress;
 pub mod pulls;
@@ -70,6 +71,9 @@ pub use pins::{IssuePin, PinRequest};
 pub use plan::{
     AffectedPart, Assumption, AssumptionScope, DataModel, DataModelKind, FitReason, ModelChange,
     ORow, PartStatus, Plan, PlanApprovalRecord, PlanDecision, PlanFit, PlanFlow, plan_fit,
+};
+pub use plan_draft::{
+    DraftBundle, DraftFile, DraftRefusal, DraftRevision, DraftRevisionInfo, DraftSummary, DraftView,
 };
 pub use plan_hash::{
     APPROVAL_KEYS, approval_hash, approval_names, bundle_hash, bundle_paths, clear_checkboxes,

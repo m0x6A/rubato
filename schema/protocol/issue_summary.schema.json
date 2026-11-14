@@ -21,6 +21,17 @@
         "$ref": "#/$defs/DecisionRecord"
       }
     },
+    "draft": {
+      "description": "The issue's plan draft in Rubato, its newest settled revision (ADR 0053). Absent when the\nissue has none.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DraftSummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "fit": {
       "description": "Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.",
       "anyOf": [
@@ -456,6 +467,67 @@
         "title",
         "created_at",
         "url"
+      ]
+    },
+    "DraftSummary": {
+      "description": "A draft as the overview carries it, per issue: its newest settled revision.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "bundle_hash": {
+          "type": "string"
+        },
+        "draft_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "live": {
+          "description": "The owner's launched session for this branch is live: the draft is being worked on.\nOtherwise it is parked. Derived on each overview build.",
+          "type": "boolean"
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "owner": {
+          "description": "The paired user whose launch first mirrored to this branch.",
+          "type": "string"
+        },
+        "parse_error": {
+          "description": "Why the plan in that revision does not parse, when it does not.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plan_sha": {
+          "description": "The approval hash of the plan in that revision (ADR 0054).",
+          "type": "string"
+        },
+        "rev": {
+          "description": "The newest settled revision, 1-based.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "draft_id",
+        "branch",
+        "owner",
+        "rev",
+        "at",
+        "plan_sha",
+        "bundle_hash",
+        "live"
       ]
     },
     "FitReason": {

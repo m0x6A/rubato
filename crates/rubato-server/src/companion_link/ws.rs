@@ -4,7 +4,7 @@
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
-use crate::{launch, pairing, queue, session_log, session_messages, spend_history};
+use crate::{launch, pairing, plan_drafts, queue, session_log, session_messages, spend_history};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -166,6 +166,7 @@ async fn on_envelope(
         CompanionMessage::CapHit(_) => "cap_hit",
         CompanionMessage::Stale(_) => "stale",
         CompanionMessage::SessionMessageResult(_) => "session_message_result",
+        CompanionMessage::Draft(_) => "draft",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
@@ -233,7 +234,10 @@ async fn on_envelope(
                     protocol_version: PROTOCOL_VERSION,
                     last_seen_companion_seq: pairing.last_companion_seq,
                     limits: app.config.limits,
-                    capabilities: vec![rubato_protocol::capability::SESSION_MESSAGES.to_owned()],
+                    capabilities: vec![
+                        rubato_protocol::capability::SESSION_MESSAGES.to_owned(),
+                        rubato_protocol::capability::DRAFTS.to_owned(),
+                    ],
                 })
             }
             CompanionMessage::Heartbeat(h) => {
@@ -304,6 +308,23 @@ async fn on_envelope(
                     store::store_stale(&app.db, &s).await,
                 );
                 app.notify("stale");
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::Draft(bundle) => {
+                // The launch decides the owner; a bundle for a launch of another companion, or
+                // for another issue, is not this companion's to send.
+                match launch::launch_target(&app.db, bundle.launch_id).await {
+                    Ok(Some(t)) if t.companion_id == companion_id && t.issue == bundle.issue => {
+                        plan_drafts::on_draft(app, &bundle, &t.user).await;
+                    }
+                    Ok(_) => {
+                        app.metrics
+                            .drafts_refused
+                            .add(1, &[KeyValue::new(attr::DROP_REASON, "unknown_launch")]);
+                        tracing::warn!(rubato.issue = %bundle.issue, "draft bundle for a launch this companion did not start");
+                    }
+                    Err(e) => tracing::error!(error = %format!("{e:#}"), "draft: reading the launch failed"),
+                }
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::SessionMessageResult(r) => {
@@ -404,7 +425,9 @@ fn stored_payload(m: &CompanionMessage) -> serde_json::Value {
             h.payload = None;
             serde_json::to_value(CompanionMessage::Hook(h)).unwrap_or_default()
         }
-        CompanionMessage::SessionMessageResult(_) => serde_json::json!({}),
+        CompanionMessage::SessionMessageResult(_) | CompanionMessage::Draft(_) => {
+            serde_json::json!({})
+        }
         other => serde_json::to_value(other).unwrap_or_default(),
     }
 }

@@ -364,6 +364,7 @@ impl RubatoWorld {
             prompt: format!("Work on {repo}#{issue}."),
             otel_resource: otel,
             map_version: Some("test".into()),
+            plan_path: None,
         }
     }
 

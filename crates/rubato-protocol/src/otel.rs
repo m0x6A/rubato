@@ -50,6 +50,8 @@ pub mod attr {
     /// `summary`), on `rubato.session_log.entries`.
     pub const LOG_ROLE: &str = "rubato.log.role";
     pub const LOG_KIND: &str = "rubato.log.kind";
+    /// A draft revision number (ADR 0053).
+    pub const DRAFT_REV: &str = "rubato.draft.rev";
 }
 
 /// Metric instrument names.
@@ -158,6 +160,10 @@ pub mod metric {
     pub const SESSION_LOG_ENTRIES: &str = "rubato.session_log.entries";
     /// Hooks that should have made a log entry and did not, by reason (`no_text`, `no_prompt_id`).
     pub const SESSION_LOG_DROPPED: &str = "rubato.session_log.dropped";
+    /// Draft revisions stored (ADR 0053).
+    pub const DRAFTS_REVISIONS: &str = "rubato.drafts.revisions";
+    /// Draft bundles not stored, by reason (`too_large`, `owner_conflict`, `unknown_launch`).
+    pub const DRAFTS_REFUSED: &str = "rubato.drafts.refused";
     /// Workspaces configured (ADR 0044), recorded at start and every poll tick.
     pub const WORKSPACES_CONFIGURED: &str = "rubato.workspaces.configured";
     /// Repos named by more than one workspace's map (ADR 0048), recorded every poll tick.
@@ -188,6 +194,8 @@ pub mod span {
     pub const SESSION_MESSAGE_DISPATCH: &str = "rubato.session_message.dispatch";
     /// Companion: one session message handled, with its outcome.
     pub const SESSION_INPUT_DELIVER: &str = "rubato.session_input.deliver";
+    /// Server: one draft bundle received.
+    pub const PLAN_DRAFT: &str = "rubato.plan.draft";
 }
 
 /// Event (log record) names.
@@ -239,6 +247,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::CAPABILITY,
         attr::LOG_ROLE,
         attr::LOG_KIND,
+        attr::DRAFT_REV,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -291,6 +300,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_INPUT_FAILED,
         metric::SESSION_LOG_ENTRIES,
         metric::SESSION_LOG_DROPPED,
+        metric::DRAFTS_REVISIONS,
+        metric::DRAFTS_REFUSED,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
@@ -302,6 +313,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::TRAFFIC_FETCH,
         span::SESSION_MESSAGE_DISPATCH,
         span::SESSION_INPUT_DELIVER,
+        span::PLAN_DRAFT,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,

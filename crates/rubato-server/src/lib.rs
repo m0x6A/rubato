@@ -21,6 +21,7 @@ pub mod new_issue;
 pub mod overview;
 pub mod pairing;
 pub mod pins;
+pub mod plan_drafts;
 pub mod plans;
 pub mod queue;
 pub mod session_log;

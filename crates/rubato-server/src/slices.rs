@@ -33,6 +33,7 @@ const SLICES: &[&str] = &[
     "map_draft",
     "new_issue",
     "plans",
+    "plan_drafts",
     "approve",
     "queue",
     "session_messages",

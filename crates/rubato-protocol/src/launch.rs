@@ -38,6 +38,10 @@ pub struct LaunchCommand {
     /// Git sha of the map the server resolved pins against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub map_version: Option<String>,
+    /// Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion
+    /// mirrors, with the bundle it names (ADR 0053). Absent from an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]

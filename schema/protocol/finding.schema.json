@@ -52,6 +52,35 @@
       ]
     },
     {
+      "description": "Another person's launched session wrote a plan bundle on a branch whose draft someone\nelse owns; it was not stored (ADR 0053). Taking a draft over is Import.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "draft_owner_conflict"
+        },
+        "other": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "branch",
+        "owner",
+        "other"
+      ]
+    },
+    {
       "description": "A plan file exists but does not parse.",
       "type": "object",
       "properties": {

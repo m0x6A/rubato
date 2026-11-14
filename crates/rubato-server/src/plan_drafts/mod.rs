@@ -1,0 +1,59 @@
+//! Slice `plan_drafts`: plan drafts that live in Rubato until approval, mirrored from launched
+//! sessions' worktrees at their settle points, one revision per changed bundle (ADR 0053, plan
+//! 122 design §D4). Owns tables `plan_drafts` and `plan_draft_revisions`. Names only `plans`
+//! (the parser), so `launch` and `import` can name it.
+
+mod handlers;
+mod intake;
+mod store;
+
+#[cfg(test)]
+mod tests;
+
+use crate::kernel::state::App;
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use rubato_protocol::{DraftSummary, IssueRef, Plan};
+
+pub use handlers::{draft, revision};
+pub use intake::on_draft;
+
+/// One draft and its newest settled revision, for the overview.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LatestDraft {
+    pub issue: IssueRef,
+    /// `live` is false here; the overview derives it from the sessions.
+    pub summary: DraftSummary,
+    /// The revision's plan, when it parses: what counts as a written plan and on seams.
+    pub plan: Option<Plan>,
+    /// The last bundle refused because someone else owns the draft, and when.
+    pub conflict: Option<(String, DateTime<Utc>)>,
+}
+
+/// Every draft with at least one revision.
+pub async fn latest_drafts(app: &App) -> Result<Vec<LatestDraft>> {
+    let mut out = Vec::new();
+    for d in store::all(&app.db).await? {
+        let Some(r) = store::latest(&app.db, d.id).await? else {
+            continue;
+        };
+        out.push(LatestDraft {
+            issue: d.issue.clone(),
+            summary: DraftSummary {
+                draft_id: d.id,
+                branch: d.branch.clone(),
+                owner: d.owner.clone(),
+                rev: r.info.rev,
+                at: r.info.at,
+                plan_sha: r.info.plan_sha.clone(),
+                bundle_hash: r.info.bundle_hash.clone(),
+                missing: r.info.missing.clone(),
+                parse_error: r.info.parse_error.clone(),
+                live: false,
+            },
+            plan: r.plan,
+            conflict: d.conflict,
+        });
+    }
+    Ok(out)
+}

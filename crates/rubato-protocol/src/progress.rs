@@ -50,7 +50,13 @@ pub struct ProgressInputs<'a> {
     pub pins: &'a [MapRef],
     pub launched: bool,
     pub sessions: &'a [SessionState],
-    pub has_plan: bool,
+    /// A plan file on the issue branch that parses. It decides the working station: a session
+    /// working after it is *Building* (ADR 0053).
+    pub plan_on_branch: bool,
+    /// A settled draft revision in Rubato that parses (ADR 0053). With a plan on the branch it
+    /// decides the idle station (*Designed*), but a session working on a draft is still
+    /// *Designing*: revising a draft is designing.
+    pub draft_plan: bool,
     /// A live cap hit that blocks the issue, and its kind (ADR 0043: the kind names the station).
     pub cap_hit: Option<CapKind>,
     pub pr: Option<&'a PullRequestState>,
@@ -87,6 +93,13 @@ fn blocking_session<'a>(inputs: &ProgressInputs<'a>) -> Option<&'a SessionState>
         .find(|s| s.status == SessionStatus::Blocked && s.source.is_trusted())
 }
 
+impl ProgressInputs<'_> {
+    /// A plan is written: on the branch, or as a settled draft (ADR 0053).
+    pub fn written_plan(&self) -> bool {
+        self.plan_on_branch || self.draft_plan
+    }
+}
+
 /// Where a *Blocked* issue left from, derived from the same inputs as [`derive_progress`]
 /// (ADR 0043, design 106 §3). `None` unless the state is *Blocked*, so the two never disagree;
 /// otherwise one of the four rail stations, or `None` for off the rail.
@@ -96,13 +109,13 @@ pub fn blocked_from(inputs: &ProgressInputs<'_>) -> Option<ProgressState> {
     }
     // The working station: a spend cap stopped a running session, or the session is blocked
     // mid-turn (or by a cause nobody reported, which counts as mid-turn).
-    let working = if inputs.has_plan {
+    let working = if inputs.plan_on_branch {
         ProgressState::Building
     } else {
         ProgressState::Designing
     };
     // The idle station: the session had stopped and waits for input.
-    let idle = if inputs.has_plan {
+    let idle = if inputs.written_plan() {
         ProgressState::Designed
     } else {
         ProgressState::Started
@@ -110,7 +123,7 @@ pub fn blocked_from(inputs: &ProgressInputs<'_>) -> Option<ProgressState> {
     match inputs.cap_hit {
         Some(CapKind::Spend) => Some(working),
         // A refused Start: nothing ran, so what the other signals say without the cap.
-        Some(CapKind::Attempts) => (inputs.has_plan || inputs.launched).then_some(idle),
+        Some(CapKind::Attempts) => (inputs.written_plan() || inputs.launched).then_some(idle),
         None => match blocking_session(inputs)?.blocked_by {
             Some(BlockCause::IdlePrompt) => Some(idle),
             Some(BlockCause::PermissionPrompt | BlockCause::StopFailure) | None => Some(working),
@@ -153,7 +166,7 @@ pub fn derive_progress(inputs: &ProgressInputs<'_>) -> (ProgressState, Option<St
             .collect();
         if effective.contains(&SessionStatus::Working) {
             return (
-                if inputs.has_plan {
+                if inputs.plan_on_branch {
                     ProgressState::Building
                 } else {
                     ProgressState::Designing
@@ -169,7 +182,7 @@ pub fn derive_progress(inputs: &ProgressInputs<'_>) -> (ProgressState, Option<St
         }
         // Idle sessions: the issue is where the plan says it is.
         return (
-            if inputs.has_plan {
+            if inputs.written_plan() {
                 ProgressState::Designed
             } else {
                 ProgressState::Started
@@ -177,7 +190,7 @@ pub fn derive_progress(inputs: &ProgressInputs<'_>) -> (ProgressState, Option<St
             None,
         );
     }
-    if inputs.has_plan {
+    if inputs.written_plan() {
         return (ProgressState::Designed, None);
     }
     if inputs.launched {
@@ -238,6 +251,10 @@ pub struct IssueSummary {
     /// Names of the other workspaces where the issue is pinned (ADR 0047): "pinned in <name>".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pinned_in: Vec<String>,
+    /// The issue's plan draft in Rubato, its newest settled revision (ADR 0053). Absent when the
+    /// issue has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<crate::plan_draft::DraftSummary>,
 }
 
 /// One point of an issue's spend over time: the total over every session it has had, at the
@@ -301,6 +318,14 @@ pub enum Finding {
     UnknownIds { issue: IssueRef, ids: Vec<String> },
     /// Two or more open plans touch the same seam.
     SeamCollision { seam: String, issues: Vec<IssueRef> },
+    /// Another person's launched session wrote a plan bundle on a branch whose draft someone
+    /// else owns; it was not stored (ADR 0053). Taking a draft over is Import.
+    DraftOwnerConflict {
+        issue: IssueRef,
+        branch: String,
+        owner: String,
+        other: String,
+    },
     /// A plan file exists but does not parse.
     PlanParseError {
         issue: IssueRef,
@@ -506,12 +531,52 @@ mod tests {
             pins,
             launched: false,
             sessions,
-            has_plan: false,
+            plan_on_branch: false,
+            draft_plan: false,
             cap_hit: None,
             pr,
             now: now(),
             session_stale_secs: 120,
         }
+    }
+
+    /// ADR 0053: a settled draft makes an idle session Designed, but a session working on a draft
+    /// is still Designing, and only a plan on the branch makes it Building. The blocked station
+    /// follows the same split.
+    #[test]
+    fn a_draft_is_designed_when_idle_and_designing_when_worked_on() {
+        let pins = [MapRef::node("rubato-protocol")];
+        let working = [session(SessionStatus::Working, StateSource::Hook, 5)];
+        let mut i = inputs(&working, &pins, None);
+        i.draft_plan = true;
+        assert_eq!(
+            derive_progress(&i).0,
+            ProgressState::Designing,
+            "revising a draft"
+        );
+        i.plan_on_branch = true;
+        assert_eq!(derive_progress(&i).0, ProgressState::Building);
+        let idle = [session(SessionStatus::Idle, StateSource::Hook, 5)];
+        let mut i = inputs(&idle, &pins, None);
+        i.draft_plan = true;
+        assert_eq!(derive_progress(&i).0, ProgressState::Designed);
+        let none: [SessionState; 0] = [];
+        let mut i = inputs(&none, &pins, None);
+        i.draft_plan = true;
+        assert_eq!(
+            derive_progress(&i).0,
+            ProgressState::Designed,
+            "a parked draft"
+        );
+        // A spend cap stopped a session working on a draft: it left from Designing.
+        let mut i = inputs(&working, &pins, None);
+        i.draft_plan = true;
+        i.cap_hit = Some(CapKind::Spend);
+        assert_eq!(blocked_from(&i), Some(ProgressState::Designing));
+        let waiting = [blocked_session(Some(BlockCause::IdlePrompt))];
+        let mut i = inputs(&waiting, &pins, None);
+        i.draft_plan = true;
+        assert_eq!(blocked_from(&i), Some(ProgressState::Designed));
     }
 
     #[test]
@@ -531,11 +596,11 @@ mod tests {
             ProgressState::Designing
         );
         let mut i = inputs(&working, &pins, None);
-        i.has_plan = true;
+        i.plan_on_branch = true;
         assert_eq!(derive_progress(&i).0, ProgressState::Building);
         let idle = [session(SessionStatus::Idle, StateSource::Hook, 5)];
         let mut i = inputs(&idle, &pins, None);
-        i.has_plan = true;
+        i.plan_on_branch = true;
         assert_eq!(derive_progress(&i).0, ProgressState::Designed);
         let blocked = [session(SessionStatus::Blocked, StateSource::Hook, 5)];
         assert_eq!(
@@ -575,7 +640,7 @@ mod tests {
         let working = [session(SessionStatus::Working, StateSource::Hook, 5)];
         let red = pr(true, ChecksStatus::Red, false);
         let mut i = inputs(&working, &pins, Some(&red));
-        i.has_plan = true;
+        i.plan_on_branch = true;
         assert_eq!(derive_progress(&i).0, ProgressState::Building);
     }
 
@@ -677,7 +742,7 @@ mod tests {
             let mut i = inputs(sessions, &pins, None);
             i.cap_hit = *cap;
             i.launched = *launched;
-            i.has_plan = *has_plan;
+            i.plan_on_branch = *has_plan;
             assert_eq!(derive_progress(&i).0, Blocked, "{row}");
             assert_eq!(blocked_from(&i), *expected, "{row}");
         }
@@ -701,7 +766,7 @@ mod tests {
         ] {
             let mut i = inputs(sessions, &pins, pr);
             i.launched = launched;
-            i.has_plan = has_plan;
+            i.plan_on_branch = has_plan;
             assert_ne!(derive_progress(&i).0, Blocked);
             assert_eq!(blocked_from(&i), None, "{:?}", derive_progress(&i));
             not_blocked += 1;
@@ -747,7 +812,7 @@ mod tests {
                                         .collect();
                                     let mut i = inputs(&sessions, &pins, pr);
                                     i.launched = launched;
-                                    i.has_plan = has_plan;
+                                    i.plan_on_branch = has_plan;
                                     i.cap_hit = cap;
                                     let state = derive_progress(&i).0;
                                     if let Some(at) = blocked_from(&i) {

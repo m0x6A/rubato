@@ -93,6 +93,24 @@
             "kind",
             "launch_id"
           ]
+        },
+        {
+          "description": "`GET` `plan_draft::routes::DRAFT` (and its revisions) for this draft.",
+          "type": "object",
+          "properties": {
+            "draft_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "draft"
+            }
+          },
+          "required": [
+            "kind",
+            "draft_id"
+          ]
         }
       ]
     }

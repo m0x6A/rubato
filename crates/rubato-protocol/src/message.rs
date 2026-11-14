@@ -3,6 +3,7 @@
 use crate::hook::HookEvent;
 use crate::launch::{CapHit, LaunchCommand, LaunchResult};
 use crate::limits::Limits;
+use crate::plan_draft::DraftBundle;
 use crate::session::{Heartbeat, SessionState, StaleSession};
 use crate::session_message::{SessionMessage, SessionMessageResult};
 use chrono::{DateTime, Utc};
@@ -22,6 +23,10 @@ pub mod capability {
     pub const HOOK_ALLOWLIST: &str = "hook_allowlist";
     /// The server takes `SessionMessageResult` and sends `SessionMessage`.
     pub const SESSION_MESSAGES: &str = "session_messages";
+    /// The companion mirrors launched sessions' plan bundles at settle points (ADR 0053).
+    pub const DRAFT_MIRROR: &str = "draft_mirror";
+    /// The server takes `CompanionMessage::Draft`.
+    pub const DRAFTS: &str = "drafts";
 }
 
 /// Companion → server.
@@ -51,6 +56,8 @@ pub enum CompanionMessage {
     Stale(StaleSession),
     /// The answer to one `SessionMessage` (ADR 0051).
     SessionMessageResult(SessionMessageResult),
+    /// A launched session's plan bundle at a settle point (ADR 0053).
+    Draft(DraftBundle),
     /// Acknowledges a server envelope by sequence.
     Ack {
         seq: u64,

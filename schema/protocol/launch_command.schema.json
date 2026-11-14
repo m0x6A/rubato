@@ -51,6 +51,13 @@
         "type": "string"
       }
     },
+    "plan_path": {
+      "description": "Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion\nmirrors, with the bundle it names (ADR 0053). Absent from an older server.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "prompt": {
       "description": "Initial prompt for the session.",
       "type": "string"
