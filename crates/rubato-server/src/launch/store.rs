@@ -30,6 +30,9 @@ pub struct LaunchTarget {
     pub user: String,
     pub issue: IssueRef,
     pub session_id: Option<String>,
+    /// The branch and plan path the launch was sent with.
+    pub branch: Option<String>,
+    pub plan_path: Option<String>,
 }
 
 /// The launch with this id, if Rubato started it.
@@ -46,7 +49,9 @@ pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<La
         companion_id: r.get::<String, _>("companion_id").parse()?,
         user: r.get("user"),
         issue: IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64),
-        session_id: command.map(|c| c.session_id.to_string()),
+        session_id: command.as_ref().map(|c| c.session_id.to_string()),
+        branch: command.as_ref().map(|c| c.branch.clone()),
+        plan_path: command.and_then(|c| c.plan_path),
     }))
 }
 

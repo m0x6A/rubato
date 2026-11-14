@@ -37,3 +37,10 @@ export async function planCheck(): Promise<{ check: CheckModule; map: MapModule;
   const [check, map, parse] = await Promise.all([load("check.ts"), load("map.ts"), load("parse-plan.ts")]);
   return { check: check as CheckModule, map: map as MapModule, parse: parse as ParseModule };
 }
+
+type BundleModule = typeof import("../../../../actions/plan-check/src/bundle.ts");
+
+/** `bundle_paths` and `bundle_hash`'s twins (plan 122 §D3), from the same place as the plan check. */
+export async function bundleModule(): Promise<BundleModule> {
+  return (await import(pathToFileURL(resolve(planCheckSrc(), "bundle.ts")).href)) as BundleModule;
+}

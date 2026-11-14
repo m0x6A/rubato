@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use rubato_protocol::{IssueRef, SessionMessageKind, SessionMessageState, SessionMessageView};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// One stored message.
@@ -68,6 +69,19 @@ fn row(r: &SqliteRow) -> Result<MessageRow> {
 
 const COLUMNS: &str = "id, launch_id, session_id, companion_id, owner, repo, number, kind, body, author, priority, state, created_at, pushed_at, outcome_at, detail";
 
+/// Whether a `plan_approved` for this approval is queued, in flight, typed, or of unknown
+/// outcome (ADR 0055): a later launch must not get a second one. A refused or failed one is not.
+pub async fn plan_approved_open(db: &SqlitePool, approval_id: Uuid) -> Result<bool> {
+    Ok(sqlx::query(
+        "SELECT 1 FROM session_messages WHERE kind = 'plan_approved' AND json_extract(body, '$.approval_id') = ? \
+         AND state IN ('queued', 'sent', 'delivered', 'delivery_unknown') LIMIT 1",
+    )
+    .bind(approval_id.to_string())
+    .fetch_optional(db)
+    .await?
+    .is_some())
+}
+
 pub async fn insert(db: &SqlitePool, m: &MessageRow) -> Result<()> {
     sqlx::query(&format!(
         "INSERT INTO session_messages ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -116,26 +130,55 @@ pub async fn for_launch(db: &SqlitePool, launch_id: Uuid) -> Result<Vec<MessageR
 
 /// Mark the launch's next queued message `sent` and return it, but only when none of the launch's
 /// messages is `sent` already: at most one in flight per launch, `plan_approved` first
-/// (`priority`), then oldest first. One statement, so two dispatches cannot both send.
+/// (`priority`), then oldest first. One statement, so two dispatches cannot both send. Without
+/// `plan_handoff` a queued `plan_approved` is passed over and waits for a companion that can
+/// type it; the chat behind it still goes.
 pub async fn take_next(
     db: &SqlitePool,
     launch_id: Uuid,
     now: DateTime<Utc>,
+    plan_handoff: bool,
 ) -> Result<Option<MessageRow>> {
     let l = launch_id.to_string();
     let r = sqlx::query(&format!(
         "UPDATE session_messages SET state = 'sent', pushed_at = ? \
          WHERE id = (SELECT id FROM session_messages WHERE launch_id = ? AND state = 'queued' \
+                       AND (kind <> 'plan_approved' OR ?) \
                      ORDER BY priority, created_at, id LIMIT 1) \
            AND NOT EXISTS (SELECT 1 FROM session_messages WHERE launch_id = ? AND state = 'sent') \
          RETURNING {COLUMNS}"
     ))
     .bind(ts(now))
     .bind(&l)
+    .bind(plan_handoff)
     .bind(&l)
     .fetch_optional(db)
     .await?;
     r.as_ref().map(row).transpose()
+}
+
+/// When each approval's `plan_approved` was typed into its session (`delivered`), by approval.
+pub async fn plan_approved_delivered(db: &SqlitePool) -> Result<HashMap<Uuid, DateTime<Utc>>> {
+    let rows = sqlx::query(
+        "SELECT body, outcome_at FROM session_messages WHERE kind = 'plan_approved' AND state = 'delivered'",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut out = HashMap::new();
+    for r in rows {
+        let Ok(SessionMessageKind::PlanApproved { approval_id, .. }) =
+            serde_json::from_str(&r.get::<String, _>("body"))
+        else {
+            continue;
+        };
+        if let Some(at) = r.get::<Option<String>, _>("outcome_at") {
+            let at = parse_ts(&at);
+            out.entry(approval_id)
+                .and_modify(|t: &mut DateTime<Utc>| *t = (*t).min(at))
+                .or_insert(at);
+        }
+    }
+    Ok(out)
 }
 
 /// A pushed row whose push did not reach a socket goes back to the queue.
