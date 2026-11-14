@@ -1284,6 +1284,77 @@
       }
     },
     {
+      "id": 84,
+      "title": "Findings by workspace",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 6,
+        "y": 78
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "What the map and the plans disagree about, per workspace (issue #89, ADR 0045): plan ids no map of the issue's workspaces has, plans that fit none of them, ids that name two different parts across workspaces sharing a repo, and approvals of an earlier plan version. An issue two workspaces hold counts in each, so read one workspace at a time; never sum across them. Each line names its workspace; the overview of that workspace (?w=<id>) lists the issues.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (rubato_workspace) (rubato_plan_unknown_id_count)",
+          "legendFormat": "unknown plan ids · {{rubato_workspace}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (rubato_workspace) (rubato_plans_fit_none)",
+          "legendFormat": "plans fitting no workspace · {{rubato_workspace}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (rubato_workspace) (rubato_workspace_id_collisions)",
+          "legendFormat": "id collisions · {{rubato_workspace}}"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (rubato_workspace) (rubato_plans_approval_stale)",
+          "legendFormat": "stale approvals · {{rubato_workspace}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
       "id": 72,
       "title": "GitHub calls by endpoint",
       "type": "timeseries",
