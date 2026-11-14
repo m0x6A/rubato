@@ -4,12 +4,12 @@
 //! `rubato.hook.forward` span.
 
 use crate::kernel::telemetry::Metrics;
-use crate::sessions::Registry;
+use crate::sessions::{Registry, save_launches_if_changed};
 use anyhow::Result;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
 use rubato_protocol::{CompanionMessage, HookEvent, IssueRef};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::{Mutex, mpsc};
 use tracing::Instrument;
 use uuid::Uuid;
@@ -17,9 +17,10 @@ use uuid::Uuid;
 /// What the spend step needs from the hook: the session's issue, transcript and spend cap.
 pub type HookOutcome = (Option<IssueRef>, Option<PathBuf>, Option<f64>);
 
-/// `rubato.hook.forwarded` exists at 0 for this companion from startup. After a restart the
-/// sessions launched earlier post to a dead port: without this series `SessionWorkingNoHooks`
-/// would have no hook side to compare with and stay silent in exactly that case.
+/// `rubato.hook.forwarded` exists at 0 for this companion from startup. After a restart that
+/// could not take the hook port back (`hook port changed`, `hooks_lost`) the sessions launched
+/// earlier post to a dead port: without this series `SessionWorkingNoHooks` would have no hook
+/// side to compare with and stay silent in exactly that case.
 pub fn seed_forwarded(metrics: &Metrics, companion_id: Uuid) {
     metrics.hook_forwarded.add(
         0,
@@ -27,12 +28,15 @@ pub fn seed_forwarded(metrics: &Metrics, companion_id: Uuid) {
     );
 }
 
+/// `state_dir` is where `launches.json` lives: a hook that moves a launch to a new session id
+/// rewrites it (plan 122 §D1).
 pub async fn on_event(
     ev: &HookEvent,
     registry: &Mutex<Registry>,
     out: &mpsc::UnboundedSender<CompanionMessage>,
     metrics: &Metrics,
     companion_id: Uuid,
+    state_dir: &Path,
 ) -> HookOutcome {
     let span = tracing::info_span!(
         span::HOOK_FORWARD,
@@ -40,7 +44,7 @@ pub async fn on_event(
         rubato.hook_event = ?ev.hook_event_name,
         rubato.session.blocked_by = ev.implied_block_cause().map(|c| c.name()),
     );
-    forward(ev, registry, out, metrics, companion_id)
+    forward(ev, registry, out, metrics, companion_id, state_dir)
         .instrument(span)
         .await
 }
@@ -51,6 +55,7 @@ async fn forward(
     out: &mpsc::UnboundedSender<CompanionMessage>,
     metrics: &Metrics,
     companion_id: Uuid,
+    state_dir: &Path,
 ) -> HookOutcome {
     let mut attrs = vec![
         // No session id: one series per session would grow for the life of the process
@@ -66,6 +71,7 @@ async fn forward(
     let (issue, transcript, cap, snapshot) = {
         let mut reg = registry.lock().await;
         let issue = reg.apply_hook(ev);
+        save_launches_if_changed(&mut reg, state_dir);
         let e = reg.by_session(&ev.session_id).cloned();
         (
             issue,
@@ -132,7 +138,15 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        on_event(&ev, &registry, &out, &metrics, id).await;
+        on_event(
+            &ev,
+            &registry,
+            &out,
+            &metrics,
+            id,
+            Path::new("/nonexistent"),
+        )
+        .await;
         let points = reader.points(metric::HOOK_FORWARDED);
         assert_eq!(points.len(), 2, "{points:?}");
         for p in &points {
@@ -158,7 +172,15 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        on_event(&ev2, &registry, &out, &metrics, id).await;
+        on_event(
+            &ev2,
+            &registry,
+            &out,
+            &metrics,
+            id,
+            Path::new("/nonexistent"),
+        )
+        .await;
         let points = reader.points(metric::HOOK_FORWARDED);
         assert_eq!(points.len(), 2, "{points:?}");
         let hook = points
@@ -178,7 +200,15 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        on_event(&blocked, &registry, &out, &metrics, id).await;
+        on_event(
+            &blocked,
+            &registry,
+            &out,
+            &metrics,
+            id,
+            Path::new("/nonexistent"),
+        )
+        .await;
         let points = reader.points(metric::HOOK_FORWARDED);
         let cause = points
             .iter()
