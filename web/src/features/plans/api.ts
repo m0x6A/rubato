@@ -1,5 +1,5 @@
-import type { ApproveRequest, ApproveResponse } from "../../protocol.ts";
-import { ApiError, request } from "../../shared/api.ts";
+import type { ApproveRequest, ApproveResponse, DraftRevision, DraftView } from "../../protocol.ts";
+import { ApiError, failureText, request } from "../../shared/api.ts";
 import { scoped } from "../../shared/workspace.ts";
 
 /** Why an approval was refused, from the server's JSON answer (ADR 0030). */
@@ -27,3 +27,23 @@ export const REFUSAL_TEXT: Record<string, string> = {
   github_refused: "GitHub refused the comment. Check that you can comment on the issue.",
   no_plan: "There is no plan file for this issue.",
 };
+
+/** A plan draft and its revisions (ADR 0053): team routes, never `scoped()`. */
+export const planDraftsApi = {
+  draft: (draftId: string) => request<DraftView>("GET", `/api/drafts/${encodeURIComponent(draftId)}`),
+  revision: (draftId: string, rev: number) => request<DraftRevision>("GET", `/api/drafts/${encodeURIComponent(draftId)}/revisions/${rev}`),
+};
+
+const DRAFT_REFUSAL: Record<string, string> = {
+  unknown_draft: "Rubato does not know this draft",
+};
+
+/** Why a draft read failed: the refusal in words with its code, or what the server said. */
+export function draftFailureText(e: unknown): string {
+  const reason = refusalReason(e);
+  if (reason === null) {
+    return failureText(e);
+  }
+  const words = DRAFT_REFUSAL[reason];
+  return words ? `${words} (${reason})` : reason;
+}

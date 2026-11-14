@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef } from "react";
 import { ProgressRing, SpendGauge, SpendSparkline, StageRail } from "./visuals.tsx";
 import { SessionChat } from "../chat/index.ts";
 import { PinMenu } from "../pins/index.ts";
-import { WhereItFits } from "../plans/index.ts";
+import { DraftSection, WhereItFits } from "../plans/index.ts";
 import { QueueMenu } from "../queue/index.ts";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
 import { setIssueDrag } from "../../shared/dnd.ts";
@@ -142,6 +142,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             </table>
           </>
         )}
+        {selected.draft && <DraftSection issue={selected} me={me} />}
         {(selected.plan || selected.fit) && (
           <>
             <h3 style={{ marginTop: 12 }}>Plan · {selected.plan?.path ?? "does not parse"}</h3>

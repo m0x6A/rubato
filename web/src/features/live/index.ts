@@ -2,3 +2,4 @@
 export { liveApi, takeForgottenWorkspace } from "./api.ts";
 export { subscribe } from "./subscribe.ts";
 export { emitWebEvent, onWebEvent } from "./events.ts";
+export { resourceKey, useWebResource } from "./useWebResource.ts";
