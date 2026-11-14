@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "traffic fixtures",
+  "nodes": [
+    { "id": "a", "kind": "context" },
+    { "id": "b", "kind": "context" },
+    { "id": "c", "kind": "context" },
+    { "id": "d", "kind": "contract" }
+  ],
+  "seams": [
+    { "id": "a-b", "from": "a", "to": "b", "owner": "a" },
+    { "id": "a-b-events", "from": "b", "to": "a", "owner": "b" },
+    { "id": "b-c", "from": "b", "to": "c", "owner": "b" },
+    { "id": "c-d", "from": "c", "to": "d", "owner": "c" }
+  ]
+}

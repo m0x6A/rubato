@@ -1,0 +1,11 @@
+{
+  "map": {
+    "map": { "version": 1, "name": "old", "nodes": [{ "id": "a", "kind": "context" }] },
+    "version": "abc123",
+    "loaded_at": "2026-11-12T08:00:00Z"
+  },
+  "issues": [],
+  "findings": [{ "kind": "repo_not_covered", "repo": "o/r" }],
+  "companions": [],
+  "generated_at": "2026-11-12T08:00:01Z"
+}

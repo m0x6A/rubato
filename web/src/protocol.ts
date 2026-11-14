@@ -125,6 +125,15 @@ branch?: (string | null)
 companion: string
 kind: "unattributed_session"
 repo?: (string | null)
+} | {
+kind: "seam_quiet"
+seam: string
+window_secs: number
+} | {
+calls: number
+from: string
+kind: "undeclared_traffic"
+to: string
 })
 /**
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
@@ -239,6 +248,10 @@ id: string
 op: "remove_seam"
 })
 export type ProposalState = ("opening" | "proposed" | "merged")
+/**
+ * Whether the source can be believed. Only `fresh` draws traffic or makes findings.
+ */
+export type TrafficState = ("not_configured" | "fresh" | "stale" | "failing")
 export type PairPollResponse = ({
 status: "pending"
 } | {
@@ -321,6 +334,7 @@ ServerEnvelope?: ServerEnvelope
 SessionState?: SessionState
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
+TrafficReport?: TrafficReport
 WebEvent?: WebEvent
 }
 /**
@@ -1098,6 +1112,7 @@ queue?: QueuedIssue[]
  * One row per repo the map names, plus repos of tracked work outside the map.
  */
 repos?: ConnectedRepo[]
+traffic?: ObservedTraffic
 /**
  * Sessions not attached to any issue (branch outside the convention).
  */
@@ -1328,6 +1343,82 @@ sessions: number
  */
 unattributed: number
 }
+/**
+ * Observed calls per seam from the latest traffic report (ADR 0039). Absent from an older
+ * server: not configured. Never an input to progress.
+ */
+export interface ObservedTraffic {
+/**
+ * Why the last fetch failed, when `failing`.
+ */
+error?: (string | null)
+/**
+ * When the last good report's window ended.
+ */
+observed_at?: (string | null)
+/**
+ * Parts that called or were called in the window. Empty unless `fresh`.
+ */
+observed_parts?: string[]
+/**
+ * Declared seams with calls in the window, in map order. Empty unless `fresh`.
+ */
+seams?: SeamTraffic[]
+state: TrafficState
+/**
+ * The source cut the report at its edge limit.
+ */
+truncated?: boolean
+/**
+ * Calls between two parts no seam joins. Empty unless `fresh`.
+ */
+undeclared?: UndeclaredEdge[]
+/**
+ * Up to 20 of them, sorted. Text only.
+ */
+unmapped_sample?: string[]
+/**
+ * Services in the report that name no map part.
+ */
+unmapped_services?: number
+/**
+ * The last good report's window.
+ */
+window_secs?: (number | null)
+}
+/**
+ * Calls on one declared seam in the report's window, each way.
+ */
+export interface SeamTraffic {
+/**
+ * Failed calls, both ways.
+ */
+errors: number
+/**
+ * Calls whose client is the seam's `from` side.
+ */
+forward_calls: number
+/**
+ * Calls whose client is the seam's `to` side.
+ */
+reverse_calls: number
+seam: string
+}
+/**
+ * Calls between two map parts that no seam joins.
+ */
+export interface UndeclaredEdge {
+calls: number
+errors: number
+/**
+ * The calling part.
+ */
+from: string
+/**
+ * The called part.
+ */
+to: string
+}
 export interface PairApproveRequest {
 user_code: string
 }
@@ -1447,4 +1538,44 @@ issue?: (IssueRef | null)
 last_seen: string
 session_id?: (string | null)
 silent_for_secs: number
+}
+/**
+ * What any source of observed traffic produces (ADR 0039).
+ */
+export interface TrafficReport {
+edges: TrafficEdge[]
+/**
+ * When the source's window ended.
+ */
+observed_at: string
+/**
+ * The source cut the edges at `MAX_EDGES`.
+ */
+truncated?: boolean
+/**
+ * How far back the counts reach.
+ */
+window_secs: number
+}
+/**
+ * Calls observed from one service to another in a report's window: the shape of the
+ * OpenTelemetry Collector `servicegraph` connector's output.
+ */
+export interface TrafficEdge {
+/**
+ * Requests in the window.
+ */
+calls: number
+/**
+ * OpenTelemetry `service.name` of the caller.
+ */
+client: string
+/**
+ * Of which failed.
+ */
+errors?: number
+/**
+ * OpenTelemetry `service.name` of the callee.
+ */
+server: string
 }

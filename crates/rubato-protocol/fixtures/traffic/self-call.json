@@ -1,0 +1,28 @@
+{
+  "why": "a self-call is ignored: it lights no seam and observes no part",
+  "now": "2026-11-13T12:00:00Z",
+  "fetch_secs": 60,
+  "report": {
+    "observed_at": "2026-11-13T12:00:00Z",
+    "window_secs": 600,
+    "edges": [
+      { "client": "c", "server": "c", "calls": 70, "errors": 0 },
+      { "client": "a", "server": "b", "calls": 1, "errors": 0 }
+    ]
+  },
+  "expect": {
+    "traffic": {
+      "state": "fresh",
+      "observed_at": "2026-11-13T12:00:00Z",
+      "window_secs": 600,
+      "seams": [
+        { "seam": "a-b", "forward_calls": 1, "reverse_calls": 0, "errors": 0 },
+        { "seam": "a-b-events", "forward_calls": 0, "reverse_calls": 1, "errors": 0 }
+      ],
+      "observed_parts": ["a", "b"],
+      "unmapped_services": 0,
+      "truncated": false
+    },
+    "findings": []
+  }
+}

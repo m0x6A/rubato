@@ -8,7 +8,7 @@ use crate::kernel::telemetry::Metrics;
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
-use rubato_protocol::{ServerMessage, SystemMap, WebEvent};
+use rubato_protocol::{ServerMessage, SourceStatus, SystemMap, TrafficReport, WebEvent};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,15 @@ pub struct LoadedMap {
     pub yaml: String,
 }
 
+/// The latest good traffic report and its source's state (slice `traffic`, ADR 0039). In
+/// memory only: a restart is *unknown* until the first fetch. The traffic task writes it; the
+/// overview reads it.
+#[derive(Debug, Clone)]
+pub struct TrafficLatest {
+    pub report: Option<TrafficReport>,
+    pub source: SourceStatus,
+}
+
 pub struct AppState {
     pub db: SqlitePool,
     pub config: Arc<Config>,
@@ -39,6 +48,7 @@ pub struct AppState {
     pub map: RwLock<Option<LoadedMap>>,
     pub metrics: Metrics,
     pub signer: Signer,
+    pub traffic: RwLock<TrafficLatest>,
 }
 
 pub type App = Arc<AppState>;
@@ -47,6 +57,17 @@ impl AppState {
     pub fn new(db: SqlitePool, config: Config, github: Arc<dyn GitHubApi>) -> App {
         let (web_tx, _) = broadcast::channel(256);
         let signer = Signer::new(config.session_secret.as_bytes());
+        let traffic = TrafficLatest {
+            report: None,
+            source: if config.dev_traffic.is_some() {
+                SourceStatus::Configured {
+                    fetch_secs: config.traffic_fetch_secs,
+                    error: None,
+                }
+            } else {
+                SourceStatus::NotConfigured
+            },
+        };
         Arc::new(Self {
             db,
             config: Arc::new(config),
@@ -56,6 +77,7 @@ impl AppState {
             map: RwLock::new(None),
             metrics: Metrics::new(),
             signer,
+            traffic: RwLock::new(traffic),
         })
     }
 

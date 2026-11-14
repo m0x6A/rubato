@@ -1,0 +1,9 @@
+{
+  "window_secs": 3600,
+  "edges": [
+    { "client": "web", "server": "rubato-server", "calls": 1200, "errors": 12 },
+    { "client": "rubato-server", "server": "github", "calls": 300, "errors": 0 },
+    { "client": "rubato-companion", "server": "github", "calls": 4, "errors": 0 },
+    { "client": "checkout", "server": "web", "calls": 9, "errors": 0 }
+  ]
+}

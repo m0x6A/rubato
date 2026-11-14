@@ -75,6 +75,7 @@ pub async fn overview(
         can_create_issues: app.github.can_create_issues(),
         repos: built.repos,
         pulls: built.pulls,
+        traffic: built.traffic,
         generated_at: Utc::now(),
     }))
 }

@@ -1,6 +1,16 @@
 import type { Finding } from "../../protocol.ts";
 import { issueKey } from "../../shared/format.ts";
 
+/** A report window in the largest whole unit: "1 h", "30 min", "90 s", "1 d". */
+export function windowText(secs: number): string {
+  for (const [unit, n] of [["d", 86_400], ["h", 3600], ["min", 60]] as const) {
+    if (secs % n === 0) {
+      return `${secs / n} ${unit}`;
+    }
+  }
+  return `${secs} s`;
+}
+
 export function findingText(f: Finding): string {
   switch (f.kind) {
     case "flow_off_seam":
@@ -21,6 +31,10 @@ export function findingText(f: Finding): string {
       return `${issueKey(f.issue)} was approved, but its plan does not fit the map, so the approval does not count`;
     case "unattributed_session":
       return `a session${f.repo ? ` in ${f.repo}` : ""} on ${f.branch ? `branch ${f.branch}` : "no branch"} is not tied to an issue; name its branch issue/<n>-…`;
+    case "seam_quiet":
+      return `${f.seam} is on the map but carried no calls in ${windowText(f.window_secs)}, while both its parts show traffic`;
+    case "undeclared_traffic":
+      return `${f.from} called ${f.to} ${f.calls} time${f.calls === 1 ? "" : "s"}, but no seam on the map joins them`;
   }
 }
 

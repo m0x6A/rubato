@@ -8,6 +8,9 @@ use std::path::PathBuf;
 /// The longest poll interval: the `ServerPollSilent` window is 10 minutes (design D14).
 pub const MAX_POLL_SECS: u64 = 300;
 
+/// The traffic fetch interval's range and default (plan #104): a report is stale after three.
+pub const TRAFFIC_FETCH_SECS: (u32, u32, u32) = (15, 60, 300);
+
 /// The GitHub App the server acts as (ADR 0022). All three settings or none.
 #[derive(Clone, PartialEq, Eq)]
 pub struct GitHubApp {
@@ -108,6 +111,11 @@ pub struct Config {
     pub dev_issues: Option<PathBuf>,
     /// `owner/name=/path/to/repo.git,...`: read plans and branches from local repos instead of GitHub.
     pub local_repos: Option<String>,
+    /// Development and tests only: a JSON `TrafficReport` file, read every fetch interval, the
+    /// only traffic source so far (ADR 0039, plan #104 Q1 (d)). Unset: traffic not configured.
+    pub dev_traffic: Option<PathBuf>,
+    /// Seconds between traffic fetches (`RUBATO_TRAFFIC_FETCH_SECS`, 15–300, default 60).
+    pub traffic_fetch_secs: u32,
     /// `owner/name` of the repo holding `system-map.yml` (ADR 0010).
     pub map_repo: String,
     pub map_path: String,
@@ -178,6 +186,11 @@ impl Config {
             github_web_url: env("RUBATO_GITHUB_WEB_URL").map(trim_slash),
             dev_issues: env("RUBATO_DEV_ISSUES").map(PathBuf::from),
             local_repos: env("RUBATO_LOCAL_REPOS"),
+            dev_traffic: env("RUBATO_DEV_TRAFFIC").map(PathBuf::from),
+            traffic_fetch_secs: traffic_fetch_secs(
+                env("RUBATO_TRAFFIC_FETCH_SECS").as_deref(),
+                &mut warnings,
+            ),
             map_repo: env("RUBATO_MAP_REPO").unwrap_or_else(|| "m0x6A/rubato".into()),
             map_path: env("RUBATO_MAP_PATH").unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
             map_ref: env("RUBATO_MAP_REF").unwrap_or_else(|| "main".into()),
@@ -229,6 +242,8 @@ impl Config {
             github_web_url: None,
             dev_issues: None,
             local_repos: None,
+            dev_traffic: None,
+            traffic_fetch_secs: TRAFFIC_FETCH_SECS.1,
             map_repo: "m0x6A/rubato".into(),
             map_path: "docs/design/rubato-map.yml".into(),
             map_ref: "main".into(),
@@ -262,9 +277,44 @@ fn clamp_poll_secs(v: u64, warnings: &mut Vec<String>) -> u64 {
     }
 }
 
+/// `RUBATO_TRAFFIC_FETCH_SECS`, clamped to 15–300; unset or unreadable is 60.
+fn traffic_fetch_secs(v: Option<&str>, warnings: &mut Vec<String>) -> u32 {
+    let (min, default, max) = TRAFFIC_FETCH_SECS;
+    let Some(v) = v else { return default };
+    match v.parse::<u32>() {
+        Ok(n) if (min..=max).contains(&n) => n,
+        Ok(n) => {
+            let c = n.clamp(min, max);
+            warnings.push(format!(
+                "RUBATO_TRAFFIC_FETCH_SECS={n} is outside {min}–{max}; fetching every {c} s"
+            ));
+            c
+        }
+        Err(_) => {
+            warnings.push(format!(
+                "RUBATO_TRAFFIC_FETCH_SECS={v:?} is not a number; fetching every {default} s"
+            ));
+            default
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn traffic_fetch_interval_is_clamped_with_a_warning() {
+        let mut w = Vec::new();
+        assert_eq!(traffic_fetch_secs(None, &mut w), 60);
+        assert_eq!(traffic_fetch_secs(Some("15"), &mut w), 15);
+        assert_eq!(traffic_fetch_secs(Some("300"), &mut w), 300);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(traffic_fetch_secs(Some("5"), &mut w), 15);
+        assert_eq!(traffic_fetch_secs(Some("3600"), &mut w), 300);
+        assert_eq!(traffic_fetch_secs(Some("soon"), &mut w), 60);
+        assert_eq!(w.len(), 3, "{w:?}");
+    }
 
     #[test]
     fn the_app_needs_all_three_settings_or_none() {

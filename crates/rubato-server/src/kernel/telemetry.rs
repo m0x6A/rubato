@@ -110,6 +110,12 @@ pub struct Metrics {
     pub issues_opening: Gauge<u64>,
     pub plans_not_fitting: Gauge<u64>,
     pub plans_approvals_opening: Gauge<u64>,
+    pub traffic_fetches: Counter<u64>,
+    /// Seconds; no unit, so the series is `rubato_traffic_report_age` as the alert names it.
+    pub traffic_report_age: Gauge<u64>,
+    pub traffic_seams_quiet: Gauge<u64>,
+    pub traffic_undeclared_edges: Gauge<u64>,
+    pub traffic_unmapped_services: Gauge<u64>,
 }
 
 impl Metrics {
@@ -151,6 +157,11 @@ impl Metrics {
             issues_opening: m.u64_gauge(otel::metric::ISSUES_OPENING).build(),
             plans_not_fitting: m.u64_gauge(otel::metric::PLANS_NOT_FITTING).build(),
             plans_approvals_opening: m.u64_gauge(otel::metric::PLANS_APPROVALS_OPENING).build(),
+            traffic_fetches: m.u64_counter(otel::metric::TRAFFIC_FETCHES).build(),
+            traffic_report_age: m.u64_gauge(otel::metric::TRAFFIC_REPORT_AGE).build(),
+            traffic_seams_quiet: m.u64_gauge(otel::metric::TRAFFIC_SEAMS_QUIET).build(),
+            traffic_undeclared_edges: m.u64_gauge(otel::metric::TRAFFIC_UNDECLARED_EDGES).build(),
+            traffic_unmapped_services: m.u64_gauge(otel::metric::TRAFFIC_UNMAPPED_SERVICES).build(),
         }
     }
 }

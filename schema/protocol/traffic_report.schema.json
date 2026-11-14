@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TrafficReport",
+  "description": "What any source of observed traffic produces (ADR 0039).",
+  "type": "object",
+  "properties": {
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TrafficEdge"
+      }
+    },
+    "observed_at": {
+      "description": "When the source's window ended.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "truncated": {
+      "description": "The source cut the edges at `MAX_EDGES`.",
+      "type": "boolean",
+      "default": false
+    },
+    "window_secs": {
+      "description": "How far back the counts reach.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "observed_at",
+    "window_secs",
+    "edges"
+  ],
+  "$defs": {
+    "TrafficEdge": {
+      "description": "Calls observed from one service to another in a report's window: the shape of the\nOpenTelemetry Collector `servicegraph` connector's output.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "description": "Requests in the window.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "client": {
+          "description": "OpenTelemetry `service.name` of the caller.",
+          "type": "string"
+        },
+        "errors": {
+          "description": "Of which failed.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
+        "server": {
+          "description": "OpenTelemetry `service.name` of the callee.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "client",
+        "server",
+        "calls"
+      ]
+    }
+  }
+}

@@ -23,5 +23,6 @@ pub async fn build_overview_inputs(app: &App) -> Result<OverviewInputs> {
         layout: layout::all(&app.db).await?,
         queue: queue::all(&app.db).await?,
         repo_pulls: github_poll::repo_pulls(&app.db).await?,
+        traffic: app.traffic.read().await.clone(),
     })
 }

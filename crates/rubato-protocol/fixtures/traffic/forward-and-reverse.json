@@ -1,0 +1,29 @@
+{
+  "why": "calls each way land on the right seam; two seams joining one pair both get them",
+  "now": "2026-11-13T12:00:00Z",
+  "fetch_secs": 60,
+  "report": {
+    "observed_at": "2026-11-13T11:59:30Z",
+    "window_secs": 3600,
+    "edges": [
+      { "client": "a", "server": "b", "calls": 10, "errors": 1 },
+      { "client": "b", "server": "a", "calls": 5, "errors": 0 },
+      { "client": "a", "server": "b", "calls": 2, "errors": 0 }
+    ]
+  },
+  "expect": {
+    "traffic": {
+      "state": "fresh",
+      "observed_at": "2026-11-13T11:59:30Z",
+      "window_secs": 3600,
+      "seams": [
+        { "seam": "a-b", "forward_calls": 12, "reverse_calls": 5, "errors": 1 },
+        { "seam": "a-b-events", "forward_calls": 5, "reverse_calls": 12, "errors": 1 }
+      ],
+      "observed_parts": ["a", "b"],
+      "unmapped_services": 0,
+      "truncated": false
+    },
+    "findings": []
+  }
+}
