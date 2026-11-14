@@ -17,6 +17,7 @@ pub async fn after_hook(
     out: &mpsc::UnboundedSender<CompanionMessage>,
     pricing: &BTreeMap<String, ModelPrice>,
     tmux: &Tmux,
+    headless: Option<&crate::sessions::Headless>,
 ) {
     let Some(path) = transcript else { return };
     if pricing.is_empty() {
@@ -42,7 +43,12 @@ pub async fn after_hook(
                 limit,
                 at: Utc::now(),
             }));
-            if let Some(name) = entry.and_then(|e| e.tmux_session) {
+            // A headless turn is a process group the companion holds (ADR 0059).
+            let killed_turn = match (headless, entry.as_ref().and_then(|e| e.launch_id)) {
+                (Some(h), Some(launch)) => h.kill(launch, crate::kernel::claude::KillReason::Cap),
+                _ => false,
+            };
+            if !killed_turn && let Some(name) = entry.and_then(|e| e.tmux_session) {
                 let t = tmux.clone();
                 let _ = tokio::task::spawn_blocking(move || t.kill_session(&name)).await;
             }

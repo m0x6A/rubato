@@ -24,6 +24,12 @@ pub enum Decision {
         session_id: String,
         text: String,
     },
+    /// Run `text` as a headless turn of the session (ADR 0059): no pane, the turn is a child.
+    Turn {
+        session_id: String,
+        worktree: std::path::PathBuf,
+        text: String,
+    },
 }
 
 /// Why a message waits, for the `not idle` log line: the last hook, if any.
@@ -69,6 +75,13 @@ pub fn decide(
     }
     if !e.waits_for_input() {
         return Answer(SessionMessageOutcome::NotIdle);
+    }
+    if e.source == rubato_protocol::StateSource::Headless {
+        return Decision::Turn {
+            session_id,
+            worktree: e.worktree.clone().unwrap_or_else(|| e.cwd.clone()),
+            text,
+        };
     }
     let Some(target) = e.pane_id.clone().or_else(|| e.tmux_session.clone()) else {
         return refused(MessageRefusal::NoPane);
@@ -161,7 +174,9 @@ mod tests {
     fn outcome(d: Decision) -> SessionMessageOutcome {
         match d {
             Decision::Answer(o) => o,
-            Decision::Paste { .. } => panic!("expected an answer, got {d:?}"),
+            Decision::Paste { .. } | Decision::Turn { .. } => {
+                panic!("expected an answer, got {d:?}")
+            }
         }
     }
 

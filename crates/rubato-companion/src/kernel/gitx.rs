@@ -98,6 +98,39 @@ pub fn worktrees(repo: &Path) -> Result<Vec<(PathBuf, Option<String>)>> {
     Ok(list)
 }
 
+/// A worktree for `branch` at `path`, without tmux-ide (headless mode, ADR 0059): the branch when
+/// it exists, else a new one from `base_ref`.
+pub fn worktree_add(
+    repo: &Path,
+    path: &Path,
+    branch: &str,
+    base_ref: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let p = path.display().to_string();
+    let exists = git_within(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+        timeout,
+    )
+    .is_ok();
+    if exists {
+        git_within(repo, &["worktree", "add", &p, branch], timeout)?;
+    } else {
+        git_within(
+            repo,
+            &["worktree", "add", "-b", branch, &p, base_ref],
+            timeout,
+        )?;
+    }
+    Ok(())
+}
+
 /// Network: bounded by `companion.command_timeout_secs` (plan 40 S3).
 pub fn fetch(repo: &Path, timeout: Duration) -> Result<()> {
     git_within(repo, &["fetch", "--quiet", "origin"], timeout).map(|_| ())
