@@ -111,6 +111,33 @@
             "kind",
             "draft_id"
           ]
+        },
+        {
+          "description": "`GET` `room::routes::ROOM` for this plan's room (ADR 0057).",
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "room"
+            },
+            "number": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "repo",
+            "number",
+            "branch"
+          ]
         }
       ]
     }

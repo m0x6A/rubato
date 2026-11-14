@@ -61,6 +61,9 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::session_message::LaunchMessages>("launch_messages"),
         one::<crate::session_message::SessionMessageView>("session_message_view"),
         one::<crate::session_message::SessionMessageRequest>("session_message_request"),
+        one::<crate::room::RoomView>("room_view"),
+        one::<crate::room::RoomPostRequest>("room_post_request"),
+        one::<crate::room::RoomMessage>("room_message"),
         one::<crate::traffic::TrafficReport>("traffic_report"),
     ]
 }

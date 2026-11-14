@@ -27,6 +27,7 @@ pub mod plan_hash;
 pub mod progress;
 pub mod pulls;
 pub mod queue;
+pub mod room;
 pub mod schema;
 pub mod session;
 pub mod session_log;
@@ -94,6 +95,7 @@ pub use progress::{
 };
 pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
+pub use room::{RoomAuthorKind, RoomKey, RoomMessage, RoomPostRequest, RoomView, SeamNotice};
 pub use session::{
     BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
 };

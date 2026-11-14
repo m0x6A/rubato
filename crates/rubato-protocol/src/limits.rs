@@ -26,6 +26,8 @@ pub struct Limits {
     /// The largest plan bundle the companion mirrors (ADR 0053); a larger one is sent without
     /// its files, refused as too large.
     pub draft_max_bytes: u64,
+    /// The longest room message a person may post, in characters (ADR 0057).
+    pub room_message_max_chars: u64,
 }
 
 impl Default for Limits {
@@ -40,6 +42,7 @@ impl Default for Limits {
             session_message_max_chars: 8000,
             session_log_max_chars: 16000,
             draft_max_bytes: 1_048_576,
+            room_message_max_chars: 8000,
         }
     }
 }

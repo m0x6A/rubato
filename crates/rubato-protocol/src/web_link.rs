@@ -34,6 +34,12 @@ pub enum WebResource {
     LaunchLog { launch_id: uuid::Uuid },
     /// `GET` `plan_draft::routes::DRAFT` (and its revisions) for this draft.
     Draft { draft_id: uuid::Uuid },
+    /// `GET` `room::routes::ROOM` for this plan's room (ADR 0057).
+    Room {
+        repo: String,
+        number: u64,
+        branch: String,
+    },
 }
 
 /// Route path for the browser websocket.

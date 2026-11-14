@@ -395,6 +395,10 @@ status: "denied"
 status: "expired"
 })
 /**
+ * Who wrote a room message.
+ */
+export type RoomAuthorKind = ("person" | "agent" | "system")
+/**
  * Server → companion.
  */
 export type ServerMessage = ({
@@ -474,6 +478,11 @@ launch_id: string
 } | {
 draft_id: string
 kind: "draft"
+} | {
+branch: string
+kind: "room"
+number: number
+repo: string
 })
 
 export interface RubatoProtocol {
@@ -522,6 +531,9 @@ ProposeResponse?: ProposeResponse
 PullRequestState?: PullRequestState
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
+RoomMessage?: RoomMessage
+RoomPostRequest?: RoomPostRequest
+RoomView?: RoomView
 ServerEnvelope?: ServerEnvelope
 SessionMessageRequest?: SessionMessageRequest
 SessionMessageView?: SessionMessageView
@@ -1471,6 +1483,10 @@ heartbeat_interval_secs?: number
  */
 plan_poll_interval_secs?: number
 /**
+ * The longest room message a person may post, in characters (ADR 0057).
+ */
+room_message_max_chars?: number
+/**
  * The longest prompt or reply the companion forwards for the session log (ADR 0052); longer
  * text is cut and marked truncated.
  */
@@ -2082,6 +2098,49 @@ issues: IssueRef[]
 export interface QueueRequest {
 companion_id: string
 issue: IssueRef
+}
+/**
+ * One message of a room, oldest first in a `RoomView`.
+ */
+export interface RoomMessage {
+at: string
+/**
+ * The person's login, the agent's handle (`<owner>-agent`), or `rubato`.
+ */
+author: string
+author_kind: RoomAuthorKind
+id: string
+/**
+ * For a seam notice: the other issue and the seam both plans touch.
+ */
+notice?: (SeamNotice | null)
+text: string
+}
+/**
+ * What a system seam notice is about (ADR 0057, Q6): posted once per pair of issue and seam.
+ */
+export interface SeamNotice {
+other: IssueRef
+other_branch: string
+seam: string
+}
+/**
+ * A person's message to a room (`POST` `routes::ROOM_MESSAGES`).
+ */
+export interface RoomPostRequest {
+branch: string
+number: number
+repo: string
+text: string
+}
+/**
+ * A room and its messages (`GET` `routes::ROOM`).
+ */
+export interface RoomView {
+branch: string
+messages: RoomMessage[]
+number: number
+repo: string
 }
 export interface ServerEnvelope {
 message: ServerMessage
