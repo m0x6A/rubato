@@ -1662,15 +1662,16 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .collect();
     // Issue #49 (design 49-poll-cost S1–S4): branches and open pull requests once per repo,
     // title and state from the open listing, the plan read when the head moves, comments on the
-    // full lane. Was 16 calls here (six per issue with an open pull request).
+    // full lane. Was 16 calls here (six per issue with an open pull request). Plans are read
+    // at the head sha (ADR 0055).
     let expected = [
         "open_issues m0x6A/rubato",
         "branches m0x6A/rubato issue/",
-        "file m0x6A/rubato docs/plans/31.md issue/31-ok",
+        "file m0x6A/rubato docs/plans/31.md s31",
         "open_pulls m0x6A/rubato",
         "checks m0x6A/rubato s31",
         "issue_comments m0x6A/rubato#31",
-        "file m0x6A/rubato docs/plans/32.md issue/32-bad",
+        "file m0x6A/rubato docs/plans/32.md s32",
         "pull_for_branch m0x6A/rubato issue/32-bad",
         "issue_comments m0x6A/rubato#32",
         "issue_comments m0x6A/rubato#33",
@@ -3718,7 +3719,8 @@ async fn the_plan_file_is_read_again_only_when_the_branch_moves() {
     poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
     assert_eq!(
         h.call_args("file"),
-        ["m0x6A/rubato docs/plans/8.md issue/8-x"]
+        ["m0x6A/rubato docs/plans/8.md s8b"],
+        "read at the new head sha, not at the branch name (ADR 0055)"
     );
     println!("checked 4 ticks of plan reads");
 }
@@ -4086,7 +4088,7 @@ async fn an_untracked_plan_branch_is_discovered_and_stays_not_pinned() {
         for_90,
         [(
             "file",
-            "m0x6A/rubato docs/plans/90.md issue/90-x".to_owned()
+            "m0x6A/rubato docs/plans/90.md s90".to_owned()
         )],
         "discovery reads the plan file and nothing else for an untracked issue"
     );
@@ -5116,4 +5118,300 @@ async fn spend_history_sums_two_sessions_on_the_issue() {
     let line = spend_line(&[&[1.0, 0.5], &[2.5, 0.5], &[4.0, 1.0]]).await;
     let usd: Vec<f64> = line.iter().map(|p| p.usd).collect();
     assert_eq!(usd, [1.5, 3.0, 5.0], "{line:?}");
+}
+
+// ---- #122 PR 7: the handoff and its link comment (ADR 0055, design §D7) ----
+
+/// Accepting as a person is possible (an App, a token key) and the cutover is an hour ago.
+async fn handoff_harness() -> Harness {
+    harness_with(|c| {
+        c.github_app = Some(rubato_server::kernel::config::GitHubApp {
+            app_id: 1,
+            private_key: "unused".into(),
+            installation_id: 34,
+        });
+        c.token_key = Some(rubato_server::kernel::config::TokenKey::from_hex(TOKEN_KEY).unwrap());
+        c.github_client_id = Some("Iv1.test".into());
+        c.github_client_secret = Some("secret".into());
+        c.comment_approvals_until = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+    })
+    .await
+}
+
+fn plan_94() -> String {
+    PLAN_49.replace("#1", "#94")
+}
+
+/// The draft of #94 on `issue/94-x`, owned by m0x6A, approved in Rubato by teammate with a
+/// summary. Returns the approval.
+async fn approved_94(h: &Harness) -> rubato_protocol::DraftApproveResponse {
+    let text = plan_94();
+    rubato_server::plan_drafts::on_draft(
+        &h.app,
+        &rubato_protocol::DraftBundle {
+            launch_id: Uuid::from_u128(1),
+            session_id: None,
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            branch: "issue/94-x".into(),
+            bundle_hash: rubato_protocol::bundle_hash(
+                "docs/plans/94.md",
+                &[("docs/plans/94.md".into(), text.clone())],
+            ),
+            files: vec![rubato_protocol::DraftFile {
+                path: "docs/plans/94.md".into(),
+                text: text.clone(),
+            }],
+            missing: vec![],
+            refused: None,
+            at: chrono::Utc::now(),
+        },
+        "m0x6A",
+    )
+    .await;
+    let r = h
+        .http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::approve::routes::PLAN_DRAFT_APPROVE
+        ))
+        .header("x-rubato-dev-user", "teammate")
+        .json(&rubato_protocol::DraftApproveRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 94,
+            branch: "issue/94-x".into(),
+            plan_sha: rubato_server::plans::approval_hash(&text),
+            rev: None,
+            summary: "We kept the table as it was.".into(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    r.json().await.unwrap()
+}
+
+/// The plan as `plan.ts handoff` commits it: the approval record in the front matter, for
+/// `by` at the approval's second.
+fn handed_off(a: &rubato_protocol::DraftApproveResponse, by: &str) -> String {
+    plan_94().replacen(
+        "issue: m0x6A/rubato#94\n",
+        &format!(
+            "issue: m0x6A/rubato#94\napproved_by: {by}\napproved_at: {}\napproved_sha: {}\n",
+            a.approved_at.format("%Y-%m-%dT%H:%M:%SZ"),
+            a.plan_sha
+        ),
+        1,
+    )
+}
+
+/// Put `text` on `issue/94-x` at head `sha`, and track #94.
+async fn on_branch_94(h: &Harness, text: &str, sha: &str) {
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.retain(|(n, _)| n != "issue/94-x");
+        b.push(("issue/94-x".into(), sha.into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/94.md".into(),
+                "issue/94-x".into(),
+            ),
+            text.to_owned(),
+        );
+    });
+}
+
+fn link_posts(h: &Harness) -> Vec<String> {
+    h.call_args("comment_as")
+        .into_iter()
+        .filter(|a| a.starts_with("m0x6A/rubato#94 "))
+        .collect()
+}
+
+async fn findings_94(h: &Harness) -> Vec<Finding> {
+    h.overview("m0x6A")
+        .await
+        .findings
+        .into_iter()
+        .filter(|f| serde_json::to_value(f).unwrap()["issue"]["number"] == 94)
+        .collect()
+}
+
+/// ADR 0055: once the handoff commit is on the branch, the link comment is posted once as the
+/// approver, naming the commit the plan was read at. A building agent pushing after it, so the
+/// head moves, makes no second comment.
+#[tokio::test]
+async fn the_link_comment_is_posted_once_over_two_ticks_while_the_head_moves() {
+    let h = handoff_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    // Before the handoff: the plan is not on the branch, nothing to link.
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(link_posts(&h).is_empty());
+
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let posts = link_posts(&h);
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    let body = &posts[0];
+    assert!(
+        body.contains(
+            "Plan approved in Rubato: [docs/plans/94.md at h1](https://github.com/m0x6A/rubato/blob/h1/docs/plans/94.md)"
+        ),
+        "the permalink names the commit read: {body}"
+    );
+    assert!(body.contains("Approved by teammate at "), "{body}");
+    assert!(!body.contains("@teammate"), "nobody is notified");
+    assert!(body.contains("We kept the table as it was."));
+    assert!(body.contains(&format!("Rubato-Approval: {}", a.approval_id)));
+
+    // The agent goes on building and pushes: the head moves, the plan stays.
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h2").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(link_posts(&h).len(), 1, "one link comment per approval");
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 94).unwrap();
+    assert_eq!(
+        one.approval.as_ref().map(|s| s.version),
+        Some(rubato_protocol::ApprovalVersion::Current)
+    );
+    assert!(
+        findings_94(&h).await.is_empty(),
+        "{:?}",
+        findings_94(&h).await
+    );
+}
+
+/// ADR 0055: a post whose outcome is unknown stays `opening`; the comments pass finds it by its
+/// `Rubato-Approval:` line from the approver, and it is never posted again on its own. One that
+/// is never found is `LinkCommentWaiting` after 30 minutes, still not posted again.
+#[tokio::test]
+async fn an_unknown_link_comment_is_found_by_its_line_and_never_posted_again() {
+    let h = handoff_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    h.github.with(|g| g.comment_times_out = true);
+    tasks::poll_once(&h.app).await.unwrap(); // posts; GitHub does not answer
+    h.github.with(|g| g.comment_times_out = false);
+    tasks::poll_once(&h.app).await.unwrap(); // reads the comment, settles the row
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(link_posts(&h).len(), 1);
+    h.app
+        .clock
+        .set(chrono::Utc::now() + chrono::Duration::minutes(31));
+    assert!(
+        !findings_94(&h)
+            .await
+            .iter()
+            .any(|f| matches!(f, Finding::LinkCommentWaiting { .. })),
+        "found, so not waiting"
+    );
+
+    // Never found: the comment did not land.
+    let h = handoff_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    h.github.with(|g| g.comment_times_out = true);
+    tasks::poll_once(&h.app).await.unwrap();
+    h.github.with(|g| {
+        g.comment_times_out = false;
+        g.comments.remove(&("m0x6A/rubato".into(), 94));
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(findings_94(&h).await.is_empty(), "not yet 30 minutes");
+    h.app
+        .clock
+        .set(chrono::Utc::now() + chrono::Duration::minutes(31));
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(link_posts(&h).len(), 1, "never posted again on its own");
+    assert_eq!(
+        findings_94(&h).await,
+        vec![Finding::LinkCommentWaiting {
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            approval_id: a.approval_id,
+        }]
+    );
+}
+
+/// ADR 0054: keys that are not Rubato's record of that branch, or keys on a branch Rubato has no
+/// approval of, are `ApprovalRecordMismatch`, and nothing is posted.
+#[tokio::test]
+async fn an_approval_record_that_differs_is_a_finding_and_posts_nothing() {
+    let h = handoff_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "mallory"), "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(link_posts(&h).is_empty());
+    assert_eq!(
+        findings_94(&h).await,
+        vec![Finding::ApprovalRecordMismatch {
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            branch: "issue/94-x".into(),
+            reason: "record_differs".into(),
+        }]
+    );
+
+    // Keys on the branch of an issue nobody approved in Rubato.
+    let h = handoff_harness().await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(link_posts(&h).is_empty());
+    assert_eq!(
+        findings_94(&h).await,
+        vec![Finding::ApprovalRecordMismatch {
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            branch: "issue/94-x".into(),
+            reason: "no_rubato_record".into(),
+        }]
+    );
+}
+
+/// ADR 0055: with no token for the approver the link waits (`LinkWaitingForApprover`), and is
+/// posted on the first tick after they log in.
+#[tokio::test]
+async fn a_link_comment_waits_for_an_approver_with_no_token() {
+    let h = handoff_harness().await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(link_posts(&h).is_empty());
+    assert_eq!(
+        findings_94(&h).await,
+        vec![Finding::LinkWaitingForApprover {
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            approver: "teammate".into(),
+        }]
+    );
+    give_token(&h, "teammate", 8 * 3600).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(link_posts(&h).len(), 1);
+    assert!(findings_94(&h).await.is_empty());
+}
+
+/// With the cutover unset nothing of the handoff shows: keys on a branch are no finding.
+#[tokio::test]
+async fn the_handoff_findings_stay_dark_without_a_cutover() {
+    let h = harness().await;
+    h.pin_issue(94).await;
+    let text = PLAN_49.replace("#1", "#94").replacen(
+        "issue: m0x6A/rubato#94\n",
+        "issue: m0x6A/rubato#94\napproved_by: x\napproved_at: 2026-11-14T08:00:00Z\napproved_sha: f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9\n",
+        1,
+    );
+    on_branch_94(&h, &text, "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(findings_94(&h).await.is_empty());
+    assert!(link_posts(&h).is_empty());
 }
