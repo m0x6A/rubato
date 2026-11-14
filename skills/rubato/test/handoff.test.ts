@@ -351,7 +351,10 @@ describe("the two planning modes in the skill and the prompt (ADR 0053)", () => 
       expect(rubato, s).toContain(s);
     }
     expect(rubato).not.toMatch(/commit it on this branch|as a `Review:` comment/);
-    expect(read("prompt.md")).toContain("commit it on this branch and post the review as a `Review:` comment");
+    // After the cutover a git-mode launch (a companion that cannot plan in Rubato) pushes and asks for Import.
+    expect(read("prompt.md")).toContain("commit it on this branch and push it");
+    expect(read("prompt.md")).toContain("import it in Rubato");
+    expect(read("prompt.md")).not.toContain("`Review:` comment");
   });
 
   it("SKILL.md's Rubato mode pins ADRs before the Summary: reply and lists every handoff exit code", () => {
