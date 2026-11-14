@@ -65,3 +65,19 @@ async fn then_no_hook(w: &mut RubatoWorld, secs: u64) {
         .await;
     assert!(got.is_none(), "a hook was forwarded");
 }
+
+/// The cause as the snapshot sent to the server carries it (ADR 0043); "" means absent.
+#[then(expr = "the companion reports that session blocked by {string}")]
+async fn then_blocked_by(w: &mut RubatoWorld, cause: String) {
+    let reg = w.handles.as_ref().unwrap().registry.lock().await;
+    let s = reg
+        .snapshot()
+        .into_iter()
+        .find(|s| s.session_id.as_deref() == Some("0f8fad5b-d9cb-469f-a165-70867728950e"))
+        .expect("session in the snapshot");
+    let got = s
+        .blocked_by
+        .map(|c| c.name().to_owned())
+        .unwrap_or_default();
+    assert_eq!(got, cause, "blocked_by in {s:?}");
+}
