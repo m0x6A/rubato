@@ -130,6 +130,12 @@ function Draft({
           · on <code>{d.branch}</code>
         </span>
       </p>
+      {d.imported_from && (
+        <p className="muted" data-testid="draft-imported">
+          Imported from <code>{d.imported_from}</code>
+          {d.original_author ? `, written by ${d.original_author}` : ""}; {d.owner} owns the draft.
+        </p>
+      )}
       {!d.live && <p className="muted">No session of {d.owner}'s is working on it; the draft waits in Rubato.</p>}
       {!d.live && onResume && me && sameLogin(me.login, d.owner) && (
         <p>

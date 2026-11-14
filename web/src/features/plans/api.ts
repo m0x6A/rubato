@@ -1,4 +1,4 @@
-import type { ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, DraftRevision, DraftView } from "../../protocol.ts";
+import type { ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, DraftRevision, DraftView, ImportRequest, ImportResponse } from "../../protocol.ts";
 import { ApiError, failureText, request } from "../../shared/api.ts";
 import { scoped } from "../../shared/workspace.ts";
 
@@ -35,6 +35,18 @@ export const planDraftsApi = {
   revision: (draftId: string, rev: number) => request<DraftRevision>("GET", `/api/drafts/${encodeURIComponent(draftId)}/revisions/${rev}`),
   /** Approve one revision as yourself (ADR 0054). Map-scoped: the fit check reads the workspace. */
   approve: (req: DraftApproveRequest) => request<DraftApproveResponse>("POST", scoped("/api/plans/drafts/approve"), req),
+  /** Import a plan written outside Rubato (ADR 0058). Map-scoped: the fit check reads the workspace. */
+  importPlan: (req: ImportRequest) => request<ImportResponse>("POST", scoped("/api/plans/import"), req),
+};
+
+/** Why an import was refused, in words; the code is shown beside them. */
+export const IMPORT_REFUSAL: Record<string, string> = {
+  already_in_rubato: "The branch has a draft in Rubato already",
+  approved: "The plan is approved; it is not outside Rubato",
+  no_branch: "The branch is gone",
+  no_plan: "There is no plan file on the branch",
+  bad_branch: "That is not a branch of this issue",
+  launch_refused: "No session could be started to rewrite it; connect a companion of yours",
 };
 
 /** Why an approval in Rubato was refused, in words; the code is shown beside them. */

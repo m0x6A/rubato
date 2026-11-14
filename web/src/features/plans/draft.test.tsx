@@ -256,3 +256,12 @@ describe("resuming a parked draft (ADR 0053, plan 122 §D5)", () => {
     expect(screen.queryByTestId("resume-draft")).not.toBeInTheDocument();
   });
 });
+
+describe("an imported draft (ADR 0058)", () => {
+  it("says where it was found and who wrote it, and who owns it now", async () => {
+    serve();
+    render(<DraftSection issue={drafted({ imported_from: "issue/122-hand", original_author: "carol" })} me={colleague} />);
+    expect(screen.getByTestId("draft-imported")).toHaveTextContent("Imported from issue/122-hand, written by carol; alice owns the draft.");
+    await screen.findAllByRole("button", { name: /^Revision \d+/ });
+  });
+});

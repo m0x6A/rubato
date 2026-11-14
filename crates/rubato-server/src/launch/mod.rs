@@ -6,7 +6,7 @@ mod handler;
 mod prompt;
 mod store;
 
-pub use handler::launch;
+pub use handler::{launch, start};
 pub use prompt::{PROMPT_TEMPLATE, render_prompt, slugify};
 pub use store::{
     LaunchTarget, issues_with_live_cap_hit, launch_map_versions, launch_target, launched_issues,

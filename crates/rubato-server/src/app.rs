@@ -6,8 +6,8 @@
 
 use crate::kernel::state::App;
 use crate::{
-    approve, auth, companion_link, launch, layout, map, map_draft, new_issue, overview, pairing,
-    pins, plan_drafts, queue, session_log, session_messages, web_link,
+    approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
+    pairing, pins, plan_drafts, queue, session_log, session_messages, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -22,6 +22,7 @@ use rubato_protocol::map::routes as map_routes;
 use rubato_protocol::map_draft::routes as draft_routes;
 use rubato_protocol::pairing::routes as pr;
 use rubato_protocol::pins::routes as pin_routes;
+use rubato_protocol::plan_draft::routes as plan_draft_routes;
 use rubato_protocol::progress::routes as overview_routes;
 use rubato_protocol::queue::routes as queue_routes;
 use rubato_protocol::web_link::routes as web_routes;
@@ -54,6 +55,7 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
             post(pins::add_pin).delete(pins::remove_pin),
         )
         .route(&at(launch_routes::LAUNCH), post(launch::launch))
+        .route(&at(plan_draft_routes::PLAN_IMPORT), post(import::import))
         .route(&at(issue_routes::ISSUES), post(new_issue::create))
         .route(&at(approve_routes::PLAN_APPROVE), post(approve::approve))
         .route(
@@ -178,6 +180,7 @@ mod tests {
             (Method::POST, pin_routes::PINS.into()),
             (Method::DELETE, pin_routes::PINS.into()),
             (Method::POST, launch_routes::LAUNCH.into()),
+            (Method::POST, plan_draft_routes::PLAN_IMPORT.into()),
             (Method::POST, issue_routes::ISSUES.into()),
             (Method::POST, approve_routes::PLAN_APPROVE.into()),
             (Method::POST, approve_routes::PLAN_DRAFT_APPROVE.into()),
@@ -210,7 +213,7 @@ mod tests {
     }
 
     /// The paths served per workspace: map-scoped, never team-scoped.
-    const MAP_SCOPED: [&str; 8] = [
+    const MAP_SCOPED: [&str; 9] = [
         "/api/overview",
         "/api/map",
         "/api/pins",
@@ -219,6 +222,7 @@ mod tests {
         "/api/issues",
         "/api/plans/approve",
         "/api/plans/drafts/approve",
+        "/api/plans/import",
     ];
 
     /// Refusals are counted by route and reason, and logged with who (design O3, O12).

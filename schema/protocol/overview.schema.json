@@ -738,6 +738,13 @@
           "type": "string",
           "format": "uuid"
         },
+        "imported_from": {
+          "description": "The branch an imported plan was found on (ADR 0058).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "live": {
           "description": "The owner's launched session for this branch is live: the draft is being worked on.\nOtherwise it is parked. Derived on each overview build.",
           "type": "boolean"
@@ -747,6 +754,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "original_author": {
+          "description": "Who last committed the imported plan file, kept with the draft the importer owns.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "owner": {
           "description": "The paired user whose launch first mirrored to this branch.",
@@ -1478,6 +1492,10 @@
         },
         "issue": {
           "$ref": "#/$defs/IssueRef"
+        },
+        "outside_rubato": {
+          "description": "The plan on the issue's branch was written outside Rubato (ADR 0058): the branch has no\ndraft and no approval counts. It is shown with its fit, cannot be approved as it stands,\nand can be imported. Only once the cutover is set; before it, plans are approved by comment.",
+          "type": "boolean"
         },
         "pinned_in": {
           "description": "Names of the other workspaces where the issue is pinned (ADR 0047): \"pinned in <name>\".",

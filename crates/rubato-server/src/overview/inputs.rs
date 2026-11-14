@@ -21,6 +21,7 @@ pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs
         reviews: github_poll::all_reviews(&app.db).await?,
         approvals: approvals.counted,
         ignored_approvals: approvals.ignored,
+        approvals_in_rubato: app.config.comment_approvals_until.is_some(),
         launched: launch::launched_issues(&app.db).await?,
         cap_hits: launch::issues_with_live_cap_hit(&app.db).await?,
         meta: github_poll::all_issue_meta(&app.db).await?,

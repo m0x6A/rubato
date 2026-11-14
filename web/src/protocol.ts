@@ -219,6 +219,19 @@ workspaces: string[]
  */
 export type HookEventKind = ("SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "Notification" | "Stop" | "StopFailure" | "SessionEnd" | "Unknown")
 /**
+ * What Import did.
+ */
+export type ImportResponse = ({
+draft_id: string
+original_author?: (string | null)
+outcome: "imported"
+rev: number
+} | {
+branch: string
+launch_id: string
+outcome: "rewriting"
+})
+/**
  * A reference into the system map: a node or a seam. Ids come from `system-map.yml` (ADR 0007).
  */
 export type MapRef = ({
@@ -477,6 +490,8 @@ DraftView?: DraftView
 Finding?: Finding
 Heartbeat?: Heartbeat1
 HookEvent?: HookEvent1
+ImportRequest?: ImportRequest
+ImportResponse?: ImportResponse
 IssuePin?: IssuePin
 IssueRef?: IssueRef
 IssueSummary?: IssueSummary
@@ -798,7 +813,9 @@ text: string
 export interface DraftView {
 branch: string
 draft_id: string
+imported_from?: (string | null)
 issue: IssueRef
+original_author?: (string | null)
 owner: string
 revisions: DraftRevisionInfo[]
 }
@@ -877,6 +894,14 @@ transcript_path?: (string | null)
 truncated?: boolean
 }
 /**
+ * Import a plan written outside Rubato (ADR 0058): the plan on `branch` of the issue.
+ */
+export interface ImportRequest {
+branch: string
+number: number
+repo: string
+}
+/**
  * An issue pinned to a node or seam. The one piece of state GitHub does not hold (ADR 0008).
  */
 export interface IssuePin {
@@ -913,6 +938,12 @@ fit?: (PlanFit | null)
  */
 fits_in?: string[]
 issue: IssueRef
+/**
+ * The plan on the issue's branch was written outside Rubato (ADR 0058): the branch has no
+ * draft and no approval counts. It is shown with its fit, cannot be approved as it stands,
+ * and can be imported. Only once the cutover is set; before it, plans are approved by comment.
+ */
+outside_rubato?: boolean
 /**
  * Names of the other workspaces where the issue is pinned (ADR 0047): "pinned in <name>".
  */
@@ -999,11 +1030,19 @@ branch: string
 bundle_hash: string
 draft_id: string
 /**
+ * The branch an imported plan was found on (ADR 0058).
+ */
+imported_from?: (string | null)
+/**
  * The owner's launched session for this branch is live: the draft is being worked on.
  * Otherwise it is parked. Derived on each overview build.
  */
 live: boolean
 missing?: string[]
+/**
+ * Who last committed the imported plan file, kept with the draft the importer owns.
+ */
+original_author?: (string | null)
 /**
  * The paired user whose launch first mirrored to this branch.
  */

@@ -13,6 +13,7 @@ pub mod approve;
 pub mod auth;
 pub mod companion_link;
 pub mod github_poll;
+pub mod import;
 pub mod launch;
 pub mod layout;
 pub mod map;

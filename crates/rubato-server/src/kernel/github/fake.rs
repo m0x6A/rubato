@@ -13,6 +13,8 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct FakeInner {
     pub files: HashMap<(String, String, String), String>,
+    /// (repo, path, sha) → the login of the last commit to that file (ADR 0058).
+    pub commit_authors: HashMap<(String, String, String), String>,
     pub branches: HashMap<String, Vec<(String, String)>>,
     pub issues: HashMap<(String, u64), IssueInfo>,
     pub comments: HashMap<(String, u64), Vec<Comment>>,
@@ -88,6 +90,20 @@ impl GitHubApi for FakeGitHub {
         g.calls.push(("file", format!("{repo} {path} {git_ref}")));
         Ok(g.files
             .get(&(repo.to_owned(), path.to_owned(), git_ref.to_owned()))
+            .cloned())
+    }
+
+    async fn last_commit_author(
+        &self,
+        repo: &str,
+        path: &str,
+        sha: &str,
+    ) -> Result<Option<String>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls
+            .push(("last_commit_author", format!("{repo} {path} {sha}")));
+        Ok(g.commit_authors
+            .get(&(repo.to_owned(), path.to_owned(), sha.to_owned()))
             .cloned())
     }
 

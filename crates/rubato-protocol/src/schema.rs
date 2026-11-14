@@ -56,6 +56,8 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::session_log::LaunchLog>("launch_log"),
         one::<crate::plan_draft::DraftView>("draft_view"),
         one::<crate::plan_draft::DraftRevision>("draft_revision"),
+        one::<crate::plan_draft::ImportRequest>("import_request"),
+        one::<crate::plan_draft::ImportResponse>("import_response"),
         one::<crate::session_message::LaunchMessages>("launch_messages"),
         one::<crate::session_message::SessionMessageView>("session_message_view"),
         one::<crate::session_message::SessionMessageRequest>("session_message_request"),
