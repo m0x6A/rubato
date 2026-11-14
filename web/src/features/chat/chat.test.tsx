@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me, SessionState, WebEvent } from "../../protocol.ts";
 import { emitWebEvent } from "../live/index.ts";
@@ -6,6 +6,9 @@ import { SessionChat } from "./SessionChat.tsx";
 import type { LaunchMessages, SessionMessageState, SessionMessageView } from "./types.ts";
 
 afterEach(() => vi.restoreAllMocks());
+// The first render of the file can take over a second while every file runs at once; the same
+// 5 s the map tests give their slow waits, for every find and waitFor here (each file is isolated).
+configure({ asyncUtilTimeout: 5000 });
 
 const LAUNCH = "6f1c0c1e-0000-4000-8000-000000000001";
 const OTHER = "6f1c0c1e-0000-4000-8000-000000000002";
@@ -174,7 +177,7 @@ describe("sending", () => {
   });
 
   it("a 403 shows not_your_session and keeps the text", async () => {
-    serve(launch(), () => json({ error: "not_your_session" }, 403));
+    serve(launch(), () => json({ reason: "not_your_session" }, 403));
     render(<SessionChat session={session()} me={owner} />);
     const box = await screen.findByLabelText("Message to your session");
     fireEvent.change(box, { target: { value: "hello" } });
@@ -186,7 +189,7 @@ describe("sending", () => {
   });
 
   it("a 422 says the message is too long", async () => {
-    serve(launch(), () => json({ error: "too_long" }, 422));
+    serve(launch(), () => json({ reason: "too_long" }, 422));
     render(<SessionChat session={session()} me={owner} />);
     fireEvent.change(await screen.findByLabelText("Message to your session"), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -208,6 +211,30 @@ describe("sending", () => {
     render(<SessionChat session={session()} me={owner} />);
     await screen.findByText("text delivered");
     expect(screen.queryByRole("button", { name: "Send again" })).toBeNull();
+  });
+});
+
+describe("what a refusal says", () => {
+  it("an empty message, in words with its code", async () => {
+    serve(launch(), () => json({ reason: "empty" }, 422));
+    render(<SessionChat session={session()} me={owner} />);
+    fireEvent.change(await screen.findByLabelText("Message to your session"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not sent: The message is empty (empty)");
+  });
+
+  it("a reason the web does not know is shown as the server said it", async () => {
+    serve(launch(), () => json({ reason: "companion_revoked" }, 409));
+    render(<SessionChat session={session()} me={owner} />);
+    fireEvent.change(await screen.findByLabelText("Message to your session"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not sent: companion_revoked");
+  });
+
+  it("a server without the route says so in words, not as JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "unknown api path" }, 404));
+    render(<SessionChat session={session()} me={owner} />);
+    expect(await screen.findByText("Messages could not be read: unknown api path")).toBeInTheDocument();
   });
 });
 
@@ -261,7 +288,7 @@ describe("when the session cannot take a message", () => {
   });
 
   it("a list that cannot be read says why", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "unknown_launch" }, 404));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ reason: "unknown_launch" }, 404));
     render(<SessionChat session={session()} me={owner} />);
     expect(await screen.findByText(/Messages could not be read: .*unknown_launch/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Message to your session")).toBeNull();

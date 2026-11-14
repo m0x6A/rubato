@@ -12,14 +12,19 @@ export const chatApi = {
   send: (launchId: string, text: string) => request<SessionMessageView>("POST", messagesPath(launchId), { text } satisfies SessionMessageRequest),
 };
 
-/** What the server said, from its JSON answer `{ "error": "<reason>" }`; null when it said nothing readable. */
+/**
+ * What the server said: a refusal's `{ "reason": "<reason>" }`, the shape `POST /api/plans/approve`
+ * uses too, or else an `{ "error": "…" }` such as the `unknown api path` of a server without this
+ * route. Null when it said nothing readable.
+ */
 export function serverReason(e: unknown): string | null {
   if (!(e instanceof ApiError)) {
     return null;
   }
   try {
-    const v = JSON.parse(e.message) as { error?: unknown };
-    return typeof v.error === "string" && v.error ? v.error : null;
+    const v = JSON.parse(e.message) as { reason?: unknown; error?: unknown };
+    const said = typeof v.reason === "string" && v.reason ? v.reason : v.error;
+    return typeof said === "string" && said ? said : null;
   } catch {
     return null;
   }
