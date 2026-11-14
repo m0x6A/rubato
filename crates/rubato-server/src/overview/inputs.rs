@@ -1,6 +1,6 @@
 //! Read every signal the overview derives from, through each owning slice.
 
-use super::build::OverviewInputs;
+use super::build::{OtherWorkspace, OverviewInputs, WorkspaceInputs};
 use crate::kernel::state::App;
 use crate::{companion_link, github_poll, launch, layout, pins, plans, queue, spend_history};
 use anyhow::Result;
@@ -25,5 +25,36 @@ pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs
         repo_pulls: github_poll::repo_pulls(&app.db).await?,
         traffic: app.traffic.read().await.clone(),
         spend: spend_history::series(&app.db).await?,
+        workspaces: workspace_inputs(app, ws).await?,
     })
+}
+
+/// The other workspaces, with their maps, pins and launches. Empty with one workspace.
+async fn workspace_inputs(app: &App, ws: &str) -> Result<WorkspaceInputs> {
+    let all = crate::map::list_workspaces(app).await;
+    if all.len() < 2 {
+        return Ok(WorkspaceInputs::default());
+    }
+    let mut out = WorkspaceInputs {
+        launched_here: launch::launched_issues_in(&app.db, ws).await?,
+        ..Default::default()
+    };
+    for w in all {
+        if w.id == ws {
+            out.here = Some((w.id, w.name));
+            continue;
+        }
+        out.others.push(OtherWorkspace {
+            map: app.map_of(&w.id).await.map(|m| m.map),
+            pinned: pins::list(&app.db, &w.id)
+                .await?
+                .into_iter()
+                .map(|p| p.issue)
+                .collect(),
+            launched: launch::launched_issues_in(&app.db, &w.id).await?,
+            id: w.id,
+            name: w.name,
+        });
+    }
+    Ok(out)
 }

@@ -129,7 +129,14 @@ pub async fn propose(
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<ProposeResponse>, Refusal> {
     let map = loaded(&app, ws.as_str()).await?;
-    let cfg = &app.config;
+    // The workspace's own map repo: a draft is proposed where its map lives (ADR 0047).
+    let entries = app.config.workspace_entries().0;
+    let Some(cfg) = entries.iter().find(|w| w.id == ws.as_str()) else {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            "unknown workspace".into(),
+        ));
+    };
     let refuse = |why: &'static str, text: String| -> Refusal {
         app.reject(routes::DRAFT_PROPOSE, why, &user);
         (StatusCode::CONFLICT, text)
@@ -352,7 +359,14 @@ pub async fn withdraw(
     ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
-    let cfg = &app.config;
+    // The workspace's own map repo: a draft is proposed where its map lives (ADR 0047).
+    let entries = app.config.workspace_entries().0;
+    let Some(cfg) = entries.iter().find(|w| w.id == ws.as_str()) else {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            "unknown workspace".into(),
+        ));
+    };
     let Some(row) = store::proposal(&app.db, ws.as_str()).await.map_err(fault)? else {
         app.reject(routes::DRAFT_WITHDRAW, reason::NO_PROPOSAL, &user);
         return Err((

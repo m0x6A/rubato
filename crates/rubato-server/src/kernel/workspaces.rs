@@ -49,10 +49,6 @@ impl Source {
     }
 }
 
-/// How many entries a file may hold. One until the scoped API is served (plan 89 PR 4): until
-/// then every route serves `default`, so a second map would be loaded and never shown.
-pub const MAX_WORKSPACES: usize = 1;
-
 /// Parse and check a workspaces file. `file` is its path: a relative `map_file` is relative to
 /// it. `legacy_set` names the `RUBATO_MAP_*` variables that are set, which must be none.
 pub fn from_file(text: &str, file: &Path, legacy_set: &[&str]) -> Result<Vec<WorkspaceEntry>> {
@@ -109,12 +105,6 @@ pub fn check(entries: &[WorkspaceEntry]) -> Result<()> {
     if !entries.iter().any(|w| w.id == DEFAULT_WORKSPACE) {
         bail!(
             "the workspaces file has no entry with id {DEFAULT_WORKSPACE}; it keeps every row from before workspaces and serves unprefixed routes"
-        );
-    }
-    if entries.len() > MAX_WORKSPACES {
-        bail!(
-            "the workspaces file lists {} workspaces; this server serves {MAX_WORKSPACES} until the scoped API is in (several workspaces need the scoped API)",
-            entries.len()
         );
     }
     Ok(())
@@ -185,6 +175,15 @@ mod tests {
     }
 
     #[test]
+    fn several_workspaces_with_default_read() {
+        let w = file("workspaces:\n  - id: default\n    map_repo: a/b\n    map_path: m.yml\n  - id: shop\n    map_repo: a/c\n    map_path: m.yml\n").unwrap();
+        assert_eq!(
+            w.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(),
+            ["default", "shop"]
+        );
+    }
+
+    #[test]
     fn every_refusal_says_why() {
         let entry = |id: &str, repo: &str, path: &str| {
             format!("  - id: {id}\n    map_repo: {repo}\n    map_path: {path}\n")
@@ -195,7 +194,6 @@ mod tests {
             (format!("workspaces:\n{}{}", entry("default", "a/b", "m.yml"), entry("default", "a/c", "m.yml")), "listed twice"),
             (format!("workspaces:\n{}{}", entry("default", "a/b", "m.yml"), entry("shop", "A/B", "m.yml")), "name the same map"),
             (format!("workspaces:\n{}", entry("shop", "a/b", "m.yml")), "no entry with id default"),
-            (format!("workspaces:\n{}{}", entry("default", "a/b", "m.yml"), entry("shop", "a/c", "m.yml")), "need the scoped API"),
             ("workspaces:\n  - id: default\n    map_repo: a/b\n    map_path: m\n    colour: red\n".into(), "unknown field"),
         ];
         for (body, want) in &cases {

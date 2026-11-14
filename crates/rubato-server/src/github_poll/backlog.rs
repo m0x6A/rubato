@@ -23,9 +23,11 @@ pub struct Listed {
     map_lines: Vec<MapLine>,
 }
 
-/// A `Map:` line from a trusted author, for the pins slice to apply (ADR 0026).
+/// A `Map:` line from a trusted author, for the pins slice to apply (ADR 0026), in the
+/// workspace it speaks to (ADR 0046).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapLine {
+    pub workspace: String,
     pub issue: IssueRef,
     pub target: MapRef,
     /// Login of the issue's author, who placed it.
@@ -73,10 +75,19 @@ impl Listed {
     }
 }
 
-/// List each repo the map names and store the result. Never fails the poll: a repo that cannot
-/// be listed keeps its rows and gets its error recorded.
-pub async fn list_open_issues(app: &App, map: &SystemMap) -> Listed {
-    let repos: Vec<String> = map.repos_named().into_iter().map(str::to_owned).collect();
+/// List each repo any workspace's map names, once (ADR 0048), and store the result; each
+/// workspace whose map names the repo places and suggests on its own map (ADR 0046). Never
+/// fails the poll: a repo that cannot be listed keeps its rows and gets its error recorded.
+pub async fn list_open_issues(app: &App, maps: &[(String, SystemMap)]) -> Listed {
+    let mut repos: Vec<String> = Vec::new();
+    for (_, m) in maps {
+        for r in m.repos_named() {
+            if !repos.iter().any(|x| x.eq_ignore_ascii_case(r)) {
+                repos.push(r.to_owned());
+            }
+        }
+    }
+    let ids: Vec<&str> = maps.iter().map(|(w, _)| w.as_str()).collect();
     let mut listed = Listed::default();
     let mut counts = Counts::default();
     for repo in &repos {
@@ -85,31 +96,50 @@ pub async fn list_open_issues(app: &App, map: &SystemMap) -> Listed {
                 if !listing.truncated {
                     listed.fresh.insert(repo.clone());
                 }
-                let mut placements = HashMap::new();
+                let mut by_ws: Vec<(&str, HashMap<u64, suggest::Placement>)> = Vec::new();
                 for i in &listing.issues {
-                    let p = suggest::place(map, i);
                     counts.listed += 1;
-                    if let Some(target) = &p.pin {
-                        counts.map_lines += 1;
-                        listed.map_lines.push(MapLine {
-                            issue: IssueRef::new(repo.clone(), i.number),
-                            target: target.clone(),
-                            author: i.author.clone(),
-                        });
-                    } else if p.untrusted_line.is_some() {
-                        // Counted per listing, not once: the line stays untrusted every tick.
-                        counts.untrusted += 1;
+                    // A line naming a workspace this server does not hold places nothing.
+                    if let Some(w) =
+                        rubato_protocol::parse_map_placement(&i.body).and_then(|p| p.workspace)
+                        && !ids.contains(&w.as_str())
+                    {
                         app.metrics
                             .backlog_map_lines
-                            .add(1, &[KeyValue::new(attr::OUTCOME, "untrusted_author")]);
+                            .add(1, &[KeyValue::new(attr::OUTCOME, "unknown_workspace")]);
                     }
-                    if p.pin.is_none() && p.suggestion.is_none() {
-                        counts.none += 1;
+                }
+                for (ws, map) in maps
+                    .iter()
+                    .filter(|(_, m)| m.repos_named().iter().any(|r| r.eq_ignore_ascii_case(repo)))
+                {
+                    let mut placements = HashMap::new();
+                    for i in &listing.issues {
+                        let p = suggest::place(map, i, ws);
+                        if let Some(target) = &p.pin {
+                            counts.map_lines += 1;
+                            listed.map_lines.push(MapLine {
+                                workspace: ws.clone(),
+                                issue: IssueRef::new(repo.clone(), i.number),
+                                target: target.clone(),
+                                author: i.author.clone(),
+                            });
+                        } else if p.untrusted_line.is_some() {
+                            // Counted per listing, not once: the line stays untrusted every tick.
+                            counts.untrusted += 1;
+                            app.metrics
+                                .backlog_map_lines
+                                .add(1, &[KeyValue::new(attr::OUTCOME, "untrusted_author")]);
+                        }
+                        if p.pin.is_none() && p.suggestion.is_none() {
+                            counts.none += 1;
+                        }
+                        if p.suggestion.is_some() {
+                            counts.suggested += 1;
+                        }
+                        placements.insert(i.number, p);
                     }
-                    if p.suggestion.is_some() {
-                        counts.suggested += 1;
-                    }
-                    placements.insert(i.number, p);
+                    by_ws.push((ws.as_str(), placements));
                 }
                 listed.open.extend(
                     listing
@@ -124,17 +154,19 @@ pub async fn list_open_issues(app: &App, map: &SystemMap) -> Listed {
                         "backlog truncated"
                     );
                 }
-                if let Err(e) = store::replace_open_issues(
-                    &app.db,
-                    rubato_protocol::DEFAULT_WORKSPACE,
-                    repo,
-                    &listing,
-                    &placements,
-                    Utc::now(),
-                )
-                .await
-                {
-                    tracing::error!(rubato.repo = %repo, error = %e, "storing open issues failed");
+                for (ws, placements) in &by_ws {
+                    if let Err(e) = store::replace_open_issues(
+                        &app.db,
+                        ws,
+                        repo,
+                        &listing,
+                        placements,
+                        Utc::now(),
+                    )
+                    .await
+                    {
+                        tracing::error!(rubato.repo = %repo, rubato.workspace = %ws, error = %e, "storing open issues failed");
+                    }
                 }
             }
             Err(e) => {
@@ -273,7 +305,14 @@ mod tests {
             g.open.insert("o/node-only".into(), vec![issue(9)]);
         });
         let (app, reader, _tmp) = app(github.clone()).await;
-        list_open_issues(&app, &map()).await;
+        list_open_issues(
+            &app,
+            &[(
+                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                map().clone(),
+            )],
+        )
+        .await;
 
         let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
@@ -304,7 +343,14 @@ mod tests {
         github.with(|g| {
             g.open.insert("o/listed".into(), vec![issue(1), issue(3)]);
         });
-        list_open_issues(&app, &map()).await;
+        list_open_issues(
+            &app,
+            &[(
+                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                map().clone(),
+            )],
+        )
+        .await;
         let (issues, _) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -328,7 +374,14 @@ mod tests {
             g.open.insert("o/listed".into(), vec![issue(1)]);
         });
         let (app, reader, _tmp) = app(github.clone()).await;
-        list_open_issues(&app, &map()).await;
+        list_open_issues(
+            &app,
+            &[(
+                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                map().clone(),
+            )],
+        )
+        .await;
         let (_, before) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -344,7 +397,14 @@ mod tests {
                 .insert("o/listed".into(), "rate limited".into());
         });
         let (events, _guard) = capture::start();
-        list_open_issues(&app, &map()).await;
+        list_open_issues(
+            &app,
+            &[(
+                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                map().clone(),
+            )],
+        )
+        .await;
         let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -376,7 +436,14 @@ mod tests {
 
         // It recovers: the error clears.
         github.with(|g| g.open_errors.clear());
-        list_open_issues(&app, &map()).await;
+        list_open_issues(
+            &app,
+            &[(
+                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                map().clone(),
+            )],
+        )
+        .await;
         let (_, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -392,7 +459,14 @@ mod tests {
         });
         let (app, reader, _tmp) = app(github).await;
         let (events, _guard) = capture::start();
-        list_open_issues(&app, &map()).await;
+        list_open_issues(
+            &app,
+            &[(
+                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                map().clone(),
+            )],
+        )
+        .await;
         let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -424,10 +498,24 @@ mod tests {
             g.open.insert("o/node-only".into(), vec![issue(9)]);
         });
         let (app, reader, _tmp) = app(github).await;
-        list_open_issues(&app, &map()).await;
+        list_open_issues(
+            &app,
+            &[(
+                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                map().clone(),
+            )],
+        )
+        .await;
         let mut smaller = map();
         smaller.nodes[0].repo = None;
-        list_open_issues(&app, &smaller).await;
+        list_open_issues(
+            &app,
+            &[(
+                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                smaller.clone(),
+            )],
+        )
+        .await;
         assert_eq!(
             value(&reader, metric::BACKLOG_ISSUES, "o/node-only"),
             Some(0)
@@ -441,5 +529,130 @@ mod tests {
             .unwrap();
         assert!(issues.iter().all(|i| i.issue.repo != "o/node-only"));
         assert!(repos.iter().all(|r| r.repo != "o/node-only"));
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    //! Plan 89 PR 4b (ADRs 0046, 0048): a repo two maps name is listed once, and each workspace
+    //! places its issues on its own map.
+
+    use super::*;
+    use crate::kernel::config::Config;
+    use crate::kernel::db::connect;
+    use crate::kernel::github::{FakeGitHub, OpenIssueInfo};
+    use crate::kernel::state::AppState;
+    use rubato_protocol::{MapNode, NodeKind, RepoRef};
+    use std::sync::Arc;
+
+    fn map_with(nodes: &[&str]) -> SystemMap {
+        SystemMap {
+            version: 1,
+            name: "t".into(),
+            owner_rule: None,
+            repos: vec![RepoRef {
+                name: "acme/auth".into(),
+                plan_path: None,
+            }],
+            nodes: nodes
+                .iter()
+                .map(|id| MapNode {
+                    id: (*id).into(),
+                    kind: NodeKind::Context,
+                    repo: Some("acme/auth".into()),
+                    path: None,
+                    description: None,
+                })
+                .collect(),
+            seams: vec![],
+            scenarios: vec![],
+        }
+    }
+
+    fn by_member(n: u64, body: &str) -> OpenIssueInfo {
+        OpenIssueInfo {
+            number: n,
+            title: format!("Issue {n}"),
+            url: format!("https://github.com/acme/auth/issues/{n}"),
+            body: body.into(),
+            author: "m0x6A".into(),
+            author_association: "MEMBER".into(),
+            updated_at: Utc::now(),
+            ..OpenIssueInfo::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_shared_repo_is_listed_once_and_each_workspace_places_on_its_own_map() {
+        let github = Arc::new(FakeGitHub::new());
+        github.with(|g| {
+            g.open.insert(
+                "acme/auth".into(),
+                vec![
+                    by_member(1, "Map: node auth-api"),
+                    by_member(2, "Map: node auth-api in shop"),
+                    by_member(3, "Map: node storefront"),
+                    by_member(4, "Map: node auth-api in nowhere"),
+                ],
+            );
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let app = AppState::new(
+            connect(&url).await.unwrap(),
+            Config::for_tests(url, "m0x6A"),
+            github.clone(),
+        );
+        let maps = vec![
+            ("default".to_string(), map_with(&["auth-api"])),
+            ("shop".to_string(), map_with(&["auth-api", "storefront"])),
+        ];
+        let listed = list_open_issues(&app, &maps).await;
+
+        let mut calls = 0;
+        github.with(|g| {
+            calls = g
+                .calls
+                .iter()
+                .filter(|(e, r)| *e == "open_issues" && r == "acme/auth")
+                .count()
+        });
+        assert_eq!(calls, 1, "one listing for a repo two maps name");
+        let mut lines: Vec<(String, u64, String)> = listed
+            .map_lines()
+            .iter()
+            .map(|l| {
+                (
+                    l.workspace.clone(),
+                    l.issue.number,
+                    l.target.id().to_string(),
+                )
+            })
+            .collect();
+        lines.sort();
+        assert_eq!(
+            lines,
+            [
+                ("default".into(), 1, "auth-api".into()),
+                // #3 names a part only shop has; default reads the line too, and the pins slice
+                // finds the id unknown there.
+                ("default".into(), 3, "storefront".into()),
+                ("shop".into(), 1, "auth-api".into()),
+                ("shop".into(), 2, "auth-api".into()),
+                ("shop".into(), 3, "storefront".into()),
+            ],
+            "#2 places in shop only; #4 names no workspace this server holds and places nowhere"
+        );
+    }
+
+    #[test]
+    fn a_line_speaks_to_its_workspace_or_to_all() {
+        use crate::github_poll::suggest::line_for;
+        assert_eq!(
+            line_for("Map: node a in shop", "shop"),
+            Some(MapRef::node("a"))
+        );
+        assert_eq!(line_for("Map: node a in shop", "default"), None);
+        assert_eq!(line_for("Map: node a", "default"), Some(MapRef::node("a")));
     }
 }

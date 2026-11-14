@@ -439,7 +439,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "time() - max(rubato_map_loaded_at)",
+          "expr": "time() - max by (rubato_workspace) (rubato_map_loaded_at)",
           "legendFormat": "__auto"
         }
       ],
@@ -494,7 +494,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (rubato_seam) (rubato_seam_open_plans)",
+          "expr": "max by (rubato_workspace, rubato_seam) (rubato_seam_open_plans)",
           "legendFormat": "__auto"
         }
       ],
@@ -676,7 +676,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (rubato_issue) (increase(claude_code_cost_usage_USD_total{rubato_issue=~\"$issue\"}[$__range]))",
+          "expr": "sum by (rubato_workspace, rubato_issue) (increase(claude_code_cost_usage_USD_total{rubato_issue=~\"$issue\"}[$__range]))",
           "legendFormat": "__auto"
         }
       ],

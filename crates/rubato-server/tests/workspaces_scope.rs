@@ -248,3 +248,182 @@ async fn a_layout_change_tells_browsers_which_workspace_changed() {
     assert_eq!(workspace.as_deref(), Some("shop"));
     let _ = &h.app;
 }
+
+// Two maps that both name `acme/auth` (ADR 0045): `default` is the admin application, `shop`
+// the storefront. `auth-api` is in both; `storefront` only in shop.
+const ADMIN: &str = r#"
+version: 1
+name: admin
+repos: [{ name: acme/auth }]
+nodes:
+  - { id: auth-api, kind: context, repo: acme/auth }
+  - { id: admin-ui, kind: context, repo: acme/admin }
+seams:
+  - { id: admin-auth, from: admin-ui, to: auth-api, owner: auth-api }
+"#;
+const STORE: &str = r#"
+version: 1
+name: shop
+repos: [{ name: acme/auth }]
+nodes:
+  - { id: auth-api, kind: context, repo: acme/auth }
+  - { id: storefront, kind: context, repo: acme/shop }
+seams:
+  - { id: storefront-auth, from: storefront, to: auth-api, owner: auth-api }
+"#;
+const SHA: &str = "5555555555555555555555555555555555555555";
+
+async fn shared_auth() -> H {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+    let pool = db::connect(&db_url).await.unwrap();
+    let mut cfg = Config::for_tests(db_url, "m0x6A");
+    let mut entries = vec![];
+    for (id, yaml) in [("default", ADMIN), ("shop", STORE)] {
+        let file = tmp.path().join(format!("{id}.yml"));
+        std::fs::write(&file, yaml).unwrap();
+        entries.push(WorkspaceEntry {
+            id: id.into(),
+            name: None,
+            map_repo: format!("acme/{id}-map"),
+            map_path: "system-map.yml".into(),
+            map_ref: "main".into(),
+            map_file: Some(file),
+        });
+    }
+    cfg.workspaces = entries;
+    let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
+    map::reload(&app).await.unwrap();
+    // Plans as the poll stores them: #5 names a part only shop has, #6 one neither has.
+    for (n, part) in [(5, "storefront"), (6, "billing")] {
+        let plan = serde_json::json!({
+            "issue": { "repo": "acme/auth", "number": n }, "path": format!("docs/plans/{n}.md"),
+            "affected_parts": [{ "node": part, "status": "affected", "change": "x" }], "o_rows": []
+        });
+        sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, fetched_at, approval_sha) VALUES ('acme/auth', ?, ?, ?, ?, NULL, '2026-11-14T08:00:00Z', ?)")
+            .bind(n).bind(format!("issue/{n}-x")).bind(format!("docs/plans/{n}.md")).bind(plan.to_string()).bind(SHA)
+            .execute(&app.db).await.unwrap();
+    }
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app::router(app.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    H {
+        url: format!("http://{addr}"),
+        app,
+        http: reqwest::Client::new(),
+        _tmp: tmp,
+    }
+}
+
+fn summary(ov: &Overview, n: u64) -> &rubato_protocol::IssueSummary {
+    ov.issues
+        .iter()
+        .find(|i| i.issue.number == n)
+        .unwrap_or_else(|| panic!("#{n} not in {}", ov.workspace))
+}
+
+fn unknown_ids_for(ov: &Overview, n: u64) -> bool {
+    ov.findings.iter().any(
+        |f| matches!(f, rubato_protocol::Finding::UnknownIds { issue, .. } if issue.number == n),
+    )
+}
+
+#[tokio::test]
+async fn a_plan_fits_where_its_ids_resolve_and_is_a_finding_only_where_none_do() {
+    let h = shared_auth().await;
+    let admin = h.overview(None).await;
+    let shop = h.overview(Some("shop")).await;
+
+    // #5 names `storefront`: it fits shop, shows in both (both maps name acme/auth), and admin
+    // says where it counts instead of raising unknown ids.
+    assert_eq!(summary(&shop, 5).fits_in, ["shop"]);
+    assert!(summary(&shop, 5).fit.as_ref().unwrap().fits);
+    assert_eq!(summary(&admin, 5).fits_in, ["shop"]);
+    assert!(
+        summary(&admin, 5).fit.as_ref().unwrap().fits,
+        "the fit where it counts is shown"
+    );
+    assert!(!unknown_ids_for(&admin, 5) && !unknown_ids_for(&shop, 5));
+
+    // #6 names `billing`: it fits nowhere, so both raise it.
+    assert!(summary(&admin, 6).fits_in.is_empty());
+    assert!(unknown_ids_for(&admin, 6) && unknown_ids_for(&shop, 6));
+}
+
+#[tokio::test]
+async fn accept_plan_refuses_only_a_plan_that_fits_none_of_its_workspaces() {
+    let h = shared_auth().await;
+    let reason = |n: u64| {
+        let h = &h;
+        async move {
+            let r = h
+                .req(reqwest::Method::POST, "/api/plans/approve")
+                .json(&rubato_protocol::ApproveRequest {
+                    issue: IssueRef::new("acme/auth", n),
+                    sha: SHA.into(),
+                })
+                .send()
+                .await
+                .unwrap();
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            body["reason"].as_str().unwrap_or_default().to_string()
+        }
+    };
+    // #5 fits shop: accepted from admin's view past the fit check (it stops later, for want of a
+    // person's GitHub token in this test).
+    assert_ne!(reason(5).await, "plan_does_not_fit");
+    assert_eq!(reason(6).await, "plan_does_not_fit");
+}
+
+#[tokio::test]
+async fn an_issue_pinned_in_another_workspace_says_so() {
+    let h = shared_auth().await;
+    let issue = IssueRef::new("acme/auth", 7);
+    let r = h
+        .req(reqwest::Method::POST, &scoped("shop", "/api/pins"))
+        .json(&PinRequest {
+            issue: issue.clone(),
+            target: MapRef::node("auth-api"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success());
+    let admin = h.overview(None).await;
+    let shop = h.overview(Some("shop")).await;
+    assert_eq!(
+        summary(&admin, 7).pinned_in,
+        ["shop"],
+        "admin holds acme/auth and says where it is pinned"
+    );
+    assert!(summary(&admin, 7).pins.is_empty());
+    assert!(summary(&shop, 7).pinned_in.is_empty());
+    // An issue in a repo only shop's map names, pinned in shop, is not admin's.
+    let r = h
+        .req(reqwest::Method::POST, &scoped("shop", "/api/pins"))
+        .json(&PinRequest {
+            issue: IssueRef::new("acme/shop", 8),
+            target: MapRef::node("storefront"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success());
+    assert!(
+        h.overview(None)
+            .await
+            .issues
+            .iter()
+            .all(|i| i.issue.number != 8)
+    );
+    assert!(
+        h.overview(Some("shop"))
+            .await
+            .issues
+            .iter()
+            .any(|i| i.issue.number == 8)
+    );
+}

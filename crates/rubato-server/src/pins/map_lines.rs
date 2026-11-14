@@ -43,10 +43,17 @@ pub struct Line {
 
 /// Apply this tick's lines. Never fails the poll: a store error is logged and the line is tried
 /// again next tick. Counts `rubato.backlog.map_lines` by outcome; returns how many pinned.
-pub async fn apply_map_lines(app: &App, map: &SystemMap, version: &str, lines: &[Line]) -> usize {
+/// `ws` is the workspace the lines speak to, `map` its map (ADR 0046).
+pub async fn apply_map_lines(
+    app: &App,
+    ws: &str,
+    map: &SystemMap,
+    version: &str,
+    lines: &[Line],
+) -> usize {
     let mut pinned = 0;
     for line in lines {
-        let outcome = match apply_one(app, map, version, line).await {
+        let outcome = match apply_one(app, ws, map, version, line).await {
             Ok(Some(outcome)) => outcome,
             Ok(None) => continue,
             Err(e) => {
@@ -63,9 +70,13 @@ pub async fn apply_map_lines(app: &App, map: &SystemMap, version: &str, lines: &
                 "pinned by its Map: line"
             );
         }
-        app.metrics
-            .backlog_map_lines
-            .add(1, &[KeyValue::new(attr::OUTCOME, outcome)]);
+        app.metrics.backlog_map_lines.add(
+            1,
+            &[
+                KeyValue::new(attr::OUTCOME, outcome),
+                KeyValue::new(attr::WORKSPACE, ws.to_owned()),
+            ],
+        );
     }
     if pinned > 0 {
         app.notify("pin");
@@ -93,31 +104,18 @@ pub async fn pin_created(
         },
     )
     .await?;
-    store::record_map_line(
-        &app.db,
-        rubato_protocol::DEFAULT_WORKSPACE,
-        issue,
-        target,
-        "pinned",
-    )
-    .await
+    store::record_map_line(&app.db, ws, issue, target, "pinned").await
 }
 
 /// `None` when the line was applied on an earlier tick (not counted again).
 async fn apply_one(
     app: &App,
+    ws: &str,
     map: &SystemMap,
     version: &str,
     line: &Line,
 ) -> anyhow::Result<Option<&'static str>> {
-    if store::map_line_applied(
-        &app.db,
-        rubato_protocol::DEFAULT_WORKSPACE,
-        &line.issue,
-        &line.target,
-    )
-    .await?
-    {
+    if store::map_line_applied(&app.db, ws, &line.issue, &line.target).await? {
         return Ok(None);
     }
     if let Err((reason, msg)) = check_target(map, version, &line.target) {
@@ -125,31 +123,23 @@ async fn apply_one(
         tracing::debug!(rubato.issue = %line.issue, reason, "{msg}");
         return Ok(Some(reason));
     }
-    let outcome =
-        if store::is_pinned(&app.db, rubato_protocol::DEFAULT_WORKSPACE, &line.issue).await? {
-            "already_pinned"
-        } else {
-            store::add_pin(
-                &app.db,
-                rubato_protocol::DEFAULT_WORKSPACE,
-                &IssuePin {
-                    issue: line.issue.clone(),
-                    target: line.target.clone(),
-                    pinned_by: line.author.clone(),
-                    pinned_at: Utc::now(),
-                },
-            )
-            .await?;
-            "pinned"
-        };
-    store::record_map_line(
-        &app.db,
-        rubato_protocol::DEFAULT_WORKSPACE,
-        &line.issue,
-        &line.target,
-        outcome,
-    )
-    .await?;
+    let outcome = if store::is_pinned(&app.db, ws, &line.issue).await? {
+        "already_pinned"
+    } else {
+        store::add_pin(
+            &app.db,
+            ws,
+            &IssuePin {
+                issue: line.issue.clone(),
+                target: line.target.clone(),
+                pinned_by: line.author.clone(),
+                pinned_at: Utc::now(),
+            },
+        )
+        .await?;
+        "pinned"
+    };
+    store::record_map_line(&app.db, ws, &line.issue, &line.target, outcome).await?;
     Ok(Some(outcome))
 }
 
@@ -237,7 +227,10 @@ mod tests {
         let (app, reader, _tmp) = app().await;
         let m = map();
         let lines = [line(1, MapRef::seam("web-server"))];
-        assert_eq!(apply_map_lines(&app, &m, "v1", &lines).await, 1);
+        assert_eq!(
+            apply_map_lines(&app, rubato_protocol::DEFAULT_WORKSPACE, &m, "v1", &lines).await,
+            1
+        );
         let pins = store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -246,7 +239,10 @@ mod tests {
         assert_eq!(pins[0].pinned_by, "m0x6A");
 
         // The next tick lists the same line: nothing changes and nothing is counted again.
-        assert_eq!(apply_map_lines(&app, &m, "v1", &lines).await, 0);
+        assert_eq!(
+            apply_map_lines(&app, rubato_protocol::DEFAULT_WORKSPACE, &m, "v1", &lines).await,
+            0
+        );
         // A person unpins it; the line is still in the body.
         store::remove_pin(
             &app.db,
@@ -256,7 +252,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(apply_map_lines(&app, &m, "v1", &lines).await, 0);
+        assert_eq!(
+            apply_map_lines(&app, rubato_protocol::DEFAULT_WORKSPACE, &m, "v1", &lines).await,
+            0
+        );
         assert!(
             store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
                 .await
@@ -288,7 +287,10 @@ mod tests {
             line(3, MapRef::node("web-server")),
             line(4, MapRef::node("rubato-server")),
         ];
-        assert_eq!(apply_map_lines(&app, &m, "v1", &lines).await, 0);
+        assert_eq!(
+            apply_map_lines(&app, rubato_protocol::DEFAULT_WORKSPACE, &m, "v1", &lines).await,
+            0
+        );
         let pins = store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -311,7 +313,17 @@ mod tests {
             path: None,
             description: None,
         });
-        assert_eq!(apply_map_lines(&app, &bigger, "v2", &lines[..1]).await, 1);
+        assert_eq!(
+            apply_map_lines(
+                &app,
+                rubato_protocol::DEFAULT_WORKSPACE,
+                &bigger,
+                "v2",
+                &lines[..1]
+            )
+            .await,
+            1
+        );
         println!("checked {} lines", lines.len() + 1);
     }
 }

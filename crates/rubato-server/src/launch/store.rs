@@ -56,6 +56,20 @@ pub async fn launched_issues(db: &SqlitePool) -> Result<HashSet<IssueRef>> {
         .collect())
 }
 
+/// Issues with a started launch from workspace `ws` (ADR 0045: launched there, so it belongs).
+pub async fn launched_issues_in(db: &SqlitePool, ws: &str) -> Result<HashSet<IssueRef>> {
+    let rows = sqlx::query(
+        "SELECT repo, number FROM launches WHERE workspace_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
+    )
+    .bind(ws)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64))
+        .collect())
+}
+
 pub async fn launch_count(db: &SqlitePool, issue: &IssueRef) -> Result<u32> {
     let r = sqlx::query("SELECT COUNT(*) AS n FROM launches WHERE repo = ? AND number = ? AND (result IS NULL OR result LIKE '%\"outcome\":\"started\"%')").bind(&issue.repo).bind(issue.number as i64).fetch_one(db).await?;
     Ok(r.get::<i64, _>("n") as u32)

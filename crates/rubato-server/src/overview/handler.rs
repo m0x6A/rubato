@@ -64,7 +64,24 @@ pub async fn overview(
             loaded_at: map.loaded_at,
         },
         issues: built.issues,
-        findings: built.findings,
+        findings: {
+            // A repo two workspaces share may get two plan paths or an id meaning two parts.
+            let all = crate::map::list_workspaces(&app).await;
+            let mut maps = Vec::new();
+            for w in &all {
+                if let Some(m) = app.map_of(&w.id).await {
+                    maps.push((w.name.clone(), m.map));
+                }
+            }
+            let here = all
+                .iter()
+                .find(|w| w.id == ws.as_str())
+                .map(|w| w.name.clone())
+                .unwrap_or_default();
+            let mut f = built.findings;
+            f.extend(build::cross_workspace_findings(&here, &maps));
+            f
+        },
         companions,
         unpinned_sessions: built.unpinned_sessions,
         backlog: built.backlog,

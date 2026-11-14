@@ -3,7 +3,7 @@
 //! map, title and body always give the same suggestion. A person confirms it; nothing here pins.
 
 use crate::kernel::github::OpenIssueInfo;
-use rubato_protocol::{MapRef, PinSuggestion, SystemMap, parse_map_line};
+use rubato_protocol::{MapRef, PinSuggestion, SystemMap, parse_map_placement};
 
 /// Lowest score shown (design A6).
 pub const SUGGEST_THRESHOLD: u8 = 50;
@@ -30,9 +30,17 @@ pub struct Placement {
     pub suggestion: Option<PinSuggestion>,
 }
 
-/// Read the `Map:` line and, when nothing places the issue, suggest a place.
-pub fn place(map: &SystemMap, issue: &OpenIssueInfo) -> Placement {
-    match parse_map_line(&issue.body) {
+/// The `Map:` line that speaks to workspace `ws`: unqualified, or naming `ws` (ADR 0046).
+pub fn line_for(body: &str, ws: &str) -> Option<MapRef> {
+    parse_map_placement(body)
+        .filter(|p| p.workspace.as_deref().is_none_or(|w| w == ws))
+        .map(|p| p.target)
+}
+
+/// Read the `Map:` line for workspace `ws` and, when nothing places the issue there, suggest a
+/// place on that workspace's map.
+pub fn place(map: &SystemMap, issue: &OpenIssueInfo, ws: &str) -> Placement {
+    match line_for(&issue.body, ws) {
         Some(target) if trusted(&issue.author_association) => Placement {
             pin: Some(target),
             ..Placement::default()
@@ -279,12 +287,20 @@ mod tests {
     fn only_members_place_an_issue() {
         let m = map();
         for who in ["OWNER", "MEMBER", "COLLABORATOR"] {
-            let p = place(&m, &info("Map: seam web-server", who));
+            let p = place(
+                &m,
+                &info("Map: seam web-server", who),
+                rubato_protocol::DEFAULT_WORKSPACE,
+            );
             assert_eq!(p.pin, Some(MapRef::seam("web-server")), "{who}");
             assert_eq!(p.suggestion, None);
         }
         for who in ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE", ""] {
-            let p = place(&m, &info("Map: seam web-server", who));
+            let p = place(
+                &m,
+                &info("Map: seam web-server", who),
+                rubato_protocol::DEFAULT_WORKSPACE,
+            );
             assert_eq!(p.pin, None, "{who} does not place an issue");
             assert_eq!(p.untrusted_line, Some(MapRef::seam("web-server")));
             assert_eq!(
@@ -294,10 +310,18 @@ mod tests {
             );
         }
         // An untrusted line naming no map id suggests nothing.
-        let p = place(&m, &info("Map: node billing", "NONE"));
+        let p = place(
+            &m,
+            &info("Map: node billing", "NONE"),
+            rubato_protocol::DEFAULT_WORKSPACE,
+        );
         assert_eq!((p.pin, p.suggestion), (None, None));
         // No line: scored.
-        let p = place(&m, &info("rubato-server is slow", "NONE"));
+        let p = place(
+            &m,
+            &info("rubato-server is slow", "NONE"),
+            rubato_protocol::DEFAULT_WORKSPACE,
+        );
         assert_eq!(
             p.suggestion.map(|s| s.target),
             Some(MapRef::node("rubato-server"))
