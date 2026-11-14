@@ -169,7 +169,7 @@ seams:
     guard: schema validation before use; rubato.map.version on every launch
     description: "The skill offers a session only the ids the map has, with the flows that already cross each seam."
     flows:
-      - { kind: data, from: system-map, to: skill-rubato, carries: "node and seam ids, descriptions, flows, the plan path template, the map version" }
+      - { kind: data, from: system-map, to: skill-rubato, carries: "node and seam ids, descriptions, flows, the plan path template, the map version; of every local map that names the session repo" }
 
   - id: server-system-map
     from: rubato-server
@@ -179,7 +179,7 @@ seams:
     guard: schema validation on load; rubato.map.load_failures counter
     description: "The server loads the map, refuses an invalid one and keeps the previous, and resolves pins and plans against it."
     flows:
-      - { kind: data, from: system-map, to: rubato-server, carries: "SystemMap: parts, seams, flows, repos" }
+      - { kind: data, from: system-map, to: rubato-server, carries: "SystemMap per workspace: parts, seams, flows, repos" }
       - { kind: control, from: rubato-server, to: system-map, carries: a map draft proposed as a pull request on the map repository }
 
   - id: web-server
@@ -190,7 +190,7 @@ seams:
     guard: generated web/src/protocol.ts diffed in CI
     description: "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map."
     flows:
-      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions, backlog, layout, open pull requests per repo; a pull request's detail" }
+      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail" }
       - { kind: control, from: rubato-server, to: web, carries: "WebEvent Changed over /ws/web: fetch the overview again" }
       - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations" }
       - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself" }
