@@ -9,11 +9,14 @@ import { issueKey, relative } from "../../shared/format.ts";
  */
 export const SESSION_STALE_SECS = 120;
 
-/** A companion that has not reported for this long is stale (AGENTS.md, "never silent": N defaults to 10 minutes). */
-export const COMPANION_STALE_MS = 10 * 60_000;
+/**
+ * The companion stale threshold N when the overview does not carry one (an older server): the
+ * AGENTS.md default of 10 minutes. The server's own N is `Overview.companion_silent_secs` (#105).
+ */
+export const DEFAULT_COMPANION_SILENT_SECS = 600;
 
 /** How fresh a companion's signal is: 1 just now, 0 at the stale threshold or never seen. */
-export function freshness(lastSeen: string | null | undefined, now = Date.now(), staleMs = COMPANION_STALE_MS): number {
+export function freshness(lastSeen: string | null | undefined, now = Date.now(), staleMs = DEFAULT_COMPANION_SILENT_SECS * 1000): number {
   if (!lastSeen) {
     return 0;
   }
@@ -54,9 +57,11 @@ interface LaneProps extends LaneActions {
   queue: QueuedIssue[];
   issues: IssueSummary[];
   titles: Map<string, string>;
+  /** The server's companion stale threshold N, in milliseconds: the bar is empty past it. */
+  staleMs: number;
 }
 
-function Lane({ companion: c, own, sessions, queue, issues, titles, onQueue, onReorder, onUnqueue, onStart, onRevoke }: LaneProps) {
+function Lane({ companion: c, own, sessions, queue, issues, titles, staleMs, onQueue, onReorder, onUnqueue, onStart, onRevoke }: LaneProps) {
   // "yes": an issue is over this lane and it will take it; "no": it is not the caller's lane.
   const [over, setOver] = useState<"yes" | "no" | null>(null);
   const takes = own && !c.revoked_at;
@@ -95,6 +100,8 @@ function Lane({ companion: c, own, sessions, queue, issues, titles, onQueue, onR
     onReorder(c.companion_id, next);
   };
   const state = c.revoked_at ? "revoked" : c.connected ? "connected" : c.last_seen ? `last seen ${relative(c.last_seen)}` : "never connected";
+  // A connected companion's bar stays full: a hung but connected one is the alert's job.
+  const share = c.connected ? 1 : freshness(c.last_seen, Date.now(), staleMs);
 
   return (
     <li
@@ -115,8 +122,8 @@ function Lane({ companion: c, own, sessions, queue, issues, titles, onQueue, onR
           <i className={c.connected && !c.revoked_at ? "led live" : "led"} aria-hidden="true" /> <strong>{c.hostname}</strong> <span className="muted">{own ? "yours" : c.user}</span>
           <div className={c.connected && !c.revoked_at ? "muted" : "warn"}>{state}</div>
           {!c.revoked_at && (
-            <span className="fresh" data-testid={`fresh-${c.companion_id}`} data-share={(c.connected ? 1 : freshness(c.last_seen)).toFixed(2)} aria-hidden="true">
-              <b className={c.connected ? "live" : freshness(c.last_seen) > 0 ? "fading" : "stale"} style={{ width: `${Math.round((c.connected ? 1 : freshness(c.last_seen)) * 100)}%` }} />
+            <span className="fresh" data-testid={`fresh-${c.companion_id}`} data-share={share.toFixed(2)} aria-hidden="true">
+              <b className={c.connected ? "live" : share > 0 ? "fading" : "stale"} style={{ width: `${Math.round(share * 100)}%` }} />
             </span>
           )}
         </span>
@@ -236,6 +243,7 @@ export function Lanes({ overview, me, ...actions }: Props) {
   const lanes = orderLanes(overview.companions, me);
   const sessions = [...overview.issues.flatMap((i) => i.sessions ?? []), ...(overview.unpinned_sessions ?? [])];
   const titles = new Map((overview.backlog?.issues ?? []).map((i) => [issueKey(i.issue), i.title]));
+  const staleMs = (overview.companion_silent_secs ?? DEFAULT_COMPANION_SILENT_SECS) * 1000;
   if (lanes.length === 0) {
     return <p className="muted">No companions paired yet.</p>;
   }
@@ -250,6 +258,7 @@ export function Lanes({ overview, me, ...actions }: Props) {
           queue={(overview.queue ?? []).filter((q) => q.companion_id === c.companion_id).sort((a, b) => a.position - b.position)}
           issues={overview.issues}
           titles={titles}
+          staleMs={staleMs}
           {...actions}
         />
       ))}
