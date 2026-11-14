@@ -93,7 +93,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
 `/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces, telemetry, db connection, `AppState` with a map per workspace, signer, `http::internal` and `http::Ws`, GitHub port); slices:
+(config, workspaces, telemetry, db connection, `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -107,7 +107,7 @@ map_draft       the shared map draft and its pull request       map_draft_ops, m
 new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
 plan_drafts     plan drafts mirrored from worktrees, revisions  plan_drafts, plan_draft_revisions
-approve         accept a plan as yourself, posted once          plan_approvals
+approve         accept a plan as yourself; approval in Rubato   plan_approvals, rubato_approvals
 queue           issues queued on your own companions, in order  companion_queue
 session_messages  messages to your own launched session, at most once  session_messages
 session_log     prompts and last replies of launched sessions   session_log_entries
@@ -169,7 +169,7 @@ Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; 
 modules, each with the types and `routes` its seam uses (every type re-exported at the root):
 
 ```text
-approve    ApproveRequest, ApproveResponse, reasons; PLAN_APPROVE
+approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
 auth       Me; ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
 session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
@@ -182,8 +182,8 @@ layout     MapLayout, Position; LAYOUT
 map        SystemMap, Scenario, MapResponse; MAP, MAP_RELOAD
 map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
 plan       Plan and its affected parts, O-rows, assumptions, decisions, the approval record
-plan_hash  approval_hash (the record left out), bundle_paths, bundle_hash; shared fixtures with plan-check
-github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord, ApprovalState
+plan_hash  approval_hash (the record left out), bundle_paths, bundle_hash, adr_pins; shared fixtures with plan-check and the skill
+github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord and its source, ApprovalState, comment_counts
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, derive_traffic, limits

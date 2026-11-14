@@ -97,6 +97,18 @@ pub async fn get_or_create(
     draft(&r)
 }
 
+pub async fn find(db: &SqlitePool, issue: &IssueRef, branch: &str) -> Result<Option<DraftRow>> {
+    let r = sqlx::query(&format!(
+        "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE repo = ? AND number = ? AND branch = ?"
+    ))
+    .bind(&issue.repo)
+    .bind(issue.number as i64)
+    .bind(branch)
+    .fetch_optional(db)
+    .await?;
+    r.as_ref().map(draft).transpose()
+}
+
 pub async fn get(db: &SqlitePool, id: Uuid) -> Result<Option<DraftRow>> {
     let r = sqlx::query(&format!(
         "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE id = ?"

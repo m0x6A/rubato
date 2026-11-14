@@ -266,6 +266,7 @@ async fn on_envelope(
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
+                app.set_sessions(companion_id, sessions.clone());
                 // Keyed by the pairing's companion id, never the one a session claims.
                 observe(
                     "record_spend",
@@ -666,6 +667,28 @@ mod tests {
             .iter()
             .map(|r| (r.get("bucket"), r.get("usd")))
             .collect()
+    }
+
+    /// Plan 122 §D6: every snapshot replaces that companion's entry in the kernel's session
+    /// cache, which slices that may not name this one read; the stored snapshots, read back by
+    /// `session_snapshots` at start, give the same picture.
+    #[tokio::test(flavor = "current_thread")]
+    async fn each_snapshot_replaces_the_companions_cached_sessions() {
+        let (app, _reader, pairing, _tmp) = spend_app().await;
+        let c = pairing.companion_id;
+        assert!(app.latest_sessions().is_empty());
+        on_envelope(&app, &pairing, spend_snapshot(c, 1, 1.0)).await;
+        assert_eq!(app.latest_sessions().len(), 1);
+        let mut idle = spend_snapshot(c, 2, 2.0);
+        if let CompanionMessage::Sessions { sessions } = &mut idle.message {
+            sessions[0].status = SessionStatus::Idle;
+        }
+        on_envelope(&app, &pairing, idle).await;
+        let cached = app.latest_sessions();
+        assert_eq!(cached.len(), 1, "replaced, not added");
+        assert_eq!(cached[0].status, SessionStatus::Idle);
+        let stored = store::session_snapshots(&app.db).await.unwrap();
+        assert_eq!(stored.get(&c), Some(&cached));
     }
 
     /// ADR 0012: a replayed envelope is only acked. Spend history never sees it.

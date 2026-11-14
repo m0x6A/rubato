@@ -12,8 +12,8 @@ use crate::kernel::github::{BranchHead, OpenPulls, PullInfo};
 use crate::kernel::state::App;
 use anyhow::{Result, anyhow};
 use rubato_protocol::{
-    ApprovalRecord, ChecksStatus, DecisionRecord, IssueRef, PullRequestState, ReviewRecord,
-    trusted_author,
+    ApprovalRecord, ApprovalSource, ChecksStatus, DecisionRecord, IssueRef, PullRequestState,
+    ReviewRecord, trusted_author,
 };
 use std::collections::HashMap;
 
@@ -313,7 +313,12 @@ pub struct CommentsRead {
 /// before (ADR 0014), and `Review:` and `Approved:` comments from members (ADR 0027). A review
 /// or approval from a Bot or from someone who is not OWNER, MEMBER or COLLABORATOR is ignored
 /// and logged. Signals whose comment is gone are dropped.
+///
+/// An `Approved:` comment posted at or after the cutover is stored, so the overview can show
+/// it as `CommentApprovalIgnored`, but it is never the newest counted approval; the first read
+/// of one counts on `rubato.plans.comment_after_cutover` (ADR 0054).
 pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> {
+    let cutover = app.config.comment_approvals_until;
     let mut read = CommentsRead::default();
     let mut kept: Vec<u64> = Vec::new();
     for c in app.github.issue_comments(&issue.repo, issue.number).await? {
@@ -368,7 +373,9 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
         if let Some(a) = approval {
             let rec = ApprovalRecord {
                 issue: issue.clone(),
-                comment_id: c.id,
+                source: ApprovalSource::Comment,
+                comment_id: Some(c.id),
+                approval_id: None,
                 author: c.author.clone(),
                 sha: a.sha,
                 branch: a.branch,
@@ -376,7 +383,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
                 created_at: c.created_at,
                 url: c.url.clone(),
             };
-            store::upsert_signal(
+            let new = store::upsert_signal(
                 &app.db,
                 issue,
                 c.id,
@@ -385,6 +392,18 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             )
             .await?;
             kept.push(c.id);
+            if !rec.counts(cutover) {
+                if new {
+                    app.metrics.plans_comment_after_cutover.add(1, &[]);
+                    tracing::info!(
+                        rubato.issue = %issue,
+                        comment_id = c.id,
+                        author = %c.author,
+                        "approval comment after the cutover not counted"
+                    );
+                }
+                continue;
+            }
             if read
                 .newest_approval
                 .as_ref()

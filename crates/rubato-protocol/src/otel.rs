@@ -52,6 +52,8 @@ pub mod attr {
     pub const LOG_KIND: &str = "rubato.log.kind";
     /// A draft revision number (ADR 0053).
     pub const DRAFT_REV: &str = "rubato.draft.rev";
+    /// A `rubato_approvals` row (ADR 0054).
+    pub const APPROVAL_ID: &str = "rubato.approval_id";
 }
 
 /// Metric instrument names.
@@ -164,6 +166,9 @@ pub mod metric {
     pub const DRAFTS_REVISIONS: &str = "rubato.drafts.revisions";
     /// Draft bundles not stored, by reason (`too_large`, `owner_conflict`, `unknown_launch`).
     pub const DRAFTS_REFUSED: &str = "rubato.drafts.refused";
+    /// `Approved:` comments first read at or after the cutover, which do not count (ADR 0054,
+    /// finding `CommentApprovalIgnored`).
+    pub const PLANS_COMMENT_AFTER_CUTOVER: &str = "rubato.plans.comment_after_cutover";
     /// Workspaces configured (ADR 0044), recorded at start and every poll tick.
     pub const WORKSPACES_CONFIGURED: &str = "rubato.workspaces.configured";
     /// Repos named by more than one workspace's map (ADR 0048), recorded every poll tick.
@@ -248,6 +253,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::LOG_ROLE,
         attr::LOG_KIND,
         attr::DRAFT_REV,
+        attr::APPROVAL_ID,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -302,6 +308,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
         metric::DRAFTS_REFUSED,
+        metric::PLANS_COMMENT_AFTER_CUTOVER,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,

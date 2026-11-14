@@ -64,9 +64,13 @@ pub struct OverviewInputs {
     pub decisions: Vec<DecisionRecord>,
     /// `Review:` comments from members (ADR 0027).
     pub reviews: Vec<ReviewRecord>,
-    /// `Approved:` comments from members, each with the plan hash of the branch it names when
-    /// that is not the branch the plan is read from.
+    /// Counted approvals (ADR 0054): `Approved:` comments from members posted before the
+    /// cutover and approvals given in Rubato, each with the plan hash of the branch it names
+    /// when that is not the branch the plan is read from (for a Rubato approval, its draft's
+    /// newest revision).
     pub approvals: Vec<(ApprovalRecord, Option<String>)>,
+    /// `Approved:` comments posted at or after the cutover: findings, never counted.
+    pub ignored_approvals: Vec<ApprovalRecord>,
     pub launched: HashSet<IssueRef>,
     /// The live cap hit per issue, by kind.
     pub cap_hits: HashMap<IssueRef, CapKind>,
@@ -124,9 +128,12 @@ fn cap_hit_blocks(kind: Option<CapKind>, sessions: &[SessionState]) -> bool {
     }
 }
 
-/// The newest approval of an issue and whether it names the plan as it is now (ADR 0027). An
-/// approval that names a branch other than the one the plan is read from is compared with the
-/// plan on that branch (`target_sha`, read on the full lane); otherwise with the plan as read.
+/// The newest counted approval of an issue and whether it names the plan as it is now (ADR
+/// 0027, ADR 0054). `approvals` holds counted ones only: a comment after the cutover never
+/// hides a current approval. An approval that names a branch other than the one the plan is
+/// read from is compared with the plan on that branch (`target_sha`: read on the full lane for
+/// a comment, the draft's newest revision for a Rubato approval); otherwise with the plan as
+/// read.
 ///
 /// An approval of the current plan counts only while the plan fits the map (ADR 0029): with
 /// `fits == Some(false)` its version is `DoesNotFit`.
@@ -137,7 +144,7 @@ pub fn approval_state(
 ) -> Option<ApprovalState> {
     let (record, target_sha) = approvals
         .iter()
-        .max_by_key(|(a, _)| (a.created_at, a.comment_id))?;
+        .max_by_key(|(a, _)| (a.created_at, a.comment_id, a.approval_id))?;
     let elsewhere = record
         .branch
         .as_deref()
@@ -379,6 +386,17 @@ pub fn build(
             (Some(here), Some(there)) if !here.fits => Some(there),
             (here, _) => here,
         };
+        for a in inputs
+            .ignored_approvals
+            .iter()
+            .filter(|a| &a.issue == issue)
+        {
+            findings.push(Finding::CommentApprovalIgnored {
+                issue: issue.clone(),
+                author: a.author.clone(),
+                created_at: a.created_at,
+            });
+        }
         let approval = approval_state(&approvals, plan_row, fit.as_ref().map(|f| f.fits));
         if approval
             .as_ref()
@@ -827,6 +845,7 @@ mod tests {
             decisions: vec![],
             reviews: vec![],
             approvals: vec![],
+            ignored_approvals: vec![],
             launched: HashSet::new(),
             cap_hits: HashMap::new(),
             meta: HashMap::new(),
@@ -1391,7 +1410,9 @@ mod tests {
     ) -> ApprovalRecord {
         ApprovalRecord {
             issue: issue.clone(),
-            comment_id: id,
+            source: rubato_protocol::ApprovalSource::Comment,
+            comment_id: Some(id),
+            approval_id: None,
             author: "m0x6A".into(),
             sha: sha.map(str::to_owned),
             branch: branch.map(str::to_owned),
@@ -1469,6 +1490,143 @@ mod tests {
         assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::NoPlan);
         // Naming the branch the plan is read from compares with the plan as read.
         inputs.approvals[0].0.branch = Some("issue/71-create-issue".into());
+        assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::Current);
+    }
+
+    /// A Rubato approval of a draft not on a branch yet (ADR 0054), as `approve::approvals`
+    /// gives it: compared with the draft's newest revision.
+    fn rubato_approval(
+        issue: &IssueRef,
+        at_secs: i64,
+        sha: &str,
+        newest: &str,
+    ) -> (crate::approve::RubatoApproval, Option<String>) {
+        (
+            crate::approve::RubatoApproval {
+                id: Uuid::from_u128(at_secs as u128),
+                issue: issue.clone(),
+                branch: format!("issue/{}-x", issue.number),
+                draft_id: Uuid::from_u128(99),
+                rev: 1,
+                plan_sha: sha.into(),
+                bundle_hash: "h".into(),
+                approved_by: "teammate".into(),
+                approved_at: now() + chrono::Duration::seconds(at_secs),
+                self_approved: false,
+                summary: String::new(),
+            },
+            Some(newest.into()),
+        )
+    }
+
+    /// The draft that puts an issue with no plan on a branch in the overview.
+    fn draft_of(issue: &IssueRef, sha: &str) -> crate::plan_drafts::LatestDraft {
+        crate::plan_drafts::LatestDraft {
+            issue: issue.clone(),
+            summary: rubato_protocol::DraftSummary {
+                draft_id: Uuid::from_u128(99),
+                branch: format!("issue/{}-x", issue.number),
+                owner: "m0x6A".into(),
+                rev: 1,
+                at: now(),
+                plan_sha: sha.into(),
+                bundle_hash: "h".into(),
+                missing: vec![],
+                parse_error: None,
+                live: false,
+            },
+            plan: None,
+            conflict: None,
+        }
+    }
+
+    /// ADR 0054: one list, the newest counted approval decides. A comment posted after the
+    /// cutover is newer than the Rubato approval but never hides it, and is a finding; without a
+    /// cutover the same comment wins, so the check cannot pass by accident.
+    #[test]
+    fn a_comment_after_the_cutover_never_hides_a_current_rubato_approval() {
+        let a = IssueRef::new("o/r", 71);
+        let comment = (approval(&a, 30, Some(EARLIER), None), None);
+        let rubato = rubato_approval(&a, 10, CURRENT, CURRENT);
+        let cutover = Some(now() + chrono::Duration::seconds(20));
+        let merged = crate::approve::merge(vec![comment.clone()], vec![rubato.clone()], cutover);
+        let mut inputs = empty();
+        inputs.drafts = vec![draft_of(&a, CURRENT)];
+        inputs.approvals = merged.counted;
+        inputs.ignored_approvals = merged.ignored;
+        let built = build(&inputs, None, &Limits::default(), now());
+        let one = built
+            .issues
+            .iter()
+            .find(|i| i.issue == a)
+            .expect("issue 71");
+        let state = one.approval.as_ref().unwrap();
+        assert_eq!(state.version, ApprovalVersion::Current);
+        assert_eq!(state.record.source, rubato_protocol::ApprovalSource::Rubato);
+        assert_eq!(state.record.approval_id, Some(Uuid::from_u128(10)));
+        assert_eq!(
+            built
+                .findings
+                .iter()
+                .filter(|f| matches!(f, Finding::CommentApprovalIgnored { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![Finding::CommentApprovalIgnored {
+                issue: a.clone(),
+                author: "m0x6A".into(),
+                created_at: now() + chrono::Duration::seconds(30),
+            }]
+        );
+        // No cutover: the later comment counts and decides.
+        let merged = crate::approve::merge(vec![comment], vec![rubato], None);
+        let mut inputs = empty();
+        inputs.drafts = vec![draft_of(&a, CURRENT)];
+        inputs.approvals = merged.counted;
+        inputs.ignored_approvals = merged.ignored;
+        let built = build(&inputs, None, &Limits::default(), now());
+        let one = built.issues.iter().find(|i| i.issue == a).unwrap();
+        assert_eq!(
+            one.approval.as_ref().unwrap().record.source,
+            rubato_protocol::ApprovalSource::Comment
+        );
+        assert!(
+            !built
+                .findings
+                .iter()
+                .any(|f| matches!(f, Finding::CommentApprovalIgnored { .. }))
+        );
+    }
+
+    /// Before handoff a Rubato approval is current while its plan sha is the newest revision's;
+    /// a newer revision makes it stale, with the finding the gauge counts. Once the plan is on
+    /// the branch it names, the plan as read decides.
+    #[test]
+    fn a_rubato_approval_follows_the_newest_revision_then_the_plan_on_the_branch() {
+        let a = IssueRef::new("o/r", 71);
+        let mut inputs = empty();
+        inputs.drafts = vec![draft_of(&a, CURRENT)];
+        inputs.approvals =
+            crate::approve::merge(vec![], vec![rubato_approval(&a, 1, CURRENT, CURRENT)], None)
+                .counted;
+        assert_eq!(approval_of(&inputs, &a), (ApprovalVersion::Current, vec![]));
+        inputs.approvals =
+            crate::approve::merge(vec![], vec![rubato_approval(&a, 1, EARLIER, CURRENT)], None)
+                .counted;
+        assert_eq!(
+            approval_of(&inputs, &a),
+            (
+                ApprovalVersion::Earlier,
+                vec![Finding::ApprovalStale {
+                    issue: a.clone(),
+                    approved_sha: EARLIER.into(),
+                    current_sha: CURRENT.into(),
+                }]
+            )
+        );
+        // Handed off: the plan on `issue/71-x` is read, and it hashes to the approved sha.
+        let mut row = plan(&a, "companion-server", "rubato-companion");
+        row.approval_sha = Some(EARLIER.into());
+        inputs.plans = vec![row];
         assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::Current);
     }
 

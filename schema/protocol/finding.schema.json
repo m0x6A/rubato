@@ -219,6 +219,32 @@
       ]
     },
     {
+      "description": "An `Approved:` comment posted at or after the cutover: not counted, since plans are\napproved in Rubato (ADR 0054).",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "comment_approval_ignored"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "author",
+        "created_at"
+      ]
+    },
+    {
       "description": "A live session Rubato cannot tie to an issue: its branch is not `issue/<n>-…`, or its\nrepo is unknown.",
       "type": "object",
       "properties": {

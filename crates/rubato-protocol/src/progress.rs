@@ -357,6 +357,13 @@ pub enum Finding {
     /// An approval names the current plan, but the plan does not fit the map, so it does not
     /// count (ADR 0029).
     ApprovedWithoutFit { issue: IssueRef },
+    /// An `Approved:` comment posted at or after the cutover: not counted, since plans are
+    /// approved in Rubato (ADR 0054).
+    CommentApprovalIgnored {
+        issue: IssueRef,
+        author: String,
+        created_at: DateTime<Utc>,
+    },
     /// A live session Rubato cannot tie to an issue: its branch is not `issue/<n>-…`, or its
     /// repo is unknown.
     UnattributedSession {
