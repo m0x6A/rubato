@@ -127,6 +127,11 @@ pub mod metric {
     pub const TRAFFIC_UNDECLARED_EDGES: &str = "rubato.traffic.undeclared_edges";
     /// Services in the report that name no map part.
     pub const TRAFFIC_UNMAPPED_SERVICES: &str = "rubato.traffic.unmapped_services";
+    /// Ghost parts on the overlay: services seen that no part names (ADR 0059), dismissed ones
+    /// left out; recorded each fetch, per workspace.
+    pub const TRAFFIC_GHOST_PARTS: &str = "rubato.traffic.ghost_parts";
+    /// Dismissed discrepancies per workspace (ADR 0060), recorded each fetch.
+    pub const TRAFFIC_DISMISSALS: &str = "rubato.traffic.dismissals";
     /// Writes of an issue's spend history (ADR 0037), by `rubato.outcome`: `stored` (a session's
     /// spend changed and the issue's point was written), `unchanged` (same or older value),
     /// `rejected` (not finite, or negative), `failed` (the write returned an error).
@@ -244,6 +249,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::TRAFFIC_SEAMS_QUIET,
         metric::TRAFFIC_UNDECLARED_EDGES,
         metric::TRAFFIC_UNMAPPED_SERVICES,
+        metric::TRAFFIC_GHOST_PARTS,
+        metric::TRAFFIC_DISMISSALS,
         metric::COMPANION_SILENT_SECS,
         span::LAUNCH,
         span::HOOK_FORWARD,

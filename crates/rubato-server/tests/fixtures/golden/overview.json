@@ -774,6 +774,7 @@
     }
   ],
   "traffic": {
+    "ghosts_truncated": false,
     "state": "not_configured",
     "truncated": false,
     "unmapped_services": 0

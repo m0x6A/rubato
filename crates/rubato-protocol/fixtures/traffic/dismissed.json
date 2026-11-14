@@ -1,0 +1,56 @@
+{
+  "why": "dismissals hide what they name from the drawn lists and the findings, a dismissed ghost takes its edges with it, and every dismissal is listed",
+  "now": "2026-11-13T12:00:00Z",
+  "fetch_secs": 60,
+  "report": {
+    "observed_at": "2026-11-13T12:00:00Z",
+    "window_secs": 3600,
+    "edges": [
+      { "client": "checkout", "client_namespace": "shop", "server": "payments", "server_namespace": "shop", "calls": 5, "errors": 1 },
+      { "client": "checkout", "client_namespace": "shop-test", "server": "payments", "server_namespace": "shop-test", "calls": 2, "errors": 0 },
+      { "client": "b", "server": "payments", "server_namespace": "shop", "calls": 7, "errors": 0 },
+      { "client": "a", "server": "github", "calls": 3, "errors": 0 },
+      { "client": "checkout", "client_namespace": "shop", "server": "b", "server_namespace": "shop", "calls": 1, "errors": 0 }
+    ]
+  },
+  "dismissed": [
+    { "id": 1, "target": { "kind": "ghost", "service": { "namespace": "shop", "name": "b" } }, "author": "m0x6A", "at": "2026-11-13T11:00:00Z" },
+    { "id": 2, "target": { "kind": "edge", "from": { "kind": "ghost", "service": { "namespace": "shop-test", "name": "checkout" } }, "to": { "kind": "ghost", "service": { "namespace": "shop-test", "name": "payments" } } }, "author": "m0x6A", "at": "2026-11-13T11:01:00Z" },
+    { "id": 3, "target": { "kind": "quiet_seam", "seam": "a-b" }, "author": "teammate", "at": "2026-11-13T11:02:00Z" },
+    { "id": 4, "target": { "kind": "edge", "from": { "kind": "part", "id": "a" }, "to": { "kind": "part", "id": "gh" } }, "author": "teammate", "at": "2026-11-13T11:03:00Z" }
+  ],
+  "expect": {
+    "traffic": {
+      "state": "fresh",
+      "observed_at": "2026-11-13T12:00:00Z",
+      "window_secs": 3600,
+      "seams": [
+        { "seam": "b-e", "forward_calls": 7, "reverse_calls": 0, "errors": 0 }
+      ],
+      "observed_parts": ["a", "b", "e", "gh"],
+      "ghosts": [
+        { "service": { "namespace": "shop", "name": "checkout" }, "calls_in": 0, "calls_out": 6, "errors": 1 },
+        { "service": { "namespace": "shop-test", "name": "checkout" }, "calls_in": 0, "calls_out": 2, "errors": 0 },
+        { "service": { "namespace": "shop-test", "name": "payments" }, "calls_in": 2, "calls_out": 0, "errors": 0 }
+      ],
+      "ghost_edges": [
+        { "from": { "kind": "ghost", "service": { "namespace": "shop", "name": "checkout" } }, "to": { "kind": "part", "id": "e" }, "calls": 5, "errors": 1 }
+      ],
+      "ghosts_truncated": false,
+      "dismissed": [
+        { "id": 1, "target": { "kind": "ghost", "service": { "namespace": "shop", "name": "b" } }, "author": "m0x6A", "at": "2026-11-13T11:00:00Z" },
+        { "id": 2, "target": { "kind": "edge", "from": { "kind": "ghost", "service": { "namespace": "shop-test", "name": "checkout" } }, "to": { "kind": "ghost", "service": { "namespace": "shop-test", "name": "payments" } } }, "author": "m0x6A", "at": "2026-11-13T11:01:00Z" },
+        { "id": 3, "target": { "kind": "quiet_seam", "seam": "a-b" }, "author": "teammate", "at": "2026-11-13T11:02:00Z" },
+        { "id": 4, "target": { "kind": "edge", "from": { "kind": "part", "id": "a" }, "to": { "kind": "part", "id": "gh" } }, "author": "teammate", "at": "2026-11-13T11:03:00Z" }
+      ],
+      "unmapped_services": 0,
+      "truncated": false
+    },
+    "findings": [
+      { "kind": "seam_quiet", "seam": "a-b-events", "window_secs": 3600 },
+      { "kind": "observed_only_part", "service": { "namespace": "shop", "name": "checkout" }, "calls": 6 },
+      { "kind": "observed_only_part", "service": { "namespace": "shop-test", "name": "checkout" }, "calls": 2 },
+      { "kind": "observed_only_part", "service": { "namespace": "shop-test", "name": "payments" }, "calls": 2 }
+    ]
+  }
+}
