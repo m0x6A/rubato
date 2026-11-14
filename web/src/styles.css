@@ -245,6 +245,22 @@ tr.chat-row > td { padding-top: 0; }
 .msg-answered { font-size: 12px; color: var(--ok-ink); }
 .chat-meta a { font-size: 12px; color: var(--accent-ink); }
 .chat-compose { display: flex; flex-direction: column; gap: 4px; }
+/* a plan's room: the team's discussion and Rubato's seam notices (ADR 0057) */
+:where(.room p) { margin: 4px 0; }
+.room-log { gap: 6px; margin-top: 6px; }
+.room-msg { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); }
+.room-msg.agent { border-left: 3px solid var(--accent); }
+.room-msg.system { border-color: var(--warn); background: var(--warn-wash); }
+.room-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.room-kind { font-size: 12px; color: var(--muted); }
+.room-msg.agent .room-kind { color: var(--accent-ink); font-weight: 600; }
+.room-msg.system .room-kind { color: var(--warn-ink); font-weight: 600; }
+.room-text { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.room-notice { font-size: 12px; }
+.room-compose { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.room-compose textarea { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); resize: vertical; }
+.room-compose textarea[aria-invalid="true"] { border-color: var(--bad); }
+.room-compose-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 /* the plan draft on an issue, its revisions and what changed since you last looked (ADR 0053) */
 .draft h4 { margin: 10px 0 4px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .draft p { margin: 4px 0; }

@@ -162,6 +162,7 @@ findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 plans       proposed and open plans, fit, Accept plan, drafts    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
 repos       connected repos, what each provides, loose sessions  (none)
+room        a plan's room: messages, seam notices, post          GET /api/room, POST /api/room/messages
 workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
 ```
 <!-- /slices -->
