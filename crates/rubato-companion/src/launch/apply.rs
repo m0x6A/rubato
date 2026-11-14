@@ -69,6 +69,7 @@ impl Registry {
             e.issue = Some(cmd.issue.clone());
             e.launch_id = Some(cmd.id);
             e.spend_cap_usd = Some(cmd.spend_cap_usd);
+            self.launches_changed = true;
             // A pane reconcile found meanwhile is the same session: drop the duplicate.
             self.entries.retain(|o| {
                 !(o.session_id.is_none() && o.pane_id.as_deref() == Some(pane_id) && !o.ended)
@@ -113,11 +114,17 @@ impl Registry {
             head_mtime: None,
             branch_drift: None,
             blocked_by: None,
+            last_hook: None,
+            last_hook_idle: false,
+            last_hook_at: None,
+            input_sent_at: None,
+            hooks_lost: false,
         };
         match discovered {
             Some(i) => self.entries[i] = launched,
             None => self.entries.push(launched),
         }
+        self.launches_changed = true;
     }
 }
 

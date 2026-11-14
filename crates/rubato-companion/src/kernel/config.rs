@@ -228,7 +228,34 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Where the hook listener publishes its port and token for `hooks.ts` and the launcher.
+/// Write a state file readable only by the owner, atomically: a temp file with mode 0600,
+/// synced, then renamed over `path`, so a reader (or the next start, after a crash) sees the
+/// old contents or the new, never a partial file. As `server_link`'s `seq.json`.
+pub fn write_atomic_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    let tmp = path.with_file_name(name);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&tmp)
+        .with_context(|| format!("opening {}", tmp.display()))?;
+    // In case a leftover temp file had wider permissions.
+    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    f.write_all(bytes)
+        .with_context(|| format!("writing {}", tmp.display()))?;
+    f.sync_all()?;
+    std::fs::rename(&tmp, path).with_context(|| format!("renaming over {}", path.display()))?;
+    Ok(())
+}
+
+/// Where the hook listener publishes its port and token for `hooks.ts` and the launcher. Kept
+/// across restarts: the next start binds the same port with the same token when it can, so
+/// sessions launched earlier keep their hooks (plan 122 §D1).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct HookEndpoint {
     pub port: u16,
@@ -242,13 +269,59 @@ impl HookEndpoint {
 
     pub fn save(&self, dir: &Path) -> Result<()> {
         std::fs::create_dir_all(dir)?;
-        write_private(&Self::path(dir), serde_json::to_string(self)?.as_bytes())
+        write_atomic_private(&Self::path(dir), serde_json::to_string(self)?.as_bytes())
+    }
+
+    /// The endpoint the last run published. `None` when there is none, or it does not parse
+    /// (logged): the next start then binds a new one.
+    pub fn load(dir: &Path) -> Option<Self> {
+        let p = Self::path(dir);
+        let text = std::fs::read_to_string(&p).ok()?;
+        match serde_json::from_str(&text) {
+            Ok(ep) => Some(ep),
+            Err(e) => {
+                tracing::warn!(path = %p.display(), error = %e, "hook endpoint file does not parse");
+                None
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_atomic_write_is_private_and_leaves_no_temp_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("deliveries.json");
+        std::fs::write(&p, "old").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_atomic_private(&p, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "new");
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["deliveries.json"], "no temp file left behind");
+    }
+
+    #[test]
+    fn the_hook_endpoint_round_trips_and_a_bad_file_reads_as_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(HookEndpoint::load(dir.path()), None);
+        let ep = HookEndpoint {
+            port: 43125,
+            token: "t".into(),
+        };
+        ep.save(dir.path()).unwrap();
+        assert_eq!(HookEndpoint::load(dir.path()), Some(ep));
+        std::fs::write(HookEndpoint::path(dir.path()), "{not json").unwrap();
+        assert_eq!(HookEndpoint::load(dir.path()), None);
+    }
 
     #[test]
     fn parses_the_example_workspace() {

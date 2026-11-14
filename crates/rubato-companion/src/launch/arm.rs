@@ -6,7 +6,7 @@
 //! the launch task's channel (plan 40), not in the dispatch loop, so hooks keep flowing.
 
 use super::launcher::Launcher;
-use crate::sessions::Registry;
+use crate::sessions::{Registry, save_launches_if_changed};
 use chrono::Utc;
 use rubato_protocol::{
     CapHit, CapKind, CompanionMessage, LaunchCommand, LaunchResult, RefusalReason,
@@ -60,6 +60,8 @@ pub async fn on_command(
         reg.end_launch();
         if let Some(s) = started {
             reg.apply_launch(cmd, &s.pane_id, &s.tmux_session, &s.worktree, Utc::now());
+            // Kept across a companion restart (plan 122 §D1).
+            save_launches_if_changed(&mut reg, &launcher.state_dir);
         }
     }
     tracing::info!(launch_id = %cmd.id, issue = %cmd.issue, outcome = ?std::mem::discriminant(&result), "{}", rubato_protocol::otel::span::LAUNCH);

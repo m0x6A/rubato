@@ -86,6 +86,9 @@ pub struct Metrics {
     pub hook_payload_trimmed: Counter<u64>,
     pub sessions_discovered: Gauge<u64>,
     pub events_dropped: Counter<u64>,
+    /// Session messages the companion could not type, or stopped while typing, by
+    /// `rubato.reason` (ADR 0051).
+    pub session_input_failed: Counter<u64>,
 }
 
 impl Metrics {
@@ -107,6 +110,10 @@ impl Metrics {
                 .build(),
             sessions_discovered: m.u64_gauge(otel::metric::SESSIONS_DISCOVERED).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
+            session_input_failed: m
+                .u64_counter(otel::metric::SESSION_INPUT_FAILED)
+                .with_description("session messages not typed, or stopped while typing, by reason")
+                .build(),
         }
     }
 }
