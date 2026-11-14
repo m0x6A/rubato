@@ -9,7 +9,11 @@ async fn at_0012() -> (SqlitePool, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let url = format!("sqlite://{}/m.db?mode=rwc", tmp.path().display());
     // One connection: the migration and the checks see one schema.
-    let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect(&url).await.unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
     let mut m = sqlx::migrate!("./migrations");
     m.migrations = Cow::Owned(
         m.migrations
