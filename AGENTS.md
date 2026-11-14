@@ -128,12 +128,13 @@ slices:
 ```text
 pairing        device-code pairing with a GitHub login                            pair
 server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
-sessions       Registry, identity from the branch, discovery, launches.json       reconcile (essential), events watcher (best-effort)
+sessions       Registry, identity, discovery, launches.json with plan_path        reconcile (essential), events watcher (best-effort)
 hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
 launch         LaunchCommand: own user only, worktree, tmux, exec                 launch task (essential)
 spend          transcript cost, spend cap, CapHit                                 after each hook
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
 session_input  SessionMessage: own user, launched here, idle, typed once          session input task (essential)
+plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
 ```
 <!-- /slices -->
 <!-- slices: web -->

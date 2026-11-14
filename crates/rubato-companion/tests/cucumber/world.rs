@@ -36,6 +36,8 @@ pub struct TestServer {
     pub push: broadcast::Sender<ServerEnvelope>,
     pub seq: Arc<std::sync::atomic::AtomicU64>,
     pub limits: Arc<std::sync::Mutex<Limits>>,
+    /// What the Welcome announces; a scenario may take one away before the daemon starts.
+    pub capabilities: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl TestServer {
@@ -57,6 +59,10 @@ impl TestServer {
             push,
             seq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             limits: Arc::new(std::sync::Mutex::new(Limits::default())),
+            capabilities: Arc::new(std::sync::Mutex::new(vec![
+                rubato_protocol::capability::SESSION_MESSAGES.into(),
+                rubato_protocol::capability::DRAFTS.into(),
+            ])),
         };
         let st = srv.clone();
         let app = Router::new()
@@ -90,7 +96,7 @@ impl TestServer {
                                         st.notify.notify_waiters();
                                         if is_hello {
                                             let seq = st.seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                                            let welcome = ServerEnvelope { seq, sent_at: chrono::Utc::now(), message: ServerMessage::Welcome { capabilities: vec![rubato_protocol::capability::SESSION_MESSAGES.into()], server_version: "test".into(), protocol_version: 1, last_seen_companion_seq: 0, limits: *st.limits.lock().unwrap() } };
+                                            let welcome = ServerEnvelope { seq, sent_at: chrono::Utc::now(), message: ServerMessage::Welcome { capabilities: st.capabilities.lock().unwrap().clone(), server_version: "test".into(), protocol_version: 1, last_seen_companion_seq: 0, limits: *st.limits.lock().unwrap() } };
                                             let _ = sink.send(Message::Text(serde_json::to_string(&welcome).unwrap().into())).await;
                                         }
                                     }
@@ -364,7 +370,7 @@ impl RubatoWorld {
             prompt: format!("Work on {repo}#{issue}."),
             otel_resource: otel,
             map_version: Some("test".into()),
-            plan_path: None,
+            plan_path: Some(format!("docs/plans/{issue}.md")),
         }
     }
 
@@ -459,13 +465,18 @@ impl RubatoWorld {
     }
 
     pub async fn post_hook(&self, fixture: &str, with_token: bool) -> u16 {
-        let h = self.handles.as_ref().expect("daemon running");
         let body = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("features/fixtures/hooks")
                 .join(fixture),
         )
         .unwrap();
+        self.post_hook_body(&body, with_token).await
+    }
+
+    /// As `post_hook`, with a body the step built: a hook from a session started by hand.
+    pub async fn post_hook_body(&self, body: &str, with_token: bool) -> u16 {
+        let h = self.handles.as_ref().expect("daemon running");
         // Exactly what Claude Code's hook command does: curl with the bearer and the stdin body.
         let mut cmd = Command::new("curl");
         cmd.args([

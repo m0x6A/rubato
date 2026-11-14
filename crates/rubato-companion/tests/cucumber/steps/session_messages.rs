@@ -14,7 +14,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// A docstring as written, without the indentation of its block and the surrounding newlines.
-fn docstring(step: &Step) -> String {
+pub(crate) fn docstring(step: &Step) -> String {
     let raw = step.docstring.as_deref().expect("a docstring");
     let lines: Vec<&str> = raw.trim_matches('\n').lines().collect();
     let indent = lines

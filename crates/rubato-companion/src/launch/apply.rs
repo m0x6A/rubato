@@ -69,6 +69,7 @@ impl Registry {
             e.issue = Some(cmd.issue.clone());
             e.launch_id = Some(cmd.id);
             e.spend_cap_usd = Some(cmd.spend_cap_usd);
+            e.plan_path = cmd.plan_path.clone();
             self.launches_changed = true;
             // A pane reconcile found meanwhile is the same session: drop the duplicate.
             self.entries.retain(|o| {
@@ -120,6 +121,7 @@ impl Registry {
             input_sent_at: None,
             hooks_lost: false,
             pasted: Vec::new(),
+            plan_path: cmd.plan_path.clone(),
         };
         match discovered {
             Some(i) => self.entries[i] = launched,

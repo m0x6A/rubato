@@ -61,6 +61,9 @@ pub struct Entry {
     /// most [`PASTED_KEPT`]. The next `UserPromptSubmit` ending with one is tagged with its id
     /// (plan 122 PR 4). In memory only; it follows the launch across a `/clear`.
     pub pasted: Vec<(Uuid, String)>,
+    /// Where the launch's plan lives in the worktree (`LaunchCommand.plan_path`): what
+    /// `plan_mirror` reads at settle points (ADR 0053). None from an older server.
+    pub plan_path: Option<String>,
 }
 
 impl Entry {
@@ -260,6 +263,7 @@ mod tests {
             input_sent_at: None,
             hooks_lost: false,
             pasted: Vec::new(),
+            plan_path: None,
         });
         let counts = r.counts_by_source();
         assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");

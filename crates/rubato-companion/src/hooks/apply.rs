@@ -112,6 +112,7 @@ impl Registry {
             input_sent_at: None,
             hooks_lost: false,
             pasted: Vec::new(),
+            plan_path: None,
         };
         self.entries.push(entry);
         id.issue
@@ -149,6 +150,7 @@ mod tests {
                 issue: IssueRef::new("acme/pantry", 7),
                 branch: Some("issue/7-restock".into()),
                 spend_cap_usd: Some(20.0),
+                plan_path: None,
             }],
             None,
             false,

@@ -4,7 +4,8 @@
 //!
 //! - essential (server link, hook server, heartbeat, reconcile, stale sweep, dropped counter,
 //!   launch task, which handles launch commands one at a time off the dispatch loop, plan 40,
-//!   and session input task, which types session messages one at a time, plan 122):
+//!   session input task, which types session messages one at a time, and plan mirror task,
+//!   which reads plan bundles off the hook path, plan 122):
 //!   ending while shutdown is not requested logs `rubato.task.exited` and makes `run` return
 //!   `Err`, which `main` turns into a non-zero exit;
 //! - best-effort (tmux-ide events watcher): ending is normal on a machine with no adopted
@@ -21,10 +22,11 @@ use crate::kernel::telemetry::Metrics;
 use crate::kernel::tmux::Tmux;
 use crate::kernel::tmux_ide::TmuxIde;
 use crate::launch::Launcher;
+use crate::plan_mirror::PlanMirrorTask;
 use crate::server_link::{Client, Identity, Reservation};
 use crate::session_input::{Deliveries, SessionInputTask};
 use crate::sessions::Registry;
-use crate::{hooks, launch, server_link, session_input, sessions, spend, stale};
+use crate::{hooks, launch, plan_mirror, server_link, session_input, sessions, spend, stale};
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use rubato_protocol::otel::event;
@@ -176,10 +178,12 @@ async fn run(
             user: cfg.state.user.clone(),
             version: crate::kernel::VERSION.to_owned(),
             token: cfg.state.pairing_token.clone(),
-            // The trim has shipped since #122 PR 1 (ADR 0052); session input since PR 3.
+            // The trim has shipped since #122 PR 1 (ADR 0052), session input since PR 3, the plan
+            // mirror since PR 5.
             capabilities: vec![
                 capability::HOOK_ALLOWLIST.to_owned(),
                 capability::SESSION_INPUT.to_owned(),
+                capability::DRAFT_MIRROR.to_owned(),
             ],
         },
         seq,
@@ -279,6 +283,22 @@ async fn run(
             },
         ),
     );
+    let (mirror_tx, mirror_rx) = mpsc::unbounded_channel::<String>();
+    tasks.spawn(
+        "plan_mirror",
+        Kind::Essential,
+        plan_mirror::run(
+            mirror_rx,
+            PlanMirrorTask {
+                registry: registry.clone(),
+                out: out_tx.clone(),
+                limits: limits.clone(),
+                server_capabilities: server_capabilities.clone(),
+                read_timeout: crate::kernel::proc::LOCAL_TIMEOUT,
+                last_sent: HashMap::new(),
+            },
+        ),
+    );
     let dispatch = Dispatch {
         cfg: &cfg,
         registry: &registry,
@@ -289,6 +309,7 @@ async fn run(
         server_capabilities: &server_capabilities,
         launch: &launch_tx,
         session_input: &input_tx,
+        plan_mirror: &mirror_tx,
     };
     let supervised = supervise(tasks, shutdown.clone());
     tokio::pin!(supervised);
@@ -312,6 +333,8 @@ struct Dispatch<'a> {
     launch: &'a mpsc::UnboundedSender<LaunchCommand>,
     /// The session input task's queue (plan 122 §D1).
     session_input: &'a mpsc::UnboundedSender<SessionMessage>,
+    /// The plan mirror task's queue: session ids of settle hooks (ADR 0053).
+    plan_mirror: &'a mpsc::UnboundedSender<String>,
 }
 
 impl Dispatch<'_> {
@@ -327,6 +350,7 @@ impl Dispatch<'_> {
                 Some(ev) = hook_rx.recv() => {
                     let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id, &self.cfg.state_dir, self.limits).await;
                     spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
+                    plan_mirror::on_hook(&ev, self.plan_mirror);
                 }
                 Some(msg) = in_rx.recv() => match msg {
                     ServerMessage::Welcome { limits, capabilities, .. } => {
