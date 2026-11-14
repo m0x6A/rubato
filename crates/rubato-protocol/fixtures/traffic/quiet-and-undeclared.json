@@ -1,0 +1,33 @@
+{
+  "why": "an edge no seam joins is undeclared and a finding; a seam whose two parts are observed with no calls is quiet; a seam to an unobserved part is not",
+  "now": "2026-11-13T12:00:00Z",
+  "fetch_secs": 60,
+  "report": {
+    "observed_at": "2026-11-13T11:58:00Z",
+    "window_secs": 3600,
+    "truncated": true,
+    "edges": [
+      { "client": "a", "server": "b", "calls": 2, "errors": 0 },
+      { "client": "a", "server": "c", "calls": 3, "errors": 1 }
+    ]
+  },
+  "expect": {
+    "traffic": {
+      "state": "fresh",
+      "observed_at": "2026-11-13T11:58:00Z",
+      "window_secs": 3600,
+      "seams": [
+        { "seam": "a-b", "forward_calls": 2, "reverse_calls": 0, "errors": 0 },
+        { "seam": "a-b-events", "forward_calls": 0, "reverse_calls": 2, "errors": 0 }
+      ],
+      "undeclared": [{ "from": "a", "to": "c", "calls": 3, "errors": 1 }],
+      "observed_parts": ["a", "b", "c"],
+      "unmapped_services": 0,
+      "truncated": true
+    },
+    "findings": [
+      { "kind": "seam_quiet", "seam": "b-c", "window_secs": 3600 },
+      { "kind": "undeclared_traffic", "from": "a", "to": "c", "calls": 3 }
+    ]
+  }
+}

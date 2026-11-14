@@ -2,16 +2,17 @@
 //! Pure over the rows the database holds, so it is testable without a server.
 
 use crate::github_poll::IssueMeta;
-use crate::kernel::state::LoadedMap;
+use crate::kernel::state::{LoadedMap, TrafficLatest};
 use crate::plans::{PlanRow, approval_names};
 use chrono::{DateTime, Utc};
 use rubato_protocol::QueuedIssue;
 use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
     ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
-    DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, OpenIssue, Plan,
-    Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls, ReviewRecord,
-    SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress, plan_fit,
+    DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, ObservedTraffic,
+    OpenIssue, Plan, Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls,
+    ReviewRecord, SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress,
+    derive_traffic, plan_fit,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -41,6 +42,8 @@ pub struct OverviewInputs {
     pub repo_pulls: Vec<RepoPulls>,
     /// Every queued issue, lanes of revoked companions included; the handler leaves those out.
     pub queue: Vec<QueuedIssue>,
+    /// The latest traffic report and its source (ADR 0039). Never an input to progress.
+    pub traffic: TrafficLatest,
     /// Each issue's spend over time, downsampled (ADR 0037). Copied onto its summary only.
     pub spend: HashMap<IssueRef, Vec<SpendPoint>>,
 }
@@ -56,6 +59,8 @@ pub struct Built {
     pub repos: Vec<ConnectedRepo>,
     /// Open pull requests per map repo, checks of tracked ones from `pull_requests` (ADR 0034).
     pub pulls: Vec<RepoPulls>,
+    /// Observed traffic per seam; its findings are in `findings` (ADR 0039).
+    pub traffic: ObservedTraffic,
 }
 
 fn seams_touched(plan: &Plan) -> BTreeSet<&str> {
@@ -343,6 +348,21 @@ pub fn build(
             .iter()
             .map(|repo| Finding::RepoNotCovered { repo: repo.clone() }),
     );
+    // Map versus territory (ADR 0039): only a fresh report makes findings. Read after progress
+    // is derived and never fed back into it.
+    let traffic = match map {
+        Some(m) => {
+            let (t, f) = derive_traffic(
+                &m.map,
+                inputs.traffic.report.as_ref(),
+                &inputs.traffic.source,
+                now,
+            );
+            findings.extend(f);
+            t
+        }
+        None => ObservedTraffic::default(),
+    };
     let pulls = pulls_with_checks(inputs);
     let repos = connected_repos(inputs, map, &out, &pulls);
 
@@ -410,6 +430,7 @@ pub fn build(
         layout,
         repos,
         pulls,
+        traffic,
     }
 }
 
@@ -646,8 +667,66 @@ mod tests {
             layout: MapLayout::default(),
             queue: vec![],
             repo_pulls: vec![],
+            traffic: TrafficLatest {
+                report: None,
+                source: rubato_protocol::SourceStatus::NotConfigured,
+            },
             spend: HashMap::new(),
         }
+    }
+
+    /// Plan #104: traffic is never an input to progress. The same inputs with and without a
+    /// fresh report give the same summary for every issue; only the traffic findings differ.
+    #[test]
+    fn traffic_does_not_change_any_issue_summary() {
+        use rubato_protocol::{SourceStatus, TrafficEdge, TrafficReport, TrafficState};
+        let a = IssueRef::new("m0x6A/rubato", 1);
+        let b = IssueRef::new("m0x6A/rubato", 2);
+        let mut inputs = empty();
+        inputs.plans = vec![plan(&a, "web-server", "web"), plan(&b, "web-server", "web")];
+        inputs.sessions = vec![session(&a, SessionStatus::Working, StateSource::Hook)];
+        inputs.pins = vec![IssuePin {
+            issue: b.clone(),
+            target: MapRef::node("web"),
+            pinned_by: "m0x6A".into(),
+            pinned_at: now(),
+        }];
+        let without = build(&inputs, Some(&map()), &Limits::default(), now());
+        let edge = |client: &str, server: &str, calls| TrafficEdge {
+            client: client.into(),
+            server: server.into(),
+            calls,
+            errors: 0,
+        };
+        inputs.traffic = TrafficLatest {
+            report: Some(TrafficReport {
+                observed_at: now(),
+                window_secs: 3600,
+                edges: vec![
+                    edge("web", "rubato-server", 100),
+                    edge("rubato-companion", "github", 3),
+                ],
+                truncated: false,
+            }),
+            source: SourceStatus::Configured {
+                fetch_secs: 60,
+                error: None,
+            },
+        };
+        let with = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert_eq!(with.traffic.state, TrafficState::Fresh);
+        assert_eq!(without.traffic.state, TrafficState::NotConfigured);
+        assert!(!with.issues.is_empty());
+        assert_eq!(
+            with.issues, without.issues,
+            "every IssueSummary is unchanged"
+        );
+        let traffic_findings = with.findings.len() - without.findings.len();
+        assert!(traffic_findings >= 2, "{:?}", with.findings);
+        println!(
+            "compared {} issue summaries with and without a report",
+            with.issues.len()
+        );
     }
 
     #[test]

@@ -334,6 +334,16 @@ pub enum Finding {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo: Option<String>,
     },
+    /// Map versus territory (ADR 0039): a declared seam with no calls in the window of a fresh
+    /// report, though both its parts show traffic elsewhere in it.
+    SeamQuiet { seam: String, window_secs: u32 },
+    /// Map versus territory (ADR 0039): calls between two parts no seam joins, from a fresh
+    /// report. `from` calls `to`.
+    UndeclaredTraffic {
+        from: String,
+        to: String,
+        calls: u64,
+    },
 }
 
 /// One repo the map names, and what Rubato sees of it: whether the App covers it, and its open
@@ -393,6 +403,10 @@ pub struct Overview {
     /// Open pull requests per map repo (ADR 0034). Never an input to progress.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pulls: Vec<crate::pulls::RepoPulls>,
+    /// Observed calls per seam from the latest traffic report (ADR 0039). Absent from an older
+    /// server: not configured. Never an input to progress.
+    #[serde(default)]
+    pub traffic: crate::traffic::ObservedTraffic,
     /// The companion stale threshold N in seconds, from the server's config
     /// (`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and
     /// `CompanionSilent` fires past it (#105). An older server's overview reads as 600.

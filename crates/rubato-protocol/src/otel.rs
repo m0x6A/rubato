@@ -111,6 +111,18 @@ pub mod metric {
     /// Approvals Rubato posted as a person that GitHub has not confirmed for two minutes
     /// (ADR 0030), recorded every full poll tick.
     pub const PLANS_APPROVALS_OPENING: &str = "rubato.plans.approvals_opening";
+    /// Traffic report fetches (ADR 0039), by `rubato.outcome`: `ok`, `rejected`, `failed`.
+    pub const TRAFFIC_FETCHES: &str = "rubato.traffic.fetches";
+    /// Seconds since the last good traffic report's window ended (since the source started,
+    /// before the first one); recorded each fetch, absent when no source is configured. No
+    /// unit, so the series keeps this name. `TrafficReportStale` fires above 600.
+    pub const TRAFFIC_REPORT_AGE: &str = "rubato.traffic.report_age";
+    /// Declared seams with no calls whose two parts show traffic (finding `SeamQuiet`).
+    pub const TRAFFIC_SEAMS_QUIET: &str = "rubato.traffic.seams_quiet";
+    /// Edges between two parts no seam joins (finding `UndeclaredTraffic`).
+    pub const TRAFFIC_UNDECLARED_EDGES: &str = "rubato.traffic.undeclared_edges";
+    /// Services in the report that name no map part.
+    pub const TRAFFIC_UNMAPPED_SERVICES: &str = "rubato.traffic.unmapped_services";
     /// Writes of an issue's spend history (ADR 0037), by `rubato.outcome`: `stored` (a session's
     /// spend changed and the issue's point was written), `unchanged` (same or older value),
     /// `rejected` (not finite, or negative), `failed` (the write returned an error).
@@ -131,6 +143,8 @@ pub mod span {
     pub const HANDOFF: &str = "rubato.handoff";
     /// An approval posted from Rubato as the person (ADR 0030).
     pub const PLAN_APPROVE: &str = "rubato.plan.approve";
+    /// One fetch of the traffic report (ADR 0039), with `rubato.outcome`.
+    pub const TRAFFIC_FETCH: &str = "rubato.traffic.fetch";
 }
 
 /// Event (log record) names.
@@ -209,6 +223,11 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GITHUB_CALLS,
         metric::PLANS_NOT_FITTING,
         metric::PLANS_APPROVALS_OPENING,
+        metric::TRAFFIC_FETCHES,
+        metric::TRAFFIC_REPORT_AGE,
+        metric::TRAFFIC_SEAMS_QUIET,
+        metric::TRAFFIC_UNDECLARED_EDGES,
+        metric::TRAFFIC_UNMAPPED_SERVICES,
         metric::COMPANION_SILENT_SECS,
         span::LAUNCH,
         span::HOOK_FORWARD,
@@ -218,6 +237,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::WS_FANOUT,
         span::HANDOFF,
         span::PLAN_APPROVE,
+        span::TRAFFIC_FETCH,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,

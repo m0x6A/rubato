@@ -34,6 +34,12 @@ const mutants: Mutant[] = [
     caughtBy: "alertname: SessionWorkingNoHooks, time: 10m",
   },
   {
+    why: "#104: a report at 300 s is not stale; the bar is 600 s",
+    from: "max(rubato_traffic_report_age) > 600",
+    to: "max(rubato_traffic_report_age) > 200",
+    caughtBy: "alertname: TrafficReportStale, time: 3m",
+  },
+  {
     why: "#105: without the threshold series CompanionSilent falls back to 600 s, never silent",
     from: " or vector(600)",
     to: "",

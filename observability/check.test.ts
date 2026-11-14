@@ -79,6 +79,18 @@ test("a Backlog age panel on a metric with a unit suffix is rejected", () => {
   assert.deepEqual(check(rules, tests, withUnit).problems, ['the dashboard has no "Backlog age" panel that queries rubato_backlog_listed_at']);
 });
 
+test("a dashboard without the Map versus territory panels is rejected (#104)", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => !["Traffic report age", "Quiet seams and undeclared edges", "Traffic fetches"].includes(p.title))));
+  assert.deepEqual(r.problems, [
+    'alert TrafficReportStale names panel "Traffic report age" which is not on the dashboard',
+    'the dashboard has no "Traffic report age" panel that queries rubato_traffic_report_age',
+    'the dashboard has no "Quiet seams and undeclared edges" panel that queries rubato_traffic_seams_quiet',
+    'the dashboard has no "Quiet seams and undeclared edges" panel that queries rubato_traffic_undeclared_edges',
+    'the dashboard has no "Quiet seams and undeclared edges" panel that queries rubato_traffic_unmapped_services',
+    'the dashboard has no "Traffic fetches" panel that queries rubato_traffic_fetches_total',
+  ]);
+});
+
 /** A copy of the committed dashboard with one panel's expressions replaced. */
 const withExprs = (title: string, exprs: string[]) =>
   changed((panels) => panels.map((p) => (p.title === title && p.type !== "row" ? { ...p, targets: exprs.map((expr) => ({ expr })) } : p)));

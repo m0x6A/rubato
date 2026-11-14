@@ -75,3 +75,17 @@ groups:
         annotations:
           summary: "rubato-server has not completed a poll tick for 10 minutes"
           panel: Poll ticks
+
+      # #104, ADR 0039: the traffic report is older than 10 minutes while a source is configured.
+      # The server reports stale (and draws unknown) past 3 × the fetch interval; this pages on a
+      # dead source. With no source the gauge is not exported, so the rule stays silent.
+      - alert: TrafficReportStale
+        expr: max(rubato_traffic_report_age) > 600
+        for: 0m
+        labels:
+          severity: ticket
+          seam: web-server
+          owner: rubato-server
+        annotations:
+          summary: "The traffic report is {{ $value }}s old: the Traffic lens says unknown"
+          panel: Traffic report age

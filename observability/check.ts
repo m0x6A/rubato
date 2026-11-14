@@ -34,6 +34,12 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Map lines", "rubato_backlog_map_lines_total"],
   ["Issues created", "rubato_issues_created_total"],
   ["Issues created", "rubato_issues_opening"],
+  // Issue #104 (ADR 0039): the row "Map versus territory" the O-row of seam web-server names.
+  ["Traffic report age", "rubato_traffic_report_age"],
+  ["Quiet seams and undeclared edges", "rubato_traffic_seams_quiet"],
+  ["Quiet seams and undeclared edges", "rubato_traffic_undeclared_edges"],
+  ["Quiet seams and undeclared edges", "rubato_traffic_unmapped_services"],
+  ["Traffic fetches", "rubato_traffic_fetches_total"],
   // Issue #106 (ADR 0043): both O-rows name this panel.
   ["Blocked, by station left from", "rubato_issues_blocked_from"],
   // Issue #105: the Companions panel shows the N that CompanionSilent compares against.

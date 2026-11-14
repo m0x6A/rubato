@@ -218,6 +218,56 @@
         "kind",
         "companion"
       ]
+    },
+    {
+      "description": "Map versus territory (ADR 0039): a declared seam with no calls in the window of a fresh\nreport, though both its parts show traffic elsewhere in it.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "seam_quiet"
+        },
+        "seam": {
+          "type": "string"
+        },
+        "window_secs": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "kind",
+        "seam",
+        "window_secs"
+      ]
+    },
+    {
+      "description": "Map versus territory (ADR 0039): calls between two parts no seam joins, from a fresh\nreport. `from` calls `to`.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "const": "undeclared_traffic"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "calls"
+      ]
     }
   ],
   "$defs": {

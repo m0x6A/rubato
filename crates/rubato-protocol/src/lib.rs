@@ -26,6 +26,7 @@ pub mod pulls;
 pub mod queue;
 pub mod schema;
 pub mod session;
+pub mod traffic;
 pub mod web_link;
 
 pub use approve::{ApproveRequest, ApproveResponse, ApproveState};
@@ -71,5 +72,9 @@ pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use session::{
     BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
+};
+pub use traffic::{
+    ObservedTraffic, SeamTraffic, SourceStatus, TrafficEdge, TrafficReport, TrafficState,
+    UndeclaredEdge, derive_traffic,
 };
 pub use web_link::WebEvent;

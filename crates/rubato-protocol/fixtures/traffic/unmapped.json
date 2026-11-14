@@ -1,0 +1,31 @@
+{
+  "why": "a service that names no part counts as unmapped and makes no finding, and observes nothing",
+  "now": "2026-11-13T12:00:00Z",
+  "fetch_secs": 60,
+  "report": {
+    "observed_at": "2026-11-13T12:00:00Z",
+    "window_secs": 3600,
+    "edges": [
+      { "client": "a", "server": "b", "calls": 1, "errors": 0 },
+      { "client": "checkout", "server": "c", "calls": 5, "errors": 0 },
+      { "client": "b", "server": "<img src=x>", "calls": 2, "errors": 2 },
+      { "client": "checkout", "server": "b", "calls": 1, "errors": 0 }
+    ]
+  },
+  "expect": {
+    "traffic": {
+      "state": "fresh",
+      "observed_at": "2026-11-13T12:00:00Z",
+      "window_secs": 3600,
+      "seams": [
+        { "seam": "a-b", "forward_calls": 1, "reverse_calls": 0, "errors": 0 },
+        { "seam": "a-b-events", "forward_calls": 0, "reverse_calls": 1, "errors": 0 }
+      ],
+      "observed_parts": ["a", "b"],
+      "unmapped_services": 2,
+      "unmapped_sample": ["<img src=x>", "checkout"],
+      "truncated": false
+    },
+    "findings": []
+  }
+}

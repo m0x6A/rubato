@@ -92,7 +92,7 @@ Each deployable's block appears here with the PR that slices it:
 
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, 404 for
-unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, task supervision); `kernel/`
+unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
 (config, telemetry, db connection, `AppState`, signer, `http::internal`, GitHub port); slices:
 
 ```text
@@ -109,6 +109,7 @@ plans           parse and keep plan files from issue branches   plans
 approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
+traffic         observed calls per seam from a traffic report   (none; latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
@@ -175,6 +176,7 @@ plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord, ApprovalState
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
+traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, derive_traffic, limits
 web_link   WebEvent; WEB_WS
 ```
 

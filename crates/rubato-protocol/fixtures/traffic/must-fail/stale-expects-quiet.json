@@ -1,0 +1,32 @@
+{
+  "why": "must fail: a stale report yields no findings, so a fixture that expects SeamQuiet from one is rejected",
+  "now": "2026-11-13T12:00:00Z",
+  "fetch_secs": 60,
+  "report": {
+    "observed_at": "2026-11-13T11:56:59Z",
+    "window_secs": 3600,
+    "edges": [
+      { "client": "a", "server": "b", "calls": 2, "errors": 0 },
+      { "client": "a", "server": "c", "calls": 3, "errors": 0 }
+    ]
+  },
+  "expect": {
+    "traffic": {
+      "state": "fresh",
+      "observed_at": "2026-11-13T11:56:59Z",
+      "window_secs": 3600,
+      "seams": [
+        { "seam": "a-b", "forward_calls": 2, "reverse_calls": 0, "errors": 0 },
+        { "seam": "a-b-events", "forward_calls": 0, "reverse_calls": 2, "errors": 0 }
+      ],
+      "undeclared": [{ "from": "a", "to": "c", "calls": 3, "errors": 0 }],
+      "observed_parts": ["a", "b", "c"],
+      "unmapped_services": 0,
+      "truncated": false
+    },
+    "findings": [
+      { "kind": "seam_quiet", "seam": "b-c", "window_secs": 3600 },
+      { "kind": "undeclared_traffic", "from": "a", "to": "c", "calls": 3 }
+    ]
+  }
+}

@@ -9,7 +9,7 @@
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
     approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins,
-    plans, queue,
+    plans, queue, traffic,
 };
 use anyhow::{Result, anyhow};
 use rubato_protocol::otel::event;
@@ -402,9 +402,17 @@ pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) {
     }
 }
 
-/// The server's background tasks: the poll loop, essential.
+/// The server's background tasks: the poll loop, essential; the traffic fetch when a source
+/// is configured, best-effort (a dead fetch makes the report stale, and the map says unknown).
 pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
     let mut tasks = Tasks::default();
+    if app.config.dev_traffic.is_some() {
+        tasks.spawn(
+            "traffic",
+            Kind::BestEffort,
+            traffic::run(app.clone(), shutdown.clone()),
+        );
+    }
     tasks.spawn("poll", Kind::Essential, async move {
         run(app, shutdown).await;
         Ok(())

@@ -107,6 +107,28 @@ bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
 `RUBATO_DEV_USER=<login>` skips OAuth and must never be set where others
 can reach the server.
 
+Observed traffic on the map's seams (ADR 0039) has no production source yet (#107). For
+development, `RUBATO_DEV_TRAFFIC=<file.json>` reads a traffic report from a file every
+`RUBATO_TRAFFIC_FETCH_SECS` (15–300, default 60). Each edge names a client and a server by
+their map part id (the OTel `service.name`); a name that matches no part is counted as
+unmapped:
+
+```json
+{
+  "window_secs": 3600,
+  "edges": [
+    { "client": "web", "server": "rubato-server", "calls": 1200, "errors": 12 },
+    { "client": "rubato-server", "server": "github", "calls": 300 }
+  ]
+}
+```
+
+`observed_at` may be left out; it is then the file's modification time, so a file nobody
+rewrites goes stale after three fetch intervals and the overview says `stale`, not quiet. A
+report with more than 2 000 edges, a window outside 60 s to 24 h or a name over 200 bytes is
+rejected whole (log line `traffic report rejected`) and the previous one kept. Unset, the
+overview says `not_configured`.
+
 ## 4. Install the skill on your machine
 
 ```sh

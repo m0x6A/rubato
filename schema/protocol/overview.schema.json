@@ -79,6 +79,15 @@
         "$ref": "#/$defs/ConnectedRepo"
       }
     },
+    "traffic": {
+      "description": "Observed calls per seam from the latest traffic report (ADR 0039). Absent from an older\nserver: not configured. Never an input to progress.",
+      "$ref": "#/$defs/ObservedTraffic",
+      "default": {
+        "state": "not_configured",
+        "truncated": false,
+        "unmapped_services": 0
+      }
+    },
     "unpinned_sessions": {
       "description": "Sessions not attached to any issue (branch outside the convention).",
       "type": "array",
@@ -878,6 +887,56 @@
             "kind",
             "companion"
           ]
+        },
+        {
+          "description": "Map versus territory (ADR 0039): a declared seam with no calls in the window of a fresh\nreport, though both its parts show traffic elsewhere in it.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "seam_quiet"
+            },
+            "seam": {
+              "type": "string"
+            },
+            "window_secs": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "seam",
+            "window_secs"
+          ]
+        },
+        {
+          "description": "Map versus territory (ADR 0039): calls between two parts no seam joins, from a fresh\nreport. `from` calls `to`.",
+          "type": "object",
+          "properties": {
+            "calls": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "from": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "undeclared_traffic"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "from",
+            "to",
+            "calls"
+          ]
         }
       ]
     },
@@ -1383,6 +1442,82 @@
         "signal",
         "panel",
         "owner"
+      ]
+    },
+    "ObservedTraffic": {
+      "description": "Observed traffic as the overview carries it (`Overview.traffic`, ADR 0039). Never an input\nto progress, pins, plans or approvals.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "Why the last fetch failed, when `failing`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_at": {
+          "description": "When the last good report's window ended.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "observed_parts": {
+          "description": "Parts that called or were called in the window. Empty unless `fresh`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "seams": {
+          "description": "Declared seams with calls in the window, in map order. Empty unless `fresh`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeamTraffic"
+          }
+        },
+        "state": {
+          "$ref": "#/$defs/TrafficState"
+        },
+        "truncated": {
+          "description": "The source cut the report at its edge limit.",
+          "type": "boolean",
+          "default": false
+        },
+        "undeclared": {
+          "description": "Calls between two parts no seam joins. Empty unless `fresh`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UndeclaredEdge"
+          }
+        },
+        "unmapped_sample": {
+          "description": "Up to 20 of them, sorted. Text only.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unmapped_services": {
+          "description": "Services in the report that name no map part.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "window_secs": {
+          "description": "The last good report's window.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "state"
       ]
     },
     "OpenIssue": {
@@ -2217,6 +2352,39 @@
         "owner"
       ]
     },
+    "SeamTraffic": {
+      "description": "Calls on one declared seam in the report's window, each way.",
+      "type": "object",
+      "properties": {
+        "errors": {
+          "description": "Failed calls, both ways.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "forward_calls": {
+          "description": "Calls whose client is the seam's `from` side.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reverse_calls": {
+          "description": "Calls whose client is the seam's `to` side.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "seam": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seam",
+        "forward_calls",
+        "reverse_calls",
+        "errors"
+      ]
+    },
     "SessionState": {
       "description": "One session as the companion sees it. Identity comes from the branch (ADR 0006).",
       "type": "object",
@@ -2470,6 +2638,61 @@
       },
       "required": [
         "session"
+      ]
+    },
+    "TrafficState": {
+      "description": "Whether the source can be believed. Only `fresh` draws traffic or makes findings.",
+      "oneOf": [
+        {
+          "description": "No source is configured.",
+          "type": "string",
+          "const": "not_configured"
+        },
+        {
+          "description": "The last report is recent enough to judge the map by.",
+          "type": "string",
+          "const": "fresh"
+        },
+        {
+          "description": "No report yet, or the last good one is older than three fetch intervals.",
+          "type": "string",
+          "const": "stale"
+        },
+        {
+          "description": "The last fetch failed.",
+          "type": "string",
+          "const": "failing"
+        }
+      ]
+    },
+    "UndeclaredEdge": {
+      "description": "Calls between two map parts that no seam joins.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "from": {
+          "description": "The calling part.",
+          "type": "string"
+        },
+        "to": {
+          "description": "The called part.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "calls",
+        "errors"
       ]
     }
   }

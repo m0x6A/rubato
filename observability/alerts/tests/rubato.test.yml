@@ -242,3 +242,32 @@ tests:
             exp_annotations:
               summary: "rubato-server has not completed a poll tick for 10 minutes"
               panel: Poll ticks
+
+  # #104: a configured source's report is 300 s old, then 700 s: fires past 600 s. With no
+  # source configured the gauge is absent and the rule stays silent (unknown is not stale).
+  - interval: 1m
+    input_series:
+      - series: 'rubato_traffic_report_age'
+        values: "300x5 700x5"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TrafficReportStale
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: TrafficReportStale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: web-server
+              owner: rubato-server
+            exp_annotations:
+              summary: "The traffic report is 700s old: the Traffic lens says unknown"
+              panel: Traffic report age
+  - interval: 1m
+    input_series:
+      - series: 'rubato_poll_ticks_total'
+        values: "0+1x10"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: TrafficReportStale
+        exp_alerts: []
