@@ -306,7 +306,14 @@ pub fn build(
                 });
             }
         }
-        if let Some(m) = map {
+        // Only while the issue is open on GitHub (#135): a closed issue whose work merged elsewhere
+        // never reaches Done, and its old launch would be flagged forever. Unknown is not closed.
+        let closed = inputs
+            .meta
+            .get(issue)
+            .and_then(|m| m.github_state.as_deref())
+            == Some("closed");
+        if let (Some(m), false) = (map, closed) {
             for (i, v) in &inputs.launch_map_versions {
                 if i == issue && *v != m.version && state != ProgressState::Done {
                     findings.push(Finding::MapVersionMismatch {
@@ -749,6 +756,10 @@ mod tests {
             branch_drift: None,
             blocked_by: None,
         }
+    }
+
+    pub(super) fn empty_inputs() -> OverviewInputs {
+        empty()
     }
 
     fn empty() -> OverviewInputs {
@@ -1513,5 +1524,60 @@ mod cross_workspace_tests {
         assert!(cross_workspace_findings("admin", &quiet).is_empty());
         // One workspace: never.
         assert!(cross_workspace_findings("admin", &maps[..1]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod closed_mismatch_tests {
+    //! #135: a launch at an older map version is a finding only while its issue is open.
+    use super::*;
+    use rubato_protocol::Limits;
+
+    #[test]
+    fn a_closed_issue_raises_no_map_version_mismatch_and_an_open_or_unknown_one_does() {
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/design/rubato-map.yml"
+        ))
+        .unwrap();
+        let map = LoadedMap {
+            map: serde_yaml_ng::from_str(&text).unwrap(),
+            version: "new".into(),
+            loaded_at: Utc::now(),
+            yaml: text,
+        };
+        let closed = IssueRef::new("m0x6A/rubato", 47);
+        let open = IssueRef::new("m0x6A/rubato", 48);
+        let unknown = IssueRef::new("m0x6A/rubato", 49);
+        let mut inputs = tests::empty_inputs();
+        for i in [&closed, &open, &unknown] {
+            inputs.launched.insert(i.clone());
+            inputs.launch_map_versions.push((i.clone(), "old".into()));
+        }
+        for (i, state) in [(&closed, "closed"), (&open, "open")] {
+            inputs.meta.insert(
+                i.clone(),
+                IssueMeta {
+                    title: None,
+                    url: None,
+                    github_state: Some(state.into()),
+                },
+            );
+        }
+        let built = build(&inputs, Some(&map), &Limits::default(), Utc::now());
+        let mut flagged: Vec<u64> = built
+            .findings
+            .iter()
+            .filter_map(|f| match f {
+                Finding::MapVersionMismatch { issue, .. } => Some(issue.number),
+                _ => None,
+            })
+            .collect();
+        flagged.sort();
+        assert_eq!(
+            flagged,
+            [48, 49],
+            "closed #47 is not flagged; open #48 and unread #49 are"
+        );
     }
 }
