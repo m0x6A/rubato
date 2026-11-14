@@ -81,10 +81,8 @@ pub async fn create(
         ));
     }
     let map = app
-        .map
-        .read()
+        .default_map()
         .await
-        .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".to_owned()))?;
     if let Err((_, msg)) = pins::check_target(&map.map, &map.version, &req.target) {
         return Err(refuse(
@@ -118,6 +116,7 @@ pub async fn create(
     // At most once per request id: a second submit answers with what the first got.
     if !store::begin(
         &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
         &req.request_id,
         &req.repo,
         &req.target,

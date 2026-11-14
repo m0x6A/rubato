@@ -35,11 +35,13 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
         Ok((version, yaml)) => (version, yaml, None),
         Err(e) => {
             app.metrics.map_load_failures.add(1, &[]);
-            if let Some(m) = app.map.read().await.clone() {
+            if let Some(m) = app.default_map().await {
                 tracing::warn!(error = %e, "map fetch failed; keeping cached version {}", m.version);
                 return Ok(m);
             }
-            if let Some((version, yaml, loaded_at)) = store::load_map(&app.db).await? {
+            if let Some((version, yaml, loaded_at)) =
+                store::load_map(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?
+            {
                 tracing::warn!(error = %e, %loaded_at, "map fetch failed; using the database copy {version}");
                 (version, yaml, Some((loaded_at, e)))
             } else {
@@ -61,9 +63,17 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
         yaml: yaml.clone(),
     };
     if stored_at.is_none() {
-        store::store_map(&app.db, &version, &yaml, loaded.loaded_at).await?;
+        store::store_map(
+            &app.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
+            &version,
+            &yaml,
+            loaded.loaded_at,
+        )
+        .await?;
     }
-    *app.map.write().await = Some(loaded.clone());
+    app.set_map(rubato_protocol::DEFAULT_WORKSPACE, loaded.clone())
+        .await;
     app.metrics
         .map_loaded
         .record(1, &[KeyValue::new(attr::MAP_VERSION, version.clone())]);
@@ -95,8 +105,16 @@ async fn load_from_file(app: &App, file: &std::path::Path) -> Result<LoadedMap> 
         loaded_at: Utc::now(),
         yaml: yaml.clone(),
     };
-    store::store_map(&app.db, &version, &yaml, loaded.loaded_at).await?;
-    *app.map.write().await = Some(loaded.clone());
+    store::store_map(
+        &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        &version,
+        &yaml,
+        loaded.loaded_at,
+    )
+    .await?;
+    app.set_map(rubato_protocol::DEFAULT_WORKSPACE, loaded.clone())
+        .await;
     app.metrics
         .map_loaded
         .record(1, &[KeyValue::new(attr::MAP_VERSION, version.clone())]);
@@ -132,14 +150,20 @@ fn parse(app: &App, yaml: &str, count: bool) -> Result<SystemMap> {
 
 /// Load the map from the database at startup so the server answers before the first fetch.
 pub async fn warm(app: &App) -> Result<()> {
-    if let Some((version, yaml, loaded_at)) = store::load_map(&app.db).await? {
+    if let Some((version, yaml, loaded_at)) =
+        store::load_map(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await?
+    {
         let map: SystemMap = serde_yaml_ng::from_str(&yaml)?;
-        *app.map.write().await = Some(LoadedMap {
-            map,
-            version,
-            loaded_at,
-            yaml,
-        });
+        app.set_map(
+            rubato_protocol::DEFAULT_WORKSPACE,
+            LoadedMap {
+                map,
+                version,
+                loaded_at,
+                yaml,
+            },
+        )
+        .await;
         // The stored time, so a restart during a GitHub outage shows the real age.
         record_loaded_at(app, loaded_at);
     }
@@ -211,7 +235,7 @@ mod tests {
         let e = reload(&a).await.unwrap_err();
         assert!(format!("{e:#}").contains("\"web-server\""), "{e:#}");
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
-        let kept = a.map.read().await.clone().unwrap();
+        let kept = a.default_map().await.unwrap();
         assert_eq!(kept.version, good.version);
         assert_eq!(kept.map.name, "flows-fixture");
     }
@@ -245,7 +269,7 @@ mod tests {
         assert!(e.contains("scenario \"off-flow\" step 1"), "{e}");
         assert!(e.contains("name one with carries"), "{e}");
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
-        let kept = a.map.read().await.clone().unwrap();
+        let kept = a.default_map().await.unwrap();
         assert_eq!(kept.map.name, "scenarios-fixture");
     }
 
@@ -329,9 +353,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (a, reader) = failing_github_over(&tmp.path().join("t.db")).await;
         let stored_at = Utc::now() - chrono::Duration::hours(3);
-        store::store_map(&a.db, "sha-old", MAP, stored_at)
-            .await
-            .unwrap();
+        store::store_map(
+            &a.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
+            "sha-old",
+            MAP,
+            stored_at,
+        )
+        .await
+        .unwrap();
 
         // The map in use and the gauge carry the stored time, not the time of this reload, and
         // the failed fetch is counted once.
@@ -342,7 +372,10 @@ mod tests {
         assert_eq!(only(&reader, metric::MAP_LOADED_AT).value, at);
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
         // The stored row keeps its time.
-        let (_, _, row_at) = store::load_map(&a.db).await.unwrap().unwrap();
+        let (_, _, row_at) = store::load_map(&a.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(row_at.timestamp(), stored_at.timestamp());
     }
 
@@ -360,9 +393,15 @@ mod tests {
         {
             let tmp = tempfile::tempdir().unwrap();
             let (a, reader) = failing_github_over(&tmp.path().join(format!("{n}.db"))).await;
-            store::store_map(&a.db, "sha-bad", yaml, Utc::now())
-                .await
-                .unwrap();
+            store::store_map(
+                &a.db,
+                rubato_protocol::DEFAULT_WORKSPACE,
+                "sha-bad",
+                yaml,
+                Utc::now(),
+            )
+            .await
+            .unwrap();
 
             // One reload, one failure: the fetch is counted, the broken copy behind it is not
             // counted again, and the error still names the failed fetch.
@@ -372,7 +411,7 @@ mod tests {
             assert!(e.contains("the database copy sha-bad is unusable"), "{e}");
             assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1, "{yaml}");
             assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
-            assert!(a.map.read().await.is_none());
+            assert!(a.default_map().await.is_none());
         }
     }
 
@@ -413,8 +452,13 @@ mod tests {
             assert!(e.contains(names), "{e}");
             assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, n as u64 + 1);
             assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
-            assert!(store::load_map(&a.db).await.unwrap().is_none());
-            assert!(a.map.read().await.is_none());
+            assert!(
+                store::load_map(&a.db, rubato_protocol::DEFAULT_WORKSPACE)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(a.default_map().await.is_none());
         }
     }
 }

@@ -1,0 +1,782 @@
+{
+  "backlog": {
+    "repos": [
+      {
+        "repo": "m0x6A/rubato",
+        "truncated": false
+      }
+    ]
+  },
+  "can_create_issues": false,
+  "companion_silent_secs": 600,
+  "companions": [],
+  "draft": {
+    "ops": [
+      {
+        "author": "m0x6A",
+        "created_at": "2026-11-14T08:00:00Z",
+        "node": {
+          "id": "billing",
+          "kind": "context"
+        },
+        "op": "add_node",
+        "op_id": "00000000-0000-0000-0000-000000000000",
+        "seq": 1
+      },
+      {
+        "author": "m0x6A",
+        "created_at": "2026-11-14T08:00:00Z",
+        "op": "add_seam",
+        "op_id": "00000000-0000-0000-0000-000000000000",
+        "seam": {
+          "from": "billing",
+          "id": "billing-server",
+          "owner": "rubato-server",
+          "to": "rubato-server"
+        },
+        "seq": 2
+      }
+    ],
+    "preview": {
+      "name": "rubato",
+      "nodes": [
+        {
+          "description": "Shared serde types, JSON Schema export, OTel attribute names and limits. No I/O.",
+          "id": "rubato-protocol",
+          "kind": "contract",
+          "path": "crates/rubato-protocol",
+          "repo": "m0x6A/rubato"
+        },
+        {
+          "description": "One per developer machine. Outbound only. Runs tmux, git worktree and claude for its paired user.",
+          "id": "rubato-companion",
+          "kind": "context",
+          "path": "crates/rubato-companion",
+          "repo": "m0x6A/rubato"
+        },
+        {
+          "description": "One per team. Map, pins, plans, progress derivation, decisions, GitHub OAuth, websocket fan-out, embeds web.",
+          "id": "rubato-server",
+          "kind": "context",
+          "path": "crates/rubato-server",
+          "repo": "m0x6A/rubato"
+        },
+        {
+          "description": "React map view served by the server.",
+          "id": "web",
+          "kind": "context",
+          "path": "web",
+          "repo": "m0x6A/rubato"
+        },
+        {
+          "description": "Claude Code skill installed in every connected repo. Loads map and ADRs, writes the plan, ships hook config.",
+          "id": "skill-rubato",
+          "kind": "context",
+          "path": "skills/rubato",
+          "repo": "m0x6A/rubato"
+        },
+        {
+          "description": "GitHub Action. Fails a PR whose plan names an unknown id or lacks an O-row per seam.",
+          "id": "plan-check",
+          "kind": "context",
+          "path": "actions/plan-check",
+          "repo": "m0x6A/rubato"
+        },
+        {
+          "description": "The plan Markdown on an issue branch. Affected-parts and O-rows tables parsed to JSON.",
+          "id": "plan-file",
+          "kind": "contract",
+          "path": "schema/plan.schema.json",
+          "repo": "m0x6A/rubato"
+        },
+        {
+          "description": "A team's system-map.yml. Node and seam ids referenced by pins and plans.",
+          "id": "system-map",
+          "kind": "contract",
+          "path": "schema/system-map.schema.json",
+          "repo": "m0x6A/rubato"
+        },
+        {
+          "description": "Issues, comments, PRs, checks, OAuth, REST, Projects v2 GraphQL, plan files on branches.",
+          "id": "github",
+          "kind": "external"
+        },
+        {
+          "description": "Session runner (TypeScript CLI, npm tmux-ide, tmux >= 3.7). worktree create, events, team --json, send, wait, MCP. Version pinned by the companion.",
+          "id": "tmux-ide",
+          "kind": "external"
+        },
+        {
+          "description": "The only agent in v0. Hooks are the event source. Exports its own OTel.",
+          "id": "claude-code",
+          "kind": "external"
+        },
+        {
+          "id": "billing",
+          "kind": "context"
+        }
+      ],
+      "owner_rule": "The owner side of a seam is the node whose team is woken when the seam breaks. For a seam with an external node, the owner is always the Rubato side.\n",
+      "repos": [
+        {
+          "name": "m0x6A/rubato",
+          "plan_path": "docs/plans/{issue}.md"
+        }
+      ],
+      "scenarios": [
+        {
+          "description": "A person starts a Claude Code session on a pinned issue, on their own companion, and sees it working on the map.",
+          "id": "start-a-session",
+          "name": "Start a session on an issue",
+          "steps": [
+            {
+              "from": "web",
+              "kind": "control",
+              "says": "you press Start on a pinned issue",
+              "seam": "web-server",
+              "to": "rubato-server"
+            },
+            {
+              "carries": "LaunchCommand, for the paired user only",
+              "from": "rubato-server",
+              "kind": "control",
+              "says": "the server sends the launch to your own companion only",
+              "seam": "companion-server",
+              "to": "rubato-companion"
+            },
+            {
+              "from": "rubato-companion",
+              "kind": "control",
+              "says": "the companion creates a worktree on the issue branch",
+              "seam": "companion-tmux-ide",
+              "to": "tmux-ide"
+            },
+            {
+              "from": "rubato-companion",
+              "kind": "control",
+              "says": "Claude Code starts with hooks and telemetry attributes",
+              "seam": "companion-claude-code",
+              "to": "claude-code"
+            },
+            {
+              "from": "rubato-companion",
+              "kind": "data",
+              "says": "the launch result and the new session come back",
+              "seam": "companion-server",
+              "to": "rubato-server"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "control",
+              "says": "every browser is told something changed",
+              "seam": "web-server",
+              "to": "web"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "data",
+              "says": "the issue shows Started",
+              "seam": "web-server",
+              "to": "web"
+            },
+            {
+              "from": "claude-code",
+              "kind": "data",
+              "says": "the session fires hooks as it works",
+              "seam": "companion-claude-code",
+              "to": "rubato-companion"
+            },
+            {
+              "from": "rubato-companion",
+              "kind": "data",
+              "says": "hook events reach the server",
+              "seam": "companion-server",
+              "to": "rubato-server"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "control",
+              "says": "browsers are told again",
+              "seam": "web-server",
+              "to": "web"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "data",
+              "says": "the issue shows Designing",
+              "seam": "web-server",
+              "to": "web"
+            }
+          ]
+        },
+        {
+          "description": "The agent plans from the map, the plan check reads it on the pull request, and the server paints the map with it.",
+          "id": "plan-comes-back",
+          "name": "A plan comes back",
+          "steps": [
+            {
+              "from": "system-map",
+              "kind": "data",
+              "says": "the skill offers the session the map's ids and flows",
+              "seam": "skill-system-map",
+              "to": "skill-rubato"
+            },
+            {
+              "from": "skill-rubato",
+              "kind": "data",
+              "says": "the plan is written on the issue branch",
+              "seam": "skill-plan-file",
+              "to": "plan-file"
+            },
+            {
+              "from": "plan-file",
+              "kind": "data",
+              "says": "the Action reads the plan",
+              "seam": "plan-check-plan-file",
+              "to": "plan-check"
+            },
+            {
+              "from": "plan-check",
+              "kind": "control",
+              "says": "pass or fail on the pull request",
+              "seam": "plan-check-plan-file",
+              "to": "plan-file"
+            },
+            {
+              "from": "plan-file",
+              "kind": "data",
+              "says": "the server reads the plan from the branch",
+              "seam": "server-plan-file",
+              "to": "rubato-server"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "control",
+              "says": "browsers are told",
+              "seam": "web-server",
+              "to": "web"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "data",
+              "says": "the affected parts light up; the issue shows Designed",
+              "seam": "web-server",
+              "to": "web"
+            }
+          ]
+        },
+        {
+          "description": "The team edits the map as one shared draft, proposes it as a pull request, and the merged map comes back.",
+          "id": "propose-a-map-change",
+          "name": "Propose a map change",
+          "steps": [
+            {
+              "from": "web",
+              "kind": "data",
+              "says": "a person adds a part or a seam to the draft",
+              "seam": "web-server",
+              "to": "rubato-server"
+            },
+            {
+              "from": "web",
+              "kind": "control",
+              "says": "someone proposes the draft",
+              "seam": "web-server",
+              "to": "rubato-server"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "control",
+              "says": "the draft becomes a change to the map file",
+              "seam": "server-system-map",
+              "to": "system-map"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "control",
+              "says": "a branch, a commit and a pull request, as the App",
+              "seam": "server-github",
+              "to": "github"
+            },
+            {
+              "carries": "open issues, issue state, Decision: comments, pull requests, check runs, plan files and the map from branches",
+              "from": "github",
+              "kind": "data",
+              "says": "the pull request merges and the server reads the new map",
+              "seam": "server-github",
+              "to": "rubato-server"
+            },
+            {
+              "from": "system-map",
+              "kind": "data",
+              "says": "the map is validated and loaded",
+              "seam": "server-system-map",
+              "to": "rubato-server"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "control",
+              "says": "browsers are told",
+              "seam": "web-server",
+              "to": "web"
+            },
+            {
+              "from": "rubato-server",
+              "kind": "data",
+              "says": "everyone sees the new map",
+              "seam": "web-server",
+              "to": "web"
+            }
+          ]
+        }
+      ],
+      "seams": [
+        {
+          "carries": "CompanionMessage / ServerMessage envelopes, JSON over one outbound websocket",
+          "description": "Each companion reports what its sessions are doing, and receives launch commands for its own user only. The companion always dials out.",
+          "flows": [
+            {
+              "carries": "SessionState snapshots, HookEvent, Heartbeat, StaleSession, LaunchResult, CapHit",
+              "from": "rubato-companion",
+              "kind": "data",
+              "to": "rubato-server"
+            },
+            {
+              "carries": "LaunchCommand, for the paired user only",
+              "from": "rubato-server",
+              "kind": "control",
+              "to": "rubato-companion"
+            },
+            {
+              "carries": "Welcome with limits and the last sequence seen; acks",
+              "from": "rubato-server",
+              "kind": "control",
+              "to": "rubato-companion"
+            }
+          ],
+          "from": "rubato-companion",
+          "guard": "protocol JSON Schema snapshot test; both suites replay crates/rubato-protocol/fixtures/",
+          "id": "companion-server",
+          "owner": "rubato-server",
+          "to": "rubato-server"
+        },
+        {
+          "carries": "OAuth login, REST (issues, comments, PRs, checks, contents), Projects v2 GraphQL later",
+          "description": "The server reads what GitHub already knows about an issue and, as a GitHub App, proposes map changes as pull requests.",
+          "flows": [
+            {
+              "carries": "open issues, issue state, Decision: comments, pull requests, check runs, plan files and the map from branches",
+              "from": "github",
+              "kind": "data",
+              "to": "rubato-server"
+            },
+            {
+              "carries": "who a login is, and whether the account can access the App installation",
+              "from": "github",
+              "kind": "data",
+              "to": "rubato-server"
+            },
+            {
+              "carries": "a pull request's detail when someone opens it: body, reviews, check runs, changed files, mergeable; the person's permission and allowed merge methods",
+              "from": "github",
+              "kind": "data",
+              "to": "rubato-server"
+            },
+            {
+              "carries": "OAuth login redirect; a branch, a commit and a pull request for a map draft; as the person, an Approved: comment and a pull request merge at the head they saw",
+              "from": "rubato-server",
+              "kind": "control",
+              "to": "github"
+            }
+          ],
+          "from": "rubato-server",
+          "guard": "one GitHubApi trait with recorded-response tests; rubato.github.rate_limit.remaining alert",
+          "id": "server-github",
+          "owner": "rubato-server",
+          "to": "github"
+        },
+        {
+          "carries": "worktree create, events --follow --json, team --json, send, wait",
+          "description": "The companion asks tmux-ide to create worktrees and sessions, and reads which sessions exist and what state they are in.",
+          "flows": [
+            {
+              "carries": "worktree create, send, wait",
+              "from": "rubato-companion",
+              "kind": "control",
+              "to": "tmux-ide"
+            },
+            {
+              "carries": "team --json and events --follow --json: sessions, panes, agent status",
+              "from": "tmux-ide",
+              "kind": "data",
+              "to": "rubato-companion"
+            }
+          ],
+          "from": "rubato-companion",
+          "guard": "Gherkin against real tmux-ide on tmux -L rubato-test; version pinned (2.9.x), reported as rubato.tmux_ide.version; low-confidence state renders unknown",
+          "id": "companion-tmux-ide",
+          "owner": "rubato-companion",
+          "to": "tmux-ide"
+        },
+        {
+          "carries": "hook stdin JSON (async hooks); launch flags (--session-id, --settings, --permission-mode); OTel env (OTEL_RESOURCE_ATTRIBUTES)",
+          "description": "The companion starts Claude Code with a session id, hooks and telemetry attributes, and hears every hook the session fires.",
+          "flows": [
+            {
+              "carries": "launch: --session-id, --settings with hooks, --permission-mode, OTEL_RESOURCE_ATTRIBUTES, the prompt",
+              "from": "rubato-companion",
+              "kind": "control",
+              "to": "claude-code"
+            },
+            {
+              "carries": "hook payloads on stdin (session start, tool use, stop, notification); the transcript with usage",
+              "from": "claude-code",
+              "kind": "data",
+              "to": "rubato-companion"
+            }
+          ],
+          "from": "rubato-companion",
+          "guard": "Gherkin replays recorded hook payloads per event name; fixtures refreshed on Claude Code upgrade",
+          "id": "companion-claude-code",
+          "owner": "rubato-companion",
+          "to": "claude-code"
+        },
+        {
+          "carries": "plan Markdown at the agreed path with the agreed sections",
+          "description": "The skill writes the plan in the agreed form at the agreed path, so the team and the plan check can read it.",
+          "flows": [
+            {
+              "carries": "plan Markdown: frontmatter, Affected parts, Flows, O-rows, Assumed, Tasks",
+              "from": "skill-rubato",
+              "kind": "data",
+              "to": "plan-file"
+            }
+          ],
+          "from": "skill-rubato",
+          "guard": "skill Vitest writes a plan and runs the plan check on it",
+          "id": "skill-plan-file",
+          "owner": "plan-file",
+          "to": "plan-file"
+        },
+        {
+          "carries": "gh in the developer's session: Review: and Decision: comments posted; issue comments read for an approval",
+          "description": "The planning session posts its review and decisions on the issue and waits there for a person's approval, with the developer's own gh.",
+          "flows": [
+            {
+              "carries": "Review: and Decision: comments, as the developer",
+              "from": "skill-rubato",
+              "kind": "control",
+              "to": "github"
+            },
+            {
+              "carries": "issue comments: Approved:, Review:, Decision:, with author, association and edit time",
+              "from": "github",
+              "kind": "data",
+              "to": "skill-rubato"
+            }
+          ],
+          "from": "skill-rubato",
+          "guard": "skill Vitest against a stub gh on PATH; the comment fixtures shared with rubato-protocol",
+          "id": "skill-github",
+          "owner": "skill-rubato",
+          "to": "github"
+        },
+        {
+          "carries": "plan parsed from the branch",
+          "description": "The server reads each issue branch's plan and paints the map with it.",
+          "flows": [
+            {
+              "carries": "Plan: affected parts, flows, O-rows, assumptions, caps",
+              "from": "plan-file",
+              "kind": "data",
+              "to": "rubato-server"
+            }
+          ],
+          "from": "rubato-server",
+          "guard": "schema/fixtures/plans/ parsed identically by Rust and TypeScript",
+          "id": "server-plan-file",
+          "owner": "plan-file",
+          "to": "plan-file"
+        },
+        {
+          "carries": "plan parsed in the Action",
+          "description": "The Action reads the same plan and fails the pull request when it names an unknown id or misses an O-row.",
+          "flows": [
+            {
+              "carries": "Plan parsed with the same rules as the server",
+              "from": "plan-file",
+              "kind": "data",
+              "to": "plan-check"
+            },
+            {
+              "carries": "pass or fail on the pull request, with the rubato.plan.check line",
+              "from": "plan-check",
+              "kind": "control",
+              "to": "plan-file"
+            }
+          ],
+          "from": "plan-check",
+          "guard": "same fixtures; a fixture that must fail, asserted in CI",
+          "id": "plan-check-plan-file",
+          "owner": "plan-check",
+          "to": "plan-file"
+        },
+        {
+          "carries": "node and seam ids offered to the session",
+          "description": "The skill offers a session only the ids the map has, with the flows that already cross each seam.",
+          "flows": [
+            {
+              "carries": "node and seam ids, descriptions, flows, the plan path template, the map version; of every local map that names the session repo",
+              "from": "system-map",
+              "kind": "data",
+              "to": "skill-rubato"
+            }
+          ],
+          "from": "skill-rubato",
+          "guard": "schema validation before use; rubato.map.version on every launch",
+          "id": "skill-system-map",
+          "owner": "system-map",
+          "to": "system-map"
+        },
+        {
+          "carries": "map loaded; pins and plans resolved against it",
+          "description": "The server loads the map, refuses an invalid one and keeps the previous, and resolves pins and plans against it.",
+          "flows": [
+            {
+              "carries": "SystemMap per workspace: parts, seams, flows, repos",
+              "from": "system-map",
+              "kind": "data",
+              "to": "rubato-server"
+            },
+            {
+              "carries": "a map draft proposed as a pull request on the map repository",
+              "from": "rubato-server",
+              "kind": "control",
+              "to": "system-map"
+            }
+          ],
+          "from": "rubato-server",
+          "guard": "schema validation on load; rubato.map.load_failures counter",
+          "id": "server-system-map",
+          "owner": "system-map",
+          "to": "system-map"
+        },
+        {
+          "carries": "REST and websocket; TS types generated from the protocol schema",
+          "description": "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map.",
+          "flows": [
+            {
+              "carries": "Overview: map, issues with derived progress, findings, companions, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail",
+              "from": "rubato-server",
+              "kind": "data",
+              "to": "web"
+            },
+            {
+              "carries": "WebEvent Changed over /ws/web: fetch the overview again",
+              "from": "rubato-server",
+              "kind": "control",
+              "to": "web"
+            },
+            {
+              "carries": "PinRequest, MapLayout, PairApproveRequest, map draft operations",
+              "from": "web",
+              "kind": "data",
+              "to": "rubato-server"
+            },
+            {
+              "carries": "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself",
+              "from": "web",
+              "kind": "control",
+              "to": "rubato-server"
+            }
+          ],
+          "from": "web",
+          "guard": "generated web/src/protocol.ts diffed in CI",
+          "id": "web-server",
+          "owner": "rubato-server",
+          "to": "rubato-server"
+        },
+        {
+          "from": "billing",
+          "id": "billing-server",
+          "owner": "rubato-server",
+          "to": "rubato-server"
+        }
+      ],
+      "version": 1
+    },
+    "proposal": {
+      "branch": "map/draft-20261114-080000",
+      "pr_number": 77,
+      "pr_url": "https://github.com/m0x6A/rubato/pull/77",
+      "proposed_by": "m0x6A",
+      "state": "proposed",
+      "state_since": "<time>"
+    }
+  },
+  "findings": [
+    {
+      "ids": [
+        "billing"
+      ],
+      "issue": {
+        "number": 5,
+        "repo": "acme/loose"
+      },
+      "kind": "unknown_ids"
+    },
+    {
+      "issue": {
+        "number": 5,
+        "repo": "acme/loose"
+      },
+      "kind": "approved_without_fit"
+    },
+    {
+      "current": "mapsha1",
+      "issue": {
+        "number": 10,
+        "repo": "m0x6A/rubato"
+      },
+      "kind": "map_version_mismatch",
+      "launched_with": "oldsha"
+    }
+  ],
+  "generated_at": "<time>",
+  "issues": [
+    {
+      "approval": {
+        "current_sha": "5555555555555555555555555555555555555555",
+        "record": {
+          "author": "m0x6A",
+          "comment_id": 1,
+          "created_at": "2026-11-14T08:00:00Z",
+          "issue": {
+            "number": 5,
+            "repo": "acme/loose"
+          },
+          "sha": "5555555555555555555555555555555555555555",
+          "url": "https://github.com/acme/loose/issues/5#issuecomment-1"
+        },
+        "version": "does_not_fit"
+      },
+      "fit": {
+        "fits": false,
+        "reasons": [
+          {
+            "ids": [
+              "billing"
+            ],
+            "kind": "unknown_ids"
+          }
+        ]
+      },
+      "issue": {
+        "number": 5,
+        "repo": "acme/loose"
+      },
+      "pins": [
+        {
+          "id": "rubato-server",
+          "kind": "node"
+        }
+      ],
+      "plan": {
+        "affected_parts": [
+          {
+            "change": "x",
+            "node": "billing",
+            "status": "affected"
+          }
+        ],
+        "issue": {
+          "number": 5,
+          "repo": "acme/loose"
+        },
+        "path": "docs/plans/5.md"
+      },
+      "plan_sha": "5555555555555555555555555555555555555555",
+      "progress": {
+        "issue": {
+          "number": 5,
+          "repo": "acme/loose"
+        },
+        "last_seen": "<time>",
+        "pinned_to": [
+          {
+            "id": "rubato-server",
+            "kind": "node"
+          }
+        ],
+        "state": "designed"
+      }
+    },
+    {
+      "issue": {
+        "number": 10,
+        "repo": "m0x6A/rubato"
+      },
+      "pins": [
+        {
+          "id": "web-server",
+          "kind": "seam"
+        }
+      ],
+      "progress": {
+        "issue": {
+          "number": 10,
+          "repo": "m0x6A/rubato"
+        },
+        "last_seen": "<time>",
+        "pinned_to": [
+          {
+            "id": "web-server",
+            "kind": "seam"
+          }
+        ],
+        "state": "started"
+      }
+    }
+  ],
+  "layout": {
+    "positions": {
+      "rubato-server": {
+        "x": 100.0,
+        "y": 200.0
+      }
+    }
+  },
+  "map": {
+    "loaded_at": "<time>",
+    "map": "<docs/design/rubato-map.yml>",
+    "version": "mapsha1"
+  },
+  "repos": [
+    {
+      "covered": true,
+      "in_map": true,
+      "open_issues": 0,
+      "open_pulls": 0,
+      "plans": 0,
+      "repo": "m0x6A/rubato",
+      "sessions": 0,
+      "unattributed": 0
+    },
+    {
+      "covered": true,
+      "in_map": false,
+      "open_issues": 0,
+      "open_pulls": 0,
+      "plans": 1,
+      "repo": "acme/loose",
+      "sessions": 0,
+      "unattributed": 0
+    }
+  ],
+  "traffic": {
+    "state": "not_configured",
+    "truncated": false,
+    "unmapped_services": 0
+  },
+  "workspace": "default"
+}

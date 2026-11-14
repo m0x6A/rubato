@@ -124,9 +124,15 @@ pub async fn list_open_issues(app: &App, map: &SystemMap) -> Listed {
                         "backlog truncated"
                     );
                 }
-                if let Err(e) =
-                    store::replace_open_issues(&app.db, repo, &listing, &placements, Utc::now())
-                        .await
+                if let Err(e) = store::replace_open_issues(
+                    &app.db,
+                    rubato_protocol::DEFAULT_WORKSPACE,
+                    repo,
+                    &listing,
+                    &placements,
+                    Utc::now(),
+                )
+                .await
                 {
                     tracing::error!(rubato.repo = %repo, error = %e, "storing open issues failed");
                 }
@@ -166,7 +172,7 @@ struct Counts {
 /// Both gauges on every tick, for every repo with a row: a gauge recorded only on change keeps
 /// its last value. A repo the map no longer names is recorded once as 0 and its rows removed.
 async fn record_gauges(app: &App, named: &[String]) {
-    let (issues, repos) = match store::backlog(&app.db).await {
+    let (issues, repos) = match store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE).await {
         Ok(b) => b,
         Err(e) => {
             tracing::error!(error = %e, "reading the backlog failed");
@@ -269,7 +275,9 @@ mod tests {
         let (app, reader, _tmp) = app(github.clone()).await;
         list_open_issues(&app, &map()).await;
 
-        let (issues, repos) = store::backlog(&app.db).await.unwrap();
+        let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         assert_eq!(issues.len(), 4, "{issues:?}");
         assert_eq!(repos.len(), 2);
         assert!(
@@ -297,7 +305,9 @@ mod tests {
             g.open.insert("o/listed".into(), vec![issue(1), issue(3)]);
         });
         list_open_issues(&app, &map()).await;
-        let (issues, _) = store::backlog(&app.db).await.unwrap();
+        let (issues, _) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         let listed: Vec<u64> = issues
             .iter()
             .filter(|i| i.issue.repo == "o/listed")
@@ -319,7 +329,9 @@ mod tests {
         });
         let (app, reader, _tmp) = app(github.clone()).await;
         list_open_issues(&app, &map()).await;
-        let (_, before) = store::backlog(&app.db).await.unwrap();
+        let (_, before) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         let listed_at = before
             .iter()
             .find(|r| r.repo == "o/listed")
@@ -333,7 +345,9 @@ mod tests {
         });
         let (events, _guard) = capture::start();
         list_open_issues(&app, &map()).await;
-        let (issues, repos) = store::backlog(&app.db).await.unwrap();
+        let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         let repo = repos.iter().find(|r| r.repo == "o/listed").unwrap();
         assert_eq!(
             issues.len(),
@@ -363,7 +377,9 @@ mod tests {
         // It recovers: the error clears.
         github.with(|g| g.open_errors.clear());
         list_open_issues(&app, &map()).await;
-        let (_, repos) = store::backlog(&app.db).await.unwrap();
+        let (_, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         assert!(repos.iter().all(|r| r.error.is_none()));
     }
 
@@ -377,7 +393,9 @@ mod tests {
         let (app, reader, _tmp) = app(github).await;
         let (events, _guard) = capture::start();
         list_open_issues(&app, &map()).await;
-        let (issues, repos) = store::backlog(&app.db).await.unwrap();
+        let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         assert_eq!(issues.len(), BACKLOG_MAX_PER_REPO);
         assert!(
             repos
@@ -418,7 +436,9 @@ mod tests {
             value(&reader, metric::BACKLOG_LISTED_AT, "o/node-only"),
             Some(0)
         );
-        let (issues, repos) = store::backlog(&app.db).await.unwrap();
+        let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .unwrap();
         assert!(issues.iter().all(|i| i.issue.repo != "o/node-only"));
         assert!(repos.iter().all(|r| r.repo != "o/node-only"));
     }

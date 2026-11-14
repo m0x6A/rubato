@@ -10,7 +10,7 @@ use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
 use rubato_protocol::{ServerMessage, SourceStatus, SystemMap, TrafficReport, WebEvent};
 use sqlx::SqlitePool;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{RwLock, broadcast, mpsc};
 use uuid::Uuid;
@@ -61,7 +61,9 @@ pub struct AppState {
     /// Companions with a websocket open right now.
     pub companions: Mutex<HashMap<Uuid, CompanionConn>>,
     pub web_tx: broadcast::Sender<WebEvent>,
-    pub map: RwLock<Option<LoadedMap>>,
+    /// The loaded map of each workspace, by workspace id (ADR 0044). A workspace whose map has
+    /// never loaded has no entry.
+    pub maps: RwLock<BTreeMap<String, LoadedMap>>,
     pub metrics: Metrics,
     pub signer: Signer,
     pub traffic: RwLock<TrafficLatest>,
@@ -91,12 +93,41 @@ impl AppState {
             github,
             companions: Mutex::new(HashMap::new()),
             web_tx,
-            map: RwLock::new(None),
+            maps: RwLock::new(BTreeMap::new()),
             metrics: Metrics::new(),
             signer,
             traffic: RwLock::new(traffic),
             clock: Clock::default(),
         })
+    }
+
+    /// The loaded map of workspace `default`: what every route served before workspaces, and
+    /// what unprefixed routes serve (ADR 0049).
+    pub async fn default_map(&self) -> Option<LoadedMap> {
+        self.map_of(rubato_protocol::DEFAULT_WORKSPACE).await
+    }
+
+    pub async fn map_of(&self, ws: &str) -> Option<LoadedMap> {
+        self.maps.read().await.get(ws).cloned()
+    }
+
+    pub async fn set_map(&self, ws: &str, map: LoadedMap) {
+        self.maps.write().await.insert(ws.to_string(), map);
+    }
+
+    /// Every distinct repo the loaded maps name, each once (ADR 0048), in order.
+    pub async fn union_repos(&self) -> Vec<String> {
+        let maps = self.maps.read().await;
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for m in maps.values() {
+            for r in m.map.repos_named() {
+                if seen.insert(r.to_ascii_lowercase()) {
+                    out.push(r.to_string());
+                }
+            }
+        }
+        out
     }
 
     /// Tell every browser something changed; they refetch the overview. One `info` line per

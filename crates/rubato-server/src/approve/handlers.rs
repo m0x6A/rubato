@@ -58,7 +58,7 @@ pub async fn approve(
             Json(json!({ "reason": "internal" })),
         )
     };
-    let Some(map) = app.map.read().await.clone() else {
+    let Some(map) = app.default_map().await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     let issue = req.issue.clone();

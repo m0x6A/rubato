@@ -13,10 +13,8 @@ pub async fn map(
     _user: CurrentUser,
 ) -> Result<Json<MapResponse>, StatusCode> {
     let m = app
-        .map
-        .read()
+        .default_map()
         .await
-        .clone()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(Json(MapResponse {
         map: m.map,

@@ -65,12 +65,16 @@ async fn the_dev_file_feeds_the_overview_and_the_instruments() {
     let mut app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
     Arc::get_mut(&mut app).unwrap().metrics = metrics;
     let map: SystemMap = serde_yaml_ng::from_str(MAP).unwrap();
-    *app.map.write().await = Some(LoadedMap {
-        map,
-        version: "v".into(),
-        loaded_at: chrono::Utc::now(),
-        yaml: String::new(),
-    });
+    app.set_map(
+        rubato_protocol::DEFAULT_WORKSPACE,
+        LoadedMap {
+            map,
+            version: "v".into(),
+            loaded_at: chrono::Utc::now(),
+            yaml: String::new(),
+        },
+    )
+    .await;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();

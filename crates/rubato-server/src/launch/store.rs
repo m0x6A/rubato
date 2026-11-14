@@ -8,9 +8,15 @@ use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-pub async fn store_launch(db: &SqlitePool, companion_id: Uuid, cmd: &LaunchCommand) -> Result<()> {
-    sqlx::query("INSERT INTO launches (id, companion_id, user, repo, number, command, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(cmd.id.to_string()).bind(companion_id.to_string()).bind(&cmd.user).bind(&cmd.issue.repo).bind(cmd.issue.number as i64).bind(serde_json::to_string(cmd)?).bind(ts(Utc::now()))
+/// `ws` is the workspace the launch was started from (ADR 0047).
+pub async fn store_launch(
+    db: &SqlitePool,
+    ws: &str,
+    companion_id: Uuid,
+    cmd: &LaunchCommand,
+) -> Result<()> {
+    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(ws).bind(cmd.id.to_string()).bind(companion_id.to_string()).bind(&cmd.user).bind(&cmd.issue.repo).bind(cmd.issue.number as i64).bind(serde_json::to_string(cmd)?).bind(ts(Utc::now()))
         .execute(db).await?;
     Ok(())
 }
@@ -55,10 +61,13 @@ pub async fn launch_count(db: &SqlitePool, issue: &IssueRef) -> Result<u32> {
     Ok(r.get::<i64, _>("n") as u32)
 }
 
-pub async fn launch_map_versions(db: &SqlitePool) -> Result<Vec<(IssueRef, String)>> {
+/// The map version each started launch of this workspace carried, compared with that
+/// workspace's map only (`MapVersionMismatch`).
+pub async fn launch_map_versions(db: &SqlitePool, ws: &str) -> Result<Vec<(IssueRef, String)>> {
     let rows = sqlx::query(
-        "SELECT repo, number, command FROM launches WHERE result LIKE '%\"outcome\":\"started\"%'",
+        "SELECT repo, number, command FROM launches WHERE workspace_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
     )
+    .bind(ws)
     .fetch_all(db)
     .await?;
     Ok(rows

@@ -19,10 +19,8 @@ pub async fn overview(
     _user: CurrentUser,
 ) -> Result<Json<Overview>, StatusCode> {
     let map = app
-        .map
-        .read()
+        .default_map()
         .await
-        .clone()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let inputs = build_overview_inputs(&app)
         .await
@@ -46,7 +44,7 @@ pub async fn overview(
         })
         .cloned()
         .collect();
-    let draft = map_draft::snapshot(&app.db, &map.map)
+    let draft = map_draft::snapshot(&app.db, rubato_protocol::DEFAULT_WORKSPACE, &map.map)
         .await
         .map_err(|e| internal(SLICE, e))?;
     // A part that exists only in the draft may have a position too (ADR 0016).

@@ -31,13 +31,11 @@ pub async fn put_layout(
     Json(moved): Json<MapLayout>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let map = app
-        .map
-        .read()
+        .default_map()
         .await
-        .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     // Parts of the merged map, and parts that exist only in the shared draft (ADR 0016).
-    let draft = map_draft::snapshot(&app.db, &map.map)
+    let draft = map_draft::snapshot(&app.db, rubato_protocol::DEFAULT_WORKSPACE, &map.map)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?;
     let mut known = map.map.node_ids();
@@ -62,9 +60,16 @@ pub async fn put_layout(
         }
     }
     let known: Vec<&str> = known.into_iter().collect();
-    store::put(&app.db, &moved, &known, &user, Utc::now())
-        .await
-        .map_err(|e| (internal(SLICE, e), String::new()))?;
+    store::put(
+        &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        &moved,
+        &known,
+        &user,
+        Utc::now(),
+    )
+    .await
+    .map_err(|e| (internal(SLICE, e), String::new()))?;
     tracing::debug!(rubato.user = %user, parts = moved.positions.len(), "layout written");
     written(&app);
     Ok(StatusCode::NO_CONTENT)
@@ -74,7 +79,7 @@ pub async fn clear_layout(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<MapLayout>, StatusCode> {
-    let removed = store::clear(&app.db)
+    let removed = store::clear(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
         .await
         .map_err(|e| internal(SLICE, e))?;
     // Clearing moves every part for the whole team, so it is said at info with who did it.

@@ -125,6 +125,9 @@ pub struct Config {
     pub map_ref: String,
     /// Local file to load the map from instead of GitHub (local runs and e2e tests).
     pub map_file: Option<PathBuf>,
+    /// The workspaces from `RUBATO_WORKSPACES_FILE` (ADR 0044). Empty: the `map_*` fields above
+    /// are the one workspace `default`. Set: they are copied from its `default` entry.
+    pub workspaces: Vec<crate::kernel::workspaces::WorkspaceEntry>,
     pub session_secret: String,
     /// Development only: every request is this login, no OAuth. Never set in production.
     pub dev_user: Option<String>,
@@ -162,6 +165,29 @@ impl Config {
         if let Some(v) = env("RUBATO_GITHUB_POLL_SECS").and_then(|v| v.parse().ok()) {
             limits.github_poll_interval_secs = clamp_poll_secs(v, &mut warnings);
         }
+        let workspaces = match env("RUBATO_WORKSPACES_FILE") {
+            Some(path) => {
+                let legacy: Vec<&str> = [
+                    "RUBATO_MAP_REPO",
+                    "RUBATO_MAP_PATH",
+                    "RUBATO_MAP_REF",
+                    "RUBATO_MAP_FILE",
+                ]
+                .into_iter()
+                .filter(|k| env(k).is_some())
+                .collect();
+                let path = PathBuf::from(path);
+                let text = std::fs::read_to_string(&path).with_context(|| {
+                    format!("reading RUBATO_WORKSPACES_FILE {}", path.display())
+                })?;
+                crate::kernel::workspaces::from_file(&text, &path, &legacy)?
+            }
+            None => vec![],
+        };
+        let default_entry = workspaces
+            .iter()
+            .find(|w| w.id == rubato_protocol::DEFAULT_WORKSPACE)
+            .cloned();
         let session_secret = env("RUBATO_SESSION_SECRET").unwrap_or_else(|| {
             warnings.push(
                 "RUBATO_SESSION_SECRET unset; web sessions will not survive a restart".into(),
@@ -194,10 +220,26 @@ impl Config {
                 env("RUBATO_TRAFFIC_FETCH_SECS").as_deref(),
                 &mut warnings,
             ),
-            map_repo: env("RUBATO_MAP_REPO").unwrap_or_else(|| "m0x6A/rubato".into()),
-            map_path: env("RUBATO_MAP_PATH").unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
-            map_ref: env("RUBATO_MAP_REF").unwrap_or_else(|| "main".into()),
-            map_file: env("RUBATO_MAP_FILE").map(PathBuf::from),
+            map_repo: default_entry
+                .as_ref()
+                .map(|w| w.map_repo.clone())
+                .or_else(|| env("RUBATO_MAP_REPO"))
+                .unwrap_or_else(|| "m0x6A/rubato".into()),
+            map_path: default_entry
+                .as_ref()
+                .map(|w| w.map_path.clone())
+                .or_else(|| env("RUBATO_MAP_PATH"))
+                .unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
+            map_ref: default_entry
+                .as_ref()
+                .map(|w| w.map_ref.clone())
+                .or_else(|| env("RUBATO_MAP_REF"))
+                .unwrap_or_else(|| "main".into()),
+            map_file: match &default_entry {
+                Some(w) => w.map_file.clone(),
+                None => env("RUBATO_MAP_FILE").map(PathBuf::from),
+            },
+            workspaces,
             session_secret,
             dev_user: env("RUBATO_DEV_USER"),
             web_dist: env("RUBATO_WEB_DIST")
@@ -217,6 +259,30 @@ impl Config {
     }
 
     /// The REST API root, without a trailing slash.
+    /// The configured workspaces, in switcher order, and where they came from: the file, or
+    /// the `map_*` fields as the one workspace `default`.
+    pub fn workspace_entries(
+        &self,
+    ) -> (
+        Vec<crate::kernel::workspaces::WorkspaceEntry>,
+        crate::kernel::workspaces::Source,
+    ) {
+        use crate::kernel::workspaces::{Source, WorkspaceEntry};
+        if self.workspaces.is_empty() {
+            let w = WorkspaceEntry {
+                id: rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                name: None,
+                map_repo: self.map_repo.clone(),
+                map_path: self.map_path.clone(),
+                map_ref: self.map_ref.clone(),
+                map_file: self.map_file.clone(),
+            };
+            (vec![w], Source::LegacyEnv)
+        } else {
+            (self.workspaces.clone(), Source::File)
+        }
+    }
+
     pub fn github_api(&self) -> &str {
         self.github_api_url
             .as_deref()
@@ -251,6 +317,7 @@ impl Config {
             map_path: "docs/design/rubato-map.yml".into(),
             map_ref: "main".into(),
             map_file: None,
+            workspaces: vec![],
             session_secret: "test-secret".into(),
             dev_user: Some(dev_user.into()),
             web_dist: PathBuf::from("web/dist"),

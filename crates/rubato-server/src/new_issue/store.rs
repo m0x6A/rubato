@@ -59,8 +59,10 @@ fn row(r: &sqlx::sqlite::SqliteRow) -> Creation {
 }
 
 /// Insert a request as `opening`. False when a row with this id exists already.
+#[allow(clippy::too_many_arguments)]
 pub async fn begin(
     db: &SqlitePool,
+    ws: &str,
     request_id: &str,
     repo: &str,
     target: &MapRef,
@@ -72,8 +74,8 @@ pub async fn begin(
         MapRef::Node { id } => ("node", id),
         MapRef::Seam { id } => ("seam", id),
     };
-    let r = sqlx::query("INSERT OR IGNORE INTO issue_creations (request_id, repo, kind, target, title, created_by, created_at, state, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'opening', ?)")
-        .bind(request_id).bind(repo).bind(kind).bind(t).bind(title).bind(by).bind(ts(now)).bind(ts(now)).execute(db).await?;
+    let r = sqlx::query("INSERT OR IGNORE INTO issue_creations (workspace_id, request_id, repo, kind, target, title, created_by, created_at, state, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'opening', ?)")
+        .bind(ws).bind(request_id).bind(repo).bind(kind).bind(t).bind(title).bind(by).bind(ts(now)).bind(ts(now)).execute(db).await?;
     Ok(r.rows_affected() == 1)
 }
 

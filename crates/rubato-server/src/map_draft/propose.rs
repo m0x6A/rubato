@@ -53,10 +53,8 @@ pub(super) fn log_state(from: &str, to: &str, row: &ProposalRow, pr: Option<u64>
 }
 
 async fn loaded(app: &App) -> Result<LoadedMap, Refusal> {
-    app.map
-        .read()
+    app.default_map()
         .await
-        .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))
 }
 
@@ -135,7 +133,9 @@ pub async fn propose(
         app.reject(routes::DRAFT_PROPOSE, why, &user);
         (StatusCode::CONFLICT, text)
     };
-    let existing = store::proposal(&app.db).await.map_err(fault)?;
+    let existing = store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+        .await
+        .map_err(fault)?;
     match existing.as_ref().map(|p| p.state) {
         // Asked twice: the answer is the proposal there is.
         Some(ProposalState::Proposed) => {
@@ -164,7 +164,9 @@ pub async fn propose(
             "The map is read from a local file, so there is no repository to propose to. Copy YAML gives the full proposed file.".into(),
         ));
     }
-    let (ops, preview) = store::ops(&app.db, &map.map).await.map_err(fault)?;
+    let (ops, preview) = store::ops(&app.db, rubato_protocol::DEFAULT_WORKSPACE, &map.map)
+        .await
+        .map_err(fault)?;
     if ops.is_empty() {
         return Err(refuse(
             reason::NOTHING_TO_PROPOSE,
@@ -235,6 +237,7 @@ pub async fn propose(
             let branch = format!("map/draft-{}", Utc::now().format("%Y%m%d-%H%M%S"));
             match store::start_proposal(
                 &app.db,
+                rubato_protocol::DEFAULT_WORKSPACE,
                 &branch,
                 &head,
                 &hash(&map.yaml),
@@ -311,6 +314,7 @@ pub async fn propose(
     };
     store::set_state(
         &app.db,
+        rubato_protocol::DEFAULT_WORKSPACE,
         ProposalState::Proposed,
         Utc::now(),
         Some((pr.0, &pr.1)),
@@ -321,7 +325,7 @@ pub async fn propose(
     count(&app, "opened");
     app.notify("draft");
     // `ok_or_else`: building the error logs it, so it must only be built when it is one.
-    let proposal = store::proposal(&app.db)
+    let proposal = store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
         .await
         .map_err(fault)?
         .ok_or_else(|| {
@@ -342,7 +346,10 @@ pub async fn withdraw(
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
     let cfg = &app.config;
-    let Some(row) = store::proposal(&app.db).await.map_err(fault)? else {
+    let Some(row) = store::proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+        .await
+        .map_err(fault)?
+    else {
         app.reject(routes::DRAFT_WITHDRAW, reason::NO_PROPOSAL, &user);
         return Err((
             StatusCode::CONFLICT,
@@ -386,7 +393,9 @@ pub async fn withdraw(
     if let Err(e) = app.github.delete_ref(&cfg.map_repo, &row.branch).await {
         tracing::warn!(branch = %row.branch, error = %format!("{e:#}"), "the proposal's branch was not deleted");
     }
-    store::drop_proposal(&app.db).await.map_err(fault)?;
+    store::drop_proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+        .await
+        .map_err(fault)?;
     log_state(state_name(row.state), "drafting", &row, open);
     tracing::info!(rubato.user = %user, branch = %row.branch, "map proposal withdrawn");
     count(&app, "withdrawn");
@@ -408,7 +417,9 @@ pub async fn proposed_yaml(
     Query(q): Query<YamlQuery>,
 ) -> Result<Response, Refusal> {
     let map = loaded(&app).await?;
-    let (_, preview) = store::ops(&app.db, &map.map).await.map_err(fault)?;
+    let (_, preview) = store::ops(&app.db, rubato_protocol::DEFAULT_WORKSPACE, &map.map)
+        .await
+        .map_err(fault)?;
     let text = yaml::render(if q.base { &map.map } else { &preview }).map_err(fault)?;
     Ok(([(header::CONTENT_TYPE, "text/yaml; charset=utf-8")], text).into_response())
 }
@@ -452,12 +463,16 @@ mod tests {
         let mut app = AppState::new(pool, Config::for_tests(url, "m0x6A"), github.clone());
         Arc::get_mut(&mut app).unwrap().metrics = metrics;
         let map: SystemMap = serde_yaml_ng::from_str(MAP).unwrap();
-        *app.map.write().await = Some(LoadedMap {
-            map: map.clone(),
-            version: "head1".into(),
-            loaded_at: Utc::now(),
-            yaml: MAP.into(),
-        });
+        app.set_map(
+            rubato_protocol::DEFAULT_WORKSPACE,
+            LoadedMap {
+                map: map.clone(),
+                version: "head1".into(),
+                loaded_at: Utc::now(),
+                yaml: MAP.into(),
+            },
+        )
+        .await;
         let op = DraftOpRequest {
             op_id: uuid::Uuid::new_v4(),
             op: MapOp::AddNode {
@@ -470,9 +485,17 @@ mod tests {
                 },
             },
         };
-        store::append(&app.db, &map, &op, "alice", Utc::now(), 200)
-            .await
-            .unwrap();
+        store::append(
+            &app.db,
+            rubato_protocol::DEFAULT_WORKSPACE,
+            &map,
+            &op,
+            "alice",
+            Utc::now(),
+            200,
+        )
+        .await
+        .unwrap();
         (app, github, reader, tmp)
     }
 

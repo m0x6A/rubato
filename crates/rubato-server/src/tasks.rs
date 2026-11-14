@@ -96,15 +96,16 @@ pub async fn poll_once(app: &App) -> Result<()> {
 impl Poller {
     /// One tick over every issue of interest.
     pub async fn tick(&mut self, app: &App, lane: Lane) -> Result<()> {
-        let Some(map) = app.map.read().await.clone() else {
+        let Some(map) = app.default_map().await else {
             tracing::warn!("no map loaded; skipping poll");
             return Ok(());
         };
-        let mut issues: BTreeSet<IssueRef> = pins::list(&app.db)
-            .await?
-            .into_iter()
-            .map(|p| p.issue)
-            .collect();
+        let mut issues: BTreeSet<IssueRef> =
+            pins::list(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
+                .await?
+                .into_iter()
+                .map(|p| p.issue)
+                .collect();
         issues.extend(launch::launched_issues(&app.db).await?);
         let sessions = companion_link::all_sessions(&app.db).await?;
         let live: HashSet<IssueRef> = sessions
@@ -141,12 +142,8 @@ impl Poller {
             })
             .collect();
         pins::apply_map_lines(app, &map.map, &map.version, &lines).await;
-        let mut repos: BTreeSet<String> = map
-            .map
-            .repos_named()
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+        // Every distinct repo of every workspace, once (ADR 0048), and the repos of tracked work.
+        let mut repos: BTreeSet<String> = app.union_repos().await.into_iter().collect();
         repos.extend(issues.iter().map(|i| i.repo.clone()));
         github_poll::check_coverage(app, &repos).await;
         // As an installation, on the full lane: whether Issues: write is granted (ADR 0025), so a
@@ -335,7 +332,8 @@ impl Poller {
             .collect();
         untracked.sort();
         let mut found = 0;
-        for repo in map.map.repos_named() {
+        let union = app.union_repos().await;
+        for repo in union.iter().map(String::as_str) {
             let heads = view.heads(app, repo).await;
             for issue in untracked.iter().filter(|i| i.repo == repo) {
                 if !heads
