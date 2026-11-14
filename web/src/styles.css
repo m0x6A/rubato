@@ -172,6 +172,8 @@ body { background: var(--bg); color: var(--ink); font: 13px/1.45 var(--font-ui);
 .tabs button.active { background: none; color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 button, .button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); cursor: pointer; text-decoration: none; }
 button.active, .button.primary, button.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); font-weight: 600; }
+/* A step that cannot be taken back, asked a second time (Stop session, ADR 0059). */
+button.danger { background: var(--bad-wash); border-color: var(--bad); color: var(--bad-ink); font-weight: 600; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .login { max-width: 420px; margin: 15vh auto; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; text-align: center; }
 h1, h2, h3 { margin: 0 0 8px; }

@@ -51,7 +51,8 @@ function serve(list: Answer<LaunchMessages>, post: (body: unknown) => Response |
     if ((init?.method ?? "GET") === "GET") {
       return String(input).endsWith("/log") ? answer(log) : answer(list);
     }
-    return post(JSON.parse(init?.body as string));
+    // A stop posts no body.
+    return post(init?.body ? JSON.parse(init.body as string) : undefined);
   });
   const calls = (method: string, suffix: string) => fetch.mock.calls.filter((c) => (c[1]?.method ?? "GET") === method && String(c[0]).endsWith(suffix));
   return { fetch, gets: () => calls("GET", "/messages"), logGets: () => calls("GET", "/log"), posts: () => calls("POST", "/messages") };
@@ -417,5 +418,41 @@ describe("the session log (ADR 0052): what was said, for the whole team", () => 
     expect(await screen.findByText("The conversation could not be read: Rubato does not know this launch (unknown_launch)")).toBeInTheDocument();
     // The messages still show, and the owner can still write.
     expect(await screen.findByLabelText("Message to your session")).toBeInTheDocument();
+  });
+});
+
+describe("stop your own session (ADR 0059)", () => {
+  const stops = (fetch: ReturnType<typeof serve>["fetch"]) => fetch.mock.calls.filter((c) => c[1]?.method === "POST" && String(c[0]) === `/api/launches/${LAUNCH}/stop`);
+
+  it("the owner stops only after confirming", async () => {
+    const { fetch } = serve(launch(), () => json({ ...msg("sent"), id: "m-stop", kind: "stop", text: "Stopped by m0x6A" }));
+    render(<SessionChat session={session()} me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop this session" }));
+    expect(stops(fetch)).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Really stop this session" }));
+    await waitFor(() => expect(stops(fetch)).toHaveLength(1));
+    expect(await screen.findByText(/Stop sent/)).toBeInTheDocument();
+  });
+
+  it("an offline companion is not offered Stop", async () => {
+    serve(launch({ companion_live: false }));
+    render(<SessionChat session={session()} me={owner} />);
+    expect(await screen.findByRole("button", { name: "Stop this session" })).toBeDisabled();
+  });
+
+  it("a refusal says why, in words and with its code", async () => {
+    serve(launch(), () => json({ reason: "companion_offline" }, 409));
+    render(<SessionChat session={session()} me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop this session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Really stop this session" }));
+    expect(await screen.findByText(/Not stopped: The companion is not connected.*\(companion_offline\)/)).toBeInTheDocument();
+  });
+
+  it("a colleague sees no Stop", async () => {
+    serve(launch());
+    render(<SessionChat session={session()} me={colleague} />);
+    openChat();
+    await screen.findByText(/Only m0x6A can message/);
+    expect(screen.queryByRole("button", { name: /stop this session/i })).toBeNull();
   });
 });

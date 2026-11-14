@@ -17,7 +17,14 @@ export const chatApi = {
   log: (launchId: string) => request<LaunchLog>("GET", logPath(launchId)),
   /** Always a new message: "Send again" posts the text, never an old id (ADR 0051). */
   send: (launchId: string, text: string) => request<SessionMessageView>("POST", messagesPath(launchId), { text } satisfies SessionMessageRequest),
+  /** The owner stops their own session (ADR 0059): never queued, refused when the companion is away. */
+  stop: (launchId: string) => request<SessionMessageView>("POST", stopPath(launchId)),
 };
+
+/** A team route like the messages, owner only. */
+export function stopPath(launchId: string): string {
+  return `/api/launches/${encodeURIComponent(launchId)}/stop`;
+}
 
 /**
  * What the server said: a refusal's `{ "reason": "<reason>" }`, the shape `POST /api/plans/approve`
@@ -43,6 +50,8 @@ export const REFUSAL_TEXT: Record<string, string> = {
   too_long: "The message is longer than a session takes",
   empty: "The message is empty",
   unknown_launch: "Rubato does not know this launch",
+  companion_offline: "The companion is not connected, so nothing was stopped",
+  companion_cannot_stop: "This companion is too old to stop a session; upgrade it",
 };
 
 /** Why a call failed, for the person: the refusal in words with its code, or the server's own text. */

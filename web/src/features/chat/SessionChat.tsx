@@ -83,6 +83,26 @@ function Conversation({ launchId, hooksLost, me }: { launchId: string; hooksLost
     [launchId, live, load],
   );
 
+  /** Stops the session (ADR 0059): asks once more first, since a stop cannot be taken back. */
+  const [confirmStop, setConfirmStop] = useState(false);
+  const stop = useCallback(async () => {
+    if (!confirmStop) {
+      setConfirmStop(true);
+      return;
+    }
+    setConfirmStop(false);
+    setSaid(null);
+    try {
+      await chatApi.stop(launchId);
+      setSaid({ text: "Stop sent: the running turn is killed and the session ends", failed: false });
+      void load();
+    } catch (e) {
+      if (!needsLogin(e)) {
+        setSaid({ text: `Not stopped: ${failureWords(e)}`, failed: true });
+      }
+    }
+  }, [confirmStop, launchId, load]);
+
   const isOwner = me !== null && data !== null && sameLogin(me.login, data.owner);
   const cannot = hooksLost ? HOOKS_LOST : data && !data.companion_can_receive ? UPGRADE : null;
   const canSend = isOwner && cannot === null;
@@ -107,6 +127,11 @@ function Conversation({ launchId, hooksLost, me }: { launchId: string; hooksLost
       {data && !isOwner && <p className="muted">Only {data.owner} can message this session.</p>}
       {isOwner && cannot && <p className="warn">{cannot}</p>}
       {canSend && <Compose sending={sending} onSend={send} />}
+      {isOwner && (
+        <button type="button" className={confirmStop ? "danger" : undefined} aria-label={confirmStop ? "Really stop this session" : "Stop this session"} disabled={!data?.companion_live} title={data?.companion_live ? "Kill the running turn and end the session" : "The companion is not connected"} onClick={() => void stop()}>
+          {confirmStop ? "Really stop?" : "Stop session"}
+        </button>
+      )}
       {isOwner && (
         <p className="muted chat-said" role="status">
           {said && !said.failed ? said.text : ""}
