@@ -74,6 +74,9 @@ pub struct OverviewInputs {
     /// The cutover is set: plans are approved in Rubato, so one with no draft and no counted
     /// approval is outside Rubato (ADR 0058).
     pub approvals_in_rubato: bool,
+    /// What the handoffs of Rubato approvals left (ADR 0055): record mismatches, link comments
+    /// waiting, ADRs not accepted. Shown for the issues this overview holds.
+    pub approval_findings: Vec<Finding>,
     pub launched: HashSet<IssueRef>,
     /// The live cap hit per issue, by kind.
     pub cap_hits: HashMap<IssueRef, CapKind>,
@@ -174,6 +177,17 @@ pub fn approval_state(
         version,
         current_sha,
     })
+}
+
+/// The issue a handoff finding is about.
+fn handoff_issue(f: &Finding) -> Option<&IssueRef> {
+    match f {
+        Finding::ApprovalRecordMismatch { issue, .. }
+        | Finding::LinkCommentWaiting { issue, .. }
+        | Finding::LinkWaitingForApprover { issue, .. }
+        | Finding::AdrsNotAccepted { issue, .. } => Some(issue),
+        _ => None,
+    }
 }
 
 pub fn build(
@@ -477,6 +491,14 @@ pub fn build(
     for s in &mut out {
         s.progress.pinned_to = s.pins.clone();
     }
+    // The handoffs' findings, for the issues this overview holds (ADR 0055).
+    findings.extend(
+        inputs
+            .approval_findings
+            .iter()
+            .filter(|f| handoff_issue(f).is_some_and(|i| issues.contains(i)))
+            .cloned(),
+    );
 
     // Two or more open plans on one seam.
     let mut by_seam: BTreeMap<&str, Vec<IssueRef>> = BTreeMap::new();
@@ -815,6 +837,7 @@ mod tests {
             }),
             parse_error: None,
             approval_sha: Some("f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9".into()),
+            head_sha: None,
         }
     }
 
@@ -856,6 +879,7 @@ mod tests {
             approvals: vec![],
             ignored_approvals: vec![],
             approvals_in_rubato: false,
+            approval_findings: vec![],
             launched: HashSet::new(),
             cap_hits: HashMap::new(),
             meta: HashMap::new(),
@@ -1526,6 +1550,7 @@ mod tests {
                 approved_at: now() + chrono::Duration::seconds(at_secs),
                 self_approved: false,
                 summary: String::new(),
+                handoff: None,
             },
             Some(newest.into()),
         )

@@ -88,9 +88,18 @@ impl GitHubApi for FakeGitHub {
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("file", format!("{repo} {path} {git_ref}")));
-        Ok(g.files
-            .get(&(repo.to_owned(), path.to_owned(), git_ref.to_owned()))
-            .cloned())
+        let at = |r: &str| {
+            g.files
+                .get(&(repo.to_owned(), path.to_owned(), r.to_owned()))
+        };
+        // A ref that is a branch's head sha reads that branch's file: tests keep files by branch
+        // and move a head by changing its sha (ADR 0055 reads the plan at the head sha).
+        let by_head = g
+            .branches
+            .get(repo)
+            .and_then(|b| b.iter().find(|(_, sha)| sha == git_ref))
+            .and_then(|(name, _)| at(name));
+        Ok(at(git_ref).or(by_head).cloned())
     }
 
     async fn last_commit_author(

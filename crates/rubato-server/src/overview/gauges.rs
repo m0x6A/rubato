@@ -228,7 +228,7 @@ mod tests {
                 ],
             );
         });
-        plans::fetch_and_store(&app, &map, &i71, "issue/71-plan")
+        plans::fetch_and_store(&app, &map, &i71, "issue/71-plan", "issue/71-plan")
             .await
             .unwrap();
         github_poll::poll_comments(&app, &i71).await.unwrap();

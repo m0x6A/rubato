@@ -175,9 +175,18 @@ impl Launcher {
         let prompt_path = launch_dir.join("prompt.txt");
         std::fs::write(&prompt_path, &cmd.prompt)?;
         let script_path = launch_dir.join("launch.sh");
-        std::fs::write(
+        // Private: it exports the hook token (`RUBATO_HOOK_TOKEN`), like `hooks.json` holds it.
+        write_private(
             &script_path,
-            launcher_script(&self.workspace, cmd, &worktree, &hooks_path, &prompt_path),
+            launcher_script(
+                &self.workspace,
+                cmd,
+                &worktree,
+                &hooks_path,
+                &prompt_path,
+                &self.hook_endpoint,
+            )
+            .as_bytes(),
         )?;
         let name = session_name(&cmd.issue.repo, &cmd.branch);
         if self.tmux.has_session(&name)? {

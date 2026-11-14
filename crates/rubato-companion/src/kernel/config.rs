@@ -83,11 +83,21 @@ pub struct CompanionConfig {
     /// Deadline for the launch's `git fetch` and every tmux-ide call; a launch that hits it is
     /// `Failed` (plan 40 S3, A1).
     pub command_timeout_secs: u64,
+    /// Where the rubato skill is installed; None means `~/.claude/skills/rubato`. Its version
+    /// decides whether `plan_approved` can be typed (ADR 0055).
+    pub skill_dir: Option<PathBuf>,
 }
 
 impl CompanionConfig {
     pub fn command_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.command_timeout_secs)
+    }
+
+    /// The installed skill's directory.
+    pub fn skill_dir(&self) -> PathBuf {
+        self.skill_dir
+            .clone()
+            .unwrap_or_else(crate::kernel::skill::default_dir)
     }
 }
 
@@ -103,6 +113,7 @@ impl Default for CompanionConfig {
             pricing: BTreeMap::new(),
             permission_mode: "acceptEdits".into(),
             command_timeout_secs: crate::kernel::tmux_ide::DEFAULT_TIMEOUT.as_secs(),
+            skill_dir: None,
         }
     }
 }

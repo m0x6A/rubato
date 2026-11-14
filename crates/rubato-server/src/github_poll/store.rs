@@ -364,6 +364,18 @@ pub fn approved_branches(
     out
 }
 
+/// Every comment carrying a `Rubato-Approval:` line (ADR 0055).
+pub async fn link_comments(db: &SqlitePool) -> Result<Vec<super::links::LinkComment>> {
+    let rows =
+        sqlx::query("SELECT record FROM plan_signals WHERE kind = 'link' ORDER BY comment_id")
+            .fetch_all(db)
+            .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| serde_json::from_str(&r.get::<String, _>("record")).ok())
+        .collect())
+}
+
 /// Every approval, with the plan hash of the branch it names when it names another one.
 pub async fn all_approvals(db: &SqlitePool) -> Result<Vec<(ApprovalRecord, Option<String>)>> {
     let rows = sqlx::query(

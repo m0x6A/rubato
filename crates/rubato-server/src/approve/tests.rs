@@ -613,6 +613,7 @@ fn the_branch_of_the_newest_rubato_approval_is_preferred() {
                 approved_at,
                 self_approved: true,
                 summary: String::new(),
+                handoff: None,
             },
             None,
         )

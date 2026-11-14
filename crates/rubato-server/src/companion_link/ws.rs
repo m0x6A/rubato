@@ -4,7 +4,9 @@
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
-use crate::{launch, pairing, plan_drafts, queue, session_log, session_messages, spend_history};
+use crate::{
+    approve, launch, pairing, plan_drafts, queue, session_log, session_messages, spend_history,
+};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -238,6 +240,7 @@ async fn on_envelope(
                     capabilities: vec![
                         rubato_protocol::capability::SESSION_MESSAGES.to_owned(),
                         rubato_protocol::capability::DRAFTS.to_owned(),
+                        rubato_protocol::capability::HANDOFF_REPORTS.to_owned(),
                     ],
                 })
             }
@@ -286,6 +289,22 @@ async fn on_envelope(
                     Ok(Some(issue)) => {
                         tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result");
                         settle_queue(app, companion_id, &issue, &result).await;
+                        if let rubato_protocol::LaunchResult::Started {
+                            command_id,
+                            draft_restored,
+                            restore_skipped,
+                            ..
+                        } = &result
+                        {
+                            // ADR 0053, plan 122 §D5: what became of the draft, and an approval
+                            // that waited for this launch.
+                            if *draft_restored {
+                                tracing::info!(rubato.issue = %issue, launch_id = %command_id, "draft restored into the new worktree");
+                            } else if let Some(why) = restore_skipped {
+                                tracing::warn!(rubato.issue = %issue, launch_id = %command_id, reason = why.name(), "draft not restored");
+                            }
+                            approve::on_launch_started(app, *command_id).await;
+                        }
                     }
                     Ok(None) => tracing::warn!("launch result for an unknown command"),
                     Err(e) => tracing::error!(error = %e, "storing launch result"),
@@ -330,15 +349,8 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::HandoffReport(r) => {
-                // The approve slice takes it once PR 7's server half lands; until then it is
-                // recorded as an envelope and logged, so the outcome is never silent.
-                match launch::launch_target(&app.db, r.launch_id).await {
-                    Ok(Some(t)) if t.companion_id == companion_id => {
-                        tracing::info!(rubato.issue = %t.issue, rubato.approval_id = %r.line.approval, outcome = r.line.outcome.name(), commit = ?r.line.commit, "handoff report");
-                    }
-                    Ok(_) => tracing::warn!(rubato.approval_id = %r.line.approval, "handoff report for a launch this companion did not start"),
-                    Err(e) => tracing::error!(error = %format!("{e:#}"), "handoff: reading the launch failed"),
-                }
+                // Recorded on the approval only for this companion's own launch of its issue.
+                approve::on_handoff_report(app, companion_id, &r).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::SessionMessageResult(r) => {
