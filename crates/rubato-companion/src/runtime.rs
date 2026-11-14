@@ -324,7 +324,8 @@ async fn run(
 }
 
 /// What this companion announces in Hello (ADR 0051). The trim has shipped since #122 PR 1
-/// (ADR 0052), session input since PR 3, the plan mirror since PR 5, the handoff since PR 7:
+/// (ADR 0052), session input since PR 3, the plan mirror since PR 5, the handoff since PR 7
+/// (draft restore since PR 8):
 /// `plan_handoff` with the `/handoff` route that forwards `HandoffReport`, and `skill:<version>`
 /// when the installed skill names its version.
 pub fn hello_capabilities(skill: Option<&str>) -> Vec<String> {
@@ -333,6 +334,7 @@ pub fn hello_capabilities(skill: Option<&str>) -> Vec<String> {
         capability::SESSION_INPUT.to_owned(),
         capability::DRAFT_MIRROR.to_owned(),
         capability::PLAN_HANDOFF.to_owned(),
+        capability::DRAFT_RESTORE.to_owned(),
     ];
     if let Some(v) = skill {
         caps.push(format!("{}{v}", capability::SKILL_PREFIX));
@@ -530,6 +532,7 @@ mod tests {
             capability::SESSION_INPUT,
             capability::DRAFT_MIRROR,
             capability::PLAN_HANDOFF,
+            capability::DRAFT_RESTORE,
             "skill:0.2.0",
         ] {
             assert!(with.iter().any(|x| x == c), "{c} in {with:?}");
