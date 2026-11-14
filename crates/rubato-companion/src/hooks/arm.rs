@@ -3,12 +3,13 @@
 //! runtime then hands the result to `spend::after_hook`. The arm runs inside a
 //! `rubato.hook.forward` span.
 
+use super::wire::{Launched, for_wire};
 use crate::kernel::telemetry::Metrics;
 use crate::sessions::{Registry, save_launches_if_changed};
 use anyhow::Result;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
-use rubato_protocol::{CompanionMessage, HookEvent, IssueRef};
+use rubato_protocol::{CompanionMessage, HookEvent, HookEventKind, IssueRef, Limits};
 use std::path::{Path, PathBuf};
 use tokio::sync::{Mutex, mpsc};
 use tracing::Instrument;
@@ -29,7 +30,8 @@ pub fn seed_forwarded(metrics: &Metrics, companion_id: Uuid) {
 }
 
 /// `state_dir` is where `launches.json` lives: a hook that moves a launch to a new session id
-/// rewrites it (plan 122 §D1).
+/// rewrites it (plan 122 §D1). `limits` gives `session_log_max_chars` for a launched session's
+/// prompt and reply (ADR 0052).
 pub async fn on_event(
     ev: &HookEvent,
     registry: &Mutex<Registry>,
@@ -37,6 +39,7 @@ pub async fn on_event(
     metrics: &Metrics,
     companion_id: Uuid,
     state_dir: &Path,
+    limits: &std::sync::Mutex<Limits>,
 ) -> HookOutcome {
     let span = tracing::info_span!(
         span::HOOK_FORWARD,
@@ -44,7 +47,7 @@ pub async fn on_event(
         rubato.hook_event = ?ev.hook_event_name,
         rubato.session.blocked_by = ev.implied_block_cause().map(|c| c.name()),
     );
-    forward(ev, registry, out, metrics, companion_id, state_dir)
+    forward(ev, registry, out, metrics, companion_id, state_dir, limits)
         .instrument(span)
         .await
 }
@@ -56,6 +59,7 @@ async fn forward(
     metrics: &Metrics,
     companion_id: Uuid,
     state_dir: &Path,
+    limits: &std::sync::Mutex<Limits>,
 ) -> HookOutcome {
     let mut attrs = vec![
         // No session id: one series per session would grow for the life of the process
@@ -68,20 +72,52 @@ async fn forward(
         attrs.push(KeyValue::new(attr::SESSION_BLOCKED_BY, c.name()));
     }
     metrics.hook_forwarded.add(1, &attrs);
-    let (issue, transcript, cap, snapshot) = {
+    let max_chars = limits.lock().unwrap().session_log_max_chars;
+    let (issue, transcript, cap, snapshot, launched, carried) = {
         let mut reg = registry.lock().await;
         let issue = reg.apply_hook(ev);
         save_launches_if_changed(&mut reg, state_dir);
         let e = reg.by_session(&ev.session_id).cloned();
+        // The registry, not the header, says whether the session is a launch: a header nobody
+        // launched forwards no prompt.
+        let launched = e
+            .as_ref()
+            .and_then(|e| e.launch_id)
+            .map(|launch_id| Launched {
+                launch_id,
+                max_chars,
+            });
+        let prompt = ev
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("prompt"))
+            .and_then(|v| v.as_str());
+        let carried = match (launched, ev.hook_event_name, prompt) {
+            (Some(_), HookEventKind::UserPromptSubmit, Some(p)) => {
+                reg.take_carried(&ev.session_id, p)
+            }
+            _ => None,
+        };
         (
             issue,
             e.as_ref().and_then(|e| e.transcript_path.clone()),
             e.as_ref().and_then(|e| e.spend_cap_usd),
             reg.snapshot(),
+            launched,
+            carried,
         )
     };
-    // Only the allowlisted payload leaves the machine (ADR 0052).
-    let (wire, trimmed) = super::wire::for_wire(ev);
+    // Only the allowlisted payload leaves the machine, with a launched session's prompt or
+    // reply (ADR 0052).
+    let (mut wire, trimmed) = for_wire(ev, launched);
+    if let Some((message_id, mixed)) = carried {
+        tracing::info!(rubato.session_id = %ev.session_id, id = %message_id, mixed, "prompt carried a session message");
+        wire.message_id = Some(message_id);
+        wire.mixed = mixed;
+    }
+    if wire.truncated {
+        tracing::debug!(rubato.session_id = %ev.session_id, max_chars, "session log text cut");
+    }
     if trimmed {
         metrics.hook_payload_trimmed.add(
             1,
@@ -145,6 +181,7 @@ mod tests {
             &metrics,
             id,
             Path::new("/nonexistent"),
+            &std::sync::Mutex::new(Limits::default()),
         )
         .await;
         let points = reader.points(metric::HOOK_FORWARDED);
@@ -179,6 +216,7 @@ mod tests {
             &metrics,
             id,
             Path::new("/nonexistent"),
+            &std::sync::Mutex::new(Limits::default()),
         )
         .await;
         let points = reader.points(metric::HOOK_FORWARDED);
@@ -207,6 +245,7 @@ mod tests {
             &metrics,
             id,
             Path::new("/nonexistent"),
+            &std::sync::Mutex::new(Limits::default()),
         )
         .await;
         let points = reader.points(metric::HOOK_FORWARDED);

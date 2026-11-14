@@ -36,7 +36,7 @@ fn hooks_for(session: &str, event: HookEventKind) -> impl Fn(&CompanionMessage) 
 }
 
 /// The launched session's current id: the one it moved to, else the launch's.
-fn launched_session(w: &RubatoWorld) -> String {
+pub(crate) fn launched_session(w: &RubatoWorld) -> String {
     w.new_session_id
         .clone()
         .unwrap_or_else(|| w.last_launch.as_ref().unwrap().session_id.to_string())
@@ -44,11 +44,21 @@ fn launched_session(w: &RubatoWorld) -> String {
 
 /// Fire the hook and wait until the server has it: the companion applies a hook to the
 /// registry before it forwards it, so a message pushed after this sees it.
-async fn post_and_wait(w: &RubatoWorld, event: &str, session: &str) {
+pub(crate) async fn post_and_wait(w: &RubatoWorld, event: &str, session: &str) {
+    post_and_wait_with(w, event, session, serde_json::json!({})).await;
+}
+
+/// As `post_and_wait`, with `extra` payload keys.
+pub(crate) async fn post_and_wait_with(
+    w: &RubatoWorld,
+    event: &str,
+    session: &str,
+    extra: serde_json::Value,
+) {
     let kind: HookEventKind = serde_json::from_value(serde_json::json!(event)).unwrap();
     let pred = hooks_for(session, kind);
     let before = w.server().count(&pred).await;
-    w.fire_launched_hook(event, session).await;
+    w.fire_launched_hook(event, session, extra).await;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     while w.server().count(&pred).await <= before {
         assert!(

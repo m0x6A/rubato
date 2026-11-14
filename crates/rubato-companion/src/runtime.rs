@@ -325,7 +325,7 @@ impl Dispatch<'_> {
             tokio::select! {
                 _ = shutdown.changed() => break,
                 Some(ev) = hook_rx.recv() => {
-                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id, &self.cfg.state_dir).await;
+                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id, &self.cfg.state_dir, self.limits).await;
                     spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
                 }
                 Some(msg) = in_rx.recv() => match msg {

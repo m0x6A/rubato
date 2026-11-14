@@ -99,6 +99,7 @@ impl Registry {
                 last_hook_at: None,
                 input_sent_at: None,
                 hooks_lost: false,
+                pasted: Vec::new(),
             });
         }
         let live: std::collections::HashSet<&str> =
@@ -188,6 +189,7 @@ impl Registry {
                 last_hook_at: None,
                 input_sent_at: None,
                 hooks_lost: false,
+                pasted: Vec::new(),
             });
         }
     }

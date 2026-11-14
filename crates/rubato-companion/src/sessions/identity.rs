@@ -189,6 +189,7 @@ mod tests {
             last_hook_at: None,
             input_sent_at: None,
             hooks_lost: false,
+            pasted: Vec::new(),
         }
     }
 
