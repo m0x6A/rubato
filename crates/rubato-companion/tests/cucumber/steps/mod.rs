@@ -1,6 +1,7 @@
 mod discovery;
 mod drafts;
 mod handoff;
+mod headless;
 mod hooks;
 mod launch_refusal;
 mod launch_timeout;

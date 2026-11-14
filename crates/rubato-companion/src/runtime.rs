@@ -241,25 +241,31 @@ async fn run(
             shutdown.clone(),
         ),
     );
-    tasks.spawn(
-        "events",
-        Kind::BestEffort,
-        sessions::watch_events(tmux_ide.clone(), poll_tx.clone(), shutdown.clone()),
-    );
-    tasks.spawn(
-        "reconcile",
-        Kind::Essential,
-        sessions::reconcile(
-            out_tx.clone(),
-            registry.clone(),
-            metrics.clone(),
-            tmux.clone(),
-            tmux_ide.clone(),
-            limits.clone(),
-            poll_rx,
-            shutdown.clone(),
-        ),
-    );
+    // Discovery reads tmux and tmux-ide. A headless companion has neither: its registry holds
+    // only what it launched, and the child processes are the authority (plan 122 §D14).
+    if cfg.workspace.companion.is_headless() {
+        drop(poll_rx);
+    } else {
+        tasks.spawn(
+            "events",
+            Kind::BestEffort,
+            sessions::watch_events(tmux_ide.clone(), poll_tx.clone(), shutdown.clone()),
+        );
+        tasks.spawn(
+            "reconcile",
+            Kind::Essential,
+            sessions::reconcile(
+                out_tx.clone(),
+                registry.clone(),
+                metrics.clone(),
+                tmux.clone(),
+                tmux_ide.clone(),
+                limits.clone(),
+                poll_rx,
+                shutdown.clone(),
+            ),
+        );
+    }
     tasks.spawn(
         "stale",
         Kind::Essential,
