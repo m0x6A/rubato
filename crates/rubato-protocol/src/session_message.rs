@@ -79,6 +79,11 @@ pub enum SessionMessageKind {
         /// Rubato's link to the approval, written into accepted ADRs.
         url: String,
     },
+    /// The owner stops their own session (ADR 0059): the companion kills the running turn's
+    /// process group (headless) or the tmux session (interactive). Never queued, not held
+    /// behind an in-flight message, and not waiting for idle. Sent only to a companion that
+    /// announced `session_stop`.
+    Stop { requested_by: String },
 }
 
 impl SessionMessageKind {
@@ -87,7 +92,13 @@ impl SessionMessageKind {
         match self {
             Self::Chat { .. } => "chat",
             Self::PlanApproved { .. } => "plan_approved",
+            Self::Stop { .. } => "stop",
         }
+    }
+
+    /// `stop` skips the idle check and the in-flight rule (ADR 0059).
+    pub fn is_stop(&self) -> bool {
+        matches!(self, Self::Stop { .. })
     }
 
     /// The text a person sees for it: the chat text, or a line naming the approval. For
@@ -103,6 +114,7 @@ impl SessionMessageKind {
                 "Plan approved by {approved_by} (plan {}): hand it off",
                 &approved_sha[..approved_sha.len().min(7)]
             ),
+            Self::Stop { requested_by } => format!("Stopped by {requested_by}"),
         }
     }
 
@@ -111,6 +123,7 @@ impl SessionMessageKind {
         match self {
             Self::Chat { author, .. } => author,
             Self::PlanApproved { approved_by, .. } => approved_by,
+            Self::Stop { requested_by } => requested_by,
         }
     }
 }

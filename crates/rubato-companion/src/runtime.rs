@@ -186,7 +186,8 @@ async fn run(
             user: cfg.state.user.clone(),
             version: crate::kernel::VERSION.to_owned(),
             token: cfg.state.pairing_token.clone(),
-            capabilities: hello_capabilities(skill.as_deref()),
+            capabilities: hello_capabilities(skill.as_deref(), cfg.workspace.companion.mode),
+            client: cfg.workspace.companion.mode,
         },
         seq,
         cfg.state.last_server_seq,
@@ -328,14 +329,18 @@ async fn run(
 /// (draft restore since PR 8):
 /// `plan_handoff` with the `/handoff` route that forwards `HandoffReport`, and `skill:<version>`
 /// when the installed skill names its version.
-pub fn hello_capabilities(skill: Option<&str>) -> Vec<String> {
+pub fn hello_capabilities(skill: Option<&str>, mode: rubato_protocol::ClientKind) -> Vec<String> {
     let mut caps = vec![
         capability::HOOK_ALLOWLIST.to_owned(),
         capability::SESSION_INPUT.to_owned(),
         capability::DRAFT_MIRROR.to_owned(),
         capability::PLAN_HANDOFF.to_owned(),
         capability::DRAFT_RESTORE.to_owned(),
+        capability::SESSION_STOP.to_owned(),
     ];
+    if mode == rubato_protocol::ClientKind::Headless {
+        caps.push(capability::HEADLESS.to_owned());
+    }
     if let Some(v) = skill {
         caps.push(format!("{}{v}", capability::SKILL_PREFIX));
     }
@@ -511,6 +516,7 @@ pub async fn supervise(mut tasks: Tasks, mut shutdown: watch::Receiver<bool>) ->
 mod tests {
     use super::*;
     use crate::kernel::telemetry::capture;
+    use rubato_protocol::ClientKind;
     use std::time::Duration;
 
     fn exited(events: &capture::Events) -> usize {
@@ -526,18 +532,25 @@ mod tests {
     /// when its version is known.
     #[test]
     fn hello_announces_the_handoff_and_the_skill_when_known() {
-        let with = hello_capabilities(Some("0.2.0"));
+        let with = hello_capabilities(Some("0.2.0"), ClientKind::Interactive);
         for c in [
             capability::HOOK_ALLOWLIST,
             capability::SESSION_INPUT,
             capability::DRAFT_MIRROR,
             capability::PLAN_HANDOFF,
             capability::DRAFT_RESTORE,
+            capability::SESSION_STOP,
             "skill:0.2.0",
         ] {
             assert!(with.iter().any(|x| x == c), "{c} in {with:?}");
         }
-        let without = hello_capabilities(None);
+        assert!(
+            !with.iter().any(|x| x == capability::HEADLESS),
+            "an interactive companion does not announce headless"
+        );
+        let headless = hello_capabilities(None, ClientKind::Headless);
+        assert!(headless.iter().any(|x| x == capability::HEADLESS));
+        let without = hello_capabilities(None, ClientKind::Interactive);
         assert!(without.iter().any(|x| x == capability::PLAN_HANDOFF));
         assert!(
             without

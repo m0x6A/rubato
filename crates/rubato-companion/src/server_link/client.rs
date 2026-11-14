@@ -24,6 +24,8 @@ pub struct Identity {
     pub token: String,
     /// What this companion announces in Hello (`rubato_protocol::capability`).
     pub capabilities: Vec<String>,
+    /// Interactive or headless (ADR 0059), sent in Hello.
+    pub client: rubato_protocol::ClientKind,
 }
 
 pub struct Client {
@@ -139,6 +141,7 @@ impl Client {
             protocol_version: PROTOCOL_VERSION,
             last_seen_server_seq: self.last_server_seq,
             capabilities: self.identity.capabilities.clone(),
+            client: self.identity.client,
         })?;
         let hello_seq = hello.seq;
         sink.send(Message::Text(serde_json::to_string(&hello)?.into()))
@@ -252,6 +255,7 @@ mod tests {
             version: "test".into(),
             token: "t".into(),
             capabilities: vec![],
+            client: rubato_protocol::ClientKind::Interactive,
         }
     }
 

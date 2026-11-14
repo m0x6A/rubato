@@ -12,6 +12,7 @@ fn rank(s: StateSource) -> u8 {
     match s {
         StateSource::Hook => 3,
         StateSource::TmuxIde => 2,
+        StateSource::Headless => 3,
         StateSource::Launch => 1,
         StateSource::Scraped => 0,
     }

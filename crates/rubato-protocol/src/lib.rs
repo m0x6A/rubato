@@ -98,7 +98,8 @@ pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use room::{RoomAuthorKind, RoomKey, RoomMessage, RoomPostRequest, RoomView, SeamNotice};
 pub use session::{
-    BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
+    BlockCause, ClientKind, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource,
+    TmuxLocation,
 };
 pub use session_log::{LaunchLog, LogKind, LogRole, SessionLogEntry};
 pub use session_message::{
