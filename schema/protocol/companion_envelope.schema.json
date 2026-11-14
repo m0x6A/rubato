@@ -250,6 +250,20 @@
           ]
         },
         {
+          "description": "What `plan.ts handoff` reported to the loopback endpoint (ADR 0055).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "handoff_report"
+            }
+          },
+          "$ref": "#/$defs/HandoffReport",
+          "required": [
+            "type"
+          ]
+        },
+        {
           "description": "Acknowledges a server envelope by sequence.",
           "type": "object",
           "properties": {
@@ -357,6 +371,101 @@
           "type": "string",
           "const": "too_large"
         }
+      ]
+    },
+    "HandoffOutcome": {
+      "description": "What `plan.ts handoff` did.",
+      "oneOf": [
+        {
+          "description": "One commit with the approval record and the accepted ADRs, pushed.",
+          "type": "string",
+          "const": "committed"
+        },
+        {
+          "description": "The plan no longer hashes to the approved sha: nothing was written.",
+          "type": "string",
+          "const": "plan_changed"
+        },
+        {
+          "description": "The bundle no longer hashes to the approved bundle: nothing was written.",
+          "type": "string",
+          "const": "bundle_changed"
+        },
+        {
+          "description": "A pinned ADR changed after it was pinned: nothing was written.",
+          "type": "string",
+          "const": "adr_changed"
+        },
+        {
+          "description": "Committed, but the push failed; a rerun pushes the same commit.",
+          "type": "string",
+          "const": "push_failed"
+        },
+        {
+          "description": "Anything else, with the line's `error`.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "HandoffReport": {
+      "description": "Companion → server: a handoff's outcome, for one launch.",
+      "type": "object",
+      "properties": {
+        "adrs_accepted": {
+          "description": "ADR numbers moved to accepted in this commit.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "adrs_left": {
+          "description": "ADR numbers the approval covers that this repo could not accept (they live in the map\nrepo; finding `AdrsNotAccepted`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approval": {
+          "description": "The Rubato approval id the handoff was run for.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "commit": {
+          "description": "The commit made, when one was.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "description": "Always `rubato.plan.handoff`.",
+          "type": "string"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "outcome": {
+          "$ref": "#/$defs/HandoffOutcome"
+        }
+      },
+      "required": [
+        "launch_id",
+        "event",
+        "outcome",
+        "approval",
+        "at"
       ]
     },
     "Heartbeat": {
@@ -640,6 +749,11 @@
           "description": "The session's tmux pane is not known.",
           "type": "string",
           "const": "no_pane"
+        },
+        {
+          "description": "`plan_approved` for a companion whose installed skill has no `plan.ts handoff`.",
+          "type": "string",
+          "const": "skill_outdated"
         }
       ]
     },

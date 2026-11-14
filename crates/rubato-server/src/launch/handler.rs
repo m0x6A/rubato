@@ -179,6 +179,7 @@ pub async fn launch(
         otel_resource: otel,
         map_version: Some(map.version.clone()),
         plan_path: Some(plan_path),
+        planning: rubato_protocol::PlanningMode::Git,
     };
     store::store_launch(&app.db, ws.as_str(), companion.companion_id, &command)
         .await

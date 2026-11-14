@@ -52,6 +52,8 @@ pub mod attr {
     pub const LOG_KIND: &str = "rubato.log.kind";
     /// A draft revision number (ADR 0053).
     pub const DRAFT_REV: &str = "rubato.draft.rev";
+    /// A Rubato approval id (ADR 0054).
+    pub const APPROVAL_ID: &str = "rubato.approval_id";
 }
 
 /// Metric instrument names.
@@ -164,6 +166,13 @@ pub mod metric {
     pub const DRAFTS_REVISIONS: &str = "rubato.drafts.revisions";
     /// Draft bundles not stored, by reason (`too_large`, `owner_conflict`, `unknown_launch`).
     pub const DRAFTS_REFUSED: &str = "rubato.drafts.refused";
+    /// Approvals delivered more than 30 minutes ago, still current, with no matching commit and
+    /// no `committed` handoff report (alert `ApprovalNoHandoff`, ADR 0055).
+    pub const PLANS_HANDOFF_OVERDUE: &str = "rubato.plans.handoff_overdue";
+    /// Handoff commits whose link comment is not posted (alert `HandoffNoLinkComment`).
+    pub const PLANS_LINK_COMMENT_MISSING: &str = "rubato.plans.link_comment_missing";
+    /// Plans on a branch whose approval record differs from Rubato's (alert `ApprovalRecordMismatch`).
+    pub const PLANS_APPROVAL_RECORD_MISMATCH: &str = "rubato.plans.approval_record_mismatch";
     /// Workspaces configured (ADR 0044), recorded at start and every poll tick.
     pub const WORKSPACES_CONFIGURED: &str = "rubato.workspaces.configured";
     /// Repos named by more than one workspace's map (ADR 0048), recorded every poll tick.
@@ -196,6 +205,8 @@ pub mod span {
     pub const SESSION_INPUT_DELIVER: &str = "rubato.session_input.deliver";
     /// Server: one draft bundle received.
     pub const PLAN_DRAFT: &str = "rubato.plan.draft";
+    /// Server: posting one link comment as the approver (ADR 0055).
+    pub const PLAN_LINK_COMMENT: &str = "rubato.plan.link_comment";
 }
 
 /// Event (log record) names.
@@ -207,6 +218,8 @@ pub mod event {
     pub const PLAN_WAIT: &str = "rubato.plan.wait";
     /// A plan's pinned ADRs recorded as accepted by an approval (skill `adrs.ts accept`).
     pub const ADRS_ACCEPT: &str = "rubato.adrs.accept";
+    /// A plan handed off to Git after approval in Rubato (skill `plan.ts handoff`, ADR 0055).
+    pub const PLAN_HANDOFF: &str = "rubato.plan.handoff";
     /// An essential background task returned while shutdown was not requested.
     pub const TASK_EXITED: &str = "rubato.task.exited";
 }
@@ -248,6 +261,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::LOG_ROLE,
         attr::LOG_KIND,
         attr::DRAFT_REV,
+        attr::APPROVAL_ID,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -302,6 +316,9 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
         metric::DRAFTS_REFUSED,
+        metric::PLANS_HANDOFF_OVERDUE,
+        metric::PLANS_LINK_COMMENT_MISSING,
+        metric::PLANS_APPROVAL_RECORD_MISMATCH,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
@@ -314,11 +331,13 @@ pub fn all_names() -> Vec<&'static str> {
         span::SESSION_MESSAGE_DISPATCH,
         span::SESSION_INPUT_DELIVER,
         span::PLAN_DRAFT,
+        span::PLAN_LINK_COMMENT,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,
         event::PLAN_WAIT,
         event::ADRS_ACCEPT,
+        event::PLAN_HANDOFF,
         event::TASK_EXITED,
     ]
 }

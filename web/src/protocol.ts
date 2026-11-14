@@ -26,7 +26,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | {
 seq: number
 type: "ack"
 })
@@ -84,7 +84,7 @@ outcome: "failed"
 /**
  * Why the companion did not type a message.
  */
-export type MessageRefusal = ("not_paired_user" | "not_launched_here" | "unknown_session" | "too_long" | "no_pane")
+export type MessageRefusal = ("not_paired_user" | "not_launched_here" | "unknown_session" | "too_long" | "no_pane" | "skill_outdated")
 /**
  * Body of `POST /api/map/draft/ops`. `op_id` is made by the browser, so a retry of the same
  * request does not add the operation twice.
@@ -130,6 +130,23 @@ issue: IssueRef
 kind: "draft_owner_conflict"
 other: string
 owner: string
+} | {
+branch: string
+issue: IssueRef
+kind: "approval_record_mismatch"
+reason: string
+} | {
+approval_id: string
+issue: IssueRef
+kind: "link_comment_waiting"
+} | {
+approver: string
+issue: IssueRef
+kind: "link_waiting_for_approver"
+} | {
+adrs: string[]
+issue: IssueRef
+kind: "adrs_not_accepted"
 } | {
 error: string
 issue: IssueRef
@@ -368,11 +385,28 @@ type: "error"
  */
 export type SessionMessage = ({
 type: "session_message"
-} & {
+} & ({
 author: string
 kind: "chat"
 text: string
-})
+} | {
+approval_id: string
+approved_at: string
+approved_by: string
+approved_sha: string
+branch: string
+bundle_hash: string
+kind: "plan_approved"
+plan_path: string
+/**
+ * The approver owns the draft.
+ */
+self_approved: boolean
+/**
+ * Rubato's link to the approval, written into accepted ADRs.
+ */
+url: string
+}))
 /**
  * Pushed to browsers over `/ws/web`. Clients refetch the overview on `Changed`.
  */
@@ -598,6 +632,12 @@ type: "stale"
  */
 export interface DraftBundle {
 type: "draft"
+}
+/**
+ * What `plan.ts handoff` reported to the loopback endpoint (ADR 0055).
+ */
+export interface HandoffReport {
+type: "handoff_report"
 }
 /**
  * A decision recorded as an issue comment with the `Decision:` template (ADR 0014).
@@ -1152,6 +1192,10 @@ otel_resource?: {
  * mirrors, with the bundle it names (ADR 0053). Absent from an older server.
  */
 plan_path?: (string | null)
+/**
+ * How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.
+ */
+planning?: ("git" | "rubato")
 /**
  * Initial prompt for the session.
  */
@@ -1942,6 +1986,10 @@ otel_resource?: {
  * mirrors, with the bundle it names (ADR 0053). Absent from an older server.
  */
 plan_path?: (string | null)
+/**
+ * How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.
+ */
+planning?: ("git" | "rubato")
 /**
  * Initial prompt for the session.
  */

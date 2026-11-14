@@ -7,6 +7,7 @@
 pub mod approve;
 pub mod auth;
 pub mod github;
+pub mod handoff;
 pub mod hook;
 pub mod ids;
 pub mod issue_body;
@@ -39,6 +40,10 @@ pub use auth::Me;
 pub use github::{
     ApprovalBody, ApprovalRecord, ApprovalState, ApprovalVersion, ChecksStatus, DecisionBody,
     DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, trusted_author,
+};
+pub use handoff::{
+    HandoffLine, HandoffOutcome, HandoffReport, PlanningMode, SKILL_HANDOFF_VERSION,
+    skill_has_handoff,
 };
 pub use hook::{HookEvent, HookEventKind};
 pub use ids::{IssueRef, MapRef, ParseIssueRefError};

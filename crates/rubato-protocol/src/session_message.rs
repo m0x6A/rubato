@@ -25,12 +25,60 @@ pub struct SessionMessage {
     pub created_at: DateTime<Utc>,
 }
 
+/// The prompt the companion types for `plan_approved` (ADR 0055): the record travels as
+/// arguments, so nothing outside the worktree has to be read.
+pub fn handoff_prompt(issue: &IssueRef, kind: &SessionMessageKind) -> Option<String> {
+    let SessionMessageKind::PlanApproved {
+        approval_id,
+        approved_by,
+        approved_at,
+        approved_sha,
+        bundle_hash,
+        branch,
+        self_approved,
+        url,
+        ..
+    } = kind
+    else {
+        return None;
+    };
+    use chrono::{Datelike, Timelike};
+    let at = format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        approved_at.year(),
+        approved_at.month(),
+        approved_at.day(),
+        approved_at.hour(),
+        approved_at.minute(),
+        approved_at.second()
+    );
+    let self_flag = if *self_approved { " --self" } else { "" };
+    Some(format!(
+        "Rubato: the plan for {issue} on {branch} was approved by {approved_by} at {at} (approval {approval_id}, plan sha {approved_sha}). Hand it off now with the rubato skill: plan.ts handoff --approval {approval_id} --sha {approved_sha} --bundle {bundle_hash} --by {approved_by} --at {at}{self_flag} --url {url}. Then reply with the rubato.plan.handoff line it prints."
+    ))
+}
+
 /// What the message is. More kinds come with their own capability (`plan_approved`, `room_turn`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionMessageKind {
     /// Text a person typed in Rubato for their own session.
     Chat { text: String, author: String },
+    /// A team member approved the session's plan in Rubato (ADR 0054): the companion types the
+    /// handoff command with the approval record as arguments (ADR 0055). Goes first.
+    PlanApproved {
+        approval_id: Uuid,
+        approved_by: String,
+        approved_at: DateTime<Utc>,
+        approved_sha: String,
+        bundle_hash: String,
+        branch: String,
+        plan_path: String,
+        /// The approver owns the draft.
+        self_approved: bool,
+        /// Rubato's link to the approval, written into accepted ADRs.
+        url: String,
+    },
 }
 
 impl SessionMessageKind {
@@ -38,13 +86,31 @@ impl SessionMessageKind {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Chat { .. } => "chat",
+            Self::PlanApproved { .. } => "plan_approved",
         }
     }
 
-    /// The text the companion types.
-    pub fn text(&self) -> &str {
+    /// The text a person sees for it: the chat text, or a line naming the approval. For
+    /// `plan_approved` the companion renders the typed prompt itself (`handoff_prompt`).
+    pub fn text(&self) -> String {
         match self {
-            Self::Chat { text, .. } => text,
+            Self::Chat { text, .. } => text.clone(),
+            Self::PlanApproved {
+                approved_by,
+                approved_sha,
+                ..
+            } => format!(
+                "Plan approved by {approved_by} (plan {}): hand it off",
+                &approved_sha[..approved_sha.len().min(7)]
+            ),
+        }
+    }
+
+    /// The author shown with it.
+    pub fn author(&self) -> &str {
+        match self {
+            Self::Chat { author, .. } => author,
+            Self::PlanApproved { approved_by, .. } => approved_by,
         }
     }
 }
@@ -63,6 +129,8 @@ pub enum MessageRefusal {
     TooLong,
     /// The session's tmux pane is not known.
     NoPane,
+    /// `plan_approved` for a companion whose installed skill has no `plan.ts handoff`.
+    SkillOutdated,
 }
 
 impl MessageRefusal {
@@ -73,6 +141,7 @@ impl MessageRefusal {
             Self::UnknownSession => "unknown_session",
             Self::TooLong => "too_long",
             Self::NoPane => "no_pane",
+            Self::SkillOutdated => "skill_outdated",
         }
     }
 }
@@ -250,5 +319,40 @@ mod tests {
             assert_eq!(SessionMessageState::parse(s.name()), Some(s));
         }
         assert_eq!(SessionMessageState::parse("nope"), None);
+    }
+}
+
+#[cfg(test)]
+mod handoff_prompt_tests {
+    use super::*;
+
+    #[test]
+    fn the_handoff_prompt_carries_the_record_as_arguments() {
+        let kind = SessionMessageKind::PlanApproved {
+            approval_id: Uuid::from_u128(5),
+            approved_by: "m0x6A".into(),
+            approved_at: DateTime::from_timestamp(1_794_700_800, 0).unwrap(),
+            approved_sha: "22e89bdc981e97d34dc7057747332a8e23cdf0e9".into(),
+            bundle_hash: "0123abcd".into(),
+            branch: "issue/122-plan-in-rubato".into(),
+            plan_path: "docs/plans/122.md".into(),
+            self_approved: true,
+            url: "https://rubato.example/approvals/5".into(),
+        };
+        let p = handoff_prompt(&IssueRef::new("m0x6A/rubato", 122), &kind).unwrap();
+        assert!(p.contains("plan.ts handoff --approval 00000000-0000-0000-0000-000000000005 --sha 22e89bdc981e97d34dc7057747332a8e23cdf0e9 --bundle 0123abcd --by m0x6A --at 2026-11-15T00:00:00Z --self --url https://rubato.example/approvals/5"), "{p}");
+        assert!(!p.contains('\n'), "one line, so the paste is one prompt");
+        assert_eq!(
+            kind.text(),
+            "Plan approved by m0x6A (plan 22e89bd): hand it off"
+        );
+        let chat = SessionMessageKind::Chat {
+            text: "hi".into(),
+            author: "m0x6A".into(),
+        };
+        assert_eq!(
+            handoff_prompt(&IssueRef::new("m0x6A/rubato", 122), &chat),
+            None
+        );
     }
 }

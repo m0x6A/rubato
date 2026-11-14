@@ -58,6 +58,10 @@
         "null"
       ]
     },
+    "planning": {
+      "description": "How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.",
+      "$ref": "#/$defs/PlanningMode"
+    },
     "prompt": {
       "description": "Initial prompt for the session.",
       "type": "string"
@@ -112,6 +116,14 @@
       "required": [
         "repo",
         "number"
+      ]
+    },
+    "PlanningMode": {
+      "description": "How a launched session plans (ADR 0053): `git` is today's flow (commit, push, `Review:` and\n`Approved:` comments); `rubato` drafts in Rubato and hands off at approval. The server sends\n`rubato` only after the cutover and to a companion and skill that can carry it.",
+      "type": "string",
+      "enum": [
+        "git",
+        "rubato"
       ]
     }
   }

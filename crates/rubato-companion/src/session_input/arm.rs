@@ -132,7 +132,7 @@ impl SessionInputTask {
                     msg.launch_id,
                     at,
                     msg.id,
-                    msg.kind.text(),
+                    &msg.kind.text(),
                 );
                 Handled {
                     outcome: SessionMessageOutcome::Delivered,

@@ -167,6 +167,7 @@ async fn on_envelope(
         CompanionMessage::Stale(_) => "stale",
         CompanionMessage::SessionMessageResult(_) => "session_message_result",
         CompanionMessage::Draft(_) => "draft",
+        CompanionMessage::HandoffReport(_) => "handoff_report",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
@@ -324,6 +325,18 @@ async fn on_envelope(
                         tracing::warn!(rubato.issue = %bundle.issue, "draft bundle for a launch this companion did not start");
                     }
                     Err(e) => tracing::error!(error = %format!("{e:#}"), "draft: reading the launch failed"),
+                }
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::HandoffReport(r) => {
+                // The approve slice takes it once PR 7's server half lands; until then it is
+                // recorded as an envelope and logged, so the outcome is never silent.
+                match launch::launch_target(&app.db, r.launch_id).await {
+                    Ok(Some(t)) if t.companion_id == companion_id => {
+                        tracing::info!(rubato.issue = %t.issue, rubato.approval_id = %r.line.approval, outcome = r.line.outcome.name(), commit = ?r.line.commit, "handoff report");
+                    }
+                    Ok(_) => tracing::warn!(rubato.approval_id = %r.line.approval, "handoff report for a launch this companion did not start"),
+                    Err(e) => tracing::error!(error = %format!("{e:#}"), "handoff: reading the launch failed"),
                 }
                 Some(ServerMessage::Ack { seq: env.seq })
             }

@@ -326,6 +326,22 @@ pub enum Finding {
         owner: String,
         other: String,
     },
+    /// The plan on the branch carries an approval record Rubato did not make, or one that differs
+    /// from its own, or a hash that is not the approved one (ADR 0054, ADR 0055). No link
+    /// comment is posted for it.
+    ApprovalRecordMismatch {
+        issue: IssueRef,
+        branch: String,
+        reason: String,
+    },
+    /// The link comment's outcome is unknown and the comments pass has not found it for 30
+    /// minutes; a person may post it again (ADR 0055).
+    LinkCommentWaiting { issue: IssueRef, approval_id: Uuid },
+    /// Rubato holds no usable token for the approver, so the link comment waits (ADR 0055).
+    LinkWaitingForApprover { issue: IssueRef, approver: String },
+    /// The approval covers ADRs that live in the map repo, which this repo's handoff could not
+    /// accept (ADR 0055, Q12).
+    AdrsNotAccepted { issue: IssueRef, adrs: Vec<String> },
     /// A plan file exists but does not parse.
     PlanParseError {
         issue: IssueRef,

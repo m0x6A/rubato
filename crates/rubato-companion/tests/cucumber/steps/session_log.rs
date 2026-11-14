@@ -10,6 +10,7 @@ use std::time::Duration;
 fn message_text(w: &RubatoWorld) -> String {
     match &w.last_message.as_ref().expect("a message sent before").kind {
         SessionMessageKind::Chat { text, .. } => text.clone(),
+        other => other.text(),
     }
 }
 
