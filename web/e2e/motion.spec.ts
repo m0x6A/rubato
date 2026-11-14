@@ -1,4 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
+import { FRESH_DIRECTIONS, freshTraffic, routeOverview } from "./fixtures/traffic.ts";
 
 // Issue #81, design §7a: with reduced motion nothing moves. Proven twice: once with the switch
 // alone (the media query says no-preference, so the CSS belt is not what stops anything, and
@@ -146,6 +147,35 @@ for (const run of runs) {
     expect(changedProposed).toBeLessThanOrEqual(STILL_NOISE_PX);
   });
 }
+
+// Issue #104, design §5.7: observed traffic under reduced motion is one still chevron per
+// direction with calls, and nothing animates; with full motion the chevrons travel.
+test("reduced motion, the Traffic lens: one still chevron per direction, nothing animates", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await routeOverview(page, freshTraffic);
+  await setUp(page);
+  const c = await animationsAfter(page, '.lens [role="radio"]:nth-child(4)');
+  await expect(page.getByRole("radio", { name: "Traffic" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator(".traffic")).toHaveCount(FRESH_DIRECTIONS);
+  expect(await page.locator(".traffic.still").count()).toBe(FRESH_DIRECTIONS);
+  await expect(page.getByTestId("territory-rubato-companion-github")).toBeVisible();
+  const changed = await canvasChange(page);
+  console.log(`reduced motion, traffic lens: ${JSON.stringify(c)}, ${FRESH_DIRECTIONS} still chevrons, ${changed} pixels changed in 500 ms`);
+  expect(c).toEqual({ running: 0, smil: 0 });
+  expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
+  expect(changed).toBeLessThanOrEqual(STILL_NOISE_PX);
+});
+
+test("must fail: with full motion the Traffic lens's chevrons travel", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await routeOverview(page, freshTraffic);
+  await setUp(page);
+  await page.getByRole("radio", { name: "Traffic" }).click();
+  // web-server 20/min forward (2), 0.5/min back (1); server-github 5/min (2); the territory edge 4/min (2).
+  await expect(page.locator(".traffic")).toHaveCount(7);
+  expect(await page.locator(".traffic.still").count()).toBe(0);
+  expect(await page.evaluate(() => document.getAnimations().length)).toBeGreaterThan(0);
+});
 
 test("must fail: with full motion the pulse animates and the canvas moves", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });

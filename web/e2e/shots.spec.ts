@@ -1,4 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
+import { freshTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
 
 // Issue #81: screenshots of every named surface, dark and light, at desktop width and at 900 px.
 // Runs only with RUBATO_E2E_SHOTS=<dir>; writes <surface>-<theme>-<width>.png there and prints
@@ -70,6 +71,25 @@ const SURFACES: { name: string; setup: (page: Page) => Promise<void> }[] = [
       await atWork(page);
       await ready(page);
       await page.getByRole("radio", { name: /^Data flow/ }).click();
+    },
+  },
+  {
+    // Issue #104: chevrons on lit seams, a hollow quiet seam and a dotted territory edge.
+    name: "map-traffic",
+    setup: async (page) => {
+      await routeOverview(page, freshTraffic);
+      await ready(page);
+      await page.getByRole("radio", { name: "Traffic" }).click();
+      await expect(page.getByTestId("territory-rubato-companion-github")).toBeVisible();
+    },
+  },
+  {
+    name: "map-traffic-unknown",
+    setup: async (page) => {
+      await routeOverview(page, staleTraffic);
+      await ready(page);
+      await page.getByRole("radio", { name: "Traffic" }).click();
+      await expect(page.getByTestId("legend")).toContainText("Traffic unknown");
     },
   },
   {
