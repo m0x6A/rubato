@@ -112,6 +112,16 @@
           "kind": "external"
         },
         {
+          "description": "Self-hosted WebRTC media server (Apache 2.0) beside Rubato, run by the team, never started by Rubato. Carries a plan room's voice channel between browsers, behind the voice flag (ADR 0073).",
+          "id": "livekit",
+          "kind": "external"
+        },
+        {
+          "description": "Speech-to-text and text-to-speech over an OpenAI-compatible HTTP API, local (Speaches, whisper.cpp, Kokoro) or hosted, chosen by configuration (ADR 0073).",
+          "id": "speech-provider",
+          "kind": "external"
+        },
+        {
           "id": "billing",
           "kind": "context"
         }
@@ -705,7 +715,7 @@
           "description": "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map.",
           "flows": [
             {
-              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room",
+              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073)",
               "from": "rubato-server",
               "kind": "data",
               "to": "web"
@@ -717,7 +727,7 @@
               "to": "web"
             },
             {
-              "carries": "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages",
+              "carries": "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages; behind the voice flag, a push-to-talk utterance for a room (ADR 0073)",
               "from": "web",
               "kind": "data",
               "to": "rubato-server"
@@ -734,6 +744,58 @@
           "id": "web-server",
           "owner": "rubato-server",
           "to": "rubato-server"
+        },
+        {
+          "carries": "WebRTC audio of a plan room's voice channel, joined with a LiveKit token Rubato minted (livekit-client)",
+          "description": "People in a plan's room hear each other through the team's own LiveKit. Rubato only mints the join token; the audio never passes through Rubato (ADR 0073).",
+          "flows": [
+            {
+              "carries": "join a plan room's voice channel with a ten-minute join token: microphone only, the login as name",
+              "from": "web",
+              "kind": "control",
+              "to": "livekit"
+            },
+            {
+              "carries": "each person's microphone audio",
+              "from": "web",
+              "kind": "data",
+              "to": "livekit"
+            },
+            {
+              "carries": "the other participants' audio and who is in the voice channel",
+              "from": "livekit",
+              "kind": "data",
+              "to": "web"
+            }
+          ],
+          "from": "web",
+          "guard": "voice token tests decode every claim with the secret, and a wrong secret fails; livekit-client mocked in Vitest; the server never connects to LiveKit",
+          "id": "web-livekit",
+          "owner": "web",
+          "to": "livekit"
+        },
+        {
+          "carries": "POST {base}/audio/transcriptions and {base}/audio/speech, behind the Speech port with a fake adapter for tests",
+          "description": "The server turns one push-to-talk utterance into room text and an agent's reply into a short spoken clip. No audio is stored (ADR 0073).",
+          "flows": [
+            {
+              "carries": "one utterance's audio to transcribe; the spoken cut of an agent's reply to synthesize",
+              "from": "rubato-server",
+              "kind": "data",
+              "to": "speech-provider"
+            },
+            {
+              "carries": "the transcript; the synthesized clip",
+              "from": "speech-provider",
+              "kind": "data",
+              "to": "rubato-server"
+            }
+          ],
+          "from": "rubato-server",
+          "guard": "Speech port tests against the fake adapter and a recorded OpenAI-compatible stub; SpeechProviderFailing alert",
+          "id": "server-speech",
+          "owner": "rubato-server",
+          "to": "speech-provider"
         },
         {
           "from": "billing",

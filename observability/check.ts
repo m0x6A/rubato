@@ -34,6 +34,8 @@ const REQUIRED = [
   // Issue #208 (ADR 0074).
   "GitHubWebhooksSilent",
   "GitHubWebhooksStuck",
+  // Issue #146 (ADR 0073).
+  "SpeechProviderFailing",
 ];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
@@ -80,6 +82,9 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Launches by outcome", "rubato_launches_total"],
   // Issue #142 (ADR 0061): the O-rows of the skill seams and companion-claude-code name this panel.
   ["Skills emitting", "traces_service_graph_request_total"],
+  // Issue #146 (ADR 0073): the O-rows of server-speech and web-livekit name this panel.
+  ["Voice", "rubato_voice_speech_total"],
+  ["Voice", "rubato_voice_join_failed_total"],
 ];
 
 type Panel = { id?: number; title: string; type?: string; targets?: { expr?: string }[] };

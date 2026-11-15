@@ -7,7 +7,7 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
-    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic,
+    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic, voice,
     web_link, webhooks,
 };
 use axum::Router;
@@ -136,6 +136,24 @@ pub fn router(app: App) -> Router {
             rubato_protocol::room::routes::ROOM_MESSAGES,
             post(rooms::post),
         )
+        // ADR 0073: a plan room's voice channel. Every route answers 404 `voice_off` while
+        // `RUBATO_VOICE` is off; the handlers cap their own bodies.
+        .route(
+            rubato_protocol::voice::routes::VOICE_TOKEN,
+            post(voice::voice_token),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_UTTERANCE,
+            post(voice::utterance),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_SPEECH,
+            get(voice::speech),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_JOIN_FAILED,
+            post(voice::join_failed),
+        )
         .route(
             rubato_protocol::plan_draft::routes::DRAFT_REVISION,
             get(plan_drafts::revision),
@@ -170,6 +188,7 @@ pub fn router(app: App) -> Router {
     .route("/webhooks/{*rest}", any(unknown_api_path));
     let csp = axum::http::HeaderValue::from_str(&crate::kernel::http::content_security_policy(
         &app.config.public_url,
+        app.config.livekit_url(),
     ))
     .expect("a header-safe policy");
     api.fallback_service(ServeDir::new(dist).not_found_service(ServeFile::new(index)))

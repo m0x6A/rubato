@@ -18,6 +18,7 @@ async fn main() -> Result<()> {
     }
     config.report_cutover();
     config.report_webhooks();
+    config.report_voice();
     let pool = db::connect(&config.database_url).await?;
     let dev_issues = match &config.dev_issues {
         Some(path) => {

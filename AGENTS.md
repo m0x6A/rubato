@@ -30,7 +30,7 @@ Does not:
 - Orchestrate agents across repositories or order cross-repo changes.
 - Run agents itself. Rubato never executes anything on a developer's machine; the companion does, for its own user only.
 - Stream or attach to a colleague's live terminal.
-- Audio.
+- Audio, except a plan's room voice channel behind the off-by-default voice flag (ADR 0073); Rubato stores no audio.
 
 ## Architecture
 
@@ -95,7 +95,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
 `/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces, telemetry, db connection, `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port); slices:
+(config, workspaces, telemetry, db connection, `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -117,6 +117,7 @@ github_poll     issue reads, open issues and pulls, placement   pull_requests, d
 pulls           a pull request's view, merging as the person    pr_merges
 import          a plan written outside Rubato becomes your draft  (none)
 rooms           a plan's room: messages, seam notices, agents called in, turns  room_messages, room_agents, room_requests
+voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
@@ -168,7 +169,7 @@ new_issue   "New issue here…": the form, pinned where begun      POST /api/iss
 plans       proposed and open plans, fit, Accept plan, drafts    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
 repos       connected repos, what each provides, their open pull requests and issues, loose sessions  (none)
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
-room        a plan's room: messages, notices, agents called in   GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id
+room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
 workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
 ```
 <!-- /slices -->
@@ -178,6 +179,7 @@ Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; 
 modules, each with the types and `routes` its seam uses (every type re-exported at the root):
 
 ```text
+agent      AgentReport, PlanStatus, DraftStatus, BranchStatus (ADR 0071; capability agent_mcp)
 approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
 auth       Me; ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
@@ -196,7 +198,9 @@ github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord and it
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 pulls      OpenPull, RepoPulls, PullDetail, MergeOffer, PlanGate, plan_gate, merge_refusal, MergeRequest, MergeResponse, reasons; PULL, PULLS_MERGE
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
+room       RoomMessage (with spoken), RoomAgent, RoomRequest, RoomView, RoomKey, RoomReply, call-in types, addressed_handles, reasons; ROOM, ROOM_MESSAGES, ROOM_AGENTS, ROOM_REQUEST
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
+voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
 ```
@@ -282,6 +286,7 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A handoff commit whose link comment is not on the issue.
 - A plan whose committed approval record differs from Rubato's.
 - Headless turns killed for running too long or too quiet, or left over from a companion restart (`HeadlessTurnsKilled`; never a stop or a cap hit).
+- A speech provider failing every call for 10 minutes while people use voice (`SpeechProviderFailing`, ADR 0073).
 - A GitHub App webhook that has stopped delivering while the catch-up poll finds changes, or a delivery not applied for 5 minutes (`GitHubWebhooksSilent`, `GitHubWebhooksStuck`, ADR 0074).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.

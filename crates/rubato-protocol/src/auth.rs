@@ -15,6 +15,9 @@ pub struct Me {
     /// `log_in_again`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cannot_act_reason: Option<String>,
+    /// A plan room's voice channel (ADR 0073); absent while `RUBATO_VOICE` is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<crate::voice::VoiceAvailability>,
 }
 
 /// Route paths for login (`/auth/*` is outside `/api`).

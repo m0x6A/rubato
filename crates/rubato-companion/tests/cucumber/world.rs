@@ -242,7 +242,7 @@ impl RubatoWorld {
             root.join("fork-cost").display()
         );
         let script = format!(
-            "#!/bin/sh\n{fork}{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log\" 2>&1\nexec '{}' idle --record \"$PWD/.claude-standin.typed\"\n",
+            "#!/bin/sh\n{fork}{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log.tmp\" 2>&1 && mv \"$PWD/.claude-standin.log.tmp\" \"$PWD/.claude-standin.log\"\nexec '{}' idle --record \"$PWD/.claude-standin.typed\"\n",
             real.join("claude").display()
         );
         let claude = fake_bin.join("claude");

@@ -15,8 +15,8 @@ const map = loadMap(resolve(root, "docs/design/rubato-map.yml"), schemaDir);
 
 describe("map", () => {
   it("loads Rubato's own map", () => {
-    expect(map.nodes.length).toBe(11);
-    expect(map.seams?.length).toBe(12);
+    expect(map.nodes.length).toBe(13);
+    expect(map.seams?.length).toBe(14);
   });
 
   it("rejects a map that fails the schema or the structural checks", () => {

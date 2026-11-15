@@ -4120,7 +4120,7 @@ async fn propose_opens_one_pr_and_freezes_the_draft() {
     assert!(proposed.node("billing").is_some());
     assert_eq!(proposed.seam("server-billing").unwrap().owner, "billing");
     assert_eq!(proposed.validate(), Ok(()));
-    assert_eq!(proposed.nodes.len(), 12, "everything else is kept");
+    assert_eq!(proposed.nodes.len(), 14, "everything else is kept");
     let pull = &h.call_args("create_pull")[0];
     assert!(
         pull.starts_with(&format!("m0x6A/rubato {} main Map: 2 changes", p.branch)),

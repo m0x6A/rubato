@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use opentelemetry::global;
-use opentelemetry::metrics::{Counter, Gauge, Meter};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
 use rubato_protocol::otel;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -165,6 +165,12 @@ pub struct Metrics {
     pub plans_link_comment_missing: Gauge<u64>,
     /// Plans whose approval record differs from Rubato's (ADR 0054).
     pub plans_approval_record_mismatch: Gauge<u64>,
+    /// Speech calls by op, outcome and provider, and their seconds (ADR 0073).
+    pub voice_speech: Counter<u64>,
+    pub voice_duration: Histogram<f64>,
+    /// Voice join tokens by outcome, and failed joins the browser reported, by reason.
+    pub voice_tokens: Counter<u64>,
+    pub voice_join_failed: Counter<u64>,
 }
 
 impl Metrics {
@@ -259,6 +265,13 @@ impl Metrics {
             plans_approval_record_mismatch: m
                 .u64_gauge(otel::metric::PLANS_APPROVAL_RECORD_MISMATCH)
                 .build(),
+            voice_speech: m.u64_counter(otel::metric::VOICE_SPEECH).build(),
+            voice_duration: m
+                .f64_histogram(otel::metric::VOICE_DURATION)
+                .with_description("seconds one speech call took")
+                .build(),
+            voice_tokens: m.u64_counter(otel::metric::VOICE_TOKENS).build(),
+            voice_join_failed: m.u64_counter(otel::metric::VOICE_JOIN_FAILED).build(),
         }
     }
 
