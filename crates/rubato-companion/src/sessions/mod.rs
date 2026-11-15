@@ -3,6 +3,7 @@
 //! comes from the branch (ADR 0006). Other slices add their own `impl Registry` blocks (design
 //! D7).
 
+mod assignment;
 mod discovery;
 mod headless;
 mod identity;
@@ -10,6 +11,8 @@ mod launches;
 mod registry;
 mod tasks;
 
+pub(crate) use assignment::PendingLaunch;
+pub use assignment::{Assignment, AssignmentView};
 pub use headless::{
     Headless, HeadlessConfig, TurnRecord, reap_previous, transcript_path_for, turn_script_path,
 };

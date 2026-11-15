@@ -68,6 +68,8 @@ pub struct Entry {
     /// The bundle hash of a draft this launch restored (plan 122 §D5): the plan mirror's
     /// first settle does not send it back as new. In memory only.
     pub restored_hash: Option<String>,
+    /// What the launch was for, for a launched session (plan 220 §2).
+    pub assignment: Option<super::Assignment>,
 }
 
 impl Entry {
@@ -129,6 +131,8 @@ pub struct Registry {
     /// The issue of the launch in flight, if any. Discovery adds no entry for it: the launch
     /// arm records the session itself, so the server never sees it as a discovered one first.
     pub(crate) launching: Option<IssueRef>,
+    /// The launch in flight, for `assignment_of` before the launcher returns (plan 220 §2).
+    pub(crate) pending: Option<super::assignment::PendingLaunch>,
     /// A launch was recorded or moved to a new session id since `launches.json` was written
     /// (`sessions::save_launches_if_changed`).
     pub(crate) launches_changed: bool,
@@ -141,6 +145,7 @@ impl Registry {
             user: user.into(),
             entries: Vec::new(),
             launching: None,
+            pending: None,
             launches_changed: false,
         }
     }
@@ -275,6 +280,7 @@ mod tests {
             pasted: Vec::new(),
             plan_path: None,
             restored_hash: None,
+            assignment: None,
         });
         let counts = r.counts_by_source();
         assert_eq!(counts.len(), StateSource::ALL.len() - 1, "{counts:?}");

@@ -103,6 +103,7 @@ mod tests {
                 branch: None,
                 spend_cap_usd: None,
                 plan_path: None,
+                assignment: None,
             }],
             None,
             false,

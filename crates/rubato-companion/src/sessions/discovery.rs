@@ -82,6 +82,7 @@ impl Registry {
                 pasted: Vec::new(),
                 plan_path: None,
                 restored_hash: None,
+                assignment: None,
             });
         }
         let live: std::collections::HashSet<&str> =

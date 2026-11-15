@@ -67,7 +67,7 @@ pub async fn on_command(
     headless: Option<&crate::sessions::Headless>,
     metrics: &Metrics,
 ) {
-    let live = registry.lock().await.begin_launch(&cmd.issue);
+    let live = registry.lock().await.begin_launch(cmd, Utc::now());
     tracing::info!(launch_id = %cmd.id, issue = %cmd.issue, "launch started");
     let blocking = tokio::task::spawn_blocking({
         let launcher = launcher.clone();
