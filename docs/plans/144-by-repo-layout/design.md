@@ -60,7 +60,10 @@ A `PUT /api/layout` carries the moved entries of any of the three; it is refused
 id is not a part of the merged map or the draft, when a box key is not a repo some such part
 names, or when a position is off the canvas. `DELETE /api/layout` clears `positions` only (as
 today); `DELETE /api/layout/grouped` clears `grouped` and `boxes`. Both answer with what they
-removed, so a `PUT` of the answer is Undo.
+removed, so a `PUT` of the answer is Undo; the answer holds only rows for the map's current
+parts and repos (a stale row would make the Undo `PUT` refused whole). A write counts once in
+`rubato.layout.writes` per arrangement it touches, so a body with both `positions` and
+`grouped` counts `flat` and `grouped`; the `layout written` line is at info.
 
 Storage: one additive table, migration `0024_map_layout_grouped.sql`:
 
@@ -102,8 +105,13 @@ A new pure module `web/src/features/map/grouped.ts`:
 - `groupedToSave(changes, shown)`: like `positionsToSave` (ADR 0016) but writes `grouped` for
   parts and `boxes` for boxes, never `positions`.
 
-`MapView` in the grouping: parts and boxes are draggable when `onMove` is given; a box node is
-draggable by its frame (its body lets clicks through to the pane); `onNodesChange` applies the
+`MapView` in the grouping: parts and boxes are draggable when `onMove` is given. React Flow 12
+wraps a draggable node in an element that takes every pointer event, so a box gets
+`dragHandle: ".repo-box-frame"` (its name bar and border), and `.react-flow__node-repo` has
+`pointer-events: none` with `auto` on the frame: clicks and pans in the box's body reach the
+pane. `mergeNodes` today keeps `style` and `draggable` from the node on screen, so a box would
+keep its first size; it now takes `style`, `width`, `height`, `draggable` and `dragHandle`
+from what is wanted (the measurement it keeps is `measured`). `onNodesChange` applies the
 clamp, then refits the boxes from the current children so a box grows while a part is dragged,
 then holds and saves through `groupedToSave`. The flat path (`positionsToSave`, `held` for the
 flat map) is not entered while the grouping is on. Held grouped positions are a separate map, so
@@ -130,7 +138,9 @@ In the grouping, a closed bundle is one React Flow edge of a new type `bundle` b
 the badge, its line, or any open chip or label of the bundle; closes 400 ms after the last leave),
 focus, a click (toggles pinned), and `dragenter` of an issue row open it; an open bundle draws
 its seams exactly as the flat map does, so lenses, particles, reduced motion and the chip's drop
-target are unchanged. Outside the grouping nothing is bundled.
+target are unchanged. A closed bundle draws no particles and no chevrons. Pointer events do not
+fire during a native HTML5 drag, so a bundle opened by `dragenter` of an issue row stays open
+until `drop` or `dragend` on the document, not on the 400 ms hover timer. Outside the grouping nothing is bundled.
 
 ELK in the grouping: `elk.spacing.nodeNode` 40 → 60, so badges and part cards keep apart.
 
