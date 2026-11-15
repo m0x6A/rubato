@@ -5,7 +5,8 @@
  * the dashboard, the "Map age" panel queries `rubato_map_loaded_at`, the "Interactive map" panels
  * of issue #48 exist and query their metrics, `CompanionSilent` and the "Companions" panel query
  * the threshold `rubato_companion_silent_secs` (#105), no expression groups by the
- * bare label `state`, and the working-sessions line takes `max by`. Reports what it checked.
+ * bare label `state`, the working-sessions line takes `max by`, and no two panels share an id
+ * (Grafana keys panels by id, so a second one is dropped or overwritten). Reports what it checked.
  * `promtool test rules` is the semantic check; `check.test.ts` makes this one fail on purpose.
  *
  *   check.ts [--rules <file>] [--tests <file>] [--dashboard <file>]
@@ -51,7 +52,7 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Skills emitting", "traces_service_graph_request_total"],
 ];
 
-type Panel = { title: string; type?: string; targets?: { expr?: string }[] };
+type Panel = { id?: number; title: string; type?: string; targets?: { expr?: string }[] };
 
 function opt(argv: string[], name: string, fallback: string): string {
   const i = argv.indexOf(name);
@@ -65,6 +66,19 @@ export function check(rulesText: string, testsText: string, dashboardText: strin
   const dashboard = JSON.parse(dashboardText) as { panels: (Panel & { panels?: Panel[] })[] };
   const panels: Panel[] = dashboard.panels.flatMap((p) => [p, ...(p.panels ?? [])]);
   const panelTitles = new Set(panels.map((p) => p.title));
+  const byId = new Map<number, string[]>();
+  for (const p of panels) {
+    if (p.id === undefined) {
+      problems.push(`panel ${JSON.stringify(p.title)} has no id`);
+    } else {
+      byId.set(p.id, [...(byId.get(p.id) ?? []), p.title]);
+    }
+  }
+  for (const [id, titles] of byId) {
+    if (titles.length > 1) {
+      problems.push(`panel id ${id} is used by ${titles.length} panels: ${titles.map((t) => JSON.stringify(t)).join(", ")}`);
+    }
+  }
   const exprs = (title: string) => panels.filter((p) => p.title === title && p.type !== "row").flatMap((p) => (p.targets ?? []).map((t) => t.expr ?? ""));
   const alerts = rules.groups.flatMap((g) => g.rules);
   const names = new Set(alerts.map((a) => a.alert));
