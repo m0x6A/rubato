@@ -316,6 +316,7 @@ mod tests {
                 branch: Some("issue/7-restock".into()),
                 spend_cap_usd: Some(cap),
                 plan_path: None,
+                assignment: None,
             }],
             None,
             false,
