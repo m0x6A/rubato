@@ -28,7 +28,7 @@ pub struct SessionInputTask {
     pub registry: Arc<Mutex<Registry>>,
     pub out: mpsc::UnboundedSender<CompanionMessage>,
     /// Updated by each Welcome.
-    pub limits: Arc<std::sync::Mutex<Limits>>,
+    pub limits: tokio::sync::watch::Receiver<Limits>,
     /// What the server announced in its last Welcome. A server without `session_messages`
     /// would drop the answer as a schema error, so it gets none.
     pub server_capabilities: Arc<std::sync::Mutex<Vec<String>>>,
@@ -112,7 +112,7 @@ impl SessionInputTask {
         if msg.kind.is_stop() {
             return Some(self.stop(msg).await);
         }
-        let max_chars = self.limits.lock().unwrap().session_message_max_chars;
+        let max_chars = self.limits.borrow().session_message_max_chars;
         // A room turn's answer is a `RoomReply`, which an older server would drop.
         if matches!(msg.kind, SessionMessageKind::RoomTurn { .. })
             && !self.server_takes(capability::ROOM_REPLIES)
@@ -496,7 +496,7 @@ mod tests {
             paired_user: USER.into(),
             registry: registry.clone(),
             out: out_tx.clone(),
-            limits: Arc::new(std::sync::Mutex::new(Limits::default())),
+            limits: tokio::sync::watch::channel(Limits::default()).1,
             server_capabilities: Arc::new(std::sync::Mutex::new(
                 server_caps.iter().map(|c| (*c).to_owned()).collect(),
             )),
@@ -514,7 +514,7 @@ mod tests {
                 },
                 registry: registry.clone(),
                 out: out_tx.clone(),
-                limits: Arc::new(std::sync::Mutex::new(Limits::default())),
+                limits: tokio::sync::watch::channel(Limits::default()).1,
                 spent: Default::default(),
                 running: Default::default(),
             }),
