@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ImportResponse",
+  "description": "What Import did.",
+  "oneOf": [
+    {
+      "description": "The plan parses and fits: a draft the importer owns, with the files at the head as\nrevision 1.",
+      "type": "object",
+      "properties": {
+        "draft_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "original_author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "const": "imported"
+        },
+        "rev": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "outcome",
+        "draft_id",
+        "rev"
+      ]
+    },
+    {
+      "description": "The plan does not parse or fit: a session of the importer's rewrites it into Rubato's\nform on that branch.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "outcome": {
+          "type": "string",
+          "const": "rewriting"
+        }
+      },
+      "required": [
+        "outcome",
+        "launch_id",
+        "branch"
+      ]
+    }
+  ]
+}

@@ -15,7 +15,7 @@ export function install(target: string, runNpm: boolean): string {
   const repoRoot = resolve(skillRoot, "..", "..");
   rmSync(target, { recursive: true, force: true });
   mkdirSync(target, { recursive: true });
-  for (const f of ["SKILL.md", "hooks.json", "prompt.md", "decision-template.md", "review-template.md", "review-checklist.md", "local.example.yml", "scripts"]) {
+  for (const f of ["SKILL.md", "hooks.json", "prompt.md", "prompt-rubato.md", "decision-template.md", "review-template.md", "review-checklist.md", "local.example.yml", "scripts"]) {
     cpSync(join(skillRoot, f), join(target, f), { recursive: true });
   }
   cpSync(join(repoRoot, "actions", "plan-check", "src"), join(target, "vendor", "plan-check"), { recursive: true });
@@ -23,8 +23,9 @@ export function install(target: string, runNpm: boolean): string {
   for (const f of ["system-map.schema.json", "plan.schema.json"]) {
     cpSync(join(repoRoot, "schema", f), join(target, "schema", f));
   }
-  const pkg = JSON.parse(readFileSync(join(skillRoot, "package.json"), "utf8")) as { dependencies: Record<string, string> };
-  writeFileSync(join(target, "package.json"), JSON.stringify({ name: "rubato-skill", private: true, type: "module", dependencies: pkg.dependencies }, null, 2) + "\n");
+  const pkg = JSON.parse(readFileSync(join(skillRoot, "package.json"), "utf8")) as { version: string; dependencies: Record<string, string> };
+  // The companion announces `skill:<version>` from this file; `plan.ts handoff` needs 0.2.0 (ADR 0055).
+  writeFileSync(join(target, "package.json"), JSON.stringify({ name: "rubato-skill", version: pkg.version, private: true, type: "module", dependencies: pkg.dependencies }, null, 2) + "\n");
   if (runNpm) {
     execFileSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: target, stdio: "inherit" });
   }
@@ -45,5 +46,7 @@ function main(argv: string[]): number {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))) {
-  process.exitCode = main(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const { runCommand } = await import("./otel-emit.ts");
+  process.exitCode = await runCommand("rubato", "install", () => main(argv));
 }

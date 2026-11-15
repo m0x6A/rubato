@@ -20,8 +20,8 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-# The launch prompt is embedded in the server at compile time.
-COPY skills/rubato/prompt.md skills/rubato/prompt.md
+# The launch prompts (skills/rubato/prompt*.md) are embedded in the server at compile time.
+COPY skills/rubato/prompt*.md skills/rubato/
 # The target dir is a cache mount, so the binary is copied out of it in the same step.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \

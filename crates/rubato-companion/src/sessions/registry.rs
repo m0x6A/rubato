@@ -6,11 +6,14 @@
 use crate::kernel::gitx;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{
-    BlockCause, IssueRef, SessionState, SessionStatus, StateSource, TmuxLocation,
+    BlockCause, HookEventKind, IssueRef, SessionState, SessionStatus, StateSource, TmuxLocation,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+/// How many pasted texts an entry keeps for matching its next prompts.
+pub const PASTED_KEPT: usize = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
@@ -42,6 +45,47 @@ pub struct Entry {
     /// Which hook blocked the session (ADR 0043): set by the hook that implied *blocked*,
     /// cleared by the next status a hook or tmux-ide sets. Sent only with *blocked*.
     pub blocked_by: Option<BlockCause>,
+    /// The last hook that implied a status, and when it arrived (plan 122 §D1). Set by hooks
+    /// alone: a status that discovery copies from tmux-ide never proves a turn ended.
+    pub last_hook: Option<HookEventKind>,
+    /// That hook says the session waits for input: `Stop`, or `Notification(idle_prompt)`.
+    pub last_hook_idle: bool,
+    pub last_hook_at: Option<DateTime<Utc>>,
+    /// When the companion last typed into the session (`session_input`). A message waits for
+    /// an idle hook newer than this, so a second one never lands in the turn the first began.
+    pub input_sent_at: Option<DateTime<Utc>>,
+    /// A launch restored after a restart whose hook port could not be taken back: its hooks
+    /// go nowhere, so chat needs a relaunch (`SessionState.hooks_lost`).
+    pub hooks_lost: bool,
+    /// Session messages typed into the session that no prompt has carried yet, oldest first, at
+    /// most [`PASTED_KEPT`]. The next `UserPromptSubmit` ending with one is tagged with its id
+    /// (plan 122 PR 4). In memory only; it follows the launch across a `/clear`.
+    pub pasted: Vec<(Uuid, String)>,
+    /// Where the launch's plan lives in the worktree (`LaunchCommand.plan_path`): what
+    /// `plan_mirror` reads at settle points (ADR 0053). None from an older server.
+    pub plan_path: Option<String>,
+    /// The bundle hash of a draft this launch restored (plan 122 §D5): the plan mirror's
+    /// first settle does not send it back as new. In memory only.
+    pub restored_hash: Option<String>,
+}
+
+impl Entry {
+    /// The session waits for input, as only a hook can say: its last hook was idle and arrived
+    /// after the companion last typed into it.
+    pub fn waits_for_input(&self) -> bool {
+        match (self.last_hook_idle, self.last_hook_at, self.input_sent_at) {
+            (true, Some(hook), Some(typed)) => hook > typed,
+            (true, Some(_), None) => true,
+            _ => false,
+        }
+    }
+
+    /// Whether the entry has a session to type into: its pane has not vanished and its session
+    /// id is known. A `SessionEnd` hook alone does not end it: a `/clear` sends one and the
+    /// same pane goes on under a new session id.
+    pub fn is_live(&self) -> bool {
+        !self.ended && self.session_id.is_some()
+    }
 }
 
 /// Identity from a path: worktree → branch → issue (ADR 0006).
@@ -84,6 +128,9 @@ pub struct Registry {
     /// The issue of the launch in flight, if any. Discovery adds no entry for it: the launch
     /// arm records the session itself, so the server never sees it as a discovered one first.
     pub(crate) launching: Option<IssueRef>,
+    /// A launch was recorded or moved to a new session id since `launches.json` was written
+    /// (`sessions::save_launches_if_changed`).
+    pub(crate) launches_changed: bool,
 }
 
 impl Registry {
@@ -93,7 +140,23 @@ impl Registry {
             user: user.into(),
             entries: Vec::new(),
             launching: None,
+            launches_changed: false,
         }
+    }
+
+    /// The live entry of a launch, by launch id (`session_input`, the `/clear` move).
+    pub fn by_launch(&self, launch_id: Uuid) -> Option<&Entry> {
+        self.entries
+            .iter()
+            .filter(|e| e.launch_id == Some(launch_id))
+            .min_by_key(|e| !e.is_live())
+    }
+
+    pub(crate) fn find_by_launch(&mut self, launch_id: Uuid) -> Option<&mut Entry> {
+        self.entries
+            .iter_mut()
+            .filter(|e| e.launch_id == Some(launch_id))
+            .min_by_key(|e| !e.is_live())
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -141,6 +204,8 @@ impl Registry {
                 branch_drift: e.branch_drift.clone(),
                 // The cause only travels with the status it explains.
                 blocked_by: e.blocked_by.filter(|_| e.status == SessionStatus::Blocked),
+                launch_id: e.launch_id,
+                hooks_lost: e.hooks_lost,
             })
             .collect()
     }
@@ -195,6 +260,14 @@ mod tests {
             head_mtime: None,
             branch_drift: None,
             blocked_by: None,
+            last_hook: None,
+            last_hook_idle: false,
+            last_hook_at: None,
+            input_sent_at: None,
+            hooks_lost: false,
+            pasted: Vec::new(),
+            plan_path: None,
+            restored_hash: None,
         });
         let counts = r.counts_by_source();
         assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");

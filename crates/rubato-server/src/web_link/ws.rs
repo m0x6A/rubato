@@ -128,8 +128,9 @@ mod tests {
         while let Ok(Some(Ok(msg))) =
             tokio::time::timeout(Duration::from_millis(500), ws.next()).await
         {
-            if let tokio_tungstenite::tungstenite::Message::Text(t) = msg {
-                let WebEvent::Changed { reason, .. } = serde_json::from_str(&t).unwrap();
+            if let tokio_tungstenite::tungstenite::Message::Text(t) = msg
+                && let WebEvent::Changed { reason, .. } = serde_json::from_str(&t).unwrap()
+            {
                 reasons.push(reason);
             }
         }

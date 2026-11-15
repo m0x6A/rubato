@@ -1,7 +1,7 @@
 //! Device-code pairing endpoints (ADR 0011).
 
 use super::codes::{random_token, user_code};
-use super::store::{self, PairingRow};
+use super::store::{self, Approval, PairingRow};
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
@@ -9,28 +9,65 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use rubato_protocol::pairing::{
-    PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse,
+    PAIR_FIELD_MAX_CHARS, PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse,
+    routes,
 };
 use rubato_protocol::{PairApproveRequest, PairingInfo};
 use uuid::Uuid;
 
 const SLICE: &str = "pairing";
 
+/// The reason values of a refused pairing start or approval, as counted in
+/// `rubato.web.rejected`.
+pub mod reason {
+    /// A start's hostname or version is too long (#168).
+    pub const FIELD_TOO_LONG: &str = "field_too_long";
+    /// Too many codes are pending (#168).
+    pub const PENDING_CAP: &str = "pending_cap";
+    /// The companion id is paired to another person (#160).
+    pub const COMPANION_TAKEN: &str = "companion_taken";
+}
+
+/// Who a refusal of the anonymous start is logged as.
+const ANONYMOUS: &str = "anonymous";
+
+type Refusal = (StatusCode, String);
+
 pub async fn start(
     State(app): State<App>,
     Json(req): Json<PairStartRequest>,
-) -> Result<Json<PairStartResponse>, StatusCode> {
+) -> Result<Json<PairStartResponse>, Refusal> {
+    for (field, value) in [
+        ("hostname", &req.hostname),
+        ("companion_version", &req.companion_version),
+    ] {
+        if value.chars().count() > PAIR_FIELD_MAX_CHARS {
+            app.reject(routes::PAIR_START, reason::FIELD_TOO_LONG, ANONYMOUS);
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("{field} is longer than {PAIR_FIELD_MAX_CHARS} characters."),
+            ));
+        }
+    }
     let device_code = random_token();
     let code = user_code();
-    store::create_pairing_code(
+    let stored = store::create_pairing_code(
         &app.db,
         &req,
         &device_code,
         &code,
         app.config.pairing_ttl_secs,
+        app.config.pairing_max_pending,
     )
     .await
-    .map_err(|e| internal(SLICE, e))?;
+    .map_err(|e| (internal(SLICE, e), String::new()))?;
+    if !stored {
+        app.reject(routes::PAIR_START, reason::PENDING_CAP, ANONYMOUS);
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many pairings are waiting for approval; try again in a few minutes.".into(),
+        ));
+    }
     tracing::info!(companion_id = %req.companion_id, hostname = %req.hostname, "pairing started");
     Ok(Json(PairStartResponse {
         device_code,
@@ -56,24 +93,34 @@ pub async fn approve(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
     Json(req): Json<PairApproveRequest>,
-) -> Result<Json<PairingInfo>, StatusCode> {
+) -> Result<Json<PairingInfo>, Refusal> {
+    let fail = |e| (internal(SLICE, e), String::new());
     let token = random_token();
     let code = req.user_code.trim().to_ascii_uppercase();
-    let companion_id = store::approve_pairing_code(&app.db, &code, &user, &token)
+    let companion_id = match store::approve_pairing_code(&app.db, &code, &user, &token)
         .await
-        .map_err(|e| internal(SLICE, e))?;
-    let Some(companion_id) = companion_id else {
-        return Err(StatusCode::NOT_FOUND);
+        .map_err(fail)?
+    {
+        Approval::Approved(id) => id,
+        Approval::NotFound => return Err((StatusCode::NOT_FOUND, String::new())),
+        Approval::Taken(id) => {
+            tracing::info!(companion_id = %id, %user, "pairing refused: companion paired to another person");
+            app.reject(routes::PAIR_APPROVE, reason::COMPANION_TAKEN, &user);
+            return Err((
+                StatusCode::CONFLICT,
+                "This companion is paired to another person. Pair from your own machine, or remove its companion.json to give it a new id.".into(),
+            ));
+        }
     };
     tracing::info!(%companion_id, %user, "pairing approved");
     app.notify("pairing");
     let rows = store::list_pairings(&app.db, Some(&user))
         .await
-        .map_err(|e| internal(SLICE, e))?;
+        .map_err(fail)?;
     rows.into_iter()
         .find(|r| r.companion_id == companion_id)
         .map(|r| Json(to_info(&app, r)))
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+        .ok_or((StatusCode::INTERNAL_SERVER_ERROR, String::new()))
 }
 
 pub fn to_info(app: &App, r: PairingRow) -> PairingInfo {
@@ -86,6 +133,7 @@ pub fn to_info(app: &App, r: PairingRow) -> PairingInfo {
         last_seen: r.last_seen,
         revoked_at: r.revoked_at,
         connected,
+        client: r.client,
     }
 }
 

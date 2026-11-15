@@ -5,8 +5,10 @@
 mod apply;
 mod arm;
 mod launcher;
+mod restore;
 mod script;
 
 pub use apply::LiveSession;
 pub use arm::{on_command, run};
 pub use launcher::{Launcher, Started};
+pub use restore::{Restored, restore};
