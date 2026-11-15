@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoginPage, authApi } from "./features/auth/index.ts";
 import { CompanionsPanel } from "./features/companions/index.ts";
-import { DraftPanel, draftMarks, draftsApi, seamOpFor, withDraft } from "./features/drafts/index.ts";
+import { DraftPanel, type DraftPrefill, draftMarks, draftsApi, seamOpFor, withDraft } from "./features/drafts/index.ts";
 import { Findings } from "./features/findings/index.ts";
 import { IssuePanel, TeamTrack } from "./features/issues/index.ts";
 import { launchApi, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe, takeForgottenWorkspace } from "./features/live/index.ts";
 import { NewIssueForm } from "./features/new_issue/index.ts";
-import { Inspector, MapView, PlanInspector, buildGraph, mapApi } from "./features/map/index.ts";
+import { Discrepancies, Inspector, MapView, PlanInspector, type Take, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
 import { PlansPanel, groupPlans } from "./features/plans/index.ts";
 import { ConnectedRepos } from "./features/repos/index.ts";
 import { queueApi } from "./features/queue/index.ts";
 import { WorkspaceSwitcher } from "./features/workspaces/index.ts";
-import type { IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
+import type { DiscrepancyKey, IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
 import { hasIssueDrag } from "./shared/dnd.ts";
 import { issueKey, relative } from "./shared/format.ts";
@@ -36,6 +36,9 @@ export function App() {
   // Edit mode: the draft panel shows, parts connect, a double-click on the canvas asks for a part.
   const [editing, setEditing] = useState(false);
   const [addPartFocus, setAddPartFocus] = useState(0);
+  // A discrepancy taken from the observed system (issue #140): what the draft's form starts with.
+  const [prefill, setPrefill] = useState<DraftPrefill | undefined>(undefined);
+  const [trafficBusy, setTrafficBusy] = useState(false);
   const newPartAt = useRef<{ x: number; y: number } | null>(null);
   // A notice may carry one way back ("Undo"), offered to the person who caused it.
   const [noticeState, setNoticeState] = useState<{ text: string; undo?: (() => void) | undefined } | null>(null);
@@ -284,6 +287,63 @@ export function App() {
     [refresh],
   );
 
+  /**
+   * "Take into draft" (issue #140): edit mode opens with the form filled in from the telemetry,
+   * or the quiet seam selected so its Remove is at hand. Nothing is sent: the person submits.
+   */
+  const onTake = useCallback((take: Take) => {
+    if (take.kind === "add_node") {
+      setPrefill({ nonce: Date.now(), op: "add_node", id: take.id, kind: take.nodeKind, service: take.service });
+    } else if (take.kind === "add_seam") {
+      setPrefill({ nonce: Date.now(), op: "add_seam", from: take.from, to: take.to, id: take.id });
+    } else if (take.kind === "select_seam") {
+      setPrefill(undefined);
+      setSelection({ kind: "seam", id: take.seam });
+    } else {
+      return;
+    }
+    setEditing(true);
+  }, []);
+
+  /** Dismiss a discrepancy for the workspace as yourself (ADR 0060), with a way back. */
+  const onDismiss = useCallback(
+    async (key: DiscrepancyKey) => {
+      setTrafficBusy(true);
+      try {
+        const d = await mapApi.dismiss(key);
+        setNotice("Dismissed for everyone in this workspace.", () => {
+          setNotice(null);
+          void mapApi.undismiss(d.id).then(refresh, (e: unknown) => setNotice(`The dismissal was not undone: ${failureText(e)}`));
+        });
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 401)) {
+          setNotice(`Not dismissed: ${failureText(e)}`);
+        }
+      } finally {
+        setTrafficBusy(false);
+        await refresh();
+      }
+    },
+    [refresh, setNotice],
+  );
+
+  const onUndismiss = useCallback(
+    async (id: number) => {
+      setTrafficBusy(true);
+      try {
+        await mapApi.undismiss(id);
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 401)) {
+          setNotice(`The dismissal was not undone: ${failureText(e)}`);
+        }
+      } finally {
+        setTrafficBusy(false);
+        await refresh();
+      }
+    },
+    [refresh, setNotice],
+  );
+
   // The draft is an overlay for everyone: what it adds and removes is drawn, marked as draft.
   const shown = useMemo(() => (overview ? withDraft(overview) : null), [overview]);
   const marks = useMemo(() => (overview ? draftMarks(overview.map.map, overview.draft) : undefined), [overview]);
@@ -349,6 +409,7 @@ export function App() {
                 newPartAt.current = at;
                 setAddPartFocus((n) => n + 1);
               }}
+              trafficActions={<Discrepancies overview={overview} onTake={onTake} onDismiss={(k) => void onDismiss(k)} onUndo={(id) => void onUndismiss(id)} busy={trafficBusy} canWrite={me !== null} />}
             />
           ) : (
             <div className="empty">{error ?? "Loading the map…"}</div>
@@ -379,7 +440,7 @@ export function App() {
             </button>
           </nav>
           {overview && <Findings findings={overview.findings} />}
-          {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} />}
+          {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} prefill={prefill} />}
           {/* The map explains what is selected; an open issue takes the panel instead. */}
           {overview && tab === "issues" && !newIssueAt && !selected && overview.map.map.nodes[0] && (
             <p className="new-issue-start">

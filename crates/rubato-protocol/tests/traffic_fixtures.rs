@@ -4,8 +4,8 @@
 
 use chrono::{DateTime, Utc};
 use rubato_protocol::{
-    Finding, ObservedTraffic, Overview, SourceStatus, SystemMap, TrafficReport, TrafficState,
-    derive_traffic,
+    Finding, ObservedTraffic, Overview, SourceStatus, SystemMap, TrafficDismissal, TrafficReport,
+    TrafficState, derive_traffic,
 };
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -16,6 +16,9 @@ struct Case {
     now: DateTime<Utc>,
     fetch_secs: u32,
     report: TrafficReport,
+    /// The workspace's dismissals (ADR 0060); none when left out.
+    #[serde(default)]
+    dismissed: Vec<TrafficDismissal>,
     expect: Expect,
 }
 
@@ -61,7 +64,8 @@ fn judge(map: &SystemMap, case: &Case) -> Option<String> {
         fetch_secs: case.fetch_secs,
         error: None,
     };
-    let (traffic, findings) = derive_traffic(map, Some(&case.report), &source, case.now);
+    let (traffic, findings) =
+        derive_traffic(map, Some(&case.report), &source, &case.dismissed, case.now);
     if traffic != case.expect.traffic {
         return Some(format!(
             "traffic\n  got  {traffic:?}\n  want {:?}",

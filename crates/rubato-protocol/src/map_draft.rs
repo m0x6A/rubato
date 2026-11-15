@@ -145,6 +145,7 @@ mod tests {
                     repo: None,
                     path: None,
                     description: None,
+                    service: None,
                 },
             },
         };
