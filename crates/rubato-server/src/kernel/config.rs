@@ -214,6 +214,9 @@ pub struct Config {
     /// Development and tests only: a JSON file `{"owner/name": [{number, title, url, labels}]}`
     /// giving the local stand-in and the tokenless fake their open issues.
     pub dev_issues: Option<PathBuf>,
+    /// Development and tests only: a JSON file `{"owner/name": [{number, branch, base, title,
+    /// author}]}` giving the local stand-in open pull requests between its branches (issue #82).
+    pub dev_pulls: Option<PathBuf>,
     /// `owner/name=/path/to/repo.git,...`: read plans and branches from local repos instead of GitHub.
     pub local_repos: Option<String>,
     /// Development and tests only: a JSON `TrafficReport` file, read every fetch interval, the
@@ -329,6 +332,7 @@ impl Config {
             github_api_url: env("RUBATO_GITHUB_API_URL").map(trim_slash),
             github_web_url: env("RUBATO_GITHUB_WEB_URL").map(trim_slash),
             dev_issues: env("RUBATO_DEV_ISSUES").map(PathBuf::from),
+            dev_pulls: env("RUBATO_DEV_PULLS").map(PathBuf::from),
             local_repos: env("RUBATO_LOCAL_REPOS"),
             dev_traffic,
             traffic_fetch_secs: traffic_fetch_secs(
@@ -472,6 +476,7 @@ impl Config {
             github_api_url: None,
             github_web_url: None,
             dev_issues: None,
+            dev_pulls: None,
             local_repos: None,
             dev_traffic: None,
             traffic_fetch_secs: TRAFFIC_FETCH_SECS.1,

@@ -1,18 +1,22 @@
 //! In-memory GitHub for tests and for a server with no token. Records every call in order.
 
 use super::{
-    BranchHead, Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, OpenPulls, PullInfo,
+    BranchHead, Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, OpenPulls, PullFull,
+    PullInfo, RepoAccess, ReviewInfo,
 };
 use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use rubato_protocol::ChecksStatus;
+use rubato_protocol::pulls::{ChangedFile, CheckRun, MergeMethod};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 #[derive(Default)]
 pub struct FakeInner {
     pub files: HashMap<(String, String, String), String>,
+    /// Reading any file fails with this text (a contents call that errors, issue #82).
+    pub file_error: Option<String>,
     /// (repo, path, sha) → the login of the last commit to that file (ADR 0058).
     pub commit_authors: HashMap<(String, String, String), String>,
     pub branches: HashMap<String, Vec<(String, String)>>,
@@ -60,6 +64,21 @@ pub struct FakeInner {
     /// `comment_as` posts the comment and then fails, as a call that timed out does.
     pub comment_times_out: bool,
     next_comment: u64,
+    /// A pull request's own read (`pull`), by (repo, number). Without one, `pull` answers from
+    /// `pulls`: same repo, mergeable, base sha `base-<base>`.
+    pub pull_details: HashMap<(String, u64), PullFull>,
+    /// `pull` waits this long before answering, so two views can overlap (single flight).
+    pub pull_delay: Option<std::time::Duration>,
+    /// `pull` fails with this text.
+    pub pull_error: Option<String>,
+    /// Reviews per (repo, number), oldest first.
+    pub reviews: HashMap<(String, u64), Vec<ReviewInfo>>,
+    /// Changed files per (repo, number).
+    pub files_changed: HashMap<(String, u64), Vec<ChangedFile>>,
+    /// Check runs per sha. A sha with none has no runs.
+    pub check_runs: HashMap<String, Vec<CheckRun>>,
+    /// What `repo_as` answers per (login, repo); without a row, push and every method.
+    pub access: HashMap<(String, String), RepoAccess>,
     /// Every call in order, as (method, args); the guard for the poll order (design D4).
     pub calls: Vec<(&'static str, String)>,
 }
@@ -91,6 +110,9 @@ impl GitHubApi for FakeGitHub {
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("file", format!("{repo} {path} {git_ref}")));
+        if let Some(e) = &g.file_error {
+            return Err(anyhow!("{e}"));
+        }
         let at = |r: &str| {
             g.files
                 .get(&(repo.to_owned(), path.to_owned(), r.to_owned()))
@@ -198,6 +220,75 @@ impl GitHubApi for FakeGitHub {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("checks", format!("{repo} {sha}")));
         Ok(g.checks.get(sha).copied().unwrap_or(ChecksStatus::None))
+    }
+
+    async fn pull(&self, repo: &str, number: u64) -> Result<Option<PullFull>> {
+        let delay = {
+            let mut g = self.inner.lock().unwrap();
+            g.calls.push(("pull", format!("{repo}#{number}")));
+            g.pull_delay
+        };
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
+        let g = self.inner.lock().unwrap();
+        if let Some(e) = &g.pull_error {
+            return Err(anyhow!("{e}"));
+        }
+        if let Some(p) = g.pull_details.get(&(repo.to_owned(), number)) {
+            return Ok(Some(p.clone()));
+        }
+        Ok(g.pulls
+            .iter()
+            .find(|((r, _), p)| r == repo && p.number == number)
+            .map(|((_, branch), p)| PullFull {
+                info: p.clone(),
+                branch: branch.clone(),
+                body: String::new(),
+                fork: false,
+                mergeable: Some(true),
+                base_sha: format!("base-{}", p.base.as_deref().unwrap_or("main")),
+            }))
+    }
+
+    async fn pull_reviews(&self, repo: &str, number: u64) -> Result<Vec<ReviewInfo>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("pull_reviews", format!("{repo}#{number}")));
+        Ok(g.reviews
+            .get(&(repo.to_owned(), number))
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn pull_files(&self, repo: &str, number: u64) -> Result<Vec<ChangedFile>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("pull_files", format!("{repo}#{number}")));
+        Ok(g.files_changed
+            .get(&(repo.to_owned(), number))
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn check_runs(&self, repo: &str, sha: &str) -> Result<Vec<CheckRun>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("check_runs", format!("{repo} {sha}")));
+        Ok(g.check_runs.get(sha).cloned().unwrap_or_default())
+    }
+
+    /// A token `tok-<login>` acts as `<login>`, as `comment_as` does.
+    async fn repo_as(&self, token: &str, repo: &str) -> Result<RepoAccess> {
+        let mut g = self.inner.lock().unwrap();
+        let Some(login) = token.strip_prefix("tok-") else {
+            return Err(anyhow!("GitHub refused the token: 401"));
+        };
+        g.calls.push(("repo_as", format!("{login} {repo}")));
+        Ok(g.access
+            .get(&(login.to_owned(), repo.to_owned()))
+            .cloned()
+            .unwrap_or(RepoAccess {
+                push: true,
+                methods: vec![MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase],
+            }))
     }
 
     async fn rate_limit(&self) -> Result<(u64, u64)> {
