@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import type { MapNode, MapRef, NodeKind, Overview, Seam } from "../../protocol.ts";
+import type { MapNode, MapRef, NodeKind, Overview, Seam, ServiceId } from "../../protocol.ts";
 import { ApiError, failureText } from "../../shared/api.ts";
 import { relative } from "../../shared/format.ts";
 import { type MapOp, draftsApi } from "./api.ts";
@@ -18,6 +18,43 @@ interface Props {
   focusAddPart?: number | undefined;
   /** A part was added: the shell may place it where the canvas was double-clicked. */
   onPartAdded?: ((id: string) => void) | undefined;
+  /**
+   * A discrepancy taken from the observed system (issue #140): the Add part or Add seam form is
+   * filled in from the telemetry. Nothing is sent until the person submits it.
+   */
+  prefill?: DraftPrefill | undefined;
+}
+
+/** What "Take into draft" fills in. A new `nonce` resets the form to these values. */
+export type DraftPrefill =
+  | { nonce: number; op: "add_node"; id: string; kind: NodeKind; service: ServiceId }
+  | { nonce: number; op: "add_seam"; from: string; to: string; id: string };
+
+/** The part's `service` from the form's two fields: none without a name (ADR 0059). */
+function serviceFrom(f: FormData): ServiceId | null {
+  const name = String(f.get("service_name") ?? "").trim();
+  const namespace = String(f.get("service_namespace") ?? "").trim();
+  if (name === "") {
+    return null;
+  }
+  return namespace === "" ? { name } : { namespace, name };
+}
+
+/** The two service fields, filled from `service`. Exactly as the service emits itself. */
+function ServiceFields({ service }: { service: ServiceId | null | undefined }) {
+  return (
+    <fieldset className="stack service-fields">
+      <legend>Service, exactly as its telemetry names it (optional)</legend>
+      <label>
+        service.namespace
+        <input name="service_namespace" defaultValue={service?.namespace ?? ""} />
+      </label>
+      <label>
+        service.name
+        <input name="service_name" defaultValue={service?.name ?? ""} />
+      </label>
+    </fieldset>
+  );
 }
 
 const KINDS: NodeKind[] = ["context", "contract", "external"];
@@ -35,7 +72,7 @@ function compact<T extends object>(o: T): T {
  * Every write goes to the server; what is shown comes back with the overview, so every browser
  * shows the same draft.
  */
-export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddPart, onPartAdded }: Props) {
+export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddPart, onPartAdded, prefill }: Props) {
   const draft = overview.draft ?? {};
   const ops = draft.ops ?? [];
   const proposal = draft.proposal ?? null;
@@ -46,11 +83,22 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
   const [review, setReview] = useState<{ diff: DiffLine[]; yaml: string } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const addPartId = useRef<HTMLInputElement>(null);
+  const addSeamFrom = useRef<HTMLSelectElement>(null);
   useEffect(() => {
     if (focusAddPart) {
       addPartId.current?.focus();
     }
   }, [focusAddPart]);
+  const partPrefill = prefill?.op === "add_node" ? prefill : null;
+  const seamPrefill = prefill?.op === "add_seam" ? prefill : null;
+  useEffect(() => {
+    // The prefilled form takes focus, so the person sees what was filled in before sending it.
+    if (prefill?.op === "add_node") {
+      addPartId.current?.focus();
+    } else if (prefill?.op === "add_seam") {
+      addSeamFrom.current?.focus();
+    }
+  }, [prefill]);
 
   /** Run one write; a refusal shows the server's own reason next to the forms. */
   const run = async (what: string, action: () => Promise<unknown>): Promise<boolean> => {
@@ -78,7 +126,7 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
     const form = e.currentTarget;
     const f = new FormData(form);
     const id = String(f.get("id") ?? "").trim();
-    const node: MapNode = compact({ id, kind: String(f.get("kind")) as NodeKind, description: blank(String(f.get("description") ?? "")), repo: blank(String(f.get("repo") ?? "")), path: blank(String(f.get("path") ?? "")) });
+    const node: MapNode = compact({ id, kind: String(f.get("kind")) as NodeKind, description: blank(String(f.get("description") ?? "")), repo: blank(String(f.get("repo") ?? "")), path: blank(String(f.get("path") ?? "")), service: serviceFrom(f) });
     if (await post({ op: "add_node", node }, `Part ${id} was not added`)) {
       form.reset();
       onPartAdded?.(id);
@@ -107,7 +155,8 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
       return;
     }
     const f = new FormData(e.currentTarget);
-    const node: MapNode = compact({ id: selectedNode.id, kind: String(f.get("kind")) as NodeKind, description: blank(String(f.get("description") ?? "")), repo: blank(String(f.get("repo") ?? "")), path: blank(String(f.get("path") ?? "")) });
+    // An update replaces the whole part: its service is sent as the form has it, never dropped.
+    const node: MapNode = compact({ id: selectedNode.id, kind: String(f.get("kind")) as NodeKind, description: blank(String(f.get("description") ?? "")), repo: blank(String(f.get("repo") ?? "")), path: blank(String(f.get("path") ?? "")), service: serviceFrom(f) });
     await post({ op: "update_node", node }, `Part ${node.id} was not changed`);
   };
 
@@ -321,6 +370,7 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
             Path in the repository
             <input name="path" defaultValue={selectedNode.path ?? ""} />
           </label>
+          <ServiceFields service={selectedNode.service} />
           <div className="draft-actions">
             <button type="submit" disabled={busy}>
               Save part
@@ -373,15 +423,16 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
 
       {!frozen && (
         <>
-          <form className="stack draft-form" onSubmit={(e) => void addPart(e)} aria-label="Add part">
+          <form className="stack draft-form" onSubmit={(e) => void addPart(e)} aria-label="Add part" key={`add-part-${partPrefill?.nonce ?? 0}`}>
             <h3>Add part</h3>
+            {partPrefill && <p className="muted">Taken from the observed system. Set what it is, its kind and its repository, then add it.</p>}
             <label>
               Id (lower-case letters, digits, hyphens; cannot be changed later)
-              <input ref={addPartId} name="id" required pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+              <input ref={addPartId} name="id" required pattern="[a-z0-9]+(-[a-z0-9]+)*" defaultValue={partPrefill?.id ?? ""} />
             </label>
             <label>
               Kind
-              <select name="kind" defaultValue="context">
+              <select name="kind" defaultValue={partPrefill?.kind ?? "context"}>
                 {KINDS.map((k) => (
                   <option key={k}>{k}</option>
                 ))}
@@ -399,15 +450,17 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
               Path in the repository
               <input name="path" />
             </label>
+            <ServiceFields service={partPrefill?.service} />
             <button type="submit" disabled={busy}>
               Add part
             </button>
           </form>
-          <form className="stack draft-form" onSubmit={(e) => void addSeam(e)} aria-label="Add seam">
+          <form className="stack draft-form" onSubmit={(e) => void addSeam(e)} aria-label="Add seam" key={`add-seam-${seamPrefill?.nonce ?? 0}`}>
             <h3>Add seam</h3>
+            {seamPrefill && <p className="muted">Taken from the observed system: {seamPrefill.from} calls {seamPrefill.to}. Set what it carries and who owns it, then add it.</p>}
             <label>
               From (the part that depends)
-              <select name="from" required>
+              <select ref={addSeamFrom} name="from" required defaultValue={seamPrefill?.from}>
                 {map.nodes.map((n) => (
                   <option key={n.id}>{n.id}</option>
                 ))}
@@ -415,7 +468,7 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
             </label>
             <label>
               To (the part depended on)
-              <select name="to" required defaultValue={map.nodes[1]?.id}>
+              <select name="to" required defaultValue={seamPrefill?.to ?? map.nodes[1]?.id}>
                 {map.nodes.map((n) => (
                   <option key={n.id}>{n.id}</option>
                 ))}
@@ -430,7 +483,7 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
             </label>
             <label>
               Id (empty for from-to)
-              <input name="id" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+              <input name="id" pattern="[a-z0-9]+(-[a-z0-9]+)*" defaultValue={seamPrefill?.id ?? ""} />
             </label>
             <label>
               Carries

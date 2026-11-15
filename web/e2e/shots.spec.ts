@@ -1,5 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
-import { freshTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
+import { freshTraffic, ghostTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
 
 // Issue #81: screenshots of every named surface, dark and light, at desktop width and at 900 px.
 // Runs only with RUBATO_E2E_SHOTS=<dir>; writes <surface>-<theme>-<width>.png there and prints
@@ -84,6 +84,19 @@ const SURFACES: { name: string; setup: (page: Page) => Promise<void> }[] = [
       await ready(page);
       await page.getByRole("radio", { name: "Traffic" }).click();
       await expect(page.getByTestId("territory-rubato-companion-github")).toBeVisible();
+    },
+  },
+  {
+    // Issue #140: ghost parts in a band right of the map, their territory edges, and the list of
+    // what the map and the observed system disagree about.
+    name: "map-traffic-ghosts",
+    setup: async (page) => {
+      await routeOverview(page, ghostTraffic);
+      await ready(page);
+      await page.getByRole("radio", { name: "Traffic" }).click();
+      await expect(page.getByTestId("ghost-shop/checkout")).toBeInViewport();
+      await page.getByTestId("discrepancies").locator(":scope > summary").click();
+      await expect(page.getByTestId("discrepancies")).toContainText("Add as a part");
     },
   },
   {

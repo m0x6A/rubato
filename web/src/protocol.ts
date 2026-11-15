@@ -98,6 +98,30 @@ outcome: "failed"
  */
 export type MessageRefusal = ("not_paired_user" | "not_launched_here" | "unknown_session" | "too_long" | "no_pane" | "skill_outdated")
 /**
+ * What a person can dismiss on the overlay (ADR 0060).
+ */
+export type DiscrepancyKey = ({
+kind: "ghost"
+service: ServiceId
+} | {
+from: TrafficEnd
+kind: "edge"
+to: TrafficEnd
+} | {
+kind: "quiet_seam"
+seam: string
+})
+/**
+ * One end of an observed edge on the overlay: a declared part, or a ghost (ADR 0059).
+ */
+export type TrafficEnd = ({
+id: string
+kind: "part"
+} | {
+kind: "ghost"
+service: ServiceId
+})
+/**
  * Body of `POST /api/map/draft/ops`. `op_id` is made by the browser, so a retry of the same
  * request does not add the operation twice.
  */
@@ -205,6 +229,10 @@ calls: number
 from: string
 kind: "undeclared_traffic"
 to: string
+} | {
+calls: number
+kind: "observed_only_part"
+service: ServiceId
 } | {
 kind: "plan_path_conflict"
 repo: string
@@ -482,6 +510,7 @@ ApproveResponse?: ApproveResponse
 CapHit?: CapHit
 CompanionEnvelope?: CompanionEnvelope
 DecisionRecord?: DecisionRecord
+DismissRequest?: DismissRequest
 DraftApproveRequest?: DraftApproveRequest
 DraftApproveResponse?: DraftApproveResponse
 DraftOpRequest?: DraftOpRequest
@@ -697,6 +726,27 @@ url: string
 why?: (string | null)
 }
 /**
+ * `POST /api/traffic/dismissals`: dismiss one discrepancy as yourself.
+ */
+export interface DismissRequest {
+target: DiscrepancyKey
+}
+/**
+ * A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`
+ * (ADR 0059). The namespace is absent only where the emitter has none, as for a servicegraph
+ * virtual node built from a caller's `peer.service`. Rubato never sets or derives it.
+ */
+export interface ServiceId {
+/**
+ * `service.name`.
+ */
+name: string
+/**
+ * `service.namespace`.
+ */
+namespace?: (string | null)
+}
+/**
  * Approve one version of a draft (ADR 0054): the newest revision of the draft on `branch`,
  * named by its plan's approval hash, and by its number when the person saw one. `summary` is
  * the discussion summary as the person edited it, kept with the approval (ADR 0055).
@@ -743,6 +793,11 @@ path?: (string | null)
  * `owner/name` of the repository holding the code, if any.
  */
 repo?: (string | null)
+/**
+ * The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No
+ * default: a part without it is never matched to observed traffic.
+ */
+service?: (ServiceId | null)
 }
 /**
  * A seam between two nodes. The owner side is woken when it breaks.
@@ -1946,9 +2001,26 @@ unattributed: number
  */
 export interface ObservedTraffic {
 /**
+ * Every dismissal in the workspace, whatever the state, so each can be undone.
+ */
+dismissed?: TrafficDismissal[]
+/**
  * Why the last fetch failed, when `failing`.
  */
 error?: (string | null)
+/**
+ * Calls to or from a ghost. Empty unless `fresh`.
+ */
+ghost_edges?: GhostEdge[]
+/**
+ * Services seen that no part names and that emit a namespace, busiest first. Empty unless
+ * `fresh`; dismissed ones left out.
+ */
+ghosts?: GhostPart[]
+/**
+ * More ghosts or ghost edges were seen than the overview carries.
+ */
+ghosts_truncated?: boolean
 /**
  * When the last good report's window ended.
  */
@@ -1975,13 +2047,54 @@ undeclared?: UndeclaredEdge[]
  */
 unmapped_sample?: string[]
 /**
- * Services in the report that name no map part.
+ * Edge ends in the report with no identity to match: no part names them and they emit no
+ * namespace (ADR 0059).
  */
 unmapped_services?: number
 /**
  * The last good report's window.
  */
 window_secs?: (number | null)
+}
+/**
+ * One dismissal: who dismissed what, and when (ADR 0060). Undo deletes it.
+ */
+export interface TrafficDismissal {
+at: string
+/**
+ * GitHub login.
+ */
+author: string
+id: number
+target: DiscrepancyKey
+}
+/**
+ * Calls with a ghost at one end or both. `from` calls `to`.
+ */
+export interface GhostEdge {
+calls: number
+errors: number
+from: TrafficEnd
+to: TrafficEnd
+}
+/**
+ * A service seen in a fresh report, emitting a namespace, that no part names: drawn on the
+ * overlay until a person takes it into the map draft (plan #140). Never a map part.
+ */
+export interface GhostPart {
+/**
+ * Calls it received in the window.
+ */
+calls_in: number
+/**
+ * Calls it made.
+ */
+calls_out: number
+/**
+ * Failed calls either way.
+ */
+errors: number
+service: ServiceId
 }
 /**
  * Calls on one declared seam in the report's window, each way.
@@ -2211,6 +2324,11 @@ calls: number
  */
 client: string
 /**
+ * OpenTelemetry `service.namespace` of the caller, as it emits it; absent when it emits
+ * none, as a servicegraph virtual node from `peer.service` does (ADR 0059).
+ */
+client_namespace?: (string | null)
+/**
  * Of which failed.
  */
 errors?: number
@@ -2218,4 +2336,8 @@ errors?: number
  * OpenTelemetry `service.name` of the callee.
  */
 server: string
+/**
+ * OpenTelemetry `service.namespace` of the callee, as it emits it.
+ */
+server_namespace?: (string | null)
 }

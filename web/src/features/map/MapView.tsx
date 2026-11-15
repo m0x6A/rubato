@@ -1,5 +1,5 @@
 import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { caption, playerReducer, resolveScenario } from "./scenario.ts";
 import { mergeNodes } from "./nodes.ts";
 import type { IssueRef, MapLayout, MapRef, Plan } from "../../protocol.ts";
@@ -15,14 +15,17 @@ import { SeamChip } from "./SeamChip.tsx";
 import { FlowParticles, type ParticleMode, particleBudget, particleMode } from "./particles.tsx";
 import { TerritoryMark, TrafficChevrons, chevronCount, chevronsOn, chipTraffic, perMinute, trafficLegend, unknownSentence } from "./traffic.tsx";
 import { windowText } from "../findings/index.ts";
-import type { UndeclaredEdge } from "../../protocol.ts";
+import type { GhostPart, UndeclaredEdge } from "../../protocol.ts";
+import { endId, endText, ghostBand, ghostId, ghostsToDraw, isGhostId, serviceText } from "./territory.ts";
 import { useReducedMotion } from "../../shared/motion.ts";
 
 type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
 type MapFlowNode = Node<MapNodeData, "map">;
 /** A repo's box in the By repo grouping (issue #89): a label behind its parts, never selected or moved. */
 type RepoFlowNode = Node<{ repo: string }, "repo">;
-type AnyFlowNode = MapFlowNode | RepoFlowNode;
+/** A service seen in telemetry that no part names (issue #140): drawn in the Traffic lens, never a part. */
+type GhostFlowNode = Node<{ ghost: GhostPart; windowSecs: number }, "ghost">;
+type AnyFlowNode = MapFlowNode | RepoFlowNode | GhostFlowNode;
 type SeamEdgeData = {
   seam: GraphEdge;
   arrow: Arrow;
@@ -124,6 +127,30 @@ function TerritoryEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, tar
   );
 }
 
+/**
+ * A ghost part (issue #140): dashed, amber like the territory it belongs to, with the identity
+ * it emits and its calls. No handles to draw a seam from, no drop, no pin, no plan.
+ */
+function GhostCard({ data }: NodeProps<GhostFlowNode>) {
+  const g = data.ghost;
+  const calls = g.calls_in + g.calls_out;
+  const perMin = perMinute(calls, data.windowSecs);
+  return (
+    <>
+      <Handle type="target" position={Position.Left} className="seam-handle hidden" isConnectable={false} />
+      <div className="ghost-card" data-testid={`ghost-${serviceText(g.service)}`} title={`${serviceText(g.service)} is running and calling, but no part on the map says it is this service`}>
+        <span className="ghost-tag">not on the map</span>
+        <strong>{g.service.name}</strong>
+        {g.service.namespace && <span className="muted">{g.service.namespace}</span>}
+        <span className="muted">
+          {calls} calls · {perMin < 0.1 ? "<0.1" : Math.round(perMin * 10) / 10}/min
+        </span>
+      </div>
+      <Handle type="source" position={Position.Right} className="seam-handle hidden" isConnectable={false} />
+    </>
+  );
+}
+
 function RepoBox({ data }: NodeProps<RepoFlowNode>) {
   return (
     <div className="repo-box" data-testid={`repo-box-${data.repo}`}>
@@ -132,7 +159,7 @@ function RepoBox({ data }: NodeProps<RepoFlowNode>) {
   );
 }
 
-const nodeTypes = { map: MapNodeCard, repo: RepoBox };
+const nodeTypes = { map: MapNodeCard, repo: RepoBox, ghost: GhostCard };
 const edgeTypes = { seam: SeamEdge, territory: TerritoryEdge };
 
 interface Props {
@@ -159,6 +186,8 @@ interface Props {
   onConnectParts?: ((from: string, to: string) => void) | undefined;
   /** The canvas was double-clicked in edit mode, at this canvas position. */
   onAddPartAt?: ((at: XY) => void) | undefined;
+  /** Shown under the Traffic lens's legend: what to do about each discrepancy (issue #140). */
+  trafficActions?: ReactNode | undefined;
 }
 
 /** A burst of arrow-key moves, or the end of a drag, becomes one write after this pause. */
@@ -166,7 +195,7 @@ const SAVE_AFTER_MS = 250;
 /** How long Play shows each step; one trip of the pulse is `PULSE_MS` in particles.tsx. */
 const STEP_MS = 2400;
 
-function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt }: Props) {
+function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt, trafficActions }: Props) {
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }> | null>(null);
   const { fitView, screenToFlowPosition, getNode, getViewport, setCenter } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -290,6 +319,24 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   const [heldRevision, setHeldRevision] = useState(0);
   // Where each part sits for the team (stored, else ELK): what a move is compared with.
   const settled = useMemo(() => new Map(graph.nodes.map((n) => [n.id, placePart({ auto: positions?.get(n.id), stored: stored?.positions?.[n.id], held: undefined })])), [graph, positions, stored]);
+  // The observed system (issue #140): ghosts and their edges, in the Traffic lens on a fresh
+  // report, on the flat map. They sit in a band right of the declared parts, which never move
+  // for them, and never reach the shared layout.
+  const ghostView = useMemo(
+    () => (chevronsOn(lens, graph.traffic?.state ?? "not_configured") && !grouping ? ghostsToDraw(graph.traffic, new Set(graph.nodes.map((n) => n.id))) : { ghosts: [], edges: [] }),
+    [graph, lens, grouping],
+  );
+  const ghostAt = useMemo(() => ghostBand(settled, ghostView.ghosts), [settled, ghostView]);
+  // The band sits outside the view fitted to the declared map: bring it in when ghosts appear,
+  // and back to the map when they go. The parts themselves do not move.
+  const ghostCount = ghostView.ghosts.length;
+  const hadGhosts = useRef(false);
+  useEffect(() => {
+    if (ghostCount > 0 !== hadGhosts.current) {
+      hadGhosts.current = ghostCount > 0;
+      setTimeout(() => fitView({ padding: 0.15 }), 0);
+    }
+  }, [ghostCount, fitView]);
   const wanted: AnyFlowNode[] = useMemo(
     () => [
       // Boxes first: React Flow draws a parent before its children.
@@ -307,10 +354,21 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id), draft: draftMarks?.get(n.id), editing },
         };
       }),
+      ...ghostView.ghosts.map(
+        (g): GhostFlowNode => ({
+          id: ghostId(g.service),
+          type: "ghost",
+          position: ghostAt.get(ghostId(g.service)) ?? { x: 0, y: 0 },
+          data: { ghost: g, windowSecs: graph.traffic?.window_secs ?? 3600 },
+          draggable: false,
+          selectable: false,
+          connectable: false,
+        }),
+      ),
     ],
     // `heldRevision` stands for `held`, a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing, grouping, grouped],
+    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing, grouping, grouped, ghostView, ghostAt],
   );
   // React Flow draws an edge only between parts it has measured, and it reports a measurement
   // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
@@ -361,12 +419,14 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       if (groupingRef.current) {
         return;
       }
-      for (const c of changes) {
+      // A ghost is not a part: nothing about it is held or saved (ADR 0016 stores map ids only).
+      const parts = changes.filter((c) => !("id" in c && isGhostId(c.id)));
+      for (const c of parts) {
         if (c.type === "position" && c.position && c.dragging) {
           held.current.set(c.id, c.position);
         }
       }
-      const moved = positionsToSave(changes, settledRef.current);
+      const moved = positionsToSave(parts, settledRef.current);
       if (moved?.positions) {
         for (const [id, p] of Object.entries(moved.positions)) {
           if (p) {
@@ -438,6 +498,19 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           data: { edge: u, windowSecs, reduced: reducedMotion, still: false },
         }))
       : [];
+    // Calls to or from a ghost: territory too, drawn the same way (issue #140).
+    for (const g of ghostView.edges) {
+      territory.push({
+        id: `territory-${endId(g.from)}-${endId(g.to)}`,
+        type: "territory" as const,
+        source: endId(g.from),
+        target: endId(g.to),
+        className: "territory",
+        selectable: false,
+        focusable: false,
+        data: { edge: { from: endText(g.from), to: endText(g.to), calls: g.calls, errors: g.errors }, windowSecs, reduced: reducedMotion, still: false },
+      });
+    }
     // Dots, rings and chevrons share one cap; only one lens is on, so they never add up.
     const ambient = [
       ...drawn.flatMap((ed) => (ed.data && ed.data.particles === "ambient" ? [{ id: ed.id, near: near(ed.data) }] : [])),
@@ -449,7 +522,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       ...drawn.map((ed) => (ed.data && (ed.data.particles === "ambient" || ed.data.chevrons) && !moving.has(ed.id) ? { ...ed, data: { ...ed.data, still: true } } : ed)),
       ...territory.map((t) => (t.data && !moving.has(t.id) ? { ...t, data: { ...t.data, still: true } } : t)),
     ];
-  }, [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion, showTraffic, windowSecs]);
+  }, [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion, showTraffic, windowSecs, ghostView]);
   // Particles and halos rest while a part is dragged or the page is hidden.
   const [dragging, setDragging] = useState(false);
   const [hidden, setHidden] = useState(typeof document !== "undefined" && document.visibilityState === "hidden");
@@ -597,6 +670,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           )}
         </div>
       )}
+      {lens === "traffic" && trafficActions}
     </div>
   );
 
@@ -664,7 +738,7 @@ function TrafficLegendText({ traffic }: { traffic: NonNullable<Graph["traffic"]>
       {l.unmappedCount > 0 && (
         <details className="unmapped">
           <summary>
-            {l.unmappedCount} service{l.unmappedCount === 1 ? " is" : "s are"} not on the map
+            {l.unmappedCount} service{l.unmappedCount === 1 ? "" : "s"} with no namespace and no part to match
           </summary>
           {l.unmapped.join(", ")}
         </details>
