@@ -84,6 +84,8 @@ pub struct OverviewInputs {
     pub queue: Vec<QueuedIssue>,
     /// The latest traffic report and its source (ADR 0039). Never an input to progress.
     pub traffic: TrafficLatest,
+    /// This workspace's dismissed discrepancies (ADR 0060). Never an input to progress.
+    pub dismissals: Vec<rubato_protocol::TrafficDismissal>,
     /// Each issue's spend over time, downsampled (ADR 0037). Copied onto its summary only.
     pub spend: HashMap<IssueRef, Vec<SpendPoint>>,
     /// The other workspaces, for an issue's workspaces and where its plan fits (ADR 0045).
@@ -516,6 +518,7 @@ pub fn build(
                 &m.map,
                 inputs.traffic.report.as_ref(),
                 &inputs.traffic.source,
+                &inputs.dismissals,
                 now,
             );
             findings.extend(f);
@@ -840,6 +843,7 @@ mod tests {
                 report: None,
                 source: rubato_protocol::SourceStatus::NotConfigured,
             },
+            dismissals: vec![],
             spend: HashMap::new(),
             workspaces: Default::default(),
         }
@@ -861,12 +865,20 @@ mod tests {
             pinned_by: "m0x6A".into(),
             pinned_at: now(),
         }];
-        let without = build(&inputs, Some(&map()), &Limits::default(), now());
+        // Each part declares the namespaceless service it is (ADR 0059), so the report matches.
+        let mut map = map();
+        for n in &mut map.map.nodes {
+            n.service = Some(rubato_protocol::ServiceId::new(None, &n.id));
+        }
+        let map = &map;
+        let without = build(&inputs, Some(map), &Limits::default(), now());
         let edge = |client: &str, server: &str, calls| TrafficEdge {
             client: client.into(),
             server: server.into(),
             calls,
             errors: 0,
+            client_namespace: None,
+            server_namespace: None,
         };
         inputs.traffic = TrafficLatest {
             report: Some(TrafficReport {
@@ -875,6 +887,10 @@ mod tests {
                 edges: vec![
                     edge("web", "rubato-server", 100),
                     edge("rubato-companion", "github", 3),
+                    TrafficEdge {
+                        client_namespace: Some("shop".into()),
+                        ..edge("checkout", "rubato-server", 4)
+                    },
                 ],
                 truncated: false,
             }),
@@ -883,7 +899,18 @@ mod tests {
                 error: None,
             },
         };
-        let with = build(&inputs, Some(&map()), &Limits::default(), now());
+        // A dismissal is no input to progress either (ADR 0060).
+        inputs.dismissals = vec![rubato_protocol::TrafficDismissal {
+            id: 1,
+            target: rubato_protocol::DiscrepancyKey::QuietSeam {
+                seam: "server-github".into(),
+            },
+            author: "m0x6A".into(),
+            at: now(),
+        }];
+        let with = build(&inputs, Some(map), &Limits::default(), now());
+        assert_eq!(with.traffic.ghosts.len(), 1, "{:?}", with.traffic);
+        assert_eq!(with.traffic.dismissed.len(), 1);
         assert_eq!(with.traffic.state, TrafficState::Fresh);
         assert_eq!(without.traffic.state, TrafficState::NotConfigured);
         assert!(!with.issues.is_empty());
@@ -1584,6 +1611,7 @@ mod cross_workspace_tests {
                     repo: Some((*repo).into()),
                     path: None,
                     description: None,
+                    service: None,
                 })
                 .collect(),
             seams: vec![],

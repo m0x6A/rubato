@@ -128,6 +128,8 @@ pub struct Metrics {
     pub traffic_seams_quiet: Gauge<u64>,
     pub traffic_undeclared_edges: Gauge<u64>,
     pub traffic_unmapped_services: Gauge<u64>,
+    pub traffic_ghost_parts: Gauge<u64>,
+    pub traffic_dismissals: Gauge<u64>,
     pub spend_points: Counter<u64>,
     /// The configured companion stale threshold N in seconds (#105). No unit, so the series
     /// stays `rubato_companion_silent_secs`, the name `CompanionSilent` reads.
@@ -196,6 +198,8 @@ impl Metrics {
             traffic_seams_quiet: m.u64_gauge(otel::metric::TRAFFIC_SEAMS_QUIET).build(),
             traffic_undeclared_edges: m.u64_gauge(otel::metric::TRAFFIC_UNDECLARED_EDGES).build(),
             traffic_unmapped_services: m.u64_gauge(otel::metric::TRAFFIC_UNMAPPED_SERVICES).build(),
+            traffic_ghost_parts: m.u64_gauge(otel::metric::TRAFFIC_GHOST_PARTS).build(),
+            traffic_dismissals: m.u64_gauge(otel::metric::TRAFFIC_DISMISSALS).build(),
             spend_points: m.u64_counter(otel::metric::SPEND_POINTS).build(),
             companion_silent_secs: m.u64_gauge(otel::metric::COMPANION_SILENT_SECS).build(),
             session_messages: m.u64_counter(otel::metric::SESSION_MESSAGES).build(),
