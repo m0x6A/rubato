@@ -3,7 +3,7 @@
 use crate::world::*;
 use cucumber::{given, then, when};
 use rubato_companion::kernel::config::State;
-use rubato_companion::kernel::tmux_ide::version_at_least;
+use rubato_companion::kernel::tmux::version_at_least;
 use rubato_protocol::CompanionMessage;
 use std::time::Duration;
 use uuid::Uuid;
@@ -229,17 +229,28 @@ async fn then_hello(w: &mut RubatoWorld, user: String, version: u32) {
     assert!(got.is_some(), "no matching hello");
 }
 
-#[then("the server receives a heartbeat naming the tmux-ide version")]
+/// ADR 0070: the heartbeat names `tmux -V` on this runner, and no tmux-ide version.
+#[then("the server receives a heartbeat naming the tmux version")]
 async fn then_heartbeat(w: &mut RubatoWorld) {
     let got = w
         .server()
         .wait_for(Duration::from_secs(10), |m| match m {
-            CompanionMessage::Heartbeat(h) => h.tmux_ide_version.clone(),
+            CompanionMessage::Heartbeat(h) => Some(h.clone()),
             _ => None,
         })
         .await;
-    let v = got.expect("a heartbeat with tmux-ide version");
-    assert!(version_at_least(&v, "2.9.0"), "{v}");
+    let h = got.expect("a heartbeat");
+    let out = std::process::Command::new("tmux")
+        .arg("-V")
+        .output()
+        .unwrap();
+    let want = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .trim_start_matches("tmux ")
+        .to_owned();
+    assert_eq!(h.tmux_version.as_deref(), Some(want.as_str()), "{h:?}");
+    assert!(version_at_least(&want, "3.7"), "{want}");
+    assert_eq!(h.tmux_ide_version, None);
 }
 
 #[when("the companion is told to shut down")]

@@ -9,8 +9,8 @@
 //!   and enforces the spend cap off the loop, #172):
 //!   ending while shutdown is not requested logs `rubato.task.exited` and makes `run` return
 //!   `Err`, which `main` turns into a non-zero exit;
-//! - best-effort (tmux-ide events watcher): ending is normal on a machine with no adopted
-//!   session; discovery runs on the timer;
+//! - best-effort: none since tmux-ide's events watcher went (ADR 0070); discovery runs on the
+//!   reconcile timer and is woken by launches;
 //! - on shutdown every task is aborted and `Cancelled` is clean, so `run` returns `Ok` at once.
 //!
 //! At start (plan 122 §D1) the hook receiver binds the port and token the last run published
@@ -22,7 +22,6 @@ use crate::kernel::claude::Claude;
 use crate::kernel::config::{HookEndpoint, State, Workspace};
 use crate::kernel::telemetry::Metrics;
 use crate::kernel::tmux::Tmux;
-use crate::kernel::tmux_ide::TmuxIde;
 use crate::launch::Launcher;
 use crate::plan_mirror::PlanMirrorTask;
 use crate::server_link::{Client, Identity, Reservation};
@@ -172,11 +171,12 @@ async fn run(
         cfg.workspace.companion.tmux_command.clone(),
         cfg.workspace.companion.tmux_tmpdir.clone(),
     );
-    let tmux_ide = TmuxIde::new(
-        cfg.workspace.companion.tmux_ide_command.clone(),
-        tmux.clone(),
-    )
-    .with_timeout(cfg.workspace.companion.command_timeout());
+    // The launch's tmux calls get the launch deadline, as tmux-ide's did; reconcile keeps
+    // `proc::LOCAL_TIMEOUT` (plan 147 Decision 9).
+    let launch_tmux = Tmux {
+        timeout: cfg.workspace.companion.command_timeout(),
+        ..tmux.clone()
+    };
     // The live limits; a `Welcome` that changes them wakes every reader (#172).
     let (limits, _) = watch::channel(cfg.workspace.companion.limits);
     // What the server announced in its last Welcome (ADR 0051).
@@ -242,21 +242,17 @@ async fn run(
             cfg.state.companion_id,
             cfg.state.user.clone(),
             metrics.clone(),
-            tmux_ide.clone(),
+            // A headless companion has no tmux to name (ADR 0062).
+            (!cfg.workspace.companion.is_headless()).then(|| tmux.clone()),
             limits.subscribe(),
             shutdown.clone(),
         ),
     );
-    // Discovery reads tmux and tmux-ide. A headless companion has neither: its registry holds
-    // only what it launched, and the child processes are the authority (plan 122 §D14).
+    // Discovery reads tmux. A headless companion has none: its registry holds only what it
+    // launched, and the child processes are the authority (plan 122 §D14).
     if cfg.workspace.companion.is_headless() {
         drop(poll_rx);
     } else {
-        tasks.spawn(
-            "events",
-            Kind::BestEffort,
-            sessions::watch_events(tmux_ide.clone(), poll_tx.clone(), shutdown.clone()),
-        );
         tasks.spawn(
             "reconcile",
             Kind::Essential,
@@ -265,7 +261,6 @@ async fn run(
                 registry.clone(),
                 metrics.clone(),
                 tmux.clone(),
-                tmux_ide.clone(),
                 limits.subscribe(),
                 poll_rx,
                 shutdown.clone(),
@@ -293,8 +288,7 @@ async fn run(
         paired_user: cfg.state.user.clone(),
         state_dir: cfg.state_dir.clone(),
         hook_endpoint: hook_endpoint.clone(),
-        tmux: tmux.clone(),
-        tmux_ide: tmux_ide.clone(),
+        tmux: launch_tmux,
     });
     let (launch_tx, launch_rx) = mpsc::unbounded_channel::<LaunchCommand>();
     tasks.spawn(
@@ -307,6 +301,7 @@ async fn run(
             out_tx.clone(),
             poll_tx.clone(),
             headless.clone(),
+            metrics.clone(),
         ),
     );
     let (input_tx, input_rx) = mpsc::unbounded_channel::<SessionMessage>();

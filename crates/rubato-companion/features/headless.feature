@@ -1,14 +1,14 @@
 Feature: A headless companion runs each turn as a claude -p child (ADR 0062)
-  An agent-only client is a companion in headless mode: no tmux, no tmux-ide. Each turn is one
+  An agent-only client is a companion in headless mode: no tmux. Each turn is one
   `claude -p` child that the companion holds. The child's exit and stream-json `result` end the
   turn and carry the reply. The stand-in claude here posts no hooks, so nothing below depends
-  on them. Every scenario runs with tmux and tmux-ide unusable.
+  on them. Every scenario runs with tmux unusable.
 
   Background:
     Given a test server that approves pairing for user "m0x6A"
     And a paired companion for user "m0x6A"
     And a temporary repository "acme/pantry" with a bare origin
-    And the companion is in headless mode with tmux and tmux-ide unusable
+    And the companion is in headless mode with tmux unusable
 
   Scenario: A headless launch runs the first turn and reports its reply
     Given the companion daemon is running and connected

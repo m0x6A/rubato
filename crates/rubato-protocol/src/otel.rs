@@ -38,6 +38,8 @@ pub mod attr {
     pub const TMUX_VERSION: &str = "rubato.tmux.version";
     pub const DROP_REASON: &str = "rubato.reason";
     pub const SUBSCRIBERS: &str = "rubato.subscribers";
+    /// Agent panes one reconcile cycle found (`rubato.reconcile`, ADR 0070).
+    pub const RECONCILE_PANES: &str = "rubato.reconcile.panes";
     pub const CAP_KIND: &str = "rubato.cap.kind";
     /// The background task a `rubato.task.exited` event names.
     pub const TASK: &str = "rubato.task";
@@ -393,6 +395,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::GITHUB_ENDPOINT,
         attr::TMUX_IDE_VERSION,
         attr::TMUX_VERSION,
+        attr::RECONCILE_PANES,
         attr::DROP_REASON,
         attr::SUBSCRIBERS,
         attr::CAP_KIND,

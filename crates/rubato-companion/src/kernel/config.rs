@@ -66,21 +66,22 @@ pub struct ModelPrice {
 pub struct CompanionConfig {
     /// Command used to start Claude Code. Tests point this at a stand-in.
     pub claude_command: String,
-    /// Command used for tmux-ide.
-    pub tmux_ide_command: String,
+    /// Command used for git in a launch: fetch, worktree list, add and remove (ADR 0070). Tests
+    /// point this at a wrapper around the real git.
+    pub git_command: String,
     /// Command used for tmux.
     pub tmux_command: String,
     /// Socket directory for a private tmux server (`TMUX_TMPDIR`). None means the default server.
     pub tmux_tmpdir: Option<PathBuf>,
-    /// Lowest tmux-ide version the companion accepts.
-    pub tmux_ide_min_version: String,
+    /// Lowest tmux version an interactive launch accepts (`tmux -V`, ADR 0070).
+    pub tmux_min_version: String,
     /// Thresholds; the server may override them in `Welcome`.
     pub limits: Limits,
     /// Prices by model id prefix, longest prefix wins. Empty means spend is not measured.
     pub pricing: BTreeMap<String, ModelPrice>,
     /// Permission mode passed to Claude Code at launch.
     pub permission_mode: String,
-    /// Deadline for the launch's `git fetch` and every tmux-ide call; a launch that hits it is
+    /// Deadline for every git and tmux call of a launch; a launch that hits it is
     /// `Failed` (plan 40 S3, A1).
     pub command_timeout_secs: u64,
     /// Where the rubato skill is installed; None means `~/.claude/skills/rubato`. Its version
@@ -118,14 +119,14 @@ impl Default for CompanionConfig {
     fn default() -> Self {
         Self {
             claude_command: "claude".into(),
-            tmux_ide_command: "tmux-ide".into(),
+            git_command: "git".into(),
             tmux_command: "tmux".into(),
             tmux_tmpdir: None,
-            tmux_ide_min_version: "2.9.0".into(),
+            tmux_min_version: "3.7".into(),
             limits: Limits::default(),
             pricing: BTreeMap::new(),
             permission_mode: "acceptEdits".into(),
-            command_timeout_secs: crate::kernel::tmux_ide::DEFAULT_TIMEOUT.as_secs(),
+            command_timeout_secs: crate::kernel::proc::DEFAULT_TIMEOUT.as_secs(),
             skill_dir: None,
             mode: rubato_protocol::ClientKind::Interactive,
             headless_turn_max_secs: 4 * 60 * 60,
@@ -135,10 +136,26 @@ impl Default for CompanionConfig {
     }
 }
 
+/// `local.yml` keys under `companion:` that tmux-ide used (ADR 0070). They still parse, since
+/// unknown keys are ignored; each is named once at start so the developer can delete it.
+pub const RETIRED_KEYS: [&str; 2] = ["tmux_ide_command", "tmux_ide_min_version"];
+
+/// The retired keys `text` still sets. Text that does not parse sets none: `parse` says why.
+pub fn retired_keys(text: &str) -> Vec<&'static str> {
+    let Ok(v) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(text) else {
+        return Vec::new();
+    };
+    let companion = v.get("companion");
+    RETIRED_KEYS
+        .into_iter()
+        .filter(|k| companion.and_then(|c| c.get(*k)).is_some())
+        .collect()
+}
+
 impl Workspace {
     pub fn parse(text: &str) -> Result<Self> {
         let ws: Self = serde_yaml_ng::from_str(text).context("workspace.yml does not parse")?;
-        // Zero would time every tmux-ide call out at once, with nothing pointing here (plan 40).
+        // Zero would time every launch call out at once, with nothing pointing here (plan 40).
         anyhow::ensure!(
             ws.companion.command_timeout_secs > 0,
             "workspace.yml: companion.command_timeout_secs must be at least 1"
@@ -149,6 +166,9 @@ impl Workspace {
     pub fn load(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        for key in retired_keys(&text) {
+            tracing::info!(key, "local.yml sets a retired key; delete it");
+        }
         Self::parse(&text)
     }
 
@@ -427,6 +447,20 @@ pub const HOOK_HEADER_FILE: &str = "hook-auth.header";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Plan 147 A7: a `local.yml` written for tmux-ide still parses, and each retired key it
+    /// sets is named once; one that sets none names none.
+    #[test]
+    fn a_config_with_retired_tmux_ide_keys_parses_and_names_them() {
+        let old = "companion:\n  tmux_ide_command: /usr/local/bin/tmux-ide\n  tmux_ide_min_version: 2.9.0\n  tmux_command: tmux\nrepos: []\n";
+        let ws = Workspace::parse(old).unwrap();
+        assert_eq!(ws.companion.tmux_min_version, "3.7");
+        assert_eq!(ws.companion.git_command, "git");
+        assert_eq!(retired_keys(old), RETIRED_KEYS);
+        assert!(retired_keys("companion:\n  tmux_command: tmux\nrepos: []\n").is_empty());
+        assert!(retired_keys("not: [yaml").is_empty());
+        println!("checked {} retired keys", RETIRED_KEYS.len());
+    }
 
     /// The old name is found and flagged: `RUBATO_WORKSPACE`, a `workspace.yml` left alone, or one
     /// named by `RUBATO_LOCAL`; `local.yml` and an empty directory are not (#132).

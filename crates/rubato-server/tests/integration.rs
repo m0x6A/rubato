@@ -3532,7 +3532,7 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
         message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Refused {
             command_id: first,
             reason: rubato_protocol::RefusalReason::MissingDependency,
-            detail: "tmux-ide 2.9 is needed".into(),
+            detail: "tmux 3.7 is needed".into(),
             at: chrono::Utc::now(),
         }),
     };
@@ -3541,7 +3541,7 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
     assert_eq!(ov.queue.len(), 1);
     assert_eq!(
         ov.queue[0].last_start_error.as_deref(),
-        Some("missing_dependency: tmux-ide 2.9 is needed")
+        Some("missing_dependency: tmux 3.7 is needed")
     );
     assert_eq!(progress_of(&h, &issue).await.state, before.state);
 

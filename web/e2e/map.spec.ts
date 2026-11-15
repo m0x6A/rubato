@@ -453,8 +453,8 @@ test("queue an issue on a paired companion and start it", { tag: ["@queue.queue-
 
   // The companion refuses: the entry stays and says why.
   const answer = (seq: number, message: Record<string, unknown>) => mine.send(JSON.stringify({ seq, sent_at: new Date().toISOString(), message: { type: "launch", command_id: commands.at(-1)!.id, at: new Date().toISOString(), ...message } }));
-  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux-ide 2.9 is needed" });
-  await expect(entry).toContainText("did not start: missing_dependency: tmux-ide 2.9 is needed");
+  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux 3.7 is needed" });
+  await expect(entry).toContainText("did not start: missing_dependency: tmux 3.7 is needed");
 
   // Started the second time: the entry leaves the lane.
   await entry.getByRole("button", { name: "Start m0x6A/rubato#9" }).click();

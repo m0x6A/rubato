@@ -4,9 +4,9 @@ This walks through running Rubato for real, with GitHub and a live Claude Code s
 the rubato repository as both the map repo and the one connected repo. Everything up to the
 last step is free; the last step spends tokens under a cap.
 
-What you need: a machine with tmux 3.7 or newer, [tmux-ide](https://tmux-ide.com) 2.9 or
-newer, Claude Code, Node 22.6 or newer, pnpm, Rust stable, `git`, `curl`, and a GitHub
-account that can read this repository.
+What you need: a machine with tmux 3.7 or newer, `git`, Claude Code, Node 22.6 or newer, pnpm,
+Rust stable, `curl`, and a GitHub account that can read this repository. tmux-ide is no longer
+needed (retired by ADR 0070): the companion runs tmux and git itself.
 
 ## 1. Build
 
@@ -324,7 +324,7 @@ server keeps only the log text, never a hook payload.
 
 What happens next, and what to watch:
 
-- The companion creates the worktree `../rubato-worktrees/issue/n-<slug>` with tmux-ide and a
+- The companion creates the worktree `../rubato-worktrees/issue/n-<slug>` with `git worktree` and a
   tmux session named `rubato@issue-n-<slug>` running Claude Code with `--session-id`, the hook
   configuration injected with `--settings`, and `rubato.repo`, `rubato.issue`,
   `rubato.branch` and `rubato.node` set as OTel resource attributes. Attach with
@@ -377,8 +377,10 @@ appear in their title and body.
 ## 8. If it does not move
 
 - Nothing happens after *Start session*: read the companion log. A launch for the wrong user
-  is refused and reported; a missing repo in `local.yml` or a tmux-ide below 2.9 fails
-  the launch with the reason.
+  is refused and reported; a missing repo in `local.yml` fails the launch with the reason, and a
+  tmux below 3.7 (`companion.tmux_min_version`) is refused as `missing_dependency`. A directory
+  already at the worktree path that git does not list fails the launch with the path; move it
+  away, the companion never deletes it.
 - The issue stays **Started**: no hook event has arrived. `rubato-companion status` prints the
   hook endpoint and the header file that holds its token; `curl -H @<header file>` it from the
   worktree to prove the path (curl 7.55 or later; never put the token itself on a command line,
@@ -387,7 +389,8 @@ appear in their title and body.
   `$CLAUDE_CONFIG_DIR/projects`), as a regular file of at most 256 MiB, and logs
   `rubato.transcript.refused` with the reason otherwise.
 - The issue shows **Unknown**: the trust check. The last signal is older than the stale
-  threshold, or the only state comes from tmux-ide's screen reading. A hook event fixes it.
+  threshold, or the session was started by hand and sends no hooks: opt it in with the skill's
+  `hooks.ts`. A hook event fixes it.
 - The plan never shows: the server polls GitHub every `RUBATO_GITHUB_POLL_SECS`; check the
   server log for `poll failed for issue` and the token's scopes.
 
