@@ -1,8 +1,8 @@
 # 0065. `Decision:` comments count only from team members, like `Review:` and `Approved:`
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #164); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/164#issuecomment-6892511479 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #164)
 - **Seam:** server-github
 - **Issue:** m0x6A/rubato#164
 
