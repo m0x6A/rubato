@@ -327,6 +327,11 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {
+                // The pairing is the only source of a session's companion and user (#162).
+                let overwritten = own_sessions(&mut sessions, companion_id, &pairing.user);
+                if overwritten > 0 {
+                    tracing::warn!(rubato.companion_id = %companion_id, overwritten, "session identity overwritten");
+                }
                 // Against every workspace's repos (ADR 0048): a session's repo is named by some map.
                 let union = app.union_repos().await;
                 if !union.is_empty() {
@@ -351,7 +356,7 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Launch(result) => {
-                match launch::record_result(&app.db, &result).await {
+                match launch::record_result(&app.db, companion_id, &result).await {
                     Ok(Some(issue)) => {
                         tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result");
                         settle_queue(app, companion_id, &issue, &result).await;
@@ -372,13 +377,25 @@ async fn on_envelope(
                             approve::on_launch_started(app, *command_id).await;
                         }
                     }
-                    Ok(None) => tracing::warn!("launch result for an unknown command"),
+                    // Unknown, or sent to another companion (#162): nothing was written.
+                    Ok(None) => {
+                        refuse_identity(&app.metrics);
+                        let (rubato_protocol::LaunchResult::Started { command_id, .. }
+                        | rubato_protocol::LaunchResult::Refused { command_id, .. }
+                        | rubato_protocol::LaunchResult::Failed { command_id, .. }) = &result;
+                        tracing::warn!(rubato.companion_id = %companion_id, rubato.launch_id = %command_id, "launch result for a command not sent to this companion");
+                    }
                     Err(e) => tracing::error!(error = %e, "storing launch result"),
                 }
                 app.notify("launch");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::CapHit(hit) => {
+                if !runs_issue(app, companion_id, &hit.issue).await {
+                    refuse_identity(&app.metrics);
+                    tracing::warn!(rubato.companion_id = %companion_id, rubato.issue = %hit.issue, "cap hit for an issue this companion does not run dropped");
+                    return Some(ServerMessage::Ack { seq: env.seq });
+                }
                 tracing::warn!(rubato.issue = %hit.issue, rubato.session_id = ?hit.session_id, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
                 if let Err(e) = launch::record_cap_hit(&app.db, &hit, now).await {
                     tracing::error!(error = %e, "storing cap hit");
@@ -386,7 +403,9 @@ async fn on_envelope(
                 app.notify("cap hit");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
-            CompanionMessage::Stale(s) => {
+            CompanionMessage::Stale(mut s) => {
+                // Recorded under the pairing, never the companion the event names (#162).
+                s.companion_id = companion_id;
                 tracing::warn!(rubato.session_id = ?s.session_id, silent_for_secs = s.silent_for_secs, "{}", rubato_protocol::otel::event::SESSION_STALE);
                 observe(
                     "store_stale",
@@ -458,6 +477,43 @@ pub fn canonicalise_repos(sessions: &mut [SessionState], named: &[&str]) {
             issue.repo = (*canonical).to_owned();
         }
     }
+}
+
+/// Set every session's companion and user to the pairing's. Returns how many claimed otherwise.
+fn own_sessions(sessions: &mut [SessionState], companion_id: Uuid, user: &str) -> usize {
+    let mut changed = 0;
+    for s in sessions {
+        if s.companion_id != companion_id || s.user != user {
+            changed += 1;
+            s.companion_id = companion_id;
+            s.user = user.to_owned();
+        }
+    }
+    changed
+}
+
+/// A cap hit counts only from a companion that was sent a launch for the issue or reports a
+/// session on it (#162). A failed read refuses: the hit would otherwise block on a guess.
+async fn runs_issue(app: &App, companion_id: Uuid, issue: &rubato_protocol::IssueRef) -> bool {
+    match launch::companion_launched(&app.db, companion_id, issue).await {
+        Ok(true) => return true,
+        Ok(false) => {}
+        Err(e) => tracing::error!(error = %e, "reading launches for a cap hit"),
+    }
+    match store::companion_has_session_on(&app.db, companion_id, issue).await {
+        Ok(yes) => yes,
+        Err(e) => {
+            tracing::error!(error = %e, "reading the snapshot for a cap hit");
+            false
+        }
+    }
+}
+
+/// An envelope that names another companion's issue or command: acknowledged, not applied.
+fn refuse_identity(metrics: &Metrics) {
+    metrics
+        .events_dropped
+        .add(1, &[KeyValue::new(attr::DROP_REASON, "identity")]);
 }
 
 fn record_sessions_by_state(metrics: &Metrics, companion_id: Uuid, sessions: &[SessionState]) {
@@ -573,6 +629,33 @@ mod tests {
             all[1].repo.as_deref(),
             Some("someone/else"),
             "not in the map: unchanged"
+        );
+    }
+
+    #[test]
+    fn a_foreign_identity_envelope_is_counted_as_dropped_identity() {
+        let (reader, metrics) = metric_reader::start();
+        refuse_identity(&metrics);
+        let points = reader.points(metric::EVENTS_DROPPED);
+        let identity = points
+            .iter()
+            .find(|p| p.attrs[attr::DROP_REASON] == "identity")
+            .map(|p| p.value);
+        assert_eq!(identity, Some(1), "{points:?}");
+    }
+
+    #[test]
+    fn own_sessions_counts_only_the_claims_it_changed() {
+        let me = Uuid::new_v4();
+        let mut all = vec![
+            session(me, SessionStatus::Working),
+            session(Uuid::new_v4(), SessionStatus::Working),
+        ];
+        all[0].user = "alice".into();
+        assert_eq!(own_sessions(&mut all, me, "alice"), 1);
+        assert!(
+            all.iter()
+                .all(|s| s.companion_id == me && s.user == "alice")
         );
     }
 

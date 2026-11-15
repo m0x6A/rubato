@@ -432,6 +432,20 @@ async fn protocol_fixtures_replay_derives_progress() {
         .send()
         .await
         .unwrap();
+    // The companion reports a session on #2 first: a cap hit counts only from a companion
+    // that runs the issue (#162).
+    let mut on_two = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    on_two.seq = 8;
+    if let CompanionMessage::Sessions { sessions } = &mut on_two.message {
+        let mut s = sessions[0].clone();
+        s.session_id = Some("s-two".into());
+        s.issue = Some(two.clone());
+        sessions.push(s);
+    }
+    assert!(matches!(
+        send(&mut ws, &on_two).await,
+        ServerMessage::Ack { seq: 8 }
+    ));
     let mut cap = Harness::fixture("companion_cap_hit.json");
     if let CompanionMessage::CapHit(c) = &mut cap.message {
         c.issue = two.clone();
@@ -1770,6 +1784,156 @@ async fn a_companion_attempts_hit_blocks_whatever_the_companion_clock_says() {
     let _ = send(&mut ws, &cap).await;
     await_reason(&mut web, "cap hit").await;
     assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+}
+
+/// A second companion, paired to alice, that will claim things that are not its own (#162).
+async fn intruder(h: &Harness) -> (Uuid, Ws) {
+    let (companion_id, token) = h.pair("alice").await;
+    let mut ws = h.connect(&token).await;
+    let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    if let CompanionMessage::Hello { user, .. } = &mut hello.message {
+        *user = "alice".into();
+    }
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    (companion_id, ws)
+}
+
+/// #162 S1: a snapshot's sessions take the pairing's companion id and user.
+#[tokio::test]
+async fn a_snapshot_cannot_claim_another_companion_or_user() {
+    let h = harness().await;
+    let (victim, token) = h.pair("m0x6A").await;
+    let _victim_ws = h.connect(&token).await;
+    let (alice, mut ws) = intruder(&h).await;
+    let mut forged = with_companion(Harness::fixture("companion_sessions.json"), victim);
+    forged.seq = 2;
+    let CompanionMessage::Sessions { sessions } = &mut forged.message else {
+        panic!("fixture")
+    };
+    let n = sessions.len();
+    sessions.iter_mut().for_each(|s| s.user = "bob".into());
+    assert!(matches!(
+        send(&mut ws, &forged).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let stored: String =
+        sqlx::query_scalar("SELECT sessions FROM session_snapshots WHERE companion_id = ?")
+            .bind(alice.to_string())
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap();
+    let stored: Vec<rubato_protocol::SessionState> = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored.len(), n);
+    assert!(
+        stored
+            .iter()
+            .all(|s| s.companion_id == alice && s.user == "alice"),
+        "{stored:?}"
+    );
+    let ov = h.overview("m0x6A").await;
+    let shown: Vec<_> = ov
+        .issues
+        .iter()
+        .flat_map(|i| i.sessions.iter())
+        .chain(ov.unpinned_sessions.iter())
+        .collect();
+    assert!(!shown.is_empty());
+    assert!(
+        shown.iter().all(|s| s.companion_id != victim),
+        "nothing shows in the victim's lane: {shown:?}"
+    );
+    println!("checked {n} forged sessions: all under the pairing");
+}
+
+/// #162 S2: a cap hit counts only from a companion that runs the issue.
+#[tokio::test]
+async fn a_cap_hit_for_an_issue_this_companion_does_not_run_is_dropped() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_victim, mut victim_ws) = ready_to_launch(&h, &issue).await;
+    let r = start(&h, &issue, 3).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let (_alice, mut ws) = intruder(&h).await;
+
+    let hit = spend_hit(&issue, 2, "s-forged", chrono::Utc::now());
+    assert!(matches!(
+        send(&mut ws, &hit).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cap_hits")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "the forged hit is not stored");
+    assert_ne!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+
+    // The launch command is on the victim's socket; read it off, then the victim's own hit counts.
+    let Some(Ok(Message::Text(_))) = victim_ws.next().await else {
+        panic!("no launch on the victim's socket")
+    };
+    let hit = spend_hit(&issue, 50, "s-real", chrono::Utc::now());
+    assert!(matches!(
+        send(&mut victim_ws, &hit).await,
+        ServerMessage::Ack { seq: 50 }
+    ));
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+    println!("checked 2 cap hits: 1 dropped, 1 stored");
+}
+
+/// #162 S3: a launch result updates only a launch sent to this companion.
+#[tokio::test]
+async fn a_launch_result_for_another_companions_command_changes_nothing() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_victim, _victim_ws) = ready_to_launch(&h, &issue).await;
+    let launched: rubato_protocol::LaunchResponse =
+        start(&h, &issue, 3).await.json().await.unwrap();
+    let (_alice, mut ws) = intruder(&h).await;
+    assert!(matches!(
+        send(&mut ws, &started(2, &launched)).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let result: Option<String> = sqlx::query_scalar("SELECT result FROM launches WHERE id = ?")
+        .bind(launched.command.id.to_string())
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(result, None, "the victim's launch keeps no result");
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Planned);
+    println!("checked 1 foreign launch result: 0 rows changed");
+}
+
+/// #162 S4: a stale event is recorded under the pairing.
+#[tokio::test]
+async fn a_stale_event_is_recorded_under_the_pairing() {
+    let h = harness().await;
+    let victim = Uuid::new_v4();
+    let (alice, mut ws) = intruder(&h).await;
+    let stale = CompanionEnvelope {
+        seq: 2,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Stale(rubato_protocol::StaleSession {
+            companion_id: victim,
+            session_id: Some("s".into()),
+            issue: None,
+            last_seen: chrono::Utc::now(),
+            silent_for_secs: 900,
+            at: chrono::Utc::now(),
+        }),
+    };
+    assert!(matches!(
+        send(&mut ws, &stale).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let ids: Vec<String> = sqlx::query_scalar("SELECT companion_id FROM stale_events")
+        .fetch_all(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(ids, vec![alice.to_string()]);
+    println!("checked 1 stale event: under the pairing");
 }
 
 #[tokio::test]

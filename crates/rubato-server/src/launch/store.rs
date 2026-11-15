@@ -55,8 +55,11 @@ pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<La
     }))
 }
 
+/// The result of a launch sent to `companion_id`; `None` when no such launch went to that
+/// companion, and then nothing is written (#162).
 pub async fn store_launch_result(
     db: &SqlitePool,
+    companion_id: Uuid,
     result: &LaunchResult,
 ) -> Result<Option<IssueRef>> {
     let id = match result {
@@ -64,17 +67,38 @@ pub async fn store_launch_result(
         | LaunchResult::Refused { command_id, .. }
         | LaunchResult::Failed { command_id, .. } => command_id.to_string(),
     };
-    sqlx::query("UPDATE launches SET result = ?, resulted_at = ? WHERE id = ?")
-        .bind(serde_json::to_string(result)?)
-        .bind(ts(Utc::now()))
+    let companion = companion_id.to_string();
+    sqlx::query(
+        "UPDATE launches SET result = ?, resulted_at = ? WHERE id = ? AND companion_id = ?",
+    )
+    .bind(serde_json::to_string(result)?)
+    .bind(ts(Utc::now()))
+    .bind(&id)
+    .bind(&companion)
+    .execute(db)
+    .await?;
+    let row = sqlx::query("SELECT repo, number FROM launches WHERE id = ? AND companion_id = ?")
         .bind(&id)
-        .execute(db)
-        .await?;
-    let row = sqlx::query("SELECT repo, number FROM launches WHERE id = ?")
-        .bind(&id)
+        .bind(&companion)
         .fetch_optional(db)
         .await?;
     Ok(row.map(|r| IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64)))
+}
+
+/// Whether the server ever sent a launch for `issue` to `companion_id`. The repo compares
+/// without case: a spend hit names the repo as the session's remote spells it.
+pub async fn companion_launched(
+    db: &SqlitePool,
+    companion_id: Uuid,
+    issue: &IssueRef,
+) -> Result<bool> {
+    let r = sqlx::query("SELECT EXISTS (SELECT 1 FROM launches WHERE companion_id = ? AND repo = ? COLLATE NOCASE AND number = ?) AS yes")
+        .bind(companion_id.to_string())
+        .bind(&issue.repo)
+        .bind(issue.number as i64)
+        .fetch_one(db)
+        .await?;
+    Ok(r.get::<i64, _>("yes") != 0)
 }
 
 /// Issues with at least one launch that started.
