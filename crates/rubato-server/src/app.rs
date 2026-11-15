@@ -141,8 +141,24 @@ pub fn router(app: App) -> Router {
         .route(auth_routes::LOGOUT, post(auth::logout))
         .route("/api/{*rest}", any(unknown_api_path))
         .route("/ws/{*rest}", any(unknown_api_path))
-        .route("/auth/{*rest}", any(unknown_api_path));
+        .route("/auth/{*rest}", any(unknown_api_path))
+        // Every write and websocket upgrade, map-scoped ones included (ADR 0066).
+        .route_layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            crate::kernel::http::same_origin,
+        ));
+    let csp = axum::http::HeaderValue::from_str(&crate::kernel::http::content_security_policy(
+        &app.config.public_url,
+    ))
+    .expect("a header-safe policy");
     api.fallback_service(ServeDir::new(dist).not_found_service(ServeFile::new(index)))
+        .layer(axum::middleware::map_response(move |mut res: Response| {
+            let csp = csp.clone();
+            async move {
+                crate::kernel::http::add_security_headers(&csp, &mut res);
+                res
+            }
+        }))
         .layer(TraceLayer::new_for_http())
         .with_state(app)
 }
@@ -755,5 +771,444 @@ mod tests {
                 .starts_with("text/html")
         );
         assert!(r.text().await.unwrap().contains("<title>r</title>"));
+    }
+
+    // Issue #193 (ADR 0066): same-origin writes, headers, companion caps, the login's text.
+
+    /// A served router with in-memory metrics, the map loaded, and `configure` applied.
+    async fn hardened(
+        configure: impl FnOnce(&mut Config),
+    ) -> (
+        String,
+        App,
+        crate::kernel::telemetry::metric_reader::Reader,
+        tempfile::TempDir,
+    ) {
+        use crate::kernel::telemetry::metric_reader;
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let (reader, metrics) = metric_reader::start();
+        let mut cfg = Config::for_tests(url, "m0x6A");
+        configure(&mut cfg);
+        let mut app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
+        Arc::get_mut(&mut app).unwrap().metrics = metrics;
+        let map: rubato_protocol::SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
+        app.set_map(
+            rubato_protocol::DEFAULT_WORKSPACE,
+            crate::kernel::state::LoadedMap {
+                map,
+                version: "v".into(),
+                loaded_at: chrono::Utc::now(),
+                yaml: String::new(),
+            },
+        )
+        .await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let served = app.clone();
+        tokio::spawn(async move { axum::serve(listener, router(served)).await.unwrap() });
+        (base, app, reader, tmp)
+    }
+
+    fn dropped(
+        reader: &crate::kernel::telemetry::metric_reader::Reader,
+        metric: &str,
+        reason: &str,
+    ) -> u64 {
+        use rubato_protocol::otel::attr;
+        reader
+            .points(metric)
+            .into_iter()
+            .filter(|p| p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some(reason))
+            .map(|p| p.value)
+            .sum()
+    }
+
+    /// Pair a companion through the device-code flow as the dev user; its id and token.
+    async fn pair_companion(base: &str) -> (uuid::Uuid, String) {
+        use rubato_protocol::pairing::{
+            PairApproveRequest, PairPollRequest, PairPollResponse, PairStartRequest,
+            PairStartResponse,
+        };
+        let http = reqwest::Client::new();
+        let companion_id = uuid::Uuid::new_v4();
+        let start: PairStartResponse = http
+            .post(format!("{base}{}", pr::PAIR_START))
+            .json(&PairStartRequest {
+                companion_id,
+                hostname: "h".into(),
+                companion_version: "t".into(),
+            })
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let approved = http
+            .post(format!("{base}{}", pr::PAIR_APPROVE))
+            .json(&PairApproveRequest {
+                user_code: start.user_code.clone(),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(approved.status(), 200);
+        let poll: PairPollResponse = http
+            .post(format!("{base}{}", pr::PAIR_POLL))
+            .json(&PairPollRequest {
+                device_code: start.device_code,
+            })
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let PairPollResponse::Approved { token, .. } = poll else {
+            panic!("{poll:?}")
+        };
+        (companion_id, token)
+    }
+
+    type Socket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    /// Open a websocket at `path` with `headers`; the socket, or the refusal's status.
+    async fn open_ws(base: &str, path: &str, headers: &[(&str, &str)]) -> Result<Socket, u16> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut req = format!("ws://{}{path}", base.trim_start_matches("http://"))
+            .into_client_request()
+            .unwrap();
+        for (k, v) in headers {
+            req.headers_mut().insert(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                v.parse().unwrap(),
+            );
+        }
+        match tokio_tungstenite::connect_async(req).await {
+            Ok((ws, _)) => Ok(ws),
+            Err(tokio_tungstenite::tungstenite::Error::Http(r)) => Err(r.status().as_u16()),
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    async fn send_env(ws: &mut Socket, seq: u64, message: serde_json::Value) {
+        use futures_util::SinkExt;
+        let env =
+            serde_json::json!({"seq": seq, "sent_at": "2026-11-15T12:00:00Z", "message": message});
+        ws.send(tokio_tungstenite::tungstenite::Message::Text(
+            env.to_string().into(),
+        ))
+        .await
+        .unwrap();
+    }
+
+    /// The next server message, or `None` when the socket ended.
+    async fn next_msg(ws: &mut Socket) -> Option<rubato_protocol::ServerMessage> {
+        use futures_util::StreamExt;
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(10), ws.next())
+                .await
+                .expect("an answer in time")
+            {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t))) => {
+                    let env: rubato_protocol::ServerEnvelope = serde_json::from_str(&t).unwrap();
+                    return Some(env.message);
+                }
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))
+                | None
+                | Some(Err(_)) => {
+                    return None;
+                }
+                Some(Ok(_)) => {}
+            }
+        }
+    }
+
+    fn hello(companion_id: uuid::Uuid) -> serde_json::Value {
+        serde_json::json!({"type": "hello", "companion_id": companion_id, "user": "m0x6A",
+            "companion_version": "t", "protocol_version": rubato_protocol::PROTOCOL_VERSION,
+            "last_seen_server_seq": 0})
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cross_origin_writes_are_refused_and_counted() {
+        use rubato_protocol::otel::{attr, metric};
+        let (base, _app, reader, _tmp) = hardened(|_| {}).await;
+        let http = reqwest::Client::new();
+        let host = base.trim_start_matches("http://").to_owned();
+        let post = |path: &str, headers: &[(&str, &str)]| {
+            let mut r = http.post(format!("{base}{path}"));
+            for (k, v) in headers {
+                r = r.header(*k, *v);
+            }
+            r.send()
+        };
+        let refused: &[(&str, &[(&str, &str)])] = &[
+            (
+                map_routes::MAP_RELOAD,
+                &[("origin", "https://evil.example")],
+            ),
+            (
+                draft_routes::DRAFT_DISCARD,
+                &[("origin", "https://evil.example")],
+            ),
+            (
+                draft_routes::DRAFT_DISCARD,
+                &[("sec-fetch-site", "same-site")],
+            ),
+            (
+                "/api/w/default/map/draft/discard",
+                &[("sec-fetch-site", "cross-site")],
+            ),
+        ];
+        for (path, headers) in refused {
+            let r = post(path, headers).await.unwrap();
+            assert_eq!(r.status(), 403, "{path} {headers:?}");
+            assert_eq!(r.text().await.unwrap(), crate::kernel::http::CROSS_ORIGIN);
+        }
+        let own = format!("http://{host}");
+        let allowed: &[&[(&str, &str)]] = &[
+            &[("sec-fetch-site", "same-origin")],
+            &[("origin", own.as_str())],
+            &[],
+        ];
+        for headers in allowed {
+            let r = post(draft_routes::DRAFT_DISCARD, headers).await.unwrap();
+            assert_ne!(r.status(), 403, "{headers:?}");
+        }
+        let points: Vec<_> = reader
+            .points(metric::WEB_REJECTED)
+            .into_iter()
+            .filter(|p| p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("cross_origin"))
+            .collect();
+        assert_eq!(points.iter().map(|p| p.value).sum::<u64>(), 4, "{points:?}");
+        assert!(
+            points
+                .iter()
+                .any(|p| p.attrs[attr::ROUTE] == map_routes::MAP_RELOAD)
+        );
+        assert!(
+            points
+                .iter()
+                .any(|p| p.attrs[attr::ROUTE] == "/api/w/{ws}/map/draft/discard")
+        );
+        println!(
+            "checked {} refused and {} allowed writes",
+            refused.len(),
+            allowed.len()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn websocket_upgrades_check_the_origin() {
+        let (base, _app, _reader, _tmp) = hardened(|_| {}).await;
+        let host = base.trim_start_matches("http://").to_owned();
+        let evil = [("origin", "https://evil.example")];
+        assert_eq!(
+            open_ws(&base, web_routes::WEB_WS, &evil).await.err(),
+            Some(403)
+        );
+        let own = format!("http://{host}");
+        assert!(
+            open_ws(&base, web_routes::WEB_WS, &[("origin", own.as_str())])
+                .await
+                .is_ok()
+        );
+        let (companion_id, token) = pair_companion(&base).await;
+        let bearer = format!("Bearer {token}");
+        let auth = ("authorization", bearer.as_str());
+        assert_eq!(
+            open_ws(&base, pr::COMPANION_WS, &[auth, evil[0]])
+                .await
+                .err(),
+            Some(403)
+        );
+        // The companion sends no Origin: it upgrades and is welcomed as before.
+        let mut ws = open_ws(&base, pr::COMPANION_WS, &[auth])
+            .await
+            .expect("upgrade");
+        send_env(&mut ws, 1, hello(companion_id)).await;
+        assert!(matches!(
+            next_msg(&mut ws).await,
+            Some(rubato_protocol::ServerMessage::Welcome { .. })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn every_response_carries_the_security_headers() {
+        let dist = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dist.path().join("index.html"),
+            "<!doctype html><title>r</title>",
+        )
+        .unwrap();
+        let d = dist.path().to_owned();
+        let (base, _app, _reader, _tmp) = hardened(|c| {
+            c.web_dist = d;
+            c.public_url = "http://192.168.1.20:8081".into();
+        })
+        .await;
+        for path in ["/api/health", "/api/nope", "/", "/some/page"] {
+            let r = reqwest::get(format!("{base}{path}")).await.unwrap();
+            assert_eq!(r.headers()["x-content-type-options"], "nosniff", "{path}");
+            let csp = r.headers()["content-security-policy"].to_str().unwrap();
+            assert!(csp.starts_with("default-src 'self';"), "{path}: {csp}");
+            assert!(csp.contains("ws://192.168.1.20:8081"), "{path}: {csp}");
+            assert!(csp.contains("frame-ancestors 'none'"), "{path}: {csp}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_oversized_companion_message_ends_the_socket() {
+        use rubato_protocol::otel::metric;
+        let (base, _app, reader, _tmp) = hardened(|_| {}).await;
+        let (companion_id, token) = pair_companion(&base).await;
+        let bearer = format!("Bearer {token}");
+        let mut ws = open_ws(
+            &base,
+            pr::COMPANION_WS,
+            &[("authorization", bearer.as_str())],
+        )
+        .await
+        .unwrap();
+        send_env(&mut ws, 1, hello(companion_id)).await;
+        assert!(next_msg(&mut ws).await.is_some());
+        // A 3 MiB hook is an honest size (the companion takes 2 MiB hook bodies): acknowledged.
+        let big = "x".repeat(3 * 1024 * 1024);
+        let hook = serde_json::json!({"type": "hook", "session_id": "s", "hook_event_name": "PostToolUse",
+            "cwd": "/w", "received_at": "2026-11-15T12:00:00Z", "payload": {"tool_input": big}});
+        send_env(&mut ws, 2, hook).await;
+        assert_eq!(
+            next_msg(&mut ws).await,
+            Some(rubato_protocol::ServerMessage::Ack { seq: 2 })
+        );
+        assert_eq!(dropped(&reader, metric::EVENTS_DROPPED, "too_large"), 0);
+        // Over 4 MiB: the socket ends, counted once.
+        let huge = "x".repeat(5 * 1024 * 1024);
+        // The server stops reading at the cap, so the send itself may see the reset.
+        let env = serde_json::json!({"seq": 3, "sent_at": "2026-11-15T12:00:00Z",
+            "message": {"type": "hook", "session_id": huge}});
+        let sent = futures_util::SinkExt::send(
+            &mut ws,
+            tokio_tungstenite::tungstenite::Message::Text(env.to_string().into()),
+        )
+        .await;
+        if sent.is_ok() {
+            assert_eq!(next_msg(&mut ws).await, None);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(dropped(&reader, metric::EVENTS_DROPPED, "too_large"), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_snapshot_over_the_cap_is_not_stored() {
+        use rubato_protocol::otel::metric;
+        let (base, app, reader, _tmp) = hardened(|_| {}).await;
+        let (companion_id, token) = pair_companion(&base).await;
+        let bearer = format!("Bearer {token}");
+        let mut ws = open_ws(
+            &base,
+            pr::COMPANION_WS,
+            &[("authorization", bearer.as_str())],
+        )
+        .await
+        .unwrap();
+        send_env(&mut ws, 1, hello(companion_id)).await;
+        assert!(next_msg(&mut ws).await.is_some());
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../rubato-protocol/fixtures/companion_sessions.json"
+        ))
+        .unwrap();
+        let one = fixture["message"]["sessions"][1].clone();
+        let sessions = |n: usize| -> serde_json::Value {
+            (0..n)
+                .map(|i| {
+                    let mut s = one.clone();
+                    s["companion_id"] = serde_json::json!(companion_id);
+                    s["tmux"]["pane"] = serde_json::json!(format!("%{i}"));
+                    s
+                })
+                .collect()
+        };
+        let stored = || async {
+            let row: (String,) = sqlx::query_as("SELECT sessions FROM session_snapshots")
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+            serde_json::from_str::<Vec<serde_json::Value>>(&row.0)
+                .unwrap()
+                .len()
+        };
+        let seqs = [(2u64, 1usize), (3, 257), (4, 256)];
+        for (seq, n) in seqs {
+            send_env(
+                &mut ws,
+                seq,
+                serde_json::json!({"type": "sessions", "sessions": sessions(n)}),
+            )
+            .await;
+            assert_eq!(
+                next_msg(&mut ws).await,
+                Some(rubato_protocol::ServerMessage::Ack { seq }),
+                "{n} sessions"
+            );
+            let want = if n > 256 { 1 } else { n };
+            assert_eq!(stored().await, want, "after {n} sessions");
+        }
+        assert_eq!(
+            dropped(&reader, metric::EVENTS_DROPPED, "too_many_sessions"),
+            1
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_callback_does_not_echo_upstream_errors() {
+        use rubato_protocol::otel::metric;
+        let stub = axum::Router::new().route(
+            "/login/oauth/access_token",
+            axum::routing::post(|| async {
+                (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(serde_json::json!({"error": "bad_verification_code",
+                        "error_description": "UPSTREAM-SECRET-TEXT"})),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let stub_url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+        let s = stub_url.clone();
+        let (base, _app, reader, _tmp) = hardened(move |c| {
+            c.github_client_id = Some("Iv1.test".into());
+            c.github_client_secret = Some("secret".into());
+            c.github_web_url = Some(s.clone());
+            c.github_api_url = Some(s);
+            c.dev_user = None;
+        })
+        .await;
+        let r = reqwest::Client::new()
+            .get(format!("{base}/auth/github/callback?code=c1&state=s1"))
+            .header("cookie", "rubato_oauth_state=s1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 502);
+        let body = r.text().await.unwrap();
+        assert!(!body.contains("UPSTREAM-SECRET-TEXT"), "{body}");
+        assert!(!body.contains("bad_verification_code"), "{body}");
+        assert_eq!(body, "GitHub did not complete the login. Try again.");
+        assert_eq!(
+            dropped(&reader, metric::WEB_REJECTED, "token_exchange_failed"),
+            1
+        );
     }
 }

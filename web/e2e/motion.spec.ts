@@ -1,4 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
+import { addCss } from "./fixtures/css.ts";
 import { FRESH_DIRECTIONS, freshTraffic, routeOverview } from "./fixtures/traffic.ts";
 
 // Issue #81, design §7a: with reduced motion nothing moves. Proven twice: once with the switch
@@ -81,14 +82,14 @@ async function canvasChange(page: Page): Promise<number> {
   // sub-pixel when it re-measures, which is not motion (they carry no animation; the counts above
   // cover them). Then the canvas settles: hiding them and the lens switch both repaint, and
   // Chromium draws coarse tiles first. Motion would go on regardless.
-  const style = await page.addStyleTag({ content: ".seam-label { visibility: hidden !important; }" });
+  const removeStyle = await addCss(page, ".seam-label { visibility: hidden !important; }");
   await page.waitForTimeout(500);
   // The first capture after a repaint makes Chromium re-rasterise once more; it is not compared.
   await canvas.screenshot({ animations: "allow" });
   const a = await canvas.screenshot({ animations: "allow" });
   await page.waitForTimeout(500);
   const b = await canvas.screenshot({ animations: "allow" });
-  await style.evaluate((e) => (e as Element).remove());
+  await removeStyle();
   return differingPixels(page, a, b);
 }
 
