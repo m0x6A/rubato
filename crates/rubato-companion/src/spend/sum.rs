@@ -115,7 +115,7 @@ pub fn sum_text(text: &str, pricing: &BTreeMap<String, ModelPrice>) -> Spend {
     s
 }
 
-/// Sum a transcript file, read only if it passes the guard in `transcript.rs` (ADR 0050): a
+/// Sum a transcript file, read only if it passes the guard in `transcript.rs` (ADR 0063): a
 /// regular file under `root`, at most `MAX_TRANSCRIPT_BYTES`.
 pub fn sum_file(
     path: &Path,

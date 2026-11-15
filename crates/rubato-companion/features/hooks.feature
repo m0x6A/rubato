@@ -1,7 +1,7 @@
 Feature: Forwarding Claude Code hook events
   Claude Code posts each hook's stdin JSON to the companion over loopback with a bearer token
   (ADR 0013), which the hook command reads from a 0600 header file, never from its own argv
-  (ADR 0050). Each "posts" step below runs the rendered hook command under sh, as Claude Code
+  (ADR 0063). Each "posts" step below runs the rendered hook command under sh, as Claude Code
   does. The companion forwards the event and derives the session status.
 
   Scenario Outline: A recorded hook event is forwarded and sets the status

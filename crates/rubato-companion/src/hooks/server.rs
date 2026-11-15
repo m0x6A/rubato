@@ -1,5 +1,5 @@
 //! The loopback hook receiver (ADR 0013): `POST /hook` on 127.0.0.1 with a per-start bearer
-//! token, which the hook command reads from a 0600 header file (`curl -H @<file>`, ADR 0050) and
+//! token, which the hook command reads from a 0600 header file (`curl -H @<file>`, ADR 0063) and
 //! this side compares in constant time. The body is the hook's stdin JSON as is (`--data-binary @-`).
 
 use crate::kernel::config::HookEndpoint;

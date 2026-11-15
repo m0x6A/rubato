@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
 /**
- * Render `hooks.json` for one companion (ADR 0013, 0050). The companion does the same in Rust
+ * Render `hooks.json` for one companion (ADR 0013, 0063). The companion does the same in Rust
  * at launch; this script is for a developer opting a manual session in. The token is never on a
  * command line: every hook runs `curl -H @<header file>`, and the companion writes that file
  * (mode 0600) in its state dir as `hook-auth.header`; `rubato-companion status` prints both.
@@ -53,7 +53,7 @@ function opt(argv: string[], name: string): string | undefined {
 
 export function main(argv: string[], err: (s: string) => void = (s) => console.error(s)): number {
   if (argv.includes("--token")) {
-    err("--token is no longer accepted: a token on a command line is readable by every local user (ADR 0050). Pass --header-file <state dir>/hook-auth.header; rubato-companion status prints its path.");
+    err("--token is no longer accepted: a token on a command line is readable by every local user (ADR 0063). Pass --header-file <state dir>/hook-auth.header; rubato-companion status prints its path.");
     return 2;
   }
   const port = Number(opt(argv, "--port"));

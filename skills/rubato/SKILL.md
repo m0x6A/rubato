@@ -194,4 +194,4 @@ write what you learned to the issue before you run out.
 - Don't install the hooks yourself; the companion injects `hooks.json` at launch. To opt a
   manual session in: `node --experimental-strip-types scripts/hooks.ts --port <p> --header-file
   <state dir>/hook-auth.header --out .claude/settings.local.json` (`rubato-companion status`
-  prints both). Never put the token itself on a command line (ADR 0050).
+  prints both). Never put the token itself on a command line (ADR 0063).

@@ -141,7 +141,7 @@ async fn then_settings_no_token(w: &mut RubatoWorld) {
         .nth(1)
         .expect("--settings <file>");
     let text = std::fs::read_to_string(path).unwrap();
-    // ADR 0050: the token is in a 0600 header file beside it, never in a hook command.
+    // ADR 0063: the token is in a 0600 header file beside it, never in a hook command.
     let token = &w.handles.as_ref().unwrap().hook_endpoint.token;
     assert!(!text.contains(token.as_str()), "{text}");
     let header = std::path::Path::new(path)

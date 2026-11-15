@@ -1,4 +1,4 @@
-# 0050. Pass the hook token to curl in a 0600 header file, and read only capped transcripts under the Claude projects dir
+# 0063. Pass the hook token to curl in a 0600 header file, and read only capped transcripts under the Claude projects dir
 
 - **Status:** proposed
 - **Date:** 2026-11-15

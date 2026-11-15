@@ -1,6 +1,6 @@
 //! The hooks file a launched Claude Code session gets: the skill ships the template, a copy is
 //! embedded here, and the endpoint port and the path of the header file that holds the token are
-//! filled in per start (ADR 0050). No rendered command carries the token: argv is readable by
+//! filled in per start (ADR 0063). No rendered command carries the token: argv is readable by
 //! every local user.
 
 use std::path::Path;

@@ -387,7 +387,7 @@ impl RubatoWorld {
     }
 
     /// The hook command Claude Code runs for `Stop`, rendered from the embedded template with the
-    /// header file the daemon wrote to its state dir (ADR 0050).
+    /// header file the daemon wrote to its state dir (ADR 0063).
     pub fn rendered_stop_command(&self) -> String {
         let h = self.handles.as_ref().expect("daemon running");
         let rendered = render_hooks(

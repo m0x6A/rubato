@@ -1,6 +1,6 @@
 # Design: keep the hook token out of argv; read only real transcripts, capped (#167)
 
-Plan: [../167.md](../167.md) · ADR 0050 (*proposed*, supersedes part of 0013).
+Plan: [../167.md](../167.md) · ADR 0063 (*proposed*, supersedes part of 0013).
 
 ## The threat
 

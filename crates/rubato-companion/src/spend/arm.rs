@@ -1,6 +1,6 @@
 //! After a hook: add up the transcript's spend, record it, and stop the session when it passes
 //! the cap (`rubato.cap.hit` and a `CapHit` to the server; an event, not a log line). A
-//! transcript the guard refuses (ADR 0050) is logged as `rubato.transcript.refused`, counted as
+//! transcript the guard refuses (ADR 0063) is logged as `rubato.transcript.refused`, counted as
 //! `rubato.events.dropped` with `rubato.reason = transcript`, and decides nothing.
 
 use super::transcript::{Refusal, claude_projects_dir};

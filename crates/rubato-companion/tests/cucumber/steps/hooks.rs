@@ -106,7 +106,7 @@ async fn when_post_hook_transcript(w: &mut RubatoWorld, fixture: String, transcr
     assert_eq!(w.last_status, Some(202));
 }
 
-/// ADR 0050: the token is in a 0600 file curl reads, never in the command (argv is public).
+/// ADR 0063: the token is in a 0600 file curl reads, never in the command (argv is public).
 #[then("the hook header file is private and no hook command holds the token")]
 async fn then_header_private(w: &mut RubatoWorld) {
     use std::os::unix::fs::PermissionsExt;

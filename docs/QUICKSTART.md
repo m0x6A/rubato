@@ -310,7 +310,7 @@ appear in their title and body.
 - The issue stays **Started**: no hook event has arrived. `rubato-companion status` prints the
   hook endpoint and the header file that holds its token; `curl -H @<header file>` it from the
   worktree to prove the path (curl 7.55 or later; never put the token itself on a command line,
-  ADR 0050), and check the session's `--settings` file was passed.
+  ADR 0063), and check the session's `--settings` file was passed.
 - Spend stays empty: the companion reads a transcript only under `~/.claude/projects` (or
   `$CLAUDE_CONFIG_DIR/projects`), as a regular file of at most 256 MiB, and logs
   `rubato.transcript.refused` with the reason otherwise.

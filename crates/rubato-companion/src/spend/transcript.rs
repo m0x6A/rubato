@@ -1,4 +1,4 @@
-//! Which transcript a hook may make the companion read (ADR 0050). A hook's `transcript_path` is
+//! Which transcript a hook may make the companion read (ADR 0063). A hook's `transcript_path` is
 //! read only when it resolves, symlinks followed, to a regular file under the Claude projects
 //! dir, and only up to a cap; anything else is refused before a byte is read, so a forged or
 //! mistaken path can neither feed the spend cap nor make the read grow without bound

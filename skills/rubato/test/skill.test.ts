@@ -372,7 +372,7 @@ describe("hooks.ts", () => {
     expect(() => renderHooks(template, 8080, "")).toThrow(/header/);
   });
 
-  it("refuses --token: the token must not go on a command line (ADR 0050)", () => {
+  it("refuses --token: the token must not go on a command line (ADR 0063)", () => {
     const errors: string[] = [];
     const code = main(["--port", "8080", "--token", "abcdefghijklmnopqrstuvwxyz012345"], (s) => errors.push(s));
     expect(code).toBe(2);

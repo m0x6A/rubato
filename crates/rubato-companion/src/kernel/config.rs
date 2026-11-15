@@ -240,7 +240,7 @@ impl HookEndpoint {
         dir.join("hook-endpoint.json")
     }
 
-    /// The header file curl reads with `-H @<file>` (ADR 0050): in the state dir for manual
+    /// The header file curl reads with `-H @<file>` (ADR 0063): in the state dir for manual
     /// sessions, and one beside each launch's `hooks.json`.
     pub fn header_path(dir: &Path) -> PathBuf {
         dir.join(HOOK_HEADER_FILE)
@@ -329,7 +329,7 @@ mod tests {
         assert_eq!(State::load(dir.path()).unwrap(), Some(s));
     }
 
-    /// The state dir gets the header file manual sessions render from (ADR 0050): 0600, the
+    /// The state dir gets the header file manual sessions render from (ADR 0063): 0600, the
     /// bearer line and nothing else.
     #[test]
     fn hook_endpoint_save_writes_a_private_header_file() {

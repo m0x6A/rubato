@@ -16,7 +16,7 @@ paths.
 | review | `review-template.md`, `review-checklist.md` | the design-review step and its `Review:` comment (ADR 0027, 0028) |
 | approval | `scripts/plan.ts wait`, `scripts/adrs.ts accept`, `scripts/lib/comments.ts`, `scripts/lib/approval.ts` | waits for a person's approval and records the acceptance of the ADRs the plan pins (ADR 0035, seam `skill-github`) |
 | adrs | `scripts/adrs.ts` | lists accepted ADRs so a plan does not contradict one |
-| hooks | `scripts/hooks.ts`, `hooks.json` | renders the hooks file for a companion endpoint; the token stays in the companion's 0600 header file (ADR 0013, 0050) |
+| hooks | `scripts/hooks.ts`, `hooks.json` | renders the hooks file for a companion endpoint; the token stays in the companion's 0600 header file (ADR 0013, 0063) |
 | install | `scripts/install.ts` | copies the skill, the vendored plan check and the schemas into a repo |
 
 `scripts/lib/` is the shared kernel (git, the local config `local.ts`, vendoring). The files the
