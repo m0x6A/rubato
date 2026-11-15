@@ -1,8 +1,8 @@
 # 0074. Learn about GitHub changes from the App's webhooks; the poll becomes a slow catch-up
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #208), proposed; a human accepts
+- **Decided by:** agent (delegated by Mattias, 2026-11-15), accepted with plan #208 at d63e57f; drafted by agent (Claude Code, claude-opus-5-5, issue #208)
 - **Seam:** server-github
 - **Issue:** m0x6A/rubato#208
 
