@@ -1,6 +1,6 @@
 # 0030. Rubato acts on GitHub as the person through the App's user-to-server tokens
 
-- **Status:** accepted
+- **Status:** accepted; write list extended by 0055
 - **Date:** 2026-11-12
 - **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #80)
 - **Seam:** server-github
