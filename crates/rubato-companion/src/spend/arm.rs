@@ -25,7 +25,7 @@ pub async fn after_hook(
     (issue, transcript, cap): (Option<IssueRef>, Option<PathBuf>, Option<f64>),
     registry: &Mutex<Registry>,
     out: &mpsc::UnboundedSender<CompanionMessage>,
-    pricing: &BTreeMap<String, ModelPrice>,
+    pricing: &std::sync::Arc<BTreeMap<String, ModelPrice>>,
     tmux: &Tmux,
     metrics: &Metrics,
     headless: Option<&crate::sessions::Headless>,
@@ -52,7 +52,10 @@ pub async fn after_hook(
     if let (Some(limit), Some(issue)) = (cap, issue)
         && s.usd > limit
     {
-        let entry = reg.by_session(&ev.session_id).cloned();
+        // The two fields the stop needs, not a clone of the whole entry (#172).
+        let (launch_id, tmux_session) = reg
+            .by_session(&ev.session_id)
+            .map_or((None, None), |e| (e.launch_id, e.tmux_session.clone()));
         drop(reg);
         tracing::warn!(issue = %issue, spend = s.usd, limit, "{}", event::CAP_HIT);
         let _ = out.send(CompanionMessage::CapHit(CapHit {
@@ -64,11 +67,11 @@ pub async fn after_hook(
             at: Utc::now(),
         }));
         // A headless turn is a process group the companion holds (ADR 0062).
-        let killed_turn = match (headless, entry.as_ref().and_then(|e| e.launch_id)) {
+        let killed_turn = match (headless, launch_id) {
             (Some(h), Some(launch)) => h.kill(launch, crate::kernel::claude::KillReason::Cap),
             _ => false,
         };
-        if !killed_turn && let Some(name) = entry.and_then(|e| e.tmux_session) {
+        if !killed_turn && let Some(name) = tmux_session {
             let t = tmux.clone();
             let _ = tokio::task::spawn_blocking(move || t.kill_session(&name)).await;
         }
@@ -130,7 +133,7 @@ mod tests {
             ),
             &registry,
             &out,
-            &pricing,
+            &std::sync::Arc::new(pricing),
             &tmux,
             &metrics,
             None,
