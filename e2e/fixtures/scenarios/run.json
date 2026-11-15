@@ -1,0 +1,6 @@
+{
+  "suite": "run",
+  "tests": [
+    { "key": "pairing", "title": "pairs", "file": "e2e/run.ts", "scenarios": ["@auth.all-pass"], "status": "passed", "checked": 1, "problems": [] }
+  ]
+}
