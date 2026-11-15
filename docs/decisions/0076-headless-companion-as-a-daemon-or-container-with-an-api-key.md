@@ -43,11 +43,13 @@ key, not a second agent. The companion passes the environment Claude Code alread
 - `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` and their credentials;
 - an `apiKeyHelper` in the user's Claude settings.
 
-**Who pays is visible.** At start the companion works out how Claude is authenticated, from which
-variables are set and never from their values: `api_key`, `bedrock`, `vertex` or `login`. It
+**Who pays is visible.** At start the companion works out how Claude is authenticated, never
+reading a value: `api_key` (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` set, or an
+`apiKeyHelper` key in the user's Claude settings), `bedrock`, `vertex`, or otherwise `login`. It
 announces that in Hello as the capability `claude_auth:<kind>`. The web shows *API key* (or the
-cloud's name) on the companion's lane, so the team can tell when spend is billed per token. The key
-never leaves the machine, is on no command line, and is not logged.
+cloud's name) on the companion's lane, so the team can tell when spend is billed per token. The
+label describes the companion's own environment; an interactive pane inherits the tmux server's,
+which can differ. The key never leaves the machine, is on no command line, and is not logged.
 
 ## Alternatives considered
 
