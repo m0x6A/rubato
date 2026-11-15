@@ -3058,6 +3058,7 @@ fn layout_of(pairs: &[(&str, f64, f64)]) -> MapLayout {
             .iter()
             .map(|(id, x, y)| ((*id).to_owned(), Position { x: *x, y: *y }))
             .collect(),
+        ..Default::default()
     }
 }
 
@@ -3136,6 +3137,151 @@ async fn layout_put_is_in_overview_and_notifies() {
     assert_eq!(left, 0);
     println!(
         "checked 4 accepted and {} refused layout writes",
+        refused.len()
+    );
+}
+
+/// The By repo grouping (ADR 0068): parts relative to their box, boxes by repo; kept apart from
+/// the flat map in both directions, cleared on its own route, and refused whole like the flat map.
+#[tokio::test]
+async fn grouped_layout_is_its_own_arrangement() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let put = |layout: MapLayout| {
+        h.http
+            .put(format!("{}{}", h.url, layout_routes::LAYOUT))
+            .json(&layout)
+            .send()
+    };
+    let delete = |route: &'static str| h.http.delete(format!("{}{route}", h.url)).send();
+    let at = |x: f64, y: f64| Position { x, y };
+    let grouped = |parts: &[(&str, f64, f64)], boxes: &[(&str, f64, f64)]| MapLayout {
+        grouped: parts
+            .iter()
+            .map(|(id, x, y)| ((*id).to_owned(), at(*x, *y)))
+            .collect(),
+        boxes: boxes
+            .iter()
+            .map(|(id, x, y)| ((*id).to_owned(), at(*x, *y)))
+            .collect(),
+        ..Default::default()
+    };
+
+    // A flat position first: the grouping must never touch it.
+    assert_eq!(
+        put(layout_of(&[("web", 300.0, 40.0)]))
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    await_reason(&mut web, "layout").await;
+    let r = put(grouped(
+        &[("web", 24.0, 48.0), ("github", 900.0, 10.0)],
+        &[("m0x6A/rubato", -50.0, 20.0)],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 204);
+    await_reason(&mut web, "layout").await;
+    let served = h.overview("m0x6A").await.layout;
+    assert_eq!(
+        served.positions,
+        layout_of(&[("web", 300.0, 40.0)]).positions,
+        "the flat map is untouched"
+    );
+    assert_eq!(
+        served.grouped,
+        grouped(&[("web", 24.0, 48.0), ("github", 900.0, 10.0)], &[]).grouped
+    );
+    assert_eq!(
+        served.boxes,
+        grouped(&[], &[("m0x6A/rubato", -50.0, 20.0)]).boxes
+    );
+
+    // Refused whole: a part the map lacks, a repo no part names (a part id is not a repo), a
+    // position off the canvas; and a good entry in the same write is not stored.
+    let refused = [
+        grouped(&[("web", 1.0, 1.0), ("no-such-part", 1.0, 1.0)], &[]),
+        grouped(&[], &[("acme/elsewhere", 0.0, 0.0)]),
+        grouped(&[], &[("web", 0.0, 0.0)]),
+        grouped(&[("web", 1.0e9, 0.0)], &[]),
+    ];
+    for bad in &refused {
+        let r = put(bad.clone()).await.unwrap();
+        let status = r.status();
+        let body = r.text().await.unwrap();
+        assert_eq!(status, 422, "{bad:?}: {body}");
+        assert!(!body.is_empty(), "the answer says why");
+    }
+    assert_eq!(
+        h.overview("m0x6A").await.layout,
+        served,
+        "a refused write stores nothing"
+    );
+
+    // Clearing the flat map leaves the grouping; clearing the grouping leaves the flat map.
+    let removed: MapLayout = delete(layout_routes::LAYOUT)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(removed.positions.len(), 1);
+    assert!(removed.grouped.is_empty() && removed.boxes.is_empty());
+    assert_eq!(h.overview("m0x6A").await.layout.grouped, served.grouped);
+    assert_eq!(put(removed).await.unwrap().status(), 204, "undo");
+    let removed: MapLayout = delete(layout_routes::LAYOUT_GROUPED)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!((removed.grouped.len(), removed.boxes.len()), (2, 1));
+    assert!(removed.positions.is_empty());
+    let now = h.overview("m0x6A").await.layout;
+    assert!(now.grouped.is_empty() && now.boxes.is_empty());
+    assert_eq!(now.positions, served.positions);
+    // Undo is a PUT of what was removed.
+    assert_eq!(put(removed).await.unwrap().status(), 204);
+    assert_eq!(h.overview("m0x6A").await.layout, served);
+
+    // Rows for a part or repo the map no longer has are not served, and the next write drops them.
+    sqlx::query("INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at) VALUES ('default', 'part', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z'), ('default', 'box', 'acme/gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(h.overview("m0x6A").await.layout, served);
+    put(grouped(&[("web", 30.0, 60.0)], &[])).await.unwrap();
+    let left: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM map_layout_grouped WHERE id IN ('gone', 'acme/gone')",
+    )
+    .fetch_one(&h.app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, 0);
+
+    // A clear answers only with rows for parts and repos there are now, so its Undo is never
+    // refused for a stale row.
+    sqlx::query("INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at) VALUES ('default', 'part', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z'), ('default', 'box', 'acme/gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let removed: MapLayout = delete(layout_routes::LAYOUT_GROUPED)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!removed.grouped.contains_key("gone") && !removed.boxes.contains_key("acme/gone"));
+    assert!(removed.grouped.contains_key("web"));
+    assert_eq!(
+        put(removed).await.unwrap().status(),
+        204,
+        "undo is accepted"
+    );
+    println!(
+        "checked 3 accepted and {} refused grouped writes, 3 clears",
         refused.len()
     );
 }

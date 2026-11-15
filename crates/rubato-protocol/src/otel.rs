@@ -70,6 +70,8 @@ pub mod attr {
     pub const EXIT_CODE: &str = "rubato.exit_code";
     /// Which traffic source answered a fetch (ADR 0040): `dev_file` or `prometheus`.
     pub const TRAFFIC_SOURCE: &str = "rubato.traffic.source";
+    /// Which shared layout a write or clear touched (ADR 0068): `flat` or `grouped`.
+    pub const LAYOUT_ARRANGEMENT: &str = "rubato.layout.arrangement";
     /// The GitHub webhook event a delivery carried (ADR 0074): `issues`, `issue_comment`,
     /// `pull_request`, `check_suite`, `check_run`, `push`, `ping` or `other`.
     pub const GITHUB_EVENT: &str = "rubato.github.event";
@@ -361,6 +363,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SKILL_NAME,
         attr::SKILL_SUBCOMMAND,
         attr::TRAFFIC_SOURCE,
+        attr::LAYOUT_ARRANGEMENT,
         attr::GITHUB_EVENT,
         attr::CHANGE_KIND,
         metric::COMPANION_HEARTBEAT,
