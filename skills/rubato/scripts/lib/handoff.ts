@@ -9,7 +9,7 @@
  */
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { acceptedInRubato, acceptedText, adrStatus, pinnedAdrs, rubatoAcceptance } from "../adrs.ts";
+import { acceptedInRubato, acceptedText, adrStatus, decisionFile, pinnedAdrs, rubatoAcceptance } from "../adrs.ts";
 import { planIssue } from "./approval.ts";
 import { currentBranch, git, issueFromBranch, originRepo } from "./git.ts";
 import type { Workspace } from "./local.ts";
@@ -185,7 +185,14 @@ async function run(ws: Workspace, cwd: string, a: HandoffArgs, o: HandoffOptions
   }
 
   const pinned = pinnedAdrs(text);
-  const mapRepo = ws.maps.some((m) => m.repo.toLowerCase() === (originRepo(top) ?? "").toLowerCase());
+  const here = (originRepo(top) ?? "").toLowerCase();
+  const map = ws.maps.find((m) => m.repo.toLowerCase() === here);
+  const mapRepo = map !== undefined;
+  // A pinned row's file, only inside the map repo's decisions folder: the plan is text an agent
+  // wrote, so a row that leads out (a `..`, a path elsewhere, a symlink) is never read or written
+  // and is left proposed (#195, #210).
+  const decisions = map?.decisions ?? "docs/decisions";
+  const adrFile = (file: string): string | null => (mapRepo ? decisionFile(top, decisions, file) : null);
   const branch = currentBranch(top);
   if (branch === "HEAD") {
     throw new Error("HEAD is detached; check out the plan's branch");
@@ -202,7 +209,12 @@ async function run(ws: Workspace, cwd: string, a: HandoffArgs, o: HandoffOptions
   // A rerun: the handoff commit exists (its push may have failed). Push it again; write nothing.
   const made = handoffCommit(top, a.approval);
   if (made) {
-    const accepted = mapRepo ? pinned.filter((r) => existsSync(join(top, r.file)) && acceptedInRubato(readFileSync(join(top, r.file), "utf8"), a.url)).map((r) => r.adr) : [];
+    const accepted = pinned
+      .filter((r) => {
+        const f = adrFile(r.file);
+        return f !== null && existsSync(f) && acceptedInRubato(readFileSync(f, "utf8"), a.url);
+      })
+      .map((r) => r.adr);
     return push(made, accepted, pinned.map((r) => r.adr).filter((n) => !accepted.includes(n)));
   }
 
@@ -217,7 +229,7 @@ async function run(ws: Workspace, cwd: string, a: HandoffArgs, o: HandoffOptions
       return [p, planSha(t)];
     }
     const pin = pinnedBlob.get(p);
-    return [p, mapRepo && pin && acceptedInRubato(t, a.url) ? pin : gitBlobSha(t)];
+    return [p, pin && adrFile(p) !== null && acceptedInRubato(t, a.url) ? pin : gitBlobSha(t)];
   });
   const bundleNow = bundle.bundleHashOfBlobs(blobs);
   if (bundleNow !== a.bundle) {
@@ -231,8 +243,8 @@ async function run(ws: Workspace, cwd: string, a: HandoffArgs, o: HandoffOptions
   const changed: string[] = [];
   const date = a.at.slice(0, 10);
   for (const r of pinned) {
-    const abs = join(top, r.file);
-    if (!mapRepo || !existsSync(abs)) {
+    const abs = adrFile(r.file);
+    if (abs === null || !existsSync(abs)) {
       left.push(r.adr);
       continue;
     }
