@@ -47,7 +47,7 @@ pub fn check_ref(what: &str, r: &str) -> Result<()> {
 }
 
 /// Refuse a launch whose branch is not the issue's own `issue/<n>-<slug>` (ADR 0006, issue #155).
-/// The branch names the worktree folder and goes to tmux-ide and into the script.
+/// The branch names the worktree folder and goes to git and into the script.
 pub fn check_branch(cmd: &LaunchCommand) -> Result<()> {
     if !cmd.issue.is_branch_for(&cmd.branch) {
         bail!(

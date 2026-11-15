@@ -7,9 +7,9 @@ use super::restore::{Restored, restore};
 use super::script::{check_ref, launcher_script, sh_quote};
 use crate::hooks::{HOOKS_TEMPLATE, render_hooks};
 use crate::kernel::config::{HookEndpoint, Workspace, write_private};
-use crate::kernel::tmux::{Tmux, session_name};
-use crate::kernel::tmux_ide::{TmuxIde, default_worktree_path, version_at_least};
-use crate::kernel::{gitx, proc};
+use crate::kernel::gitx::{Git, default_worktree_path};
+use crate::kernel::proc;
+use crate::kernel::tmux::{Tmux, session_name, version_at_least};
 use crate::sessions::turn_script_path;
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -23,8 +23,8 @@ pub struct Launcher {
     pub paired_user: String,
     pub state_dir: PathBuf,
     pub hook_endpoint: HookEndpoint,
+    /// The launch's tmux, under `companion.command_timeout()` (plan 147 Decision 9).
     pub tmux: Tmux,
-    pub tmux_ide: TmuxIde,
 }
 
 pub struct Started {
@@ -92,30 +92,29 @@ impl Launcher {
                 None,
             );
         }
-        // A headless companion needs neither tmux nor tmux-ide (ADR 0062).
+        // A headless companion needs no tmux (ADR 0062); an interactive one needs tmux at or
+        // above the pin, and nothing else (ADR 0070).
         let headless = self.workspace.companion.is_headless();
-        match self.tmux_ide.version() {
+        let min = &self.workspace.companion.tmux_min_version;
+        match self.tmux.version() {
             _ if headless => {}
-            Ok(v) if version_at_least(&v, &self.workspace.companion.tmux_ide_min_version) => {}
+            Ok(v) if version_at_least(&v, min) => {}
             Ok(v) => {
                 return (
                     refused(
                         cmd,
                         RefusalReason::MissingDependency,
-                        format!(
-                            "tmux-ide {v} is below the pinned {}",
-                            self.workspace.companion.tmux_ide_min_version
-                        ),
+                        format!("tmux {v} is below the pinned {min}"),
                     ),
                     None,
                 );
             }
-            // A hung tmux-ide is not a missing one (plan 40 S4, A2).
+            // A hung tmux is not a missing one (plan 40 S4, A2).
             Err(e) if proc::is_timeout(&e) => {
                 return (
                     LaunchResult::Failed {
                         command_id: cmd.id,
-                        error: format!("tmux-ide version check: {e:#}"),
+                        error: format!("tmux version check: {e:#}"),
                         at: Utc::now(),
                     },
                     None,
@@ -126,7 +125,7 @@ impl Launcher {
                     refused(
                         cmd,
                         RefusalReason::MissingDependency,
-                        format!("tmux-ide: {e}"),
+                        format!("tmux {min} or newer is needed: {e:#}"),
                     ),
                     None,
                 );
@@ -163,31 +162,35 @@ impl Launcher {
             .workspace
             .repo(&cmd.issue.repo)
             .with_context(|| format!("{} is not in workspace.yml repos", cmd.issue.repo))?;
-        gitx::fetch(&repo.local, self.workspace.companion.command_timeout())
-            .context("git fetch")?;
-        let (worktree, created) = match gitx::worktrees(&repo.local)?
+        let git = Git::new(
+            self.workspace.companion.git_command.clone(),
+            self.workspace.companion.command_timeout(),
+        );
+        git.fetch(&repo.local).context("git fetch")?;
+        let mut listed = git.worktrees(&repo.local).context("git worktree list")?;
+        // A registration for this branch whose directory is gone would be reused below and the
+        // session started in a missing directory. Only that one goes (plan 147 Decision 12).
+        for stale in listed.iter().filter(|w| {
+            w.branch.as_deref() == Some(cmd.branch.as_str()) && (w.prunable || !w.path.exists())
+        }) {
+            tracing::warn!(path = %stale.path.display(), branch = %cmd.branch, "stale worktree registration removed");
+            git.remove_registration(&repo.local, &stale.path)
+                .context("git worktree remove")?;
+        }
+        listed.retain(|w| !w.prunable && w.path.exists());
+        // One way for both modes (ADR 0070): the worktree the branch has, else a new one at the
+        // path tmux-ide used.
+        let (worktree, created) = match listed
             .into_iter()
-            .find(|(_, b)| b.as_deref() == Some(cmd.branch.as_str()))
+            .find(|w| w.branch.as_deref() == Some(cmd.branch.as_str()))
         {
-            Some((path, _)) => (path, false),
-            None if self.workspace.companion.is_headless() => {
+            Some(w) => (w.path, false),
+            None => {
                 let path = default_worktree_path(&repo.local, &cmd.branch);
-                gitx::worktree_add(
-                    &repo.local,
-                    &path,
-                    &cmd.branch,
-                    &cmd.base_ref,
-                    self.workspace.companion.command_timeout(),
-                )
-                .context("git worktree add")?;
+                git.worktree_add(&repo.local, &path, &cmd.branch, &cmd.base_ref)
+                    .context("git worktree add")?;
                 (path, true)
             }
-            None => (
-                self.tmux_ide
-                    .worktree_create(&repo.local, &cmd.branch, &cmd.base_ref)
-                    .context("tmux-ide worktree create")?,
-                true,
-            ),
         };
         // Before the session starts, so the agent finds the draft on its first turn. Only a
         // worktree this launch created is written (ADR 0053).
@@ -250,9 +253,6 @@ impl Launcher {
                 &format!("sh {}", sh_quote(&script_path.display().to_string())),
             )
             .context("tmux new-session")?;
-        if let Err(e) = self.tmux_ide.adopt(&name) {
-            tracing::warn!(session = %name, error = %e, "tmux-ide adopt failed; status bar absent");
-        }
         Ok(Started {
             pane_id,
             tmux_session: name,

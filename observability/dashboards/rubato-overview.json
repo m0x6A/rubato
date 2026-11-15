@@ -227,6 +227,36 @@
       }
     },
     {
+      "id": 111,
+      "title": "Launches by outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Launch results per companion (ADR 0070): started, refused (by rubato_reason, for example missing_dependency when tmux is missing or below the pin) and failed (a git or tmux call that failed or hit its deadline; the error is in LaunchResult.error and on the queue entry as \"did not start: …\"). A rise in failed after an upgrade is the git worktree path breaking where tmux-ide used to work: look for the rubato.launch log line with launch_id and outcome.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome, rubato_reason) (increase(rubato_launches_total[15m]))",
+          "legendFormat": "{{rubato_outcome}} {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
       "id": 10,
       "type": "row",
       "title": "Progress",
@@ -234,7 +264,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 13
       },
       "collapsed": false,
       "panels": []
@@ -247,7 +277,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 8
+        "y": 14
       },
       "datasource": {
         "type": "prometheus",
@@ -279,7 +309,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 8
+        "y": 14
       },
       "datasource": {
         "type": "prometheus",
@@ -308,7 +338,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 8
+        "y": 14
       },
       "datasource": {
         "type": "prometheus",
@@ -338,7 +368,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 15
+        "y": 21
       },
       "datasource": {
         "type": "prometheus",
@@ -375,7 +405,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 28
       },
       "collapsed": false,
       "panels": []
@@ -388,7 +418,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 23
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -430,7 +460,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 23
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -485,7 +515,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 23
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -516,7 +546,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 23
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -557,7 +587,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 35
       },
       "datasource": {
         "type": "loki",
@@ -583,7 +613,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 42
       },
       "collapsed": false,
       "panels": []
@@ -596,7 +626,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 37
+        "y": 43
       },
       "datasource": {
         "type": "prometheus",
@@ -625,7 +655,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 37
+        "y": 43
       },
       "datasource": {
         "type": "prometheus",
@@ -654,7 +684,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 49
       },
       "collapsed": false,
       "panels": []
@@ -667,7 +697,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -699,7 +729,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 44
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -731,7 +761,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 44
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -760,7 +790,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 58
       },
       "datasource": {
         "type": "prometheus",
@@ -795,7 +825,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 64
       },
       "collapsed": false,
       "panels": []
@@ -808,7 +838,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -864,7 +894,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -894,7 +924,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -924,7 +954,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -976,7 +1006,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1006,7 +1036,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1036,7 +1066,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1071,7 +1101,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1150,7 +1180,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 71
+        "y": 77
       },
       "datasource": {
         "type": "prometheus",
@@ -1180,7 +1210,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 71
+        "y": 77
       },
       "datasource": {
         "type": "prometheus",
@@ -1215,7 +1245,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 83
       },
       "collapsed": false,
       "panels": []
@@ -1228,7 +1258,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 78
+        "y": 84
       },
       "datasource": {
         "type": "prometheus",
@@ -1296,7 +1326,7 @@
         "h": 6,
         "w": 12,
         "x": 6,
-        "y": 78
+        "y": 84
       },
       "datasource": {
         "type": "prometheus",
@@ -1367,7 +1397,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 84
+        "y": 90
       },
       "datasource": {
         "type": "prometheus",
@@ -1397,7 +1427,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 90
+        "y": 96
       },
       "collapsed": false,
       "panels": []
@@ -1410,7 +1440,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 91
+        "y": 97
       },
       "datasource": {
         "type": "prometheus",
@@ -1466,7 +1496,7 @@
         "h": 6,
         "w": 12,
         "x": 6,
-        "y": 91
+        "y": 97
       },
       "datasource": {
         "type": "prometheus",
@@ -1516,7 +1546,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 91
+        "y": 97
       },
       "datasource": {
         "type": "prometheus",
@@ -1546,7 +1576,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 97
+        "y": 103
       },
       "collapsed": false,
       "panels": []
@@ -1559,7 +1589,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 98
+        "y": 104
       },
       "datasource": {
         "type": "prometheus",
@@ -1599,7 +1629,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 104
+        "y": 110
       },
       "collapsed": false,
       "panels": []
@@ -1612,7 +1642,7 @@
         "h": 6,
         "w": 8,
         "x": 0,
-        "y": 105
+        "y": 111
       },
       "datasource": {
         "type": "prometheus",
@@ -1642,7 +1672,7 @@
         "h": 6,
         "w": 8,
         "x": 8,
-        "y": 105
+        "y": 111
       },
       "datasource": {
         "type": "prometheus",
@@ -1672,7 +1702,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 105
+        "y": 111
       },
       "datasource": {
         "type": "prometheus",
@@ -1702,7 +1732,7 @@
         "h": 6,
         "w": 8,
         "x": 0,
-        "y": 111
+        "y": 117
       },
       "datasource": {
         "type": "prometheus",
@@ -1730,7 +1760,7 @@
         "h": 6,
         "w": 8,
         "x": 8,
-        "y": 111
+        "y": 117
       },
       "datasource": {
         "type": "prometheus",
@@ -1758,7 +1788,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 111
+        "y": 117
       },
       "datasource": {
         "type": "prometheus",
@@ -1786,7 +1816,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 117
+        "y": 123
       },
       "datasource": {
         "type": "prometheus",
@@ -1819,7 +1849,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 117
+        "y": 123
       },
       "datasource": {
         "type": "prometheus",
@@ -1852,7 +1882,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 123
+        "y": 129
       },
       "datasource": {
         "type": "prometheus",
@@ -1886,7 +1916,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 129
+        "y": 135
       },
       "datasource": {
         "type": "prometheus",

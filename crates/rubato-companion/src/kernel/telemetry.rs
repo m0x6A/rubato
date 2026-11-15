@@ -95,6 +95,8 @@ pub struct Metrics {
     pub headless_turns: Counter<u64>,
     /// Headless turns the companion killed, by `rubato.reason` (ADR 0062).
     pub headless_killed: Counter<u64>,
+    /// Launch results, by `rubato.outcome` and, for a refusal, `rubato.reason` (ADR 0070).
+    pub launches: Counter<u64>,
 }
 
 impl Metrics {
@@ -123,6 +125,10 @@ impl Metrics {
             headless_killed: m
                 .u64_counter(otel::metric::HEADLESS_KILLED)
                 .with_description("headless turns killed by the companion, by reason")
+                .build(),
+            launches: m
+                .u64_counter(otel::metric::LAUNCHES)
+                .with_description("launch results, by outcome and refusal reason")
                 .build(),
             session_input_failed: m
                 .u64_counter(otel::metric::SESSION_INPUT_FAILED)

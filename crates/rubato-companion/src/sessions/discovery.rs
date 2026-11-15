@@ -1,31 +1,10 @@
-//! Merge what tmux and tmux-ide report into the registry. Vanished panes end; ended entries are
-//! swept after a cycle.
+//! Merge what tmux reports into the registry: pane metadata only, never state (ADR 0070).
+//! Vanished panes end; ended entries are swept after a cycle.
 
 use super::{Entry, Registry, identify};
 use crate::kernel::tmux::Pane;
-use crate::kernel::tmux_ide::Fleet;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use rubato_protocol::{SessionStatus, StateSource};
-use std::path::PathBuf;
-
-fn rank(s: StateSource) -> u8 {
-    match s {
-        StateSource::Hook => 3,
-        StateSource::TmuxIde => 2,
-        StateSource::Headless => 3,
-        StateSource::Launch => 1,
-        StateSource::Scraped => 0,
-    }
-}
-
-fn tmux_ide_status(state: &str) -> SessionStatus {
-    match state {
-        "working" => SessionStatus::Working,
-        "blocked" => SessionStatus::Blocked,
-        "done" | "idle" => SessionStatus::Idle,
-        _ => SessionStatus::Unknown,
-    }
-}
 
 /// Commands a pane may run when Claude Code is in it. Node is included because `claude` is a Node program.
 pub fn looks_like_agent(command: &str) -> bool {
@@ -119,86 +98,6 @@ impl Registry {
         }
     }
 
-    /// tmux-ide's view. Hook-authority states are trusted (`TmuxIde`); screen-matched ones are `Scraped`.
-    pub fn apply_fleet(&mut self, fleet: &Fleet, now: DateTime<Utc>) {
-        for a in fleet.agents() {
-            let trusted = a.has_hook_authority();
-            let status = tmux_ide_status(&a.state);
-            let seen = a
-                .since
-                .and_then(|s| Utc.timestamp_opt(s as i64, 0).single())
-                .unwrap_or(now);
-            let src = if trusted {
-                StateSource::TmuxIde
-            } else {
-                StateSource::Scraped
-            };
-            if let Some(e) = self.find_by_pane(&a.pane_id) {
-                if rank(src) >= rank(e.source)
-                    || e.source == StateSource::Hook && e.last_seen < seen
-                {
-                    if trusted {
-                        if e.status != status {
-                            // tmux-ide does not say which hook blocked a session.
-                            e.blocked_by = None;
-                        }
-                        e.status = status;
-                        e.last_seen = seen.max(e.last_seen);
-                        e.source = if e.source == StateSource::Hook {
-                            StateSource::Hook
-                        } else {
-                            StateSource::TmuxIde
-                        };
-                    } else if e.source == StateSource::Scraped {
-                        e.status = SessionStatus::Unknown;
-                    }
-                }
-                continue;
-            }
-            let cwd = a.dir.as_deref().map(PathBuf::from).unwrap_or_default();
-            let id = identify(&cwd);
-            if id.issue.is_some() && id.issue == self.launching {
-                continue;
-            }
-            self.entries.push(Entry {
-                session_id: None,
-                pane_id: Some(a.pane_id.clone()),
-                tmux_session: Some(a.session.clone()),
-                window: a.window_index,
-                cwd,
-                worktree: id.worktree,
-                branch: id.branch,
-                repo: id.repo,
-                issue: id.issue,
-                status: if trusted {
-                    status
-                } else {
-                    SessionStatus::Unknown
-                },
-                source: src,
-                last_seen: seen,
-                spend_usd: None,
-                transcript_path: None,
-                launch_id: None,
-                spend_cap_usd: None,
-                stale_reported: false,
-                ended: false,
-                head: None,
-                head_mtime: None,
-                branch_drift: None,
-                blocked_by: None,
-                last_hook: None,
-                last_hook_idle: false,
-                last_hook_at: None,
-                input_sent_at: None,
-                hooks_lost: false,
-                pasted: Vec::new(),
-                plan_path: None,
-                restored_hash: None,
-            });
-        }
-    }
-
     /// Drop entries that ended more than a cycle ago.
     pub fn sweep(&mut self, now: DateTime<Utc>, keep_ended_secs: i64) {
         self.entries.retain(|e| {
@@ -210,8 +109,10 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use rubato_protocol::HookEvent;
     use serde_json::json;
+    use std::path::PathBuf;
     use uuid::Uuid;
 
     fn now() -> DateTime<Utc> {
@@ -226,69 +127,44 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn fleet_without_authority_is_scraped_and_unknown() {
-        let mut r = Registry::new(Uuid::nil(), "m0x6A");
-        let f = Fleet::parse(include_str!("../../features/fixtures/team.json")).unwrap();
-        r.apply_fleet(&f, now());
-        let scraped: Vec<&Entry> = r
-            .entries()
-            .iter()
-            .filter(|e| e.source == StateSource::Scraped)
-            .collect();
-        assert!(!scraped.is_empty());
-        assert!(scraped.iter().all(|e| e.status == SessionStatus::Unknown));
-        let trusted: Vec<&Entry> = r
-            .entries()
-            .iter()
-            .filter(|e| e.source == StateSource::TmuxIde)
-            .collect();
-        assert_eq!(trusted.len(), 1);
-        assert_eq!(trusted[0].status, SessionStatus::Working);
+    fn pane(id: &str, cwd: &str, command: &str) -> Pane {
+        Pane {
+            session: "t".into(),
+            window: 1,
+            pane_id: id.into(),
+            cwd: PathBuf::from(cwd),
+            current_command: command.into(),
+            pid: 1,
+        }
     }
 
+    /// A new agent pane is `Scraped` and *unknown*: panes give metadata, never state (ADR 0070).
     #[test]
-    fn counts_by_source_include_zero() {
+    fn a_new_agent_pane_is_scraped_and_unknown() {
         let mut r = Registry::new(Uuid::nil(), "m0x6A");
-        let all = [
-            StateSource::Hook,
-            StateSource::TmuxIde,
-            StateSource::Launch,
-            StateSource::Scraped,
-            StateSource::Headless,
-        ];
+        r.apply_panes(
+            &[pane("%5", "/w", "claude"), pane("%6", "/v", "bash")],
+            now(),
+        );
+        assert_eq!(r.entries().len(), 1, "only the agent pane");
+        let e = &r.entries()[0];
+        assert_eq!(
+            (e.status, e.source),
+            (SessionStatus::Unknown, StateSource::Scraped)
+        );
         let counts = r.counts_by_source();
-        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
-        for source in all {
-            assert_eq!(counts.get(&source), Some(&0), "{source:?}");
-        }
-        let f = Fleet::parse(include_str!("../../features/fixtures/team.json")).unwrap();
-        r.apply_fleet(&f, now());
-        let counts = r.counts_by_source();
-        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
-        assert_eq!(counts[&StateSource::TmuxIde], 1);
-        assert!(counts[&StateSource::Scraped] > 0);
-        assert_eq!(counts[&StateSource::Hook], 0);
-        assert_eq!(counts[&StateSource::Launch], 0);
+        assert_eq!(counts[&StateSource::Scraped], 1);
         assert_eq!(counts.values().sum::<usize>(), r.entries().len());
     }
 
+    /// Panes never change what a hook said.
     #[test]
-    fn fleet_never_downgrades_a_hook_source() {
+    fn panes_never_change_a_hook_source() {
         let mut r = Registry::new(Uuid::nil(), "m0x6A");
         r.apply_hook(&hook("s1", "PreToolUse", "/x", now()));
-        let pane = Pane {
-            session: "t".into(),
-            window: 1,
-            pane_id: "%9".into(),
-            cwd: PathBuf::from("/x"),
-            current_command: "claude".into(),
-            pid: 1,
-        };
-        r.apply_panes(&[pane], now());
+        r.apply_panes(&[pane("%9", "/x", "claude")], now());
         assert_eq!(r.by_session("s1").unwrap().pane_id.as_deref(), Some("%9"));
-        let f = Fleet::parse(r#"{"projects":[{"sessions":[{"agents":[{"paneId":"%9","state":"blocked","since":null}]}]}]}"#).unwrap();
-        r.apply_fleet(&f, now());
+        r.apply_panes(&[pane("%9", "/x", "claude")], now());
         let e = r.by_session("s1").unwrap();
         assert_eq!(
             (e.status, e.source),

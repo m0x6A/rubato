@@ -341,7 +341,8 @@ async function main() {
       "rubato.map.draft.ops",
       "rubato.map.proposal.state_since",
     ],
-    "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered"],
+    // ADR 0070: each launch result is counted, by outcome.
+    "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered", "rubato.launches"],
   };
   // Issue #43: names that must not show up. Sessions by state is the server's alone (a copy from
   // the companion made every sum count each session twice), and no companion metric carries the
@@ -352,9 +353,9 @@ async function main() {
   // its place on the other metrics is proved by the companion's in-memory metric tests.)
   const expectedAttributeKeys: Record<string, string[]> = {
     "rubato-server": ["rubato.issue.state"],
-    "rubato-companion": ["rubato.companion_id", "rubato.session.source"],
+    "rubato-companion": ["rubato.companion_id", "rubato.session.source", "rubato.outcome"],
   };
-  const expectedSpans: Record<string, string[]> = { "rubato-companion": ["rubato.hook.forward", "rubato.team_poll"] };
+  const expectedSpans: Record<string, string[]> = { "rubato-companion": ["rubato.hook.forward", "rubato.reconcile"] };
   const expectations: { what: string; expected: Record<string, string[]>; seen: Map<string, Set<string>> }[] = [
     { what: "metric names", expected: expectedMetrics, seen: otlp.metrics },
     { what: "attribute keys", expected: expectedAttributeKeys, seen: otlp.metrics },
