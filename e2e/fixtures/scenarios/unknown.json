@@ -1,0 +1,10 @@
+{
+  "suites": [
+    {
+      "title": "x.spec.ts",
+      "specs": [
+        { "title": "cites a scenario nobody wrote", "file": "x.spec.ts", "line": 1, "tags": ["auth.no-such-scenario"], "tests": [{ "projectName": "dev", "status": "expected", "results": [{ "status": "passed" }] }] }
+      ]
+    }
+  ]
+}

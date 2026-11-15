@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 // Issue #81: the restyle loads its fonts from the app's own origin (ADR 0036) and keeps the
 // layout inside the viewport at 900 px and below, glows and badges included.
 
-test("fonts load from the app's origin and nowhere else", async ({ page, baseURL }) => {
+test("fonts load from the app's origin and nowhere else", { tag: "@look.fonts-from-own-origin" }, async ({ page, baseURL }) => {
   const origin = new URL(baseURL as string).origin;
   const foreign: string[] = [];
   let requests = 0;
@@ -32,7 +32,7 @@ test("fonts load from the app's origin and nowhere else", async ({ page, baseURL
   expect(await page.getByTestId("node-web").locator(".id").evaluate((e) => getComputedStyle(e).fontFamily)).toContain("JetBrains Mono Variable");
 });
 
-test("must fail: a panel wider than the viewport is caught", async ({ page }) => {
+test("must fail: a panel wider than the viewport is caught", { tag: ["@look.fits-every-width", "@selftest"] }, async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 900 });
   await page.goto("/");
   await expect(page.getByTestId("node-web")).toBeVisible();
@@ -43,7 +43,7 @@ test("must fail: a panel wider than the viewport is caught", async ({ page }) =>
 
 for (const width of [900, 600]) {
   for (const colorScheme of ["dark", "light"] as const) {
-    test(`at ${width} px (${colorScheme}) nothing overflows and the panel stays on screen`, async ({ page }) => {
+    test(`at ${width} px (${colorScheme}) nothing overflows and the panel stays on screen`, { tag: "@look.fits-every-width" }, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/");

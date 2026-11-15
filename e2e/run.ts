@@ -13,11 +13,16 @@ import { existsSync, globSync, mkdirSync, readFileSync, rmSync, writeFileSync } 
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CheckLog } from "./run-checks.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const T = `/tmp/rubato-e2e-${process.pid}`;
 const BIN = { server: `${ROOT}/target/debug/rubato-server`, companion: `${ROOT}/target/debug/rubato-companion` };
 const children: ChildProcess[] = [];
+// Each problem is recorded against the check it belongs to (e2e/run-checks.ts, issue #198), and
+// the results go to e2e/results/run.json (RUBATO_E2E_RESULTS) after every run, a failed one too.
+const checks = new CheckLog();
+const RESULTS = process.env["RUBATO_E2E_RESULTS"] ?? `${ROOT}/e2e/results/run.json`;
 const started = Date.now();
 const log = (msg: string) => console.log(`[${((Date.now() - started) / 1000).toFixed(1).padStart(5)}s] ${msg}`);
 const fail = (msg: string): never => {
@@ -160,6 +165,7 @@ async function main() {
   await api("POST", "/api/pair/approve", { user_code: code });
   await new Promise<void>((ok, bad) => pair.on("exit", (c) => (c === 0 ? ok() : bad(new Error(`pair exited ${c}: ${readFileSync(`${T}/pair.log`, "utf8")}`)))));
   log(`companion paired with code ${code}`);
+  checks.reach("pairing", 1);
 
   // 5. The developer's workspace.yml and the companion daemon.
   writeFileSync(
@@ -244,54 +250,61 @@ async function main() {
   });
 
   // 7. Assertions.
-  const problems: string[] = [];
+  checks.reach("progress", issues.length);
+  checks.reach("spend", issues.length);
+  checks.reach("plans", issues.length);
   for (const i of issues) {
     const s = final.issues.find((x) => x.issue.repo === i.repo && x.issue.number === i.number)!;
     const path = seen.get(`${i.repo}#${i.number}`) ?? [];
     if (path[0] !== "planned" || path[path.length - 1] !== "designed") {
-      problems.push(`${i.repo}#${i.number} went ${path.join(" → ")}; expected planned first and designed last`);
+      checks.problem("progress", `${i.repo}#${i.number} went ${path.join(" → ")}; expected planned first and designed last`);
     }
     if (!s.sessions?.some((x) => x.source === "hook")) {
-      problems.push(`${i.repo}#${i.number} has no hook-sourced session`);
+      checks.problem("hooks", `${i.repo}#${i.number} has no hook-sourced session`);
     }
     if (!s.sessions?.some((x) => (x.spend_usd ?? 0) > 0)) {
-      problems.push(`${i.repo}#${i.number} has no spend from the transcript`);
+      checks.problem("spend", `${i.repo}#${i.number} has no spend from the transcript`);
     }
     if (!s.plan) {
-      problems.push(`${i.repo}#${i.number} has no plan`);
+      checks.problem("plans", `${i.repo}#${i.number} has no plan`);
     }
   }
   // The overview is sampled every 250 ms, so a short session can pass its live states between
   // two samples; across the three issues the live states must have been seen.
   const allStates = new Set([...seen.values()].flat());
+  checks.reach("live-states", seen.size);
   if (!allStates.has("designing") && !allStates.has("building")) {
-    problems.push(`no issue was ever observed designing or building: ${JSON.stringify([...seen])}`);
+    checks.problem("live-states", `no issue was ever observed designing or building: ${JSON.stringify([...seen])}`);
   }
+  checks.reach("collision", final.findings.length);
   const collision = final.findings.find((f) => f.kind === "seam_collision" && f.seam === "auth-contract-pantry");
   if (!collision || (collision.issues?.length ?? 0) !== 2) {
-    problems.push(`expected a seam collision on auth-contract-pantry between acme/auth#1 and acme/pantry#1, got ${JSON.stringify(final.findings)}`);
+    checks.problem("collision", `expected a seam collision on auth-contract-pantry between acme/auth#1 and acme/pantry#1, got ${JSON.stringify(final.findings)}`);
   }
   const standinLogs = globSync(standinGlob);
+  checks.reach("hooks", standinLogs.length);
+  checks.reach("session-telemetry", standinLogs.length);
   if (standinLogs.length !== 3) {
-    problems.push(`expected 3 stand-in logs, found ${standinLogs.length}`);
+    checks.problem("hooks", `expected 3 stand-in logs, found ${standinLogs.length}`);
   }
   for (const f of standinLogs) {
     const text = readFileSync(f, "utf8");
     const attrs = /OTEL_RESOURCE_ATTRIBUTES=(.*)/.exec(text)?.[1] ?? "";
     for (const k of ["rubato.repo=", "rubato.issue=", "rubato.branch=", "rubato.node="]) {
       if (!attrs.includes(k)) {
-        problems.push(`${f}: OTEL_RESOURCE_ATTRIBUTES lacks ${k} (${attrs})`);
+        checks.problem("session-telemetry", `${f}: OTEL_RESOURCE_ATTRIBUTES lacks ${k} (${attrs})`);
       }
     }
     if (!text.includes("CLAUDE_CODE_ENABLE_TELEMETRY=1") || !text.includes("OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf")) {
-      problems.push(`${f}: telemetry env not set for the session`);
+      checks.problem("session-telemetry", `${f}: telemetry env not set for the session`);
     }
     if (!/HOOK Stop exit=0/.test(text)) {
-      problems.push(`${f}: Stop hook did not run`);
+      checks.problem("hooks", `${f}: Stop hook did not run`);
     }
   }
   // The plans that came back pass the plan check against the team map.
   const plans = globSync(`${T}/repos/*-worktrees/**/docs/plans/*.md`);
+  checks.reach("plans", plans.length);
   const check = spawn("node", ["--experimental-strip-types", `${ROOT}/actions/plan-check/src/cli.ts`, "--map", `${T}/map/system-map.yml`, ...plans.flatMap((p) => ["--plans", p])], { encoding: "utf8" } as never);
   const checkOut = await new Promise<{ code: number | null; out: string }>((ok) => {
     let out = "";
@@ -302,7 +315,7 @@ async function main() {
   const summary = checkOut.out.trim().split("\n").pop() ?? "";
   log(`plan check: ${summary}`);
   if (checkOut.code !== 0 || !summary.includes("checked 3 plan(s)")) {
-    problems.push(`plan check over the pushed plans failed: ${checkOut.out}`);
+    checks.problem("plans", `plan check over the pushed plans failed: ${checkOut.out}`);
   }
   // OTLP: both binaries exported, and the names are ours. Every metric recorded on the happy
   // path, per binary (failure-only counters are left out on purpose: events.dropped,
@@ -352,12 +365,14 @@ async function main() {
       Object.entries(expected).flatMap(([service, names]) => names.filter((n) => !seen.get(service)?.has(n)).map((n) => `${service}: ${n} (${what})`)),
     );
   await waitFor("OTLP metrics and traces from both binaries", 30_000, async () => missing().length === 0 && (otlp.posts.get("/v1/traces") ?? 0) > 0).catch((e) =>
-    problems.push(`${String(e)}; not seen: ${missing().join(", ") || "none"}`),
+    checks.problem("otlp", `${String(e)}; not seen: ${missing().join(", ") || "none"}`),
   );
+  checks.reach("otlp", expectations.reduce((n, e) => n + Object.values(e.expected).flat().length, 0));
+  checks.reach("otlp-forbidden", Object.values(forbiddenInMetrics).flat().length);
   for (const [service, names] of Object.entries(forbiddenInMetrics)) {
     const seen = names.filter((n) => otlp.metrics.get(service)?.has(n));
     log(`otlp ${service}: checked ${names.length} name(s) that must not appear in metrics, saw ${seen.length}`);
-    for (const n of seen) problems.push(`${service} exported ${n} in its metrics (#43)`);
+    for (const n of seen) checks.problem("otlp-forbidden", `${service} exported ${n} in its metrics (#43)`);
   }
   for (const { what, expected, seen } of expectations) {
     for (const [service, names] of Object.entries(expected)) {
@@ -373,6 +388,7 @@ async function main() {
   console.log(`findings: ${final.findings.map((f) => f.kind + (f.seam ? ` on ${f.seam}` : "")).join("; ") || "none"}`);
   console.log(`sessions with spend: ${final.issues.flatMap((i) => i.sessions ?? []).filter((s) => (s.spend_usd ?? 0) > 0).length}`);
   console.log(`checked: ${issues.length} issues, ${standinLogs.length} launched sessions, ${plans.length} plans, ${otlp.names.size} rubato.* telemetry names`);
+  const problems = checks.all();
   if (problems.length) {
     console.log(`\n${problems.length} problem(s):`);
     for (const p of problems) {
@@ -395,6 +411,17 @@ async function main() {
   }
 }
 
+function writeResults(stopped?: string) {
+  const results = checks.results(stopped);
+  mkdirSync(dirname(RESULTS), { recursive: true });
+  writeFileSync(RESULTS, `${JSON.stringify(results, null, 2)}\n`);
+  const failed = results.tests.filter((t) => t.status === "failed").length;
+  console.log(`checks: ${results.tests.length - failed}/${results.tests.length} passed; results in ${RESULTS}`);
+  if (failed) {
+    process.exitCode = 1;
+  }
+}
+
 function cleanup() {
   for (const c of children) {
     c.kill("SIGTERM");
@@ -411,9 +438,11 @@ function cleanup() {
   }
 }
 
+let stopped: string | undefined;
 main()
   .catch((e) => {
     console.error(`e2e failed: ${e instanceof Error ? e.message : e}`);
+    stopped = e instanceof Error ? e.message : String(e);
     for (const name of ["server", "companion", "pair"]) {
       const p = `${T}/${name}.log`;
       if (existsSync(p)) {
@@ -423,6 +452,7 @@ main()
     process.exitCode = 1;
   })
   .finally(() => {
+    writeResults(stopped);
     cleanup();
     setTimeout(() => process.exit(), 200);
   });
