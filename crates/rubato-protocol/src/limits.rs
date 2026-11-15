@@ -12,7 +12,8 @@ pub struct Limits {
     pub session_stale_secs: u64,
     /// A companion silent for longer than this fires `CompanionSilent`.
     pub companion_silent_secs: u64,
-    /// Reconciliation poll of `tmux-ide team --json`.
+    /// Reconcile interval: `tmux list-panes` and identity, every this many seconds. The name is
+    /// kept from the retired `tmux-ide team --json` poll (ADR 0070).
     pub team_poll_interval_secs: u64,
     /// How often the server looks for a plan file on a live branch.
     pub plan_poll_interval_secs: u64,

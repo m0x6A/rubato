@@ -575,6 +575,14 @@
           "type": "string"
         },
         "tmux_ide_version": {
+          "description": "Deprecated (ADR 0070): `tmux-ide --version` from a companion that still ran tmux-ide.\nRead, never sent by a current companion.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tmux_version": {
+          "description": "`tmux -V` at start, such as `3.8` (ADR 0070). None on a headless companion (ADR 0062).",
           "type": [
             "string",
             "null"
@@ -873,7 +881,7 @@
           "const": "already_running"
         },
         {
-          "description": "tmux-ide or claude missing or below the pinned version.",
+          "description": "tmux or claude missing or below the pinned version.",
           "type": "string",
           "const": "missing_dependency"
         }

@@ -24,6 +24,8 @@ pub enum StateSource {
     /// A Claude Code hook forwarded by the companion.
     Hook,
     /// tmux-ide state with hook authority (`since` set).
+    // Deprecated (ADR 0070): read from stored snapshots and older companions, never sent by a
+    // current one. A plain comment, so the schema description stays as it is (plan 147 D15).
     TmuxIde,
     /// tmux-ide state from screen matching. Not trusted.
     Scraped,
@@ -219,8 +221,13 @@ pub struct Heartbeat {
     pub at: DateTime<Utc>,
     pub hostname: String,
     pub companion_version: String,
+    /// Deprecated (ADR 0070): `tmux-ide --version` from a companion that still ran tmux-ide.
+    /// Read, never sent by a current companion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tmux_ide_version: Option<String>,
+    /// `tmux -V` at start, such as `3.8` (ADR 0070). None on a headless companion (ADR 0062).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tmux_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_version: Option<String>,
 }
@@ -269,6 +276,55 @@ mod tests {
             hooks_lost: false,
         };
         (s, now)
+    }
+
+    /// Plan 147, Q2: what a companion with tmux-ide sent, and what `session_snapshots` still
+    /// holds, keeps parsing after tmux-ide is retired (ADR 0070).
+    #[test]
+    fn data_from_a_tmux_ide_companion_still_parses() {
+        let s: SessionState = serde_json::from_value(serde_json::json!({
+            "companion_id": "6f1c3a2e-9b1d-4c8e-8f7a-2d3b4c5d6e7f",
+            "user": "m0x6A",
+            "cwd": "/w",
+            "status": "working",
+            "source": "tmux_ide",
+            "last_seen": "2026-11-08T12:01:29Z"
+        }))
+        .unwrap();
+        assert_eq!(s.source, StateSource::TmuxIde);
+        let h: Heartbeat = serde_json::from_value(serde_json::json!({
+            "companion_id": "6f1c3a2e-9b1d-4c8e-8f7a-2d3b4c5d6e7f",
+            "user": "m0x6A",
+            "at": "2026-11-08T12:00:30Z",
+            "hostname": "fedora",
+            "companion_version": "0.1.0",
+            "tmux_ide_version": "2.9.18"
+        }))
+        .unwrap();
+        assert_eq!(h.tmux_ide_version.as_deref(), Some("2.9.18"));
+        assert_eq!(h.tmux_version, None);
+    }
+
+    /// The heartbeat names the tmux version (ADR 0070); a headless companion leaves it out.
+    #[test]
+    fn a_heartbeat_round_trips_with_the_tmux_version() {
+        let mut h = Heartbeat {
+            companion_id: Uuid::nil(),
+            user: "m0x6A".into(),
+            at: Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, 0).unwrap(),
+            hostname: "fedora".into(),
+            companion_version: "0.1.0".into(),
+            tmux_ide_version: None,
+            tmux_version: Some("3.8".into()),
+            claude_version: None,
+        };
+        let v = serde_json::to_value(&h).unwrap();
+        assert_eq!(v["tmux_version"], "3.8");
+        assert!(v.get("tmux_ide_version").is_none(), "{v}");
+        assert_eq!(serde_json::from_value::<Heartbeat>(v).unwrap(), h);
+        h.tmux_version = None;
+        let v = serde_json::to_value(&h).unwrap();
+        assert!(v.get("tmux_version").is_none(), "{v}");
     }
 
     #[test]
