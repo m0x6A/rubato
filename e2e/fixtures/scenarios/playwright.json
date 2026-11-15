@@ -1,0 +1,27 @@
+{
+  "config": {},
+  "suites": [
+    {
+      "title": "login.spec.ts",
+      "file": "login.spec.ts",
+      "specs": [
+        { "title": "passes", "file": "login.spec.ts", "line": 3, "tags": ["auth.all-pass", "auth.one-failed"], "tests": [{ "projectName": "dev", "status": "expected", "results": [{ "status": "passed" }] }] },
+        { "title": "fails", "file": "login.spec.ts", "line": 9, "tags": ["auth.one-failed"], "tests": [{ "projectName": "dev", "status": "unexpected", "results": [{ "status": "failed" }] }] },
+        { "title": "must fail: the check catches it", "file": "login.spec.ts", "line": 15, "tags": ["auth.selftest-only", "selftest"], "tests": [{ "projectName": "dev", "status": "expected", "results": [{ "status": "passed" }] }] }
+      ],
+      "suites": [
+        {
+          "title": "screenshots",
+          "file": "login.spec.ts",
+          "specs": [
+            { "title": "writes a screenshot", "file": "login.spec.ts", "line": 22, "tags": ["tooling"], "tests": [{ "projectName": "shots", "status": "skipped", "results": [{ "status": "skipped" }] }] },
+            { "title": "is skipped", "file": "login.spec.ts", "line": 27, "tags": ["map.skipped"], "tests": [{ "projectName": "dev", "status": "skipped", "results": [{ "status": "skipped" }] }] },
+            { "title": "was never run", "file": "login.spec.ts", "line": 31, "tags": ["auth.never-ran"], "tests": [{ "projectName": "room", "status": "skipped", "results": [] }] }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {}
+}

@@ -260,6 +260,8 @@ pub mod event {
     pub const SESSION_STALE: &str = "rubato.session.stale";
     pub const CAP_HIT: &str = "rubato.cap.hit";
     pub const PLAN_CHECK: &str = "rubato.plan.check";
+    /// The app's user scenarios against the e2e tests that cite them (`pnpm scenarios`, ADR 0069).
+    pub const SCENARIOS_CHECK: &str = "rubato.scenarios.check";
     /// A planning session waiting for a person's approval (skill `plan.ts wait`, ADR 0035).
     pub const PLAN_WAIT: &str = "rubato.plan.wait";
     /// A plan's pinned ADRs recorded as accepted by an approval (skill `adrs.ts accept`).
@@ -417,6 +419,7 @@ pub fn all_names() -> Vec<&'static str> {
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,
+        event::SCENARIOS_CHECK,
         event::PLAN_WAIT,
         event::ADRS_ACCEPT,
         event::PLAN_HANDOFF,

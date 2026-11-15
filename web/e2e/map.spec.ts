@@ -28,7 +28,7 @@ async function connectCompanion(user: string): Promise<WebSocket> {
   return ws;
 }
 
-test("the map renders every node id from system-map.yml", async ({ page }) => {
+test("the map renders every node id from system-map.yml", { tag: "@map.every-part" }, async ({ page }) => {
   await page.goto("/");
   for (const n of map.nodes) {
     await expect(page.getByTestId(`node-${n.id}`)).toBeVisible();
@@ -36,7 +36,7 @@ test("the map renders every node id from system-map.yml", async ({ page }) => {
   await expect(page.getByText("map rubato @")).toBeVisible();
 });
 
-test("By repo boxes each repo's parts, and the Repos tab says what each repo provides (issue #89)", async ({ page }) => {
+test("By repo boxes each repo's parts, and the Repos tab says what each repo provides (issue #89)", { tag: ["@map.by-repo", "@repos.what-each-provides"] }, async ({ page }) => {
   const nodes = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; repo?: string }[] }).nodes;
   const owned = nodes.filter((n) => n.repo);
   await page.goto("/");
@@ -61,7 +61,7 @@ test("By repo boxes each repo's parts, and the Repos tab says what each repo pro
   await expect(provides).toContainText(owned[0]!.id);
 });
 
-test("a member's Map: line places an issue without a drag; a stranger's only suggests", async ({ page }) => {
+test("a member's Map: line places an issue without a drag; a stranger's only suggests", { tag: ["@pins.map-line-member", "@pins.map-line-stranger-suggests"] }, async ({ page }) => {
   // fixtures/issues.json: #912 by the owner names seam companion-server; #913 by someone
   // outside the team names part plan-check (ADR 0026).
   await page.goto("/");
@@ -78,7 +78,7 @@ test("a member's Map: line places an issue without a drag; a stranger's only sug
   await expect(suggestion).toContainText("from someone outside the team");
 });
 
-test("an issue created from a part is pinned on it (ADR 0025)", async ({ page }) => {
+test("an issue created from a part is pinned on it (ADR 0025)", { tag: "@new-issue.pinned-where-begun" }, async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("node-plan-check").click();
   await page.getByTestId("inspector").getByTestId("new-issue-here").click();
@@ -97,7 +97,7 @@ test("an issue created from a part is pinned on it (ADR 0025)", async ({ page })
   await expect(detail).toContainText("node plan-check");
 });
 
-test("drag a not-pinned issue onto a part and onto a seam", async ({ page }) => {
+test("drag a not-pinned issue onto a part and onto a seam", { tag: ["@pins.drag-onto-part", "@pins.drag-onto-seam"] }, async ({ page }) => {
   // The harness serves three open issues of m0x6A/rubato: #901, #902 and #903, none tracked.
   const key = (n: number) => `m0x6A/rubato#${n}`;
   await page.goto("/");
@@ -134,7 +134,7 @@ test("drag a not-pinned issue onto a part and onto a seam", async ({ page }) => 
   await expect(page.getByTestId("seam-web-server")).toContainText("1 issue");
 });
 
-test("start session appears only for the current user's own connected companion", async ({ page }) => {
+test("start session appears only for the current user's own connected companion", { tag: ["@launch.only-own-companion", "@companions.see-teammates"] }, async ({ page }) => {
   // Pin an issue so there is something to select.
   const pin = await fetch(`${base}/api/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } }) });
   expect([201, 200]).toContain(pin.status);
@@ -182,7 +182,7 @@ async function canvasPosition(page: Page, id: string): Promise<{ x: number; y: n
   return { x: Math.round(Number(m[1])), y: Math.round(Number(m[2])) };
 }
 
-test("a dragged part is in the same place in a second browser and after reload", async ({ page, browser }) => {
+test("a dragged part is in the same place in a second browser and after reload", { tag: ["@map.shared-layout", "@live.changes-reach-every-browser"] }, async ({ page, browser }) => {
   const other = await (await browser.newContext({ baseURL: base })).newPage();
   await page.goto("/");
   await other.goto("/");
@@ -239,7 +239,7 @@ test("a dragged part is in the same place in a second browser and after reload",
   await other.context().close();
 });
 
-test("the data flow lens shows rubato-map.yml's flows with arrowheads", async ({ page }) => {
+test("the data flow lens shows rubato-map.yml's flows with arrowheads", { tag: ["@map.flow-lens", "@map.inspect-part-and-seam"] }, async ({ page }) => {
   const seams = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { seams: { id: string; flows?: { kind: string; carries: string }[] }[] }).seams;
   const flows = (kind: string) => seams.flatMap((s) => (s.flows ?? []).filter((f) => f.kind === kind).map((f) => ({ seam: s.id, ...f })));
   const withHead = page.locator(".react-flow__edge-path[marker-end], .react-flow__edge-path[marker-start]");
@@ -302,7 +302,7 @@ async function expectClear(page: Page, parts: string[]): Promise<void> {
 }
 
 for (const motion of ["no-preference", "reduce"] as const) {
-  test(`play "start a session on an issue" step by step (motion: ${motion})`, async ({ page }) => {
+  test(`play "start a session on an issue" step by step (motion: ${motion})`, { tag: "@map.play-journey" }, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: motion });
     await page.goto("/");
     await expect(page.getByTestId("seam-web-server")).toBeVisible();
@@ -363,7 +363,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
   });
 }
 
-test("selecting an issue with a plan paints its parts and flows", async ({ page }) => {
+test("selecting an issue with a plan paints its parts and flows", { tag: "@plans.paints-the-map" }, async ({ page }) => {
   // The seeded repository has branch issue/901-lens with a plan that has a Flows table. Pinning
   // #901 makes it a tracked issue; the next poll tick (5 s in this harness) reads the plan.
   const pin = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 901 }, target: { kind: "node", id: "rubato-server" } } });
@@ -407,7 +407,7 @@ test("selecting an issue with a plan paints its parts and flows", async ({ page 
   await expect(plan).toHaveCount(0);
 });
 
-test("queue an issue on a paired companion and start it", async ({ page }) => {
+test("queue an issue on a paired companion and start it", { tag: ["@queue.queue-on-own-lane", "@queue.refused-start-stays", "@queue.start-leaves-queue", "@companions.see-teammates"] }, async ({ page }) => {
   // Issue #9 was pinned by an earlier test; pin it here too so the test stands alone.
   await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } } });
   const alice = await connectCompanion("alice");
@@ -466,7 +466,7 @@ test("queue an issue on a paired companion and start it", async ({ page }) => {
   mine.close();
 });
 
-test("draft a part and a seam, propose", async ({ page }) => {
+test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@drafts.invalid-change-explained", "@drafts.propose-as-pull-request", "@drafts.withdraw"] }, async ({ page }) => {
   const repo = process.env["RUBATO_E2E_REPO"];
   test.skip(!repo, "needs the seeded repository of e2e/run.sh");
   const git = (...args: string[]) => execFileSync("git", ["-C", repo!, ...args], { encoding: "utf8" }).trim();
@@ -558,7 +558,7 @@ test("draft a part and a seam, propose", async ({ page }) => {
   await expect(panel).toContainText("empty");
 });
 
-test("a ghost taken into the draft becomes a part with its service, and its call a seam (issue #140)", async ({ page }) => {
+test("a ghost taken into the draft becomes a part with its service, and its call a seam (issue #140)", { tag: ["@map.ghosts-and-discrepancies", "@drafts.ghost-into-draft"] }, async ({ page }) => {
   // The seeded server has no traffic source: a report with two ghosts is added on the way to the page.
   await routeOverview(page, ghostTraffic);
   await page.goto("/");

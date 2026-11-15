@@ -99,7 +99,7 @@ const runs = [
 ] as const;
 
 for (const run of runs) {
-  test(`reduced motion, ${run.name}: nothing animates`, async ({ page }) => {
+  test(`reduced motion, ${run.name}: nothing animates`, { tag: "@look.reduced-motion" }, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: run.media });
     if (run.force) {
       await forceReducedSwitch(page);
@@ -151,7 +151,7 @@ for (const run of runs) {
 
 // Issue #104, design §5.7: observed traffic under reduced motion is one still chevron per
 // direction with calls, and nothing animates; with full motion the chevrons travel.
-test("reduced motion, the Traffic lens: one still chevron per direction, nothing animates", async ({ page }) => {
+test("reduced motion, the Traffic lens: one still chevron per direction, nothing animates", { tag: "@look.reduced-motion" }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await routeOverview(page, freshTraffic);
   await setUp(page);
@@ -167,7 +167,7 @@ test("reduced motion, the Traffic lens: one still chevron per direction, nothing
   expect(changed).toBeLessThanOrEqual(STILL_NOISE_PX);
 });
 
-test("must fail: with full motion the Traffic lens's chevrons travel", async ({ page }) => {
+test("must fail: with full motion the Traffic lens's chevrons travel", { tag: ["@look.reduced-motion", "@selftest"] }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await routeOverview(page, freshTraffic);
   await setUp(page);
@@ -178,7 +178,7 @@ test("must fail: with full motion the Traffic lens's chevrons travel", async ({ 
   expect(await page.evaluate(() => document.getAnimations().length)).toBeGreaterThan(0);
 });
 
-test("must fail: with full motion the pulse animates and the canvas moves", async ({ page }) => {
+test("must fail: with full motion the pulse animates and the canvas moves", { tag: ["@look.reduced-motion", "@selftest"] }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await setUp(page);
   expect(await page.evaluate(() => document.documentElement.dataset["motion"])).toBe("full");
