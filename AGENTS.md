@@ -18,10 +18,11 @@ Does:
 
 - One shared system map: contexts, contracts and the seams between them; repos are the code behind the nodes. Declared in `system-map.yml` with node ids that everything else references.
 - Issues created and shown per repository (GitHub's rule), each pinned to a map node or seam. An issue is never attached only to a repo.
-- Start a Claude Code session on an issue, in a worktree, in the developer's own tmux, through tmux-ide. A user can start sessions only in their own tmux.
-- The agent's plan comes back as a Markdown file on the branch at a known path. Its affected-parts section paints the map.
+- Start a Claude Code session on an issue, in a worktree, through the developer's own companion: in their own tmux through tmux-ide, or, on a headless companion, as one `claude -p` turn at a time with no terminal (ADR 0062). A user can start sessions only through their own companion.
+- The agent's plan is drafted in Rubato: the companion mirrors it from the worktree at each settle point, the team reads every revision, and it reaches the branch once, at approval, as a Markdown file at a known path (ADR 0053, ADR 0055). Its affected-parts section paints the map.
+- Talk to your own launched session from Rubato, and about a plan in its room, where the whole team reads both; an agent joins a room only when its owner calls it in (ADR 0050, ADR 0051, ADR 0057).
 - Progress per issue derived from existing signals (see progress model below), read three ways: by issue, by session, by map node.
-- Decisions recorded as issue comments using a `Decision:` template, shown in context.
+- Decisions recorded in the plan's `## Decisions` table and approved with it (ADR 0056); `Decision:` comments from before the cutover still show in context.
 - Cross-repo visibility: two plans touching the same seam show up on that seam. Blocking is a later gate; v0 is the view.
 
 Does not:
@@ -29,7 +30,6 @@ Does not:
 - Orchestrate agents across repositories or order cross-repo changes.
 - Run agents itself. Rubato never executes anything on a developer's machine; the companion does, for its own user only.
 - Stream or attach to a colleague's live terminal.
-- Chat. Conversation stays where the team already talks.
 - Audio.
 
 ## Architecture
@@ -39,7 +39,7 @@ Three parts, two of them built here:
 | Part | Lives | Built here | Role |
 | --- | --- | --- | --- |
 | `rubato-server` | shared, one instance per team | yes (Rust) | map, issue pins, Projects join, plans, progress, decisions, GitHub OAuth, websocket fan-out, embedded frontend |
-| `rubato-companion` | one per developer machine (WSL or macOS) | yes (Rust) | connects **outbound** to the server; pushes tmux-ide session state and Claude Code hook events; accepts launch commands only for its paired user; runs `tmux`, `git worktree`, `claude` |
+| `rubato-companion` | one per developer machine (WSL or macOS) | yes (Rust) | connects **outbound** to the server; pushes tmux-ide session state and Claude Code hook events; accepts launch commands only for its paired user; runs `git worktree` and `claude`, and `tmux` in interactive mode only (a headless companion runs each turn as a `claude -p` child, ADR 0062) |
 | GitHub | — | no | code, issues, PRs, checks, plan files |
 
 Dependencies we stitch rather than build: **tmux-ide** (session discovery, agent status from Claude Code hooks, `team --json`, `send`, `wait`, MCP, SDK; WSL is its Windows path), **Claude Code** (the only agent in v0; hooks are the event source), **GitHub** (OAuth, REST, Projects v2 GraphQL).
@@ -213,7 +213,7 @@ One state per issue, derived; never stored by hand.
 | In review | PR open, checks green |
 | Done | merged |
 
-Identity comes from the branch: pane cwd → worktree → branch → issue. No manual tags.
+Identity comes from the branch: pane cwd → worktree → branch → issue. A headless session has no pane; it starts from the launch's worktree (ADR 0062). No manual tags.
 
 Every signal carries a last-seen time. A session with no heartbeat renders as *unknown*, never as *working*. Trust check first: is the signal still flowing?
 
@@ -223,8 +223,8 @@ One planning workflow, the `rubato` skill (`skills/rubato/SKILL.md`, ADR 0028), 
 
 - **Every design starts from the map.** Read `system-map.yml`, mark nodes affected, new or quiet, write the affected-parts table and the data flow across contexts. For work on Rubato itself, the map is `docs/design/rubato-map.yml`.
 - **Size the track first.** Trivial, small or full, with the triggers in the skill; a full plan gets a design note in `docs/plans/<issue>-<slug>/design.md`.
-- **Plan before code.** A plan file at `docs/plans/<issue>.md` using `schema/plan.schema.json`, under the spec headings (what the change does, how we'll know it works, what it must not break, how we'll debug it at 3 am). Front matter is `issue`, `title`, `map_version`, `spend_cap_usd` and `attempt_limit` only (ADR 0027). Open decisions go in a section headed **Assumed, not yet approved**; a decision that touches a seam blocks, a decision inside one node may be assumed and labelled.
-- **Review and approval are issue comments.** The design review is posted as a `Review:` comment (`skills/rubato/review-template.md`, checklist in `review-checklist.md`). A person approves with a comment naming the plan's sha (`plan.ts sha`); an agent never posts it. Rubato reads both and shows them; neither is written into the plan file.
+- **Plan before code.** A plan file at `docs/plans/<issue>.md` using `schema/plan.schema.json`, under the spec headings (what the change does, how we'll know it works, what it must not break, how we'll debug it at 3 am). Front matter is `issue`, `title`, `map_version`, `spend_cap_usd` and `attempt_limit` (ADR 0027), plus the approval record `approved_by`, `approved_at` and `approved_sha`, which only `plan.ts handoff` writes (ADR 0054). Open decisions go in a section headed **Assumed, not yet approved**; a decision that touches a seam blocks, a decision inside one node may be assumed and labelled.
+- **Review and approval happen in Rubato.** The design review is the agent's reply whose first line is `Review:` (`skills/rubato/review-template.md`, checklist in `review-checklist.md`), and its summary of the discussion a reply that starts `Summary:`. A person approves the draft's newest revision in Rubato, as themselves; an agent never approves. At approval the plan reaches the branch in one commit with the approval record (`plan.ts handoff`), and the issue gets one link comment from the approver (ADR 0054, ADR 0055). `Approved:` comments posted before the cutover still count; later ones do not.
 - **Small, reversible changes.** One task, one branch named `issue/<n>-<slug>`, one PR.
 - **Every check reports how many things it checked and has a test that makes it fail on purpose.** This includes the plan check and every Gherkin suite.
 - **Ask with a question, not with prose.** When a choice can't be settled from the code, raise it as a numbered question with options; don't bury it in a paragraph.
@@ -274,6 +274,7 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - An approval in Rubato that has not reached its branch 30 minutes after it was delivered.
 - A handoff commit whose link comment is not on the issue.
 - A plan whose committed approval record differs from Rubato's.
+- Headless turns killed for running too long or too quiet, or left over from a companion restart (`HeadlessTurnsKilled`; never a stop or a cap hit).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 
@@ -306,7 +307,7 @@ Files
 Every decision that touches a seam, a dependency, a data format or a non-goal is an ADR in `docs/decisions/`, one file each, numbered, from `0000-template.md`. Rules:
 
 - **Status moves, text does not.** `proposed → accepted → superseded by NNNN` or `rejected`. Never edit an accepted ADR's decision; write a new one that supersedes it.
-- **Who decided, human or agent.** Every ADR names its decider. An agent may draft and mark *proposed*; only a human accepts it, by editing it or by approving the plan that pins it (ADR 0035): a team member's `Approved:` comment naming the plan accepts the ADRs the plan lists with their blob shas, and the agent records that acceptance with a link to the comment (`adrs.ts accept`). This is the audit trail Chopin's decision log gives inside a plan, kept across plans.
+- **Who decided, human or agent.** Every ADR names its decider. An agent may draft and mark *proposed*; only a human accepts it, by editing it or by approving the plan that pins it: approving a plan in Rubato accepts the ADRs the plan lists with their blob shas, and the handoff commit records that acceptance with a link to the approval (ADR 0054, ADR 0055). Before the cutover a team member's `Approved:` comment did the same (ADR 0035); ADRs proposed from a connected repo stay proposed until accepted in the map repo. This is the audit trail Chopin's decision log gives inside a plan, kept across plans.
 - **Agents read them before planning.** The `rubato` skill loads accepted ADRs the same way it loads the map. A plan that contradicts an accepted ADR is a plan check failure unless it proposes a superseding ADR.
 - **Inside-a-node assumptions are not ADRs.** They stay in the plan's "Assumed, not yet approved" section. The line is the seam.
 - The list below is the seed; each item becomes `000N-<slug>.md` with status *accepted* in the first PR.
@@ -315,9 +316,9 @@ Every decision that touches a seam, a dependency, a data format or a non-goal is
 
 - Planning-time tool, not an orchestrator.
 - Rust for companion and server; TypeScript for frontend and skill scripts.
-- Claude Code is the only agent in v0; tmux is required; tmux-ide is the runner.
-- A user starts sessions only in their own tmux; no inbound access to machines.
-- Plan travels as a file in the repo, not through an API.
+- Claude Code is the only agent in v0; for interactive companions tmux is required and tmux-ide is the runner (a headless companion needs neither, ADR 0062).
+- A user starts sessions only through their own companion; no inbound access to machines.
+- The approved plan travels as a file in the repo, not through an API; drafts live in Rubato until approval (ADR 0053).
 - Issue identity from the branch name.
 - Map is a versioned file with ids; plans may only name existing ids.
 - Join between issue and map node: SQLite in `rubato-server` first; GitHub Projects v2 fields are the candidate once the model settles.

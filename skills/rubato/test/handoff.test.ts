@@ -6,17 +6,17 @@
  */
 import { execFileSync } from "node:child_process";
 import { createServer, type IncomingHttpHeaders } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bundleHash, bundlePaths } from "../../../actions/plan-check/src/bundle.ts";
 import { pinAdrs } from "../scripts/adrs.ts";
 import { install } from "../scripts/install.ts";
 import { HANDOFF_EXIT, type HandoffArgs, handoff, parseHandoffArgs, withApprovalRecord } from "../scripts/lib/handoff.ts";
 import type { Workspace } from "../scripts/lib/local.ts";
-import { planSha } from "../scripts/lib/plan-sha.ts";
+import { gitBlobSha, planSha } from "../scripts/lib/plan-sha.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const APPROVAL = "5d3b1f0e-2c4a-4b8e-9f1d-7a6c5e4b3a21";
@@ -33,7 +33,7 @@ interface World {
   work: string;
   bare: string;
   ws: Workspace;
-  /** The record the companion would type, for the draft as it is now. */
+  /** The record the companion would type, for the draft as it is now (as it mirrors it: regular files inside the worktree only). */
   args: () => HandoffArgs;
 }
 
@@ -85,9 +85,14 @@ async function makeWorld(origin = "acme/map", mapRepo = origin): Promise<World> 
   const ws: Workspace = { map: clone, maps: [clone], repos: [] };
   const args = (): HandoffArgs => {
     const text = readFileSync(join(work, PLAN), "utf8");
+    const top = realpathSync(work);
     const files = bundlePaths(text, PLAN).flatMap((p) => {
       try {
-        return [[p, readFileSync(join(work, p), "utf8")] as [string, string]];
+        const real = realpathSync(join(work, p));
+        if (!real.startsWith(top + sep) || !statSync(real).isFile()) {
+          return [];
+        }
+        return [[p, readFileSync(real, "utf8")] as [string, string]];
       } catch {
         return [];
       }
@@ -324,11 +329,15 @@ describe("plan.ts handoff: its arguments and exit codes", () => {
     expect(new Set(Object.values(HANDOFF_EXIT)).size).toBe(Object.keys(HANDOFF_EXIT).length);
   });
 
-  it("the skill's version is the first with handoff (SKILL_HANDOFF_VERSION)", () => {
+  it("the skill's version has handoff: at least SKILL_HANDOFF_VERSION", () => {
     const rust = readFileSync(join(root, "crates/rubato-protocol/src/handoff.rs"), "utf8");
-    const need = /SKILL_HANDOFF_VERSION: &str = "([\d.]+)"/.exec(rust)?.[1];
+    const need = /SKILL_HANDOFF_VERSION: &str = "([\d.]+)"/.exec(rust)?.[1] ?? "";
     const pkg = JSON.parse(readFileSync(join(root, "skills/rubato/package.json"), "utf8")) as { version: string };
-    expect(pkg.version).toBe(need);
+    const parts = (v: string) => v.split(".").map(Number);
+    const [have, want] = [parts(pkg.version), parts(need)];
+    const cmp = have.map((n, i) => n - (want[i] ?? 0)).find((d) => d !== 0) ?? 0;
+    expect(want.length, need).toBe(3);
+    expect(cmp, `${pkg.version} has no handoff (needs ${need})`).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -349,7 +358,10 @@ describe("the two planning modes in the skill and the prompt (ADR 0053)", () => 
       expect(rubato, s).toContain(s);
     }
     expect(rubato).not.toMatch(/commit it on this branch|as a `Review:` comment/);
-    expect(read("prompt.md")).toContain("commit it on this branch and post the review as a `Review:` comment");
+    // After the cutover a git-mode launch (a companion that cannot plan in Rubato) pushes and asks for Import.
+    expect(read("prompt.md")).toContain("commit it on this branch and push it");
+    expect(read("prompt.md")).toContain("import it in Rubato");
+    expect(read("prompt.md")).not.toContain("`Review:` comment");
   });
 
   it("SKILL.md's Rubato mode pins ADRs before the Summary: reply and lists every handoff exit code", () => {
@@ -361,9 +373,12 @@ describe("the two planning modes in the skill and the prompt (ADR 0053)", () => 
     for (const [outcome, code] of Object.entries(HANDOFF_EXIT)) {
       expect(mode, outcome).toContain(`| ${code} | \`${outcome}\` |`);
     }
-    // The git mode keeps its comments and its wait.
-    expect(skill).toContain("plan.ts wait docs/plans/<n>.md");
-    expect(skill).toContain("adrs.ts accept --comment");
+    // After the cutover nothing posts a review, an approval or a decision as a comment, and the
+    // wait and the comment acceptance are retired (ADR 0054).
+    expect(skill).not.toContain("gh issue comment");
+    expect(skill).not.toContain("plan.ts wait docs/plans/<n>.md");
+    expect(skill).toContain("`plan.ts wait` and `adrs.ts accept --comment` are retired");
+    expect(skill).toContain("press *Import*");
   });
 });
 
@@ -395,5 +410,59 @@ describe("plan.ts handoff from an installed copy, as the session runs it", () =>
     const bad = run(["--approval", a.approval, "--sha", "zz"]);
     expect(bad.code).toBe(HANDOFF_EXIT.error);
     expect(JSON.parse(bad.out.trim())).toMatchObject({ outcome: "error", approval: APPROVAL });
+  });
+});
+
+describe("plan.ts handoff keeps ADR paths in the decisions folder (#210)", () => {
+  it("never reads or writes a pinned row outside docs/decisions, lists it as left, and still accepts the one inside", async () => {
+    const w = await makeWorld();
+    const proposed = (n: string) => ADR_TEXT.replace("# 0099. Try it", `# ${n}. Outside`);
+    // Outside the worktree, inside it but outside docs/decisions, and a symlink in docs/decisions that leads out.
+    const outside = join(w.work, "..", "outside.md");
+    const loose = join(w.work, "docs/0094-loose.md");
+    const target = join(w.work, "..", "target.md");
+    writeFileSync(outside, proposed("0093"));
+    writeFileSync(loose, proposed("0094"));
+    writeFileSync(target, proposed("0095"));
+    symlinkSync("../../../target.md", join(w.work, "docs/decisions/0095-link.md"));
+    const rows: [string, string, string][] = [
+      ["0093", "../outside.md", outside],
+      ["0094", "docs/0094-loose.md", loose],
+      ["0095", "docs/decisions/0095-link.md", target],
+    ];
+    const plan = join(w.work, PLAN);
+    writeFileSync(plan, `${readFileSync(plan, "utf8")}${rows.map(([n, f, abs]) => `| ${n} | ${f} | ${gitBlobSha(readFileSync(abs, "utf8"))} |\n`).join("")}`);
+    const before = rows.map(([, , abs]) => readFileSync(abs, "utf8"));
+    const a = w.args();
+
+    const r = await handoff(w.ws, w.work, a, quiet);
+    expect(r.code).toBe(HANDOFF_EXIT.committed);
+    expect(r.line).toMatchObject({ outcome: "committed", adrs_accepted: ["0099"] });
+    expect([...r.line.adrs_left].sort()).toEqual(["0093", "0094", "0095"]);
+    expect(rows.map(([, , abs]) => readFileSync(abs, "utf8"))).toEqual(before);
+    expect(readFileSync(join(w.work, ADR), "utf8")).toContain("- **Status:** accepted\n");
+
+    // A rerun pushes the same commit and still leaves them alone.
+    const again = await handoff(w.ws, w.work, a, quiet);
+    expect(again.line).toMatchObject({ outcome: "committed", commit: r.line.commit, adrs_accepted: ["0099"] });
+    expect([...again.line.adrs_left].sort()).toEqual(["0093", "0094", "0095"]);
+    expect(rows.map(([, , abs]) => readFileSync(abs, "utf8"))).toEqual(before);
+    console.log(`checked ${rows.length} escaping rows and one inside`);
+  });
+
+  it("a row outside the folder never counts at its pinned blob: edited into accepted text after the approval, it is bundle_changed", async () => {
+    const w = await makeWorld();
+    const loose = join(w.work, "docs/0094-loose.md");
+    const text = ADR_TEXT.replace("# 0099. Try it", "# 0094. Loose");
+    writeFileSync(loose, text);
+    const plan = join(w.work, PLAN);
+    writeFileSync(plan, `${readFileSync(plan, "utf8")}| 0094 | docs/0094-loose.md | ${gitBlobSha(text)} |\n`);
+    const a = w.args();
+    // After the approval the file reads as accepted by it; inside the folder that counts at its pinned blob.
+    writeFileSync(loose, text.replace("- **Status:** proposed", "- **Status:** accepted").replace(/- \*\*Decided by:\*\*.*/, `- **Decided by:** m0x6A, accepted 2026-11-20, approved in Rubato ${URL} (self); drafted by agent (test)`));
+    const before = snapshot(w);
+    const r = await handoff(w.ws, w.work, a, quiet);
+    expect(r.code).toBe(HANDOFF_EXIT.bundle_changed);
+    expect(snapshot(w)).toBe(before);
   });
 });

@@ -49,8 +49,10 @@ is installed on.
    the map, not as an empty repository.
 
 Without the App settings the server still runs the old way, for a first look: an OAuth app for
-login and `RUBATO_GITHUB_TOKEN` (read-only) for reads. It then warns at start that login is
-open to any GitHub account, and it cannot propose map changes.
+login and `RUBATO_GITHUB_TOKEN` (read-only) for reads. Login is then open to any GitHub
+account, and the server cannot propose map changes. It starts that way only when it is local
+(`RUBATO_BIND` a loopback address and `RUBATO_PUBLIC_URL` a loopback host); anywhere else it
+refuses to start unless you set `RUBATO_OPEN_LOGIN=1`, and it warns at start either way (ADR 0064).
 
 ## 3. Run the server
 
@@ -68,6 +70,11 @@ export RUBATO_GITHUB_APP_INSTALLATION_ID=...   # from step 3
 # secret and stable: rotating it makes every stored token unreadable (everyone logs in again).
 # The App must have "Expire user authorization tokens" on (the default).
 export RUBATO_TOKEN_KEY="$(openssl rand -hex 32)"
+# The cutover (ADR 0054): from this time on plans are approved in Rubato, and an Approved:
+# comment posted at or after it does not count. Leave it unset until every companion and skill
+# is upgraded (the "Companions by capability" panel shows session_input, draft_mirror and
+# plan_handoff for each); while unset, plans are approved by comment as before.
+# export RUBATO_COMMENT_APPROVALS_UNTIL=2026-11-20T10:00:00Z
 export RUBATO_MAP_REPO=m0x6A/rubato
 export RUBATO_MAP_PATH=docs/design/rubato-map.yml
 export RUBATO_MAP_REF=main
@@ -82,8 +89,8 @@ belong together the server stops at start with `github app check failed` and say
 Open <http://127.0.0.1:8080> and log in with GitHub. The map appears, and the Issues tab lists
 every open issue of the map's repositories under "Not pinned".
 
-A session lasts as long as its team check is at most seven days old; after that, or after the
-first start as an App, the browser sends you through login once more. The private key can
+A session lasts as long as its team check is at most seven days old, and never more than 30
+days (in every mode); after that, or after the first start as an App, the browser sends you through login once more. The private key can
 also be given inline as `RUBATO_GITHUB_APP_PRIVATE_KEY` (newlines as `\n`).
 
 Editing the map: "Edit map" opens the team's shared draft. "Propose map change…" opens one pull
@@ -104,8 +111,9 @@ carries it to the `CompanionSilent` alert (which falls back to 600 without that 
 below 60 is raised to 60 with a warning at startup. For a run without GitHub at all, `RUBATO_MAP_FILE` reads the map from a local file
 and `RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git` reads branches and plans from local
 bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
-`RUBATO_DEV_USER=<login>` skips OAuth and must never be set where others
-can reach the server.
+`RUBATO_DEV_USER=<login>` skips OAuth: every request is that login, and the
+`x-rubato-dev-user` header names any other. The server refuses to start with it unless it is
+local (a loopback `RUBATO_BIND` and `RUBATO_PUBLIC_URL`; ADR 0064).
 
 Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
 setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`
@@ -309,9 +317,20 @@ What happens next, and what to watch:
   `rubato.branch` and `rubato.node` set as OTel resource attributes. Attach with
   `tmux attach -t rubato@issue-n-<slug>` to watch or take over.
 - The issue moves to **Started**, then **Designing** as the first hook events arrive.
-- The session, following the skill, writes `docs/plans/n.md`, checks it and pushes it. On the
-  next poll the issue is **Designed** and the plan's affected parts paint the map. Two plans on
-  one seam show as a finding on that seam.
+- The session, following the skill, writes `docs/plans/n.md` and checks it.
+  - **Before the cutover** it pushes the plan and posts a `Review:` comment, and a person
+    approves it with an `Approved:` comment.
+  - **After the cutover** it leaves the draft uncommitted in the worktree. At each pause the
+    companion mirrors the plan, its design note and its proposed ADRs to Rubato, and the issue
+    shows the draft with every revision and what changed since you last looked. Talk to your
+    session from the issue panel; the agent replies with `Review:` and `Summary:` there. Press
+    **Approve** on the newest revision. The companion types the handoff, the plan reaches the
+    branch in one commit with the approval record, and the issue gets one link comment from
+    you.
+
+  Once the plan is on the branch, or a draft has settled, the issue is **Designed** and the
+  plan's affected parts paint the map. Two plans on one seam show as a finding on that seam,
+  and as a notice in both plans' rooms.
 - Spend appears on the session row as the transcript grows; at the cap the companion kills the
   session and the issue is **Blocked**.
 - Open a PR from the branch: **In review** when checks are green, **Done** when merged. The

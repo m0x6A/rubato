@@ -3027,6 +3027,31 @@ async fn without_the_app_login_stays_open() {
     );
 }
 
+/// #169 (ADR 0064): without the App a session still ends on the server, after the cookie's 30 days.
+#[tokio::test]
+async fn a_session_ends_after_thirty_days() {
+    let (url, app, _tmp) = app_harness(false).await;
+    let cookie_created = |days_ago: i64| {
+        let app = app.clone();
+        async move {
+            let id = Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO web_sessions (id, login, created_at) VALUES (?, ?, ?)")
+                .bind(&id)
+                .bind("anyone")
+                .bind((chrono::Utc::now() - chrono::Duration::days(days_ago)).to_rfc3339())
+                .execute(&app.db)
+                .await
+                .unwrap();
+            format!("rubato_session={}", app.signer.sign(&id))
+        }
+    };
+    let expired = cookie_created(31).await;
+    let current = cookie_created(29).await;
+    assert_eq!(statuses(&url, &expired).await, [401, 401, 401]);
+    assert_eq!(statuses(&url, &current).await, [200, 201, 101]);
+    println!("checked 2 sessions on 3 entry points");
+}
+
 fn layout_of(pairs: &[(&str, f64, f64)]) -> MapLayout {
     MapLayout {
         positions: pairs

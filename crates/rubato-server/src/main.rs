@@ -17,11 +17,6 @@ async fn main() -> Result<()> {
         tracing::warn!("{w}");
     }
     config.report_cutover();
-    if config.dev_user.is_some() {
-        tracing::warn!(
-            "RUBATO_DEV_USER is set: every request is that user; never run like this in production"
-        );
-    }
     let pool = db::connect(&config.database_url).await?;
     let dev_issues = match &config.dev_issues {
         Some(path) => {
@@ -66,7 +61,7 @@ async fn main() -> Result<()> {
         }
         (None, None, Some(t)) => {
             tracing::warn!(
-                "no GitHub App configured: reading with RUBATO_GITHUB_TOKEN, login is open to any GitHub account, and map changes cannot be proposed"
+                "no GitHub App configured: reading with RUBATO_GITHUB_TOKEN, and map changes cannot be proposed"
             );
             Arc::new(match api {
                 Some(base) => Octo::with_base_uri(t, base, READ_TIMEOUT)?,

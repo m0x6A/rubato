@@ -14,7 +14,7 @@ paths.
 | map | `scripts/map.ts` | prints the system map: every node and seam id a plan may use |
 | plan | `scripts/plan.ts`, `scripts/lib/plan-sha.ts` | creates and checks the plan file at the agreed path (ADR 0005, 0009, 0027); prints the sha an approval names; pins proposed ADRs by blob (`adrs-pin`) |
 | review | `review-template.md`, `review-checklist.md` | the design-review step and its `Review:` comment (ADR 0027, 0028) |
-| approval | `scripts/plan.ts wait`, `scripts/adrs.ts accept`, `scripts/lib/comments.ts`, `scripts/lib/approval.ts` | waits for a person's approval and records the acceptance of the ADRs the plan pins (ADR 0035, seam `skill-github`) |
+| approval | `scripts/plan.ts wait`, `scripts/adrs.ts accept`, `scripts/lib/comments.ts`, `scripts/lib/approval.ts` | retired at the cutover (ADR 0054): both commands print `approval_in_rubato` and exit 11, since plans are approved in Rubato and `plan.ts handoff` records the ADRs accepted. The libraries stay for the handoff and for plans approved by comment before the cutover |
 | handoff | `scripts/plan.ts handoff`, `scripts/lib/handoff.ts`, `prompt-rubato.md` | in Rubato mode (`RUBATO_PLANNING=rubato`), turns an approval made in Rubato into one commit: the approval record, the pinned ADRs accepted in the map repo, the push, and a `rubato.plan.handoff` line posted to the companion (ADR 0053, 0055) |
 | adrs | `scripts/adrs.ts` | lists accepted ADRs so a plan does not contradict one |
 | hooks | `scripts/hooks.ts`, `hooks.json` | renders the hooks file for a companion endpoint; the token stays in the companion's 0600 header file (ADR 0013, 0063) |

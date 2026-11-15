@@ -5,7 +5,9 @@
  *   adrs.ts [--all] [--json]
  *   adrs.ts accept --comment <url> [--plan <path>] [--cwd <dir>]
  *
- * `accept` records that a person's approval of the plan accepted the ADRs it pins (ADR 0035).
+ * `accept` recorded that a person's `Approved:` comment accepted the ADRs a plan pins (ADR 0035). It is
+ * retired at the cutover (ADR 0054): it prints `approval_in_rubato` and exits 11, since approval in
+ * Rubato accepts them and `plan.ts handoff` records it. `accept()` stays for that history.
  */
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -282,14 +284,10 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
 async function main(argv: string[]): Promise<number> {
   try {
     if (argv[0] === "accept") {
-      const at = (n: string) => (argv.indexOf(n) >= 0 ? argv[argv.indexOf(n) + 1] : undefined);
-      const comment = at("--comment");
-      if (!comment) {
-        throw new Error("--comment <url> is required");
-      }
-      const r = await accept(loadWorkspace(), resolve(at("--cwd") ?? process.cwd()), comment, at("--plan"));
-      console.log(JSON.stringify(r.line));
-      return r.code;
+      // Retired at the cutover (ADR 0054, ADR 0055): approving a plan in Rubato accepts its pinned
+      // ADRs, and plan.ts handoff records that in the handoff commit.
+      console.log(JSON.stringify({ event: "rubato.adrs.accept", outcome: "refused", reason: "approval_in_rubato" }));
+      return 11;
     }
     let adrs = listAdrs(loadWorkspace());
     if (!argv.includes("--all")) {
