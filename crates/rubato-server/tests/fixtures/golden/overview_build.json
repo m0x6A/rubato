@@ -189,7 +189,17 @@
       ],
       "fits_in": [
         "app"
-      ]
+      ],
+      "draft": {
+        "draft_id": "00000000-0000-0000-0000-000000000001",
+        "branch": "issue/1-x",
+        "owner": "m0x6A",
+        "rev": 2,
+        "at": "2026-11-08T11:59:00Z",
+        "plan_sha": "sha1",
+        "bundle_hash": "h",
+        "live": true
+      }
     },
     {
       "issue": {
@@ -435,7 +445,8 @@
           }
         ]
       },
-      "plan_sha": "sha4"
+      "plan_sha": "sha4",
+      "outside_rubato": true
     },
     {
       "issue": {
@@ -628,7 +639,77 @@
       "plan_sha": "sha8",
       "fits_in": [
         "app"
-      ]
+      ],
+      "outside_rubato": true
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 10
+      },
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 10
+        },
+        "state": "designed",
+        "last_seen": "2026-11-08T12:00:00Z"
+      },
+      "approval": {
+        "record": {
+          "issue": {
+            "repo": "acme/app",
+            "number": 10
+          },
+          "source": "rubato",
+          "approval_id": "00000000-0000-0000-0000-000000000110",
+          "bundle_hash": "h",
+          "author": "teammate",
+          "sha": "sha10",
+          "branch": "issue/10-x",
+          "created_at": "2026-11-08T11:54:00Z",
+          "url": "u/rubato"
+        },
+        "version": "earlier",
+        "current_sha": "sha10"
+      },
+      "draft": {
+        "draft_id": "00000000-0000-0000-0000-000000000010",
+        "branch": "issue/10-x",
+        "owner": "m0x6A",
+        "rev": 2,
+        "at": "2026-11-08T11:50:00Z",
+        "plan_sha": "sha10",
+        "bundle_hash": "h",
+        "live": false
+      }
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 11
+      },
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 11
+        },
+        "state": "unknown",
+        "last_seen": "2026-11-08T12:00:00Z",
+        "reason": "issue is not pinned to the map"
+      },
+      "draft": {
+        "draft_id": "00000000-0000-0000-0000-000000000011",
+        "branch": "issue/11-x",
+        "owner": "m0x6A",
+        "rev": 2,
+        "at": "2026-11-08T11:49:00Z",
+        "plan_sha": "sha11",
+        "bundle_hash": "h",
+        "live": false
+      }
     },
     {
       "issue": {
@@ -793,6 +874,15 @@
       "to": "auth-svc"
     },
     {
+      "kind": "comment_approval_ignored",
+      "issue": {
+        "repo": "acme/app",
+        "number": 2
+      },
+      "author": "m0x6A",
+      "created_at": "2026-11-08T10:50:00Z"
+    },
+    {
       "kind": "approval_stale",
       "issue": {
         "repo": "acme/app",
@@ -822,11 +912,38 @@
     {
       "kind": "approval_stale",
       "issue": {
+        "repo": "acme/app",
+        "number": 10
+      },
+      "approved_sha": "sha10",
+      "current_sha": "sha10"
+    },
+    {
+      "kind": "draft_owner_conflict",
+      "issue": {
+        "repo": "acme/app",
+        "number": 11
+      },
+      "branch": "issue/11-x",
+      "owner": "m0x6A",
+      "other": "alice"
+    },
+    {
+      "kind": "approval_stale",
+      "issue": {
         "repo": "acme/auth",
         "number": 5
       },
       "approved_sha": "sha5",
       "current_sha": "sha5"
+    },
+    {
+      "kind": "link_comment_waiting",
+      "issue": {
+        "repo": "acme/app",
+        "number": 1
+      },
+      "approval_id": "00000000-0000-0000-0000-000000000007"
     },
     {
       "kind": "seam_collision",
@@ -843,6 +960,10 @@
         {
           "repo": "acme/app",
           "number": 7
+        },
+        {
+          "repo": "acme/app",
+          "number": 10
         }
       ]
     },

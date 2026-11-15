@@ -306,7 +306,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
     await page.emulateMedia({ reducedMotion: motion });
     await page.goto("/");
     await expect(page.getByTestId("seam-web-server")).toBeVisible();
-    await page.getByRole("radio", { name: "Scenarios (3)" }).click();
+    await page.getByRole("radio", { name: "Scenarios (4)" }).click();
     const player = page.getByRole("group", { name: "Scenario player" });
     await expect(player.getByRole("combobox", { name: "Scenario" })).toHaveValue("start-a-session");
     const caption = page.getByTestId("scenario-caption");

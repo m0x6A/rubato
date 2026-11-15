@@ -40,6 +40,12 @@ for n in 914 915; do
   cp "e2e/fixtures/$n.md" "$SEED/docs/plans/$n.md"
   g add -A && g commit -q -m "plan for #$n"
 done
+# Issue #122: a plan with a room, on issue/916-room.
+g switch -q main
+g switch -q -c issue/916-room
+mkdir -p "$SEED/docs/plans"
+cp e2e/fixtures/916.md "$SEED/docs/plans/916.md"
+g add -A && g commit -q -m "plan for #916"
 g switch -q main
 git clone -q --bare "$SEED" "$TMP/rubato.git"
 

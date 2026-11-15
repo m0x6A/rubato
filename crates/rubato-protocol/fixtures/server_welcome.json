@@ -12,7 +12,18 @@
       "companion_silent_secs": 600,
       "team_poll_interval_secs": 30,
       "plan_poll_interval_secs": 60,
-      "github_poll_interval_secs": 60
-    }
+      "github_poll_interval_secs": 60,
+      "session_message_max_chars": 8000,
+      "room_agent_idle_secs": 1800,
+      "room_agent_turn_limit": 3,
+      "room_context_max_chars": 16000,
+      "room_message_max_chars": 8000,
+      "session_log_max_chars": 16000,
+      "draft_max_bytes": 1048576
+    },
+    "capabilities": [
+      "session_messages",
+      "drafts"
+    ]
   }
 }

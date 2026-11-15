@@ -17,11 +17,51 @@ pub async fn connect(url: &str) -> Result<SqlitePool> {
         .connect_with(opts)
         .await
         .context("connecting to sqlite")?;
+    let purged_before = applied(&pool, PURGE_MIGRATION).await;
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .context("running migrations")?;
+    if !purged_before && applied(&pool, PURGE_MIGRATION).await {
+        vacuum_after_purge(&pool).await;
+    }
     Ok(pool)
+}
+
+/// Migration 0015 removes the raw hook payloads (ADR 0052). An UPDATE leaves the old bytes in
+/// free pages, and VACUUM cannot run inside a migration's transaction, so it runs here, once,
+/// right after that migration was applied.
+const PURGE_MIGRATION: i64 = 15;
+
+async fn applied(pool: &SqlitePool, version: i64) -> bool {
+    sqlx::query("SELECT 1 FROM _sqlx_migrations WHERE version = ? AND success = 1")
+        .bind(version)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+async fn vacuum_after_purge(pool: &SqlitePool) {
+    let pages = |sql: &'static str| async move {
+        sqlx::query(sql)
+            .fetch_one(pool)
+            .await
+            .map(|r| r.get::<i64, _>(0))
+            .unwrap_or(-1)
+    };
+    let free_before = pages("PRAGMA freelist_count").await;
+    match sqlx::query("VACUUM").execute(pool).await {
+        Ok(_) => tracing::info!(
+            free_pages_before = free_before,
+            free_pages_after = pages("PRAGMA freelist_count").await,
+            "vacuum after hook payload purge"
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "vacuum after hook payload purge failed; run VACUUM by hand")
+        }
+    }
 }
 
 pub fn ts(t: DateTime<Utc>) -> String {

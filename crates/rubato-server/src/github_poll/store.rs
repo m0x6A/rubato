@@ -50,6 +50,17 @@ pub async fn upsert_decision(db: &SqlitePool, rec: &DecisionRecord) -> Result<()
     Ok(())
 }
 
+/// Forget the decision of one comment, if any: its author is not trusted (ADR 0065).
+pub async fn delete_decision(db: &SqlitePool, issue: &IssueRef, comment_id: u64) -> Result<()> {
+    sqlx::query("DELETE FROM decisions WHERE repo = ? AND number = ? AND comment_id = ?")
+        .bind(&issue.repo)
+        .bind(issue.number as i64)
+        .bind(comment_id as i64)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 pub async fn all_decisions(db: &SqlitePool) -> Result<Vec<DecisionRecord>> {
     let rows = sqlx::query("SELECT record FROM decisions ORDER BY comment_id")
         .fetch_all(db)
@@ -251,17 +262,26 @@ pub async fn uncovered(db: &SqlitePool) -> Result<Vec<String>> {
 
 // Table `plan_signals` (ADR 0027): `Review:` and `Approved:` comments from members.
 
+/// Store a review or approval signal. True when this comment was not stored before.
 pub async fn upsert_signal(
     db: &SqlitePool,
     issue: &IssueRef,
     comment_id: u64,
     kind: &str,
     record: &str,
-) -> Result<()> {
+) -> Result<bool> {
+    let known =
+        sqlx::query("SELECT 1 FROM plan_signals WHERE repo = ? AND number = ? AND comment_id = ?")
+            .bind(&issue.repo)
+            .bind(issue.number as i64)
+            .bind(comment_id as i64)
+            .fetch_optional(db)
+            .await?
+            .is_some();
     sqlx::query("INSERT INTO plan_signals (repo, number, comment_id, kind, record) VALUES (?, ?, ?, ?, ?) ON CONFLICT(repo, number, comment_id) DO UPDATE SET kind = excluded.kind, record = excluded.record")
         .bind(&issue.repo).bind(issue.number as i64).bind(comment_id as i64).bind(kind).bind(record)
         .execute(db).await?;
-    Ok(())
+    Ok(!known)
 }
 
 /// Drop the issue's signals whose comment was not seen in this read (deleted, or edited into
@@ -319,21 +339,51 @@ pub async fn all_reviews(db: &SqlitePool) -> Result<Vec<ReviewRecord>> {
         .collect())
 }
 
-/// The branch the newest approval of each issue names, for issues whose newest approval names
-/// one (ADR 0032: the plan is read from that branch).
-pub async fn approved_branches(db: &SqlitePool) -> Result<HashMap<IssueRef, String>> {
-    let mut newest: HashMap<IssueRef, ApprovalRecord> = HashMap::new();
-    for (a, _) in all_approvals(db).await? {
+/// The branch to prefer for each issue, from the merged list of counted approvals the
+/// composition root builds (ADR 0032, ADR 0054): the branch of the newest approval given in
+/// Rubato, so the handoff commit is read even when the issue has two `issue/` refs; else the
+/// branch the newest counted comment names, for issues whose newest one names one. Pure: this
+/// slice never names `approve`, which builds the list.
+pub fn approved_branches(
+    approvals: &[(ApprovalRecord, Option<String>)],
+) -> HashMap<IssueRef, String> {
+    let key = |a: &ApprovalRecord| (a.created_at, a.comment_id, a.approval_id);
+    let mut rubato: HashMap<&IssueRef, &ApprovalRecord> = HashMap::new();
+    let mut comment: HashMap<&IssueRef, &ApprovalRecord> = HashMap::new();
+    for (a, _) in approvals {
+        let newest = if a.source.is_comment() {
+            &mut comment
+        } else {
+            &mut rubato
+        };
         match newest.get(&a.issue) {
-            Some(n) if (n.created_at, n.comment_id) >= (a.created_at, a.comment_id) => {}
+            Some(n) if key(n) >= key(a) => {}
             _ => {
-                newest.insert(a.issue.clone(), a);
+                newest.insert(&a.issue, a);
             }
         }
     }
-    Ok(newest
+    let mut out: HashMap<IssueRef, String> = comment
         .into_iter()
-        .filter_map(|(i, a)| a.branch.map(|b| (i, b)))
+        .filter_map(|(i, a)| a.branch.clone().map(|b| (i.clone(), b)))
+        .collect();
+    for (i, a) in rubato {
+        if let Some(b) = &a.branch {
+            out.insert(i.clone(), b.clone());
+        }
+    }
+    out
+}
+
+/// Every comment carrying a `Rubato-Approval:` line (ADR 0055).
+pub async fn link_comments(db: &SqlitePool) -> Result<Vec<super::links::LinkComment>> {
+    let rows =
+        sqlx::query("SELECT record FROM plan_signals WHERE kind = 'link' ORDER BY comment_id")
+            .fetch_all(db)
+            .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| serde_json::from_str(&r.get::<String, _>("record")).ok())
         .collect())
 }
 

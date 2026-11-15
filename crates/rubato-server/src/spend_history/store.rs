@@ -106,25 +106,81 @@ async fn write(
         };
         let repo: String = row.get("repo");
         let number: i64 = row.get("number");
-        // One statement, so the total is read and written together: whichever writer runs it
-        // last sums every session row there is (design 103 §2, Concurrency).
-        sqlx::query(
-            "INSERT INTO spend_points (repo, number, bucket, usd, at) \
-             SELECT ?, ?, ?, SUM(usd), ? FROM spend_sessions WHERE repo = ? AND number = ? \
-             ON CONFLICT(repo, number, bucket) DO UPDATE SET usd = excluded.usd, at = excluded.at \
-             WHERE excluded.at >= spend_points.at",
-        )
-        .bind(&repo)
-        .bind(number)
-        .bind(&bucket)
-        .bind(&at)
-        .bind(&repo)
-        .bind(number)
-        .execute(db)
-        .await?;
+        write_point(db, &repo, number, &bucket, &at).await?;
         counts.stored += 1;
     }
     Ok(())
+}
+
+/// The issue's total over every session row, into this bucket. One statement, so the total is
+/// read and written together: whichever writer runs it last sums every session row there is
+/// (design 103 §2, Concurrency).
+async fn write_point(
+    db: &SqlitePool,
+    repo: &str,
+    number: i64,
+    bucket: &str,
+    at: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO spend_points (repo, number, bucket, usd, at) \
+         SELECT ?, ?, ?, SUM(usd), ? FROM spend_sessions WHERE repo = ? AND number = ? \
+         ON CONFLICT(repo, number, bucket) DO UPDATE SET usd = excluded.usd, at = excluded.at \
+         WHERE excluded.at >= spend_points.at",
+    )
+    .bind(repo)
+    .bind(number)
+    .bind(bucket)
+    .bind(at)
+    .bind(repo)
+    .bind(number)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Add a cost no `Sessions` snapshot carries to an issue (ADR 0057): a read-only fork turn's,
+/// which runs outside the session's transcript. Kept as its own session row, `key`, summed with
+/// the issue's other sessions, so the issue's spend line includes it. Counted on
+/// `rubato.spend.points` like a snapshot's.
+pub async fn add_cost(
+    db: &SqlitePool,
+    metrics: &Metrics,
+    companion_id: Uuid,
+    key: &str,
+    issue: &IssueRef,
+    usd: f64,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    if !usd.is_finite() || usd < 0.0 {
+        metrics
+            .spend_points
+            .add(1, &[KeyValue::new(attr::OUTCOME, "rejected")]);
+        return Ok(());
+    }
+    let at = stamp(now);
+    let result = async {
+        sqlx::query(
+            "INSERT INTO spend_sessions (companion_id, session_id, repo, number, usd, at) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(companion_id, session_id) DO UPDATE SET usd = spend_sessions.usd + excluded.usd, at = excluded.at",
+        )
+        .bind(companion_id.to_string())
+        .bind(key)
+        .bind(&issue.repo)
+        .bind(issue.number as i64)
+        .bind(usd)
+        .bind(&at)
+        .execute(db)
+        .await?;
+        write_point(db, &issue.repo, issue.number as i64, &stamp(bucket(now)), &at).await
+    }
+    .await;
+    let outcome = if result.is_ok() { "stored" } else { "failed" };
+    metrics
+        .spend_points
+        .add(1, &[KeyValue::new(attr::OUTCOME, outcome)]);
+    result
 }
 
 /// Every issue's series, oldest first, downsampled to at most `MAX_POINTS`. Each point is at
@@ -189,6 +245,8 @@ mod tests {
             spend_usd: usd,
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         }
     }
 

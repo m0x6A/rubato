@@ -1,0 +1,43 @@
+//! `GET /api/launches/{launch_id}/log`. Everyone who may log in reads a launch's log: the
+//! conversation is part of the shared picture (ADR 0050, ADR 0052).
+
+use super::store;
+use crate::auth::CurrentUser;
+use crate::kernel::state::App;
+use crate::launch;
+use axum::Json;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use rubato_protocol::LaunchLog;
+use rubato_protocol::session_log::routes;
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+pub async fn log(
+    State(app): State<App>,
+    CurrentUser(user): CurrentUser,
+    Path(launch_id): Path<Uuid>,
+) -> Result<Json<LaunchLog>, (StatusCode, Json<Value>)> {
+    let internal = |e: anyhow::Error| {
+        tracing::error!(slice = "session_log", error = %format!("{e:#}"), "session log failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "reason": "internal" })),
+        )
+    };
+    if launch::launch_target(&app.db, launch_id)
+        .await
+        .map_err(internal)?
+        .is_none()
+    {
+        app.reject(routes::LAUNCH_LOG, "unknown_launch", &user);
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "reason": "unknown_launch" })),
+        ));
+    }
+    let entries = store::for_launch(&app.db, launch_id)
+        .await
+        .map_err(internal)?;
+    Ok(Json(LaunchLog { launch_id, entries }))
+}

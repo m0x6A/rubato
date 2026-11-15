@@ -6,8 +6,8 @@
 
 use crate::kernel::state::App;
 use crate::{
-    approve, auth, companion_link, launch, layout, map, map_draft, new_issue, overview, pairing,
-    pins, queue, traffic, web_link,
+    approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
+    pairing, pins, plan_drafts, queue, rooms, session_log, session_messages, traffic, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -22,6 +22,7 @@ use rubato_protocol::map::routes as map_routes;
 use rubato_protocol::map_draft::routes as draft_routes;
 use rubato_protocol::pairing::routes as pr;
 use rubato_protocol::pins::routes as pin_routes;
+use rubato_protocol::plan_draft::routes as plan_draft_routes;
 use rubato_protocol::progress::routes as overview_routes;
 use rubato_protocol::queue::routes as queue_routes;
 use rubato_protocol::traffic::routes as traffic_routes;
@@ -55,8 +56,13 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
             post(pins::add_pin).delete(pins::remove_pin),
         )
         .route(&at(launch_routes::LAUNCH), post(launch::launch))
+        .route(&at(plan_draft_routes::PLAN_IMPORT), post(import::import))
         .route(&at(issue_routes::ISSUES), post(new_issue::create))
         .route(&at(approve_routes::PLAN_APPROVE), post(approve::approve))
+        .route(
+            &at(approve_routes::PLAN_DRAFT_APPROVE),
+            post(approve::approve_draft),
+        )
         .route(
             &at(layout_routes::LAYOUT),
             put(layout::put_layout).delete(layout::clear_layout),
@@ -93,6 +99,39 @@ pub fn router(app: App) -> Router {
             delete(pairing::revoke),
         )
         .route(pr::PAIR_APPROVE, post(pairing::approve))
+        .route(
+            rubato_protocol::session_message::routes::LAUNCH_MESSAGES,
+            get(session_messages::list).post(session_messages::send),
+        )
+        .route(
+            rubato_protocol::session_message::routes::LAUNCH_STOP,
+            post(session_messages::stop),
+        )
+        .route(
+            rubato_protocol::session_log::routes::LAUNCH_LOG,
+            get(session_log::log),
+        )
+        .route(
+            rubato_protocol::plan_draft::routes::DRAFT,
+            get(plan_drafts::draft),
+        )
+        .route(rubato_protocol::room::routes::ROOM, get(rooms::room))
+        .route(
+            rubato_protocol::room::routes::ROOM_AGENTS,
+            post(rooms::call_in).delete(rooms::dismiss),
+        )
+        .route(
+            rubato_protocol::room::routes::ROOM_REQUEST,
+            post(rooms::answer),
+        )
+        .route(
+            rubato_protocol::room::routes::ROOM_MESSAGES,
+            post(rooms::post),
+        )
+        .route(
+            rubato_protocol::plan_draft::routes::DRAFT_REVISION,
+            get(plan_drafts::revision),
+        )
         .route(pr::PAIR_START, post(pairing::start))
         .route(pr::PAIR_POLL, post(pairing::poll))
         .route(pr::COMPANION_WS, get(companion_link::upgrade))
@@ -167,8 +206,10 @@ mod tests {
             (Method::POST, pin_routes::PINS.into()),
             (Method::DELETE, pin_routes::PINS.into()),
             (Method::POST, launch_routes::LAUNCH.into()),
+            (Method::POST, plan_draft_routes::PLAN_IMPORT.into()),
             (Method::POST, issue_routes::ISSUES.into()),
             (Method::POST, approve_routes::PLAN_APPROVE.into()),
+            (Method::POST, approve_routes::PLAN_DRAFT_APPROVE.into()),
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
             (Method::POST, traffic_routes::TRAFFIC_DISMISSALS.into()),
@@ -190,6 +231,30 @@ mod tests {
             (Method::GET, auth_routes::CALLBACK.into()),
             (Method::POST, auth_routes::LOGOUT.into()),
             (Method::GET, workspace_routes::WORKSPACES.into()),
+            (
+                Method::GET,
+                format!(
+                    "{}?repo=m0x6A/rubato&number=1&branch=issue/1-x",
+                    rubato_protocol::room::routes::ROOM
+                ),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_MESSAGES.into(),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_AGENTS.into(),
+            ),
+            (
+                Method::DELETE,
+                rubato_protocol::room::routes::ROOM_AGENTS.into(),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_REQUEST
+                    .replace("{request_id}", &uuid::Uuid::new_v4().to_string()),
+            ),
         ];
         // Every map-scoped route again under `/api/w/{ws}` for a configured workspace (ADR 0049).
         let scoped: Vec<(Method, String)> = routes
@@ -197,13 +262,13 @@ mod tests {
             .filter(|(_, p)| MAP_SCOPED.iter().any(|m| p.starts_with(m)))
             .map(|(m, p)| (m.clone(), workspace_routes::scoped("default", p)))
             .collect();
-        assert!(scoped.len() >= 17, "{scoped:?}");
+        assert!(scoped.len() >= 18, "{scoped:?}");
         routes.extend(scoped);
         routes
     }
 
     /// The paths served per workspace: map-scoped, never team-scoped.
-    const MAP_SCOPED: [&str; 8] = [
+    const MAP_SCOPED: [&str; 10] = [
         "/api/traffic",
         "/api/overview",
         "/api/map",
@@ -212,6 +277,8 @@ mod tests {
         "/api/layout",
         "/api/issues",
         "/api/plans/approve",
+        "/api/plans/drafts/approve",
+        "/api/plans/import",
     ];
 
     /// Refusals are counted by route and reason, and logged with who (design O3, O12).
@@ -286,6 +353,44 @@ mod tests {
             Some((1, pin_routes::PINS.to_owned()))
         );
         assert_eq!(count("unknown_id"), Some((1, pin_routes::PINS.to_owned())));
+        // Issue #163: an issue of a repo the map does not name is refused at the pin and at
+        // the launch, each counted on its own route.
+        let elsewhere = IssueRef::new("elsewhere/secret", 1);
+        let r = http
+            .post(format!("{base}{}", pin_routes::PINS))
+            .json(&PinRequest {
+                issue: elsewhere.clone(),
+                target: MapRef::node("web"),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 422);
+        assert!(
+            r.text()
+                .await
+                .unwrap()
+                .contains("elsewhere/secret is not a repo the map names")
+        );
+        let r = http
+            .post(format!("{base}{}", launch_routes::LAUNCH))
+            .json(&serde_json::json!({ "issue": elsewhere }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 422);
+        let unknown_repo = |route: &str| {
+            reader
+                .points(metric::WEB_REJECTED)
+                .into_iter()
+                .find(|p| {
+                    p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("unknown_repo")
+                        && p.attrs.get(attr::ROUTE).map(String::as_str) == Some(route)
+                })
+                .map(|p| p.value)
+        };
+        assert_eq!(unknown_repo(pin_routes::PINS), Some(1));
+        assert_eq!(unknown_repo(launch_routes::LAUNCH), Some(1));
         {
             let events = events.lock().unwrap();
             let line = events
@@ -440,6 +545,75 @@ mod tests {
         assert_eq!(refused.value, 3);
         assert_eq!(refused.attrs[attr::ROUTE], queue_routes::QUEUE);
 
+        // Pairing (#160): approving a code for a companion another login owns is refused.
+        use rubato_protocol::pairing::{PAIR_FIELD_MAX_CHARS, PairStartRequest, PairStartResponse};
+        let owned = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO pairings (companion_id, user, token_hash, hostname, created_at) VALUES (?, 'bob', 'h', 'h', '2026-11-01T00:00:00Z')")
+            .bind(owned.to_string())
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let start: PairStartResponse = http
+            .post(format!("{base}{}", pr::PAIR_START))
+            .json(&PairStartRequest {
+                companion_id: owned,
+                hostname: "h".into(),
+                companion_version: "t".into(),
+            })
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let r = http
+            .post(format!("{base}{}", pr::PAIR_APPROVE))
+            .json(&rubato_protocol::PairApproveRequest {
+                user_code: start.user_code,
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 409);
+        assert_eq!(
+            count("companion_taken"),
+            Some((1, pr::PAIR_APPROVE.to_owned()))
+        );
+
+        // Pairing starts (#168): a field too long, then the pending cap.
+        let start = |hostname: String| PairStartRequest {
+            companion_id: uuid::Uuid::new_v4(),
+            hostname,
+            companion_version: "t".into(),
+        };
+        let r = http
+            .post(format!("{base}{}", pr::PAIR_START))
+            .json(&start("h".repeat(PAIR_FIELD_MAX_CHARS + 1)))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 422);
+        assert_eq!(
+            count("field_too_long"),
+            Some((1, pr::PAIR_START.to_owned()))
+        );
+        for _ in 0..app.config.pairing_max_pending {
+            sqlx::query("INSERT INTO pairing_codes (device_code, user_code, companion_id, hostname, companion_version, status, created_at, expires_at) VALUES (?, ?, 'x', 'h', 't', 'pending', '2026-01-01T00:00:00+00:00', '2999-01-01T00:00:00+00:00')")
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(uuid::Uuid::new_v4().to_string())
+                .execute(&app.db)
+                .await
+                .unwrap();
+        }
+        let r = http
+            .post(format!("{base}{}", pr::PAIR_START))
+            .json(&start("h".into()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 429);
+        assert_eq!(count("pending_cap"), Some((1, pr::PAIR_START.to_owned())));
+
         // As a GitHub App with no dev user: a session without a team record is refused, counted.
         let tmp2 = tempfile::tempdir().unwrap();
         let url2 = format!("sqlite://{}/t.db?mode=rwc", tmp2.path().display());
@@ -475,7 +649,7 @@ mod tests {
         assert_eq!(stale.len(), 1, "{stale:?}");
         assert_eq!(stale[0].attrs[attr::DROP_REASON], "team_record_stale");
         assert_eq!(stale[0].attrs[attr::ROUTE], overview_routes::OVERVIEW);
-        println!("checked 8 refusal reasons");
+        println!("checked 11 refusal reasons");
     }
 
     #[tokio::test]
@@ -510,6 +684,7 @@ mod tests {
             "/api/w/default/pair/start",
             "/api/w/default/me",
             "/api/w/default/workspaces",
+            "/api/w/default/room/messages",
         ] {
             let r = http.post(format!("{url}{path}")).send().await.unwrap();
             assert_eq!(r.status(), 404, "{path}");

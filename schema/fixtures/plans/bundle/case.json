@@ -1,0 +1,15 @@
+{
+  "plan_path": "docs/plans/122.md",
+  "paths": [
+    "docs/plans/122.md",
+    "docs/decisions/0050-a.md",
+    "docs/decisions/0051-b.md",
+    "docs/plans/122-plan-in-rubato/design.md",
+    "docs/plans/122-plan-in-rubato/spike.md"
+  ],
+  "files": [
+    ["docs/plans/122.md", "---\nissue: m0x6A/rubato#122\n---\n# p\n- [x] t\n"],
+    ["docs/plans/122-plan-in-rubato/design.md", "design\n"]
+  ],
+  "hash": "5a3646a2ebaa6a1c0b274ba6e9a2df36744bb2d5"
+}

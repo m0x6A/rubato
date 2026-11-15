@@ -3,7 +3,8 @@
 use super::build::{OtherWorkspace, OverviewInputs, WorkspaceInputs};
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
-    companion_link, github_poll, launch, layout, pins, plans, queue, spend_history, traffic,
+    approve, companion_link, github_poll, launch, layout, pins, plan_drafts, plans, queue,
+    spend_history, traffic,
 };
 use anyhow::Result;
 use rubato_protocol::{SystemMap, WorkspaceInfo};
@@ -43,14 +44,20 @@ pub async fn build_overview_inputs(
     all: &[WorkspaceInfo],
     maps: &Maps,
 ) -> Result<OverviewInputs> {
+    // Comments under the cutover and approvals given in Rubato, as one list (ADR 0054).
+    let approvals = approve::approvals(app).await?;
     Ok(OverviewInputs {
         pins: pins::list(&app.db, ws).await?,
         sessions: companion_link::all_sessions(&app.db).await?,
         plans: plans::all(&app.db).await?,
+        drafts: plan_drafts::latest_drafts(app).await?,
         prs: github_poll::all_prs(&app.db).await?,
         decisions: github_poll::all_decisions(&app.db).await?,
         reviews: github_poll::all_reviews(&app.db).await?,
-        approvals: github_poll::all_approvals(&app.db).await?,
+        approvals: approvals.counted,
+        ignored_approvals: approvals.ignored,
+        approvals_in_rubato: app.config.comment_approvals_until.is_some(),
+        approval_findings: approve::link_findings(app).await?,
         launched: launch::launched_issues(&app.db).await?,
         cap_hits: launch::issues_with_live_cap_hit(&app.db).await?,
         meta: github_poll::all_issue_meta(&app.db).await?,

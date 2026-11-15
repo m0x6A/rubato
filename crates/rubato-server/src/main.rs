@@ -16,11 +16,7 @@ async fn main() -> Result<()> {
     for w in &config.warnings {
         tracing::warn!("{w}");
     }
-    if config.dev_user.is_some() {
-        tracing::warn!(
-            "RUBATO_DEV_USER is set: every request is that user; never run like this in production"
-        );
-    }
+    config.report_cutover();
     let pool = db::connect(&config.database_url).await?;
     let dev_issues = match &config.dev_issues {
         Some(path) => {
@@ -65,7 +61,7 @@ async fn main() -> Result<()> {
         }
         (None, None, Some(t)) => {
             tracing::warn!(
-                "no GitHub App configured: reading with RUBATO_GITHUB_TOKEN, login is open to any GitHub account, and map changes cannot be proposed"
+                "no GitHub App configured: reading with RUBATO_GITHUB_TOKEN, and map changes cannot be proposed"
             );
             Arc::new(match api {
                 Some(base) => Octo::with_base_uri(t, base, READ_TIMEOUT)?,
@@ -85,6 +81,7 @@ async fn main() -> Result<()> {
     let state = AppState::new(pool, config, github);
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
+    tasks::warm_sessions(&state).await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let background = tasks::spawn(state.clone(), shutdown_rx.clone());
     let listener = tokio::net::TcpListener::bind(bind).await?;

@@ -37,6 +37,26 @@ impl IssueRef {
         }
         digits.parse().ok()
     }
+
+    /// Whether `branch` is this issue's own launch branch: `issue/<number>-<slug>` with the slug
+    /// passing [`is_branch_slug`] (ADR 0006). The companion refuses a launch on anything else; the
+    /// branch also names the worktree folder and goes into the launch script.
+    pub fn is_branch_for(&self, branch: &str) -> bool {
+        branch
+            .strip_prefix("issue/")
+            .and_then(|rest| rest.strip_prefix(&self.number.to_string()))
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(is_branch_slug)
+    }
+}
+
+/// A branch slug: words of letters and digits (any script, as the server's `slugify` keeps
+/// them) joined by single hyphens, at most 100 characters. No `/`, `.`, `_`, space or quote, so
+/// a branch built from it cannot leave its worktree folder or end a shell word.
+pub fn is_branch_slug(s: &str) -> bool {
+    s.chars().count() <= 100
+        && s.split('-')
+            .all(|w| !w.is_empty() && w.chars().all(char::is_alphanumeric))
 }
 
 impl fmt::Display for IssueRef {
@@ -118,5 +138,56 @@ mod tests {
         assert_eq!(IssueRef::number_from_branch("issue/7x-bad"), None);
         assert_eq!(IssueRef::number_from_branch("feature/12-protocol"), None);
         assert_eq!(IssueRef::number_from_branch("main"), None);
+    }
+
+    #[test]
+    fn branch_slugs() {
+        for ok in ["restock", "v0-2", "öppna-kartan", "a1-b2-c3"] {
+            assert!(is_branch_slug(ok), "{ok:?}");
+        }
+        let long = "a".repeat(101);
+        for bad in [
+            "",
+            "x';touch p;'",
+            "..",
+            "a--b",
+            "-a",
+            "a-",
+            "a b",
+            "a/b",
+            "a.b",
+            "a_b",
+            "$(id)",
+            long.as_str(),
+        ] {
+            assert!(!is_branch_slug(bad), "{bad:?}");
+        }
+        assert!(is_branch_slug(&"a".repeat(100)));
+    }
+
+    #[test]
+    fn a_launch_branch_is_the_issues_own() {
+        let issue = IssueRef::new("acme/pantry", 7);
+        for ok in ["issue/7-restock", "issue/7-öppna-kartan", "issue/7-v0-2"] {
+            assert!(issue.is_branch_for(ok), "{ok:?}");
+        }
+        for bad in [
+            "issue/9-x",
+            "issue/7",
+            "issue/7-",
+            "issue/07-x",
+            "issue/77-x",
+            "issue/7-../x",
+            "issue/7-../../escape",
+            "issue/7-a/b",
+            "issue/7-x.lock",
+            "issue/7-a--b",
+            "issue/7-x';touch p;'",
+            "-issue/7-x",
+            "main",
+            "feature/7-x",
+        ] {
+            assert!(!issue.is_branch_for(bad), "{bad:?}");
+        }
     }
 }

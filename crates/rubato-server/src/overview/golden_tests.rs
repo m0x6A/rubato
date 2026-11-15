@@ -135,7 +135,43 @@ fn plan(issue: &IssueRef, nodes: &[&str], seams: &[&str], flows: &[(&str, &str, 
         plan: Some(plan),
         parse_error: None,
         approval_sha: Some(format!("sha{}", issue.number)),
+        head_sha: None,
     }
+}
+
+/// The newest settled revision of a draft (ADR 0053) on `issue/<n>-x`, owned by m0x6A.
+fn draft(
+    issue: &IssueRef,
+    plan: Option<rubato_protocol::Plan>,
+    conflict: Option<&str>,
+) -> crate::plan_drafts::LatestDraft {
+    crate::plan_drafts::LatestDraft {
+        issue: issue.clone(),
+        summary: de(json!({
+            "draft_id": format!("00000000-0000-0000-0000-0000000000{:02}", issue.number),
+            "branch": format!("issue/{}-x", issue.number),
+            "owner": "m0x6A",
+            "rev": 2,
+            "at": at(issue.number as i64),
+            "plan_sha": format!("sha{}", issue.number),
+            "bundle_hash": "h",
+            "missing": [],
+            "live": false,
+        })),
+        plan,
+        conflict: conflict.map(|o| (o.to_owned(), now() - Duration::minutes(5))),
+    }
+}
+
+/// An approval given in Rubato (ADR 0054) of the draft on `issue/<n>-x`.
+fn rubato_approval(issue: &IssueRef, mins: i64, sha: &str) -> rubato_protocol::ApprovalRecord {
+    de(json!({
+        "issue": issue, "source": "rubato",
+        "approval_id": format!("00000000-0000-0000-0000-0000000001{:02}", issue.number),
+        "bundle_hash": "h", "author": "teammate", "sha": sha,
+        "branch": format!("issue/{}-x", issue.number),
+        "created_at": at(mins), "url": "u/rubato",
+    }))
 }
 
 fn pin(issue: &IssueRef, kind: &str, id: &str, mins: i64) -> rubato_protocol::IssuePin {
@@ -209,6 +245,9 @@ fn rich() -> OverviewInputs {
     );
     let (a7, a8) = (i("acme/app", 7), i("acme/app", 8));
     let (auth5, bill6, loose9) = (i("acme/auth", 5), i("acme/billing", 6), i("acme/zzz", 9));
+    // Main's drafts (ADR 0053): #10 has a draft and no plan on a branch, #11 a draft that does
+    // not parse and a bundle refused from another person.
+    let (a10, a11) = (i("acme/app", 10), i("acme/app", 11));
     let mut p4 = plan(&a4, &["app-api"], &[], &[]);
     p4.plan = None;
     p4.parse_error = Some("no Affected parts table".into());
@@ -251,6 +290,12 @@ fn rich() -> OverviewInputs {
             p7,
             plan(&a8, &["app-api"], &["web-api"], &[]),
         ],
+        drafts: vec![
+            // On the branch the plan is read from: the plan on the branch is the plan.
+            draft(&a1, plan(&a1, &["app-api"], &[], &[]).plan, None),
+            draft(&a10, plan(&a10, &["app-api"], &["web-api"], &[]).plan, None),
+            draft(&a11, None, Some("alice")),
+        ],
         prs: HashMap::from([
             (a1.clone(), pr(&a1, 11, true, false, "green")),
             (a7.clone(), pr(&a7, 17, true, false, "red")),
@@ -277,6 +322,20 @@ fn rich() -> OverviewInputs {
             ),
             (approval(&auth5, 23, Some("sha5"), None), None),
             (approval(&a3, 24, None, None), None),
+            (rubato_approval(&a10, 6, "sha10"), Some("sha10".into())),
+        ],
+        ignored_approvals: vec![approval(&a2, 30, Some("sha2"), None)],
+        approvals_in_rubato: true,
+        approval_findings: vec![
+            Finding::LinkCommentWaiting {
+                issue: a1.clone(),
+                approval_id: uuid::Uuid::from_u128(7),
+            },
+            // About an issue this overview does not hold: left out.
+            Finding::AdrsNotAccepted {
+                issue: i("acme/elsewhere", 99),
+                adrs: vec!["0001".into()],
+            },
         ],
         launched: HashSet::from([a1.clone(), a3.clone(), a4.clone(), loose9.clone()]),
         cap_hits: HashMap::from([
@@ -505,12 +564,27 @@ fn build_matches_the_golden() {
         "seam_collision",
         "unattributed_session",
         "repo_not_covered",
+        "draft_owner_conflict",
+        "comment_approval_ignored",
+        "link_comment_waiting",
     ] {
         assert!(
             got.contains(&format!("\"{kind}\"")),
             "the fixture makes no {kind} finding"
         );
     }
+    assert!(
+        got.contains("\"outside_rubato\": true"),
+        "no plan outside Rubato"
+    );
+    assert!(
+        got.contains("\"source\": \"rubato\""),
+        "no approval given in Rubato"
+    );
+    assert!(
+        !got.contains("acme/elsewhere"),
+        "a handoff finding of an issue not held leaked"
+    );
     if let Err(at) = compare(&got, &golden) {
         panic!("the overview differs from the golden at {at}; RUBATO_BLESS=1 records it again");
     }
@@ -562,6 +636,11 @@ fn build_time_over_a_scaled_fixture() {
             let mut a = a.clone();
             a.issue = shift(&a.issue);
             (a, t.clone())
+        }));
+        inputs.drafts.extend(base.drafts.iter().map(|d| {
+            let mut d = d.clone();
+            d.issue = shift(&d.issue);
+            d
         }));
         inputs.launched.extend(base.launched.iter().map(shift));
         inputs.launch_map_versions.extend(

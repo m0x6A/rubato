@@ -7,6 +7,6 @@ mod store;
 
 pub use handlers::{approve, list, poll, revoke, start, to_info};
 pub use store::{
-    PairingRow, list_pairings, next_server_seq, pairing_by_token as authenticate,
-    set_last_companion_seq, touch_pairing as touch,
+    PairingRow, list_pairings, next_server_seq, pairing_by_token as authenticate, set_client,
+    set_last_companion_seq, sweep_codes, touch_pairing as touch,
 };

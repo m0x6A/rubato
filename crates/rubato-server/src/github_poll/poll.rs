@@ -1,5 +1,5 @@
 //! Per-issue reads of GitHub: issue metadata, the issue branch, its PR and checks, `Decision:`
-//! comments (ADR 0014), `Review:` and `Approved:` comments from members (ADR 0027); and the rate
+//! (ADR 0014), `Review:` and `Approved:` (ADR 0027) comments from members (ADR 0065); and the rate
 //! limit. `tasks::Poller` calls these in order (design §9.1).
 //!
 //! Issue #49 (ADR 0023, proposed): branches and open pull requests are listed once per repo per
@@ -12,8 +12,8 @@ use crate::kernel::github::{BranchHead, OpenPulls, PullInfo};
 use crate::kernel::state::App;
 use anyhow::{Result, anyhow};
 use rubato_protocol::{
-    ApprovalRecord, ChecksStatus, DecisionRecord, IssueRef, PullRequestState, ReviewRecord,
-    trusted_author,
+    ApprovalRecord, ApprovalSource, ChecksStatus, DecisionRecord, IssueRef, PullRequestState,
+    ReviewRecord, trusted_author,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -316,23 +316,31 @@ pub struct CommentsRead {
     pub newest_approval: Option<ApprovalRecord>,
 }
 
-/// One pass over an issue's comments (one call, on the full lane): `Decision:` comments as
-/// before (ADR 0014), and `Review:` and `Approved:` comments from members (ADR 0027). A review
-/// or approval from a Bot or from someone who is not OWNER, MEMBER or COLLABORATOR is ignored
-/// and logged. Signals whose comment is gone are dropped.
+/// One pass over an issue's comments (one call, on the full lane): `Decision:` (ADR 0014),
+/// `Review:` and `Approved:` (ADR 0027) comments, each counted only from members (ADR 0065). One
+/// from a Bot or from someone who is not OWNER, MEMBER or COLLABORATOR is ignored and logged, and
+/// a decision stored for it earlier is deleted. Signals whose comment is gone are dropped.
+///
+/// An `Approved:` comment posted at or after the cutover is stored, so the overview can show
+/// it as `CommentApprovalIgnored`, but it is never the newest counted approval; the first read
+/// of one counts on `rubato.plans.comment_after_cutover` (ADR 0054).
 pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> {
+    let cutover = app.config.comment_approvals_until;
     let mut read = CommentsRead::default();
     let mut kept: Vec<u64> = Vec::new();
     for c in app.github.issue_comments(&issue.repo, issue.number).await? {
         let review = ReviewRecord::parse_body(&c.body);
         let approval = ApprovalRecord::parse_body(&c.body);
-        if (review.is_some() || approval.is_some())
+        let decision = DecisionRecord::parse_body(&c.body);
+        if (review.is_some() || approval.is_some() || decision.is_some())
             && !trusted_author(&c.author_association, c.author_is_bot)
         {
             let kind = if review.is_some() {
                 "review"
-            } else {
+            } else if approval.is_some() {
                 "approval"
+            } else {
+                "decision"
             };
             let reason = if c.author_is_bot {
                 "bot".to_owned()
@@ -347,6 +355,10 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
                 reason = %reason,
                 "{kind} ignored"
             );
+            if decision.is_some() {
+                // A row an older server stored before the author was checked (#164).
+                store::delete_decision(&app.db, issue, c.id).await?;
+            }
             continue;
         }
         if let Some(r) = review {
@@ -375,7 +387,10 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
         if let Some(a) = approval {
             let rec = ApprovalRecord {
                 issue: issue.clone(),
-                comment_id: c.id,
+                source: ApprovalSource::Comment,
+                comment_id: Some(c.id),
+                approval_id: None,
+                bundle_hash: None,
                 author: c.author.clone(),
                 sha: a.sha,
                 branch: a.branch,
@@ -383,7 +398,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
                 created_at: c.created_at,
                 url: c.url.clone(),
             };
-            store::upsert_signal(
+            let new = store::upsert_signal(
                 &app.db,
                 issue,
                 c.id,
@@ -392,6 +407,18 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             )
             .await?;
             kept.push(c.id);
+            if !rec.counts(cutover) {
+                if new {
+                    app.metrics.plans_comment_after_cutover.add(1, &[]);
+                    tracing::info!(
+                        rubato.issue = %issue,
+                        comment_id = c.id,
+                        author = %c.author,
+                        "approval comment after the cutover not counted"
+                    );
+                }
+                continue;
+            }
             if read
                 .newest_approval
                 .as_ref()
@@ -401,7 +428,23 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             }
             continue;
         }
-        if let Some(body) = DecisionRecord::parse_body(&c.body) {
+        // A link comment (ADR 0055): kept whoever wrote it; `approve` matches it to the
+        // approver, so nobody else's comment settles a link.
+        if let Some(approval_id) = super::links::link_approval(&c.body) {
+            let rec = super::links::LinkComment {
+                issue: issue.clone(),
+                comment_id: c.id,
+                author: c.author.clone(),
+                approval_id,
+                url: c.url.clone(),
+                created_at: c.created_at,
+            };
+            store::upsert_signal(&app.db, issue, c.id, "link", &serde_json::to_string(&rec)?)
+                .await?;
+            kept.push(c.id);
+            continue;
+        }
+        if let Some(body) = decision {
             store::upsert_decision(
                 &app.db,
                 &DecisionRecord {

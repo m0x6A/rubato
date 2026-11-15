@@ -214,7 +214,11 @@ mod tests {
         record_gauges(&reg, &metrics);
 
         let discovered = reader.points(metric::SESSIONS_DISCOVERED);
-        assert_eq!(discovered.len(), 4, "one point per source: {discovered:?}");
+        assert_eq!(
+            discovered.len(),
+            rubato_protocol::StateSource::ALL.len(),
+            "one point per source: {discovered:?}"
+        );
         for p in &discovered {
             assert_eq!(
                 p.attrs.get(attr::COMPANION_ID),
@@ -228,7 +232,14 @@ mod tests {
             .collect();
         assert_eq!(
             sources,
-            [("hook", 1), ("launch", 0), ("scraped", 0), ("tmux_ide", 0)].into()
+            [
+                ("headless", 0),
+                ("hook", 1),
+                ("launch", 0),
+                ("scraped", 0),
+                ("tmux_ide", 0)
+            ]
+            .into()
         );
 
         // The session moves on: `discovered` follows, and `by_state` is never recorded here.
@@ -236,7 +247,10 @@ mod tests {
         // sum count each session twice.
         reg.apply_hook(&hook("Stop"));
         record_gauges(&reg, &metrics);
-        assert_eq!(reader.points(metric::SESSIONS_DISCOVERED).len(), 4);
+        assert_eq!(
+            reader.points(metric::SESSIONS_DISCOVERED).len(),
+            rubato_protocol::StateSource::ALL.len()
+        );
         let by_state = reader.points(metric::SESSIONS_BY_STATE);
         assert!(
             by_state.is_empty(),
