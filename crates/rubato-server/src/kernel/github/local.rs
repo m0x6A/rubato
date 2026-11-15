@@ -235,6 +235,11 @@ impl GitHubApi for LocalGit {
         true
     }
 
+    /// The author `create_issue` writes, as the App's login would be.
+    fn app_login(&self) -> Option<String> {
+        Some("rubato[bot]".into())
+    }
+
     async fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<(u64, String)> {
         self.path(repo)?;
         let mut open = self.open.lock().unwrap();
@@ -250,6 +255,7 @@ impl GitHubApi for LocalGit {
             body: body.to_owned(),
             author: "rubato[bot]".into(),
             author_association: "NONE".into(),
+            author_is_bot: true,
         });
         Ok((number, url))
     }

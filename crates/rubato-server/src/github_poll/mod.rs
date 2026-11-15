@@ -12,7 +12,7 @@ mod pulls;
 mod store;
 mod suggest;
 
-pub use backlog::{BACKLOG_MAX_PER_REPO, Listed, MapLine, list_open_issues};
+pub use backlog::{BACKLOG_MAX_PER_REPO, Listed, MapLine, Request, list_open_issues};
 pub use coverage::check_coverage;
 pub use links::{LINK_LINE, LinkComment, link_approval};
 pub use poll::{
