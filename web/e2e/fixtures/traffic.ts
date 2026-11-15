@@ -33,11 +33,20 @@ export function staleTraffic(o: Overview): Overview {
   return { ...o, traffic: { state: "stale", observed_at: new Date(Date.now() - 14 * 60_000).toISOString(), window_secs: 3600 } };
 }
 
-/** Rewrite every overview the page fetches with `edit`. */
+/**
+ * Rewrite every overview the page fetches with `edit`. A refetch still in flight when the test
+ * ends (a draft change makes the page fetch again) meets a closed context; that is not a failure.
+ * Any other error still is.
+ */
 export async function routeOverview(page: Page, edit: (o: Overview) => Overview): Promise<void> {
   await page.route("**/api/overview", async (route) => {
-    const res = await route.fetch();
-    await route.fulfill({ response: res, json: edit((await res.json()) as Overview) });
+    try {
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: edit((await res.json()) as Overview) });
+    } catch (e) {
+      if (page.isClosed() || /disposed|Test ended|has been closed/.test(String(e))) return;
+      throw e;
+    }
   });
 }
 
