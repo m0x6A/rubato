@@ -39,7 +39,7 @@ pub struct ForkCtx {
     pub claude: Claude,
     pub registry: Arc<Mutex<Registry>>,
     pub out: mpsc::UnboundedSender<CompanionMessage>,
-    pub limits: Arc<std::sync::Mutex<Limits>>,
+    pub limits: tokio::sync::watch::Receiver<Limits>,
     /// Fork costs per launch so far, in USD.
     pub spent: std::sync::Mutex<HashMap<Uuid, f64>>,
     /// The fork turn running per launch, so a `stop` can kill its process group.
@@ -200,7 +200,7 @@ impl ForkCtx {
                 None => tracing::info!(rubato.room = %label, cost_usd = ?t.cost_usd, fork_session_id = ?t.session_id, fork, "room fork turn answered"),
                 Some(e) => tracing::warn!(rubato.room = %label, error = %e, exit_code = ?t.exit_code, "room fork turn failed"),
             }
-            let max = self.limits.lock().unwrap().session_log_max_chars;
+            let max = self.limits.borrow().session_log_max_chars;
             let fork_session = t.session_id.clone().or_else(|| fork_session_id.clone());
             self.reply(&turn.msg, *turn_id, cut(&t.text, max), fork_session, t.cost_usd, t.error.clone());
             if let Some(limit) = cap
@@ -327,7 +327,7 @@ mod tests {
                 claude: standin(dir, cost),
                 registry: Arc::new(Mutex::new(reg)),
                 out,
-                limits: Arc::new(std::sync::Mutex::new(Limits::default())),
+                limits: tokio::sync::watch::channel(Limits::default()).1,
                 spent: Default::default(),
                 running: Default::default(),
             },
