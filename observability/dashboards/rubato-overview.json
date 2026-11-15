@@ -900,7 +900,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, not_on_team, team_record_stale, installation_lookup_failed. Each has an info log line 'web write rejected' with the user.",
+      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, not_on_team, team_record_stale, installation_lookup_failed, session_expired. Each has an info log line 'web write rejected' with the user.",
       "targets": [
         {
           "refId": "A",

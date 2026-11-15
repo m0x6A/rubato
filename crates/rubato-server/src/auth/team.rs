@@ -7,11 +7,16 @@ use chrono::{DateTime, Duration, Utc};
 /// A team record older than this sends the person through login again.
 pub const TEAM_RECORD_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
 
+/// A web session counts for this long from its creation, in every mode: the session cookie's own
+/// `Max-Age` (ADR 0062). Without the App it is the only limit on the server.
+pub const SESSION_MAX_AGE_SECS: i64 = 30 * 24 * 60 * 60;
+
 /// Reasons a session or login is refused, as `rubato.reason` on `rubato.web.rejected`.
 pub mod reason {
     pub const NOT_ON_TEAM: &str = "not_on_team";
     pub const TEAM_RECORD_STALE: &str = "team_record_stale";
     pub const INSTALLATION_LOOKUP_FAILED: &str = "installation_lookup_failed";
+    pub const SESSION_EXPIRED: &str = "session_expired";
 }
 
 /// Whether the answer of `GET /user/installations`, asked with the person's own token, lists
@@ -30,6 +35,11 @@ pub fn member_of(answer: &serde_json::Value, installation_id: u64) -> bool {
 /// Whether a session's team record still counts at `now`. None never does.
 pub fn record_is_fresh(checked_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
     checked_at.is_some_and(|at| now - at <= Duration::seconds(TEAM_RECORD_MAX_AGE_SECS))
+}
+
+/// Whether a session created at `created_at` still counts at `now` (ADR 0062).
+pub fn session_is_current(created_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    now - created_at <= Duration::seconds(SESSION_MAX_AGE_SECS)
 }
 
 #[cfg(test)]
@@ -63,5 +73,13 @@ mod tests {
         assert!(record_is_fresh(Some(now), now));
         assert!(record_is_fresh(Some(now - Duration::days(6)), now));
         assert!(!record_is_fresh(Some(now - Duration::days(8)), now));
+    }
+
+    #[test]
+    fn a_session_counts_for_thirty_days() {
+        let now = Utc::now();
+        assert!(session_is_current(now, now));
+        assert!(session_is_current(now - Duration::days(29), now));
+        assert!(!session_is_current(now - Duration::days(31), now));
     }
 }
