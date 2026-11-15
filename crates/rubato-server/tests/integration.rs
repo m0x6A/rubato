@@ -6880,3 +6880,135 @@ async fn the_tick_posts_seam_notices_and_the_room_is_read_by_the_team() {
         Some(("alice", "Shall we share the comments pass?"))
     );
 }
+
+// ----- issue #82: the merge gate through the overview (plan 82 Decisions 1, 3) ----------------
+
+/// Plan 71 on `branch` at `s71`, an open green pull request #171 from it, the comments given,
+/// pinned and polled once; then the view as m0x6A, who has a token.
+async fn view_71(
+    cutover: Option<chrono::DateTime<chrono::Utc>>,
+    branch: &str,
+    head_plan: &str,
+    comments: Vec<Comment>,
+) -> rubato_protocol::pulls::PullDetail {
+    let h = harness_with(|c| {
+        c.github_app = Some(rubato_server::kernel::config::GitHubApp {
+            app_id: 1,
+            private_key: "unused".into(),
+            installation_id: 34,
+        });
+        c.token_key = Some(rubato_server::kernel::config::TokenKey::from_hex(TOKEN_KEY).unwrap());
+        c.comment_approvals_until = cutover;
+    })
+    .await;
+    give_token(&h, "m0x6A", 8 * 3600).await;
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push((branch.into(), "s71".into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/71.md".into(),
+                branch.into(),
+            ),
+            head_plan.to_owned(),
+        );
+        let mut pr = open_pull(171, "s71");
+        pr.base = Some("main".into());
+        g.pulls.insert(("m0x6A/rubato".into(), branch.into()), pr);
+        g.checks.insert("s71".into(), ChecksStatus::Green);
+        g.check_runs.insert(
+            "s71".into(),
+            vec![rubato_protocol::pulls::CheckRun {
+                name: "ci".into(),
+                status: "completed".into(),
+                conclusion: Some("success".into()),
+                url: "u".into(),
+            }],
+        );
+        g.comments.insert(("m0x6A/rubato".into(), 71), comments);
+    });
+    h.pin_issue(71).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let r = h
+        .http
+        .get(format!("{}/api/pulls/m0x6A/rubato/171", h.url))
+        .header("x-rubato-dev-user", "m0x6A")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+fn gate_why(d: &rubato_protocol::pulls::PullDetail) -> Option<String> {
+    match &d.merge.plan_gate {
+        rubato_protocol::pulls::PlanGate::NotApproved { why } => Some(why.clone()),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn the_merge_gate_reads_the_counted_approval_and_the_plan_at_the_head() {
+    use rubato_protocol::pulls::plan_why;
+    let sha = rubato_server::plans::approval_hash(PLAN_71);
+    let approved = |body: String| vec![comment(1, "m0x6A", "OWNER", false, &body)];
+    let mut checked = 0;
+
+    // A counted comment approval of the plan at the head opens the gate.
+    let d = view_71(
+        None,
+        "issue/71-plan",
+        PLAN_71,
+        approved(format!("Approved: plan {sha}")),
+    )
+    .await;
+    assert_eq!(gate_why(&d), None, "{:?}", d.merge);
+    assert!(d.merge.can_merge, "{:?}", d.merge);
+    checked += 1;
+
+    // The same comment after the cutover does not count: closed (ADR 0054).
+    let past = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+    let d = view_71(
+        past,
+        "issue/71-plan",
+        PLAN_71,
+        approved(format!("Approved: plan {sha}")),
+    )
+    .await;
+    assert_eq!(gate_why(&d).as_deref(), Some(plan_why::NO_APPROVAL));
+    assert_eq!(d.merge.why_not.as_deref(), Some("plan_not_approved"));
+    checked += 1;
+
+    // No approval at all, with a plan on the branch: closed.
+    let d = view_71(None, "issue/71-plan", PLAN_71, vec![]).await;
+    assert_eq!(gate_why(&d).as_deref(), Some(plan_why::NO_APPROVAL));
+    checked += 1;
+
+    // The plan at the head edited after approval: closed.
+    let edited = PLAN_71.replace("| x |", "| changed |");
+    let d = view_71(
+        None,
+        "issue/71-plan",
+        &edited,
+        approved(format!("Approved: plan {sha}")),
+    )
+    .await;
+    assert_eq!(gate_why(&d).as_deref(), Some(plan_why::CHANGED_AT_HEAD));
+    checked += 1;
+
+    // Stacked: approved on a branch that is gone; the head carries the same plan. The overview's
+    // version reads NoPlan for that branch, and the gate still opens on the plan at the head.
+    let d = view_71(
+        None,
+        "issue/71-b",
+        PLAN_71,
+        approved(format!("Approved: plan {sha} on issue/71-a")),
+    )
+    .await;
+    assert_eq!(gate_why(&d), None, "{:?}", d.merge);
+    checked += 1;
+    println!("checked {checked} merge gate cases through the overview");
+}

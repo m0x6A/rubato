@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rubato_server::kernel::config::Config;
 use rubato_server::kernel::github::{
-    FakeGitHub, GitHubApi, LocalGit, Octo, READ_TIMEOUT, check_app, read_dev_issues,
+    FakeGitHub, GitHubApi, LocalGit, Octo, READ_TIMEOUT, check_app, read_dev_issues, read_dev_pulls,
 };
 use rubato_server::kernel::state::AppState;
 use rubato_server::kernel::{db, telemetry};
@@ -44,7 +44,15 @@ async fn main() -> Result<()> {
             tracing::warn!(
                 "RUBATO_LOCAL_REPOS is set: branches and plan files come from local repositories, not GitHub"
             );
-            Arc::new(LocalGit::from_spec(spec)?.with_open_issues(dev_issues))
+            let dev_pulls = match &config.dev_pulls {
+                Some(path) => read_dev_pulls(path)?,
+                None => Default::default(),
+            };
+            Arc::new(
+                LocalGit::from_spec(spec)?
+                    .with_open_issues(dev_issues)
+                    .with_pulls(dev_pulls),
+            )
         }
         (None, Some(app), _) => {
             // A wrong key, client id or installation ends the start here, with its name.
