@@ -1,8 +1,8 @@
 # 0076. A headless companion may run as a daemon or in a container, and Claude Code may use an API key; the companion says which, never the key
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, m0x6A/rubato#134), under Mattias Jonsson's delegation of 2026-11-15 for best-effort choices; a human accepts it
+- **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-15; drafted by agent
 - **Seam:** companion-server, companion-claude-code
 - **Issue:** m0x6A/rubato#134
 

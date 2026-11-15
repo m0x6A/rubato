@@ -1,8 +1,8 @@
 # 0072. A person may run a lead agent that directs only the sessions it launched for them, behind an orchestrator flag that is off by default
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, m0x6A/rubato#134), drafted at Mattias Jonsson's request of 2026-11-15 that #134 get a superseding ADR, built behind a flag that is off by default and not deployed; a human accepts it
+- **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-15; drafted by agent
 - **Seam:** companion-server, companion-mcp, web-server
 - **Issue:** m0x6A/rubato#134
 
