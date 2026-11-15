@@ -1,6 +1,6 @@
 //! The loopback hook receiver (ADR 0013): `POST /hook` on 127.0.0.1 with a per-start bearer
-//! token. Claude Code's hook command is `curl ... --data-binary @-`, so the body is the hook's
-//! stdin JSON as is.
+//! token, which the hook command reads from a 0600 header file (`curl -H @<file>`, ADR 0050) and
+//! this side compares in constant time. The body is the hook's stdin JSON as is (`--data-binary @-`).
 
 use crate::kernel::config::HookEndpoint;
 use axum::Router;
@@ -77,12 +77,23 @@ impl HookServer {
     }
 }
 
+/// Compare without stopping at the first differing byte, so the time taken does not tell how
+/// much of a guess was right. The length is not secret (every token is 32 characters).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let diff = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    std::hint::black_box(diff) == 0
+}
+
 async fn receive(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> StatusCode {
     let auth = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if auth.strip_prefix("Bearer ").map(str::trim) != Some(st.token.as_str()) {
+    let presented = auth.strip_prefix("Bearer ").map(str::trim).unwrap_or("");
+    if !ct_eq(presented.as_bytes(), st.token.as_bytes()) {
         let _ = st.dropped.send("auth");
         return StatusCode::UNAUTHORIZED;
     }
@@ -121,5 +132,23 @@ mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
         assert_ne!(t, new_token());
+    }
+
+    #[test]
+    fn ct_eq_compares_whole_tokens() {
+        let t = new_token();
+        assert!(ct_eq(t.as_bytes(), t.clone().as_bytes()));
+        let mut wrong = t.clone().into_bytes();
+        wrong[31] ^= 1;
+        assert!(!ct_eq(&wrong, t.as_bytes()), "last byte differs");
+        wrong = t.clone().into_bytes();
+        wrong[0] ^= 1;
+        assert!(!ct_eq(&wrong, t.as_bytes()), "first byte differs");
+        assert!(
+            !ct_eq(&t.as_bytes()[..31], t.as_bytes()),
+            "a prefix is not the token"
+        );
+        assert!(!ct_eq(b"", t.as_bytes()));
+        assert!(ct_eq(b"", b""));
     }
 }

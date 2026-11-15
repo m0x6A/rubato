@@ -246,7 +246,7 @@ impl Dispatch<'_> {
                 _ = shutdown.changed() => break,
                 Some(ev) = hook_rx.recv() => {
                     let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id).await;
-                    spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
+                    spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux, self.metrics).await;
                 }
                 Some(msg) = in_rx.recv() => match msg {
                     ServerMessage::Welcome { limits, .. } => server_link::on_welcome(limits, self.limits),

@@ -173,6 +173,9 @@ pub mod event {
     pub const ADRS_ACCEPT: &str = "rubato.adrs.accept";
     /// An essential background task returned while shutdown was not requested.
     pub const TASK_EXITED: &str = "rubato.task.exited";
+    /// A hook's transcript not read for spend (ADR 0050), with `rubato.reason`; counted as
+    /// `rubato.events.dropped` with `rubato.reason = transcript`.
+    pub const TRANSCRIPT_REFUSED: &str = "rubato.transcript.refused";
 }
 
 /// Every name, for the test that checks the namespace and for documentation.
@@ -260,6 +263,7 @@ pub fn all_names() -> Vec<&'static str> {
         event::PLAN_WAIT,
         event::ADRS_ACCEPT,
         event::TASK_EXITED,
+        event::TRANSCRIPT_REFUSED,
     ]
 }
 

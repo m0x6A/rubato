@@ -108,7 +108,13 @@ async fn main() -> Result<()> {
             }
             let ep = HookEndpoint::path(&state_dir);
             match std::fs::read_to_string(&ep) {
-                Ok(t) => println!("hook endpoint: {}", t.trim()),
+                Ok(t) => {
+                    println!("hook endpoint: {}", t.trim());
+                    println!(
+                        "hook header file: {}",
+                        HookEndpoint::header_path(&state_dir).display()
+                    );
+                }
                 Err(_) => println!("hook endpoint: daemon not running"),
             }
             Ok(())
@@ -120,7 +126,14 @@ async fn main() -> Result<()> {
             let text = std::fs::read_to_string(HookEndpoint::path(&state_dir))
                 .context("daemon not running (no hook endpoint file)")?;
             let ep: HookEndpoint = serde_json::from_str(&text)?;
-            print!("{}", render_hooks(HOOKS_TEMPLATE, &ep)?);
+            print!(
+                "{}",
+                render_hooks(
+                    HOOKS_TEMPLATE,
+                    ep.port,
+                    &HookEndpoint::header_path(&state_dir)
+                )?
+            );
             Ok(())
         }
     }

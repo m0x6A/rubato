@@ -29,7 +29,9 @@ for (const [k, v] of Object.entries(process.env)) {
   }
 }
 
-const transcriptDir = resolve(process.env["HOME"] ?? "/tmp", ".claude-standin", "transcripts");
+// Where Claude Code keeps transcripts; the companion reads spend only from there (ADR 0050).
+const claudeDir = process.env["CLAUDE_CONFIG_DIR"] || resolve(process.env["HOME"] ?? "/tmp", ".claude");
+const transcriptDir = resolve(claudeDir, "projects", cwd.replaceAll("/", "-"));
 mkdirSync(transcriptDir, { recursive: true });
 const transcriptPath = resolve(transcriptDir, `${sessionId}.jsonl`);
 writeFileSync(transcriptPath, "");

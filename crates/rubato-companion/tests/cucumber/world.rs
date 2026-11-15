@@ -2,8 +2,9 @@
 //! the stand-in `claude`.
 
 use cucumber::World;
+use rubato_companion::hooks::{HOOKS_TEMPLATE, render_hooks};
 use rubato_companion::kernel::config::{
-    CompanionConfig, MapLocation, OtelConfig, State, Workspace, WorkspaceRepo,
+    CompanionConfig, HookEndpoint, MapLocation, OtelConfig, State, Workspace, WorkspaceRepo,
 };
 use rubato_companion::kernel::tmux::Tmux;
 use rubato_companion::kernel::tmux_ide::{Fleet, default_worktree_path};
@@ -371,36 +372,69 @@ impl RubatoWorld {
         self.join = Some(join);
     }
 
-    pub async fn post_hook(&self, fixture: &str, with_token: bool) -> u16 {
-        let h = self.handles.as_ref().expect("daemon running");
-        let body = std::fs::read_to_string(
+    pub fn hook_fixture(fixture: &str) -> String {
+        std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("features/fixtures/hooks")
                 .join(fixture),
         )
+        .unwrap()
+    }
+
+    pub async fn post_hook(&self, fixture: &str, with_token: bool) -> u16 {
+        self.post_body(&Self::hook_fixture(fixture), with_token)
+            .await
+    }
+
+    /// The hook command Claude Code runs for `Stop`, rendered from the embedded template with the
+    /// header file the daemon wrote to its state dir (ADR 0050).
+    pub fn rendered_stop_command(&self) -> String {
+        let h = self.handles.as_ref().expect("daemon running");
+        let rendered = render_hooks(
+            HOOKS_TEMPLATE,
+            h.hook_endpoint.port,
+            &HookEndpoint::header_path(&self.state_dir),
+        )
         .unwrap();
-        // Exactly what Claude Code's hook command does: curl with the bearer and the stdin body.
-        let mut cmd = Command::new("curl");
-        cmd.args([
-            "-sS",
-            "-m",
-            "2",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "-H",
-            "Content-Type: application/json",
-            "--data-binary",
-            "@-",
-            &format!("http://127.0.0.1:{}/hook", h.hook_endpoint.port),
-        ]);
-        if with_token {
-            cmd.args([
-                "-H",
-                &format!("Authorization: Bearer {}", h.hook_endpoint.token),
+        let v: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        v["hooks"]["Stop"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// With the token: exactly what Claude Code does, the rendered hook command under `sh -c`
+    /// with the body on stdin, plus `-w` to read the status. Without: a bare curl, no header.
+    pub async fn post_body(&self, body: &str, with_token: bool) -> u16 {
+        let h = self.handles.as_ref().expect("daemon running");
+        let mut cmd = if with_token {
+            let mut c = Command::new("sh");
+            c.args([
+                "-c",
+                &format!(
+                    "{} -o /dev/null -w '%{{http_code}}'",
+                    self.rendered_stop_command()
+                ),
             ]);
-        }
+            c
+        } else {
+            let mut c = Command::new("curl");
+            c.args([
+                "-sS",
+                "-m",
+                "2",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "-H",
+                "Content-Type: application/json",
+                "--data-binary",
+                "@-",
+                &format!("http://127.0.0.1:{}/hook", h.hook_endpoint.port),
+            ]);
+            c
+        };
         cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped());
         let mut child = cmd.spawn().unwrap();

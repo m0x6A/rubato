@@ -240,11 +240,29 @@ impl HookEndpoint {
         dir.join("hook-endpoint.json")
     }
 
+    /// The header file curl reads with `-H @<file>` (ADR 0050): in the state dir for manual
+    /// sessions, and one beside each launch's `hooks.json`.
+    pub fn header_path(dir: &Path) -> PathBuf {
+        dir.join(HOOK_HEADER_FILE)
+    }
+
+    /// Write the one `Authorization` line curl sends, mode 0600. The token never goes in argv.
+    pub fn write_header(&self, path: &Path) -> Result<()> {
+        write_private(
+            path,
+            format!("Authorization: Bearer {}\n", self.token).as_bytes(),
+        )
+    }
+
     pub fn save(&self, dir: &Path) -> Result<()> {
         std::fs::create_dir_all(dir)?;
-        write_private(&Self::path(dir), serde_json::to_string(self)?.as_bytes())
+        write_private(&Self::path(dir), serde_json::to_string(self)?.as_bytes())?;
+        self.write_header(&Self::header_path(dir))
     }
 }
+
+/// The name of the hook header file, in the state dir and in each launch dir.
+pub const HOOK_HEADER_FILE: &str = "hook-auth.header";
 
 #[cfg(test)]
 mod tests {
@@ -309,5 +327,27 @@ mod tests {
             & 0o777;
         assert_eq!(mode, 0o600);
         assert_eq!(State::load(dir.path()).unwrap(), Some(s));
+    }
+
+    /// The state dir gets the header file manual sessions render from (ADR 0050): 0600, the
+    /// bearer line and nothing else.
+    #[test]
+    fn hook_endpoint_save_writes_a_private_header_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ep = HookEndpoint {
+            port: 4321,
+            token: "abcdefghijklmnopqrstuvwxyz012345".into(),
+        };
+        ep.save(dir.path()).unwrap();
+        let p = HookEndpoint::header_path(dir.path());
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            "Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

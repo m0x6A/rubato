@@ -1,9 +1,11 @@
 #!/usr/bin/env -S node --experimental-strip-types
 /**
- * Render `hooks.json` for one companion (ADR 0013). The companion does the same in Rust at
- * launch; this script is for a developer opting a manual session in.
+ * Render `hooks.json` for one companion (ADR 0013, 0050). The companion does the same in Rust
+ * at launch; this script is for a developer opting a manual session in. The token is never on a
+ * command line: every hook runs `curl -H @<header file>`, and the companion writes that file
+ * (mode 0600) in its state dir as `hook-auth.header`; `rubato-companion status` prints both.
  *
- *   hooks.ts --port <n> --token <t> [--out <file>]
+ *   hooks.ts --port <n> --header-file <state dir>/hook-auth.header [--out <file>]
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,14 +27,21 @@ export function templatePath(): string {
   return resolve(skillRoot, "hooks.json");
 }
 
-export function renderHooks(template: string, port: number, token: string): string {
+/** Single-quote for `sh -c`, as the companion's `render_hooks` does. */
+function shQuote(s: string): string {
+  return `'${s.replaceAll("'", "'\\''")}'`;
+}
+
+export function renderHooks(template: string, port: number, headerFile: string): string {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`port must be 1..65535, got ${port}`);
   }
-  if (!/^[A-Za-z0-9_-]{16,}$/.test(token)) {
-    throw new Error("token must be at least 16 URL-safe characters");
+  if (!headerFile) {
+    throw new Error("--header-file is required: the companion's hook-auth.header (rubato-companion status prints it)");
   }
-  const out = template.replaceAll("{port}", String(port)).replaceAll("{token}", token);
+  // Shell-quoted, then escaped for its place inside a JSON string.
+  const inJson = JSON.stringify(shQuote(headerFile)).slice(1, -1);
+  const out = template.replaceAll("{port}", String(port)).replaceAll("{header_file}", inJson);
   JSON.parse(out);
   return out;
 }
@@ -42,11 +51,15 @@ function opt(argv: string[], name: string): string | undefined {
   return i >= 0 ? argv[i + 1] : undefined;
 }
 
-function main(argv: string[]): number {
+export function main(argv: string[], err: (s: string) => void = (s) => console.error(s)): number {
+  if (argv.includes("--token")) {
+    err("--token is no longer accepted: a token on a command line is readable by every local user (ADR 0050). Pass --header-file <state dir>/hook-auth.header; rubato-companion status prints its path.");
+    return 2;
+  }
   const port = Number(opt(argv, "--port"));
-  const token = opt(argv, "--token") ?? "";
+  const headerFile = opt(argv, "--header-file") ?? "";
   try {
-    const rendered = renderHooks(readFileSync(templatePath(), "utf8"), port, token);
+    const rendered = renderHooks(readFileSync(templatePath(), "utf8"), port, headerFile);
     const out = opt(argv, "--out");
     if (out) {
       writeFileSync(out, rendered);
@@ -56,7 +69,7 @@ function main(argv: string[]): number {
     }
     return 0;
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
+    err(e instanceof Error ? e.message : String(e));
     return 2;
   }
 }

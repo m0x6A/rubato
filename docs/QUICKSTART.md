@@ -308,8 +308,12 @@ appear in their title and body.
   is refused and reported; a missing repo in `local.yml` or a tmux-ide below 2.9 fails
   the launch with the reason.
 - The issue stays **Started**: no hook event has arrived. `rubato-companion status` prints the
-  hook endpoint; `curl` it from the worktree with the token to prove the path, and check the
-  session's `--settings` file was passed.
+  hook endpoint and the header file that holds its token; `curl -H @<header file>` it from the
+  worktree to prove the path (curl 7.55 or later; never put the token itself on a command line,
+  ADR 0050), and check the session's `--settings` file was passed.
+- Spend stays empty: the companion reads a transcript only under `~/.claude/projects` (or
+  `$CLAUDE_CONFIG_DIR/projects`), as a regular file of at most 256 MiB, and logs
+  `rubato.transcript.refused` with the reason otherwise.
 - The issue shows **Unknown**: the trust check. The last signal is older than the stale
   threshold, or the only state comes from tmux-ide's screen reading. A hook event fixes it.
 - The plan never shows: the server polls GitHub every `RUBATO_GITHUB_POLL_SECS`; check the
