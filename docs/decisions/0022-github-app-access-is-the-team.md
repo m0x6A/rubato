@@ -1,6 +1,6 @@
 # 0022. Register Rubato as a GitHub App; access to its installation decides who is on the team
 
-- **Status:** accepted; permission list (Issues: read) superseded by 0025
+- **Status:** accepted; permission list (Issues: read) superseded by 0025; open login without the App superseded by 0064
 - **Date:** 2026-11-10
 - **Decided by:** Mattias Jonsson, accepted 2026-11-11 (drafted by agent, Claude Code issue #48 design session)
 - **Seam:** server-github, web-server

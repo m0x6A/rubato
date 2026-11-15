@@ -40,17 +40,24 @@ impl FromRequestParts<App> for CurrentUser {
         }
         let value = cookie_value(&parts.headers, COOKIE).ok_or(StatusCode::UNAUTHORIZED)?;
         let id = app.signer.verify(&value).ok_or(StatusCode::UNAUTHORIZED)?;
-        let Ok(Some((login, team_checked_at))) = store::web_session(&app.db, &id).await else {
+        let Ok(Some(session)) = store::web_session(&app.db, &id).await else {
             return Err(StatusCode::UNAUTHORIZED);
         };
+        let now = Utc::now();
         // As a GitHub App, a session counts only with a fresh team record (ADR 0022). This
         // runs on every route and on the websocket upgrade, so a session from before the
         // gate, or of someone who lost access, is refused too: 401, and the web logs in again.
-        if app.config.github_app.is_some() && !team::record_is_fresh(team_checked_at, Utc::now()) {
-            app.reject(parts.uri.path(), reason::TEAM_RECORD_STALE, &login);
+        if app.config.github_app.is_some() && !team::record_is_fresh(session.team_checked_at, now) {
+            app.reject(parts.uri.path(), reason::TEAM_RECORD_STALE, &session.login);
             return Err(StatusCode::UNAUTHORIZED);
         }
-        Ok(CurrentUser(login))
+        // In every mode a session ends with its cookie, after 30 days (ADR 0064); without the
+        // App this is the only limit on the server.
+        if !team::session_is_current(session.created_at, now) {
+            app.reject(parts.uri.path(), reason::SESSION_EXPIRED, &session.login);
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        Ok(CurrentUser(session.login))
     }
 }
 

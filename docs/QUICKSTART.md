@@ -49,8 +49,10 @@ is installed on.
    the map, not as an empty repository.
 
 Without the App settings the server still runs the old way, for a first look: an OAuth app for
-login and `RUBATO_GITHUB_TOKEN` (read-only) for reads. It then warns at start that login is
-open to any GitHub account, and it cannot propose map changes.
+login and `RUBATO_GITHUB_TOKEN` (read-only) for reads. Login is then open to any GitHub
+account, and the server cannot propose map changes. It starts that way only when it is local
+(`RUBATO_BIND` a loopback address and `RUBATO_PUBLIC_URL` a loopback host); anywhere else it
+refuses to start unless you set `RUBATO_OPEN_LOGIN=1`, and it warns at start either way (ADR 0064).
 
 ## 3. Run the server
 
@@ -82,8 +84,8 @@ belong together the server stops at start with `github app check failed` and say
 Open <http://127.0.0.1:8080> and log in with GitHub. The map appears, and the Issues tab lists
 every open issue of the map's repositories under "Not pinned".
 
-A session lasts as long as its team check is at most seven days old; after that, or after the
-first start as an App, the browser sends you through login once more. The private key can
+A session lasts as long as its team check is at most seven days old, and never more than 30
+days (in every mode); after that, or after the first start as an App, the browser sends you through login once more. The private key can
 also be given inline as `RUBATO_GITHUB_APP_PRIVATE_KEY` (newlines as `\n`).
 
 Editing the map: "Edit map" opens the team's shared draft. "Propose map change…" opens one pull
@@ -104,8 +106,9 @@ carries it to the `CompanionSilent` alert (which falls back to 600 without that 
 below 60 is raised to 60 with a warning at startup. For a run without GitHub at all, `RUBATO_MAP_FILE` reads the map from a local file
 and `RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git` reads branches and plans from local
 bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
-`RUBATO_DEV_USER=<login>` skips OAuth and must never be set where others
-can reach the server.
+`RUBATO_DEV_USER=<login>` skips OAuth: every request is that login, and the
+`x-rubato-dev-user` header names any other. The server refuses to start with it unless it is
+local (a loopback `RUBATO_BIND` and `RUBATO_PUBLIC_URL`; ADR 0064).
 
 Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
 setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`
