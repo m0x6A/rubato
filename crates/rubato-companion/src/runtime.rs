@@ -227,13 +227,38 @@ async fn run(
     )
     .allow_plain_http(cfg.state.allow_plain_http);
 
+    // The agent-facing MCP server on the hook receiver (ADR 0071, plan 220 §4). Built before any
+    // launch can run, so launches restored at start count as initialized.
+    let agent_mcp = crate::agent_mcp::AgentMcp::new(
+        registry.clone(),
+        metrics.clone(),
+        server_capabilities.clone(),
+        out_tx.clone(),
+    )
+    .await;
+    let (mcp_open, mcp_guarded) = crate::agent_mcp::routers(agent_mcp.clone());
+
     let mut tasks = Tasks::default();
     tasks.spawn(
         "server_link",
         Kind::Essential,
         client.run(out_rx, in_tx, connected_tx, shutdown.clone()),
     );
-    tasks.spawn("hooks", Kind::Essential, server.serve());
+    tasks.spawn(
+        "hooks",
+        Kind::Essential,
+        server.serve_with(mcp_open, mcp_guarded),
+    );
+    tasks.spawn(
+        "agent_mcp_drain",
+        Kind::Essential,
+        crate::agent_mcp::drain(agent_mcp.clone(), shutdown.clone()),
+    );
+    tasks.spawn(
+        "agent_mcp_watch",
+        Kind::BestEffort,
+        crate::agent_mcp::watch(agent_mcp, shutdown.clone()),
+    );
     tasks.spawn(
         "heartbeat",
         Kind::Essential,
