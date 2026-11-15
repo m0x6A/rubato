@@ -900,7 +900,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, not_on_team, team_record_stale, installation_lookup_failed. Each has an info log line 'web write rejected' with the user.",
+      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, not_on_team, team_record_stale, installation_lookup_failed, token_exchange_failed and user_lookup_failed (login, log line 'login failed' with step), cross_origin (a write or websocket from another origin, ADR 0066; warn line 'cross-origin request refused' with origin and sec_fetch_site; behind a proxy, check RUBATO_PUBLIC_URL is the origin the browser sees). Each has an info log line 'web write rejected' with the user.",
       "targets": [
         {
           "refId": "A",

@@ -21,7 +21,17 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
 
+/// The largest companion message the server reads (ADR 0066): twice the companion's 2 MiB hook
+/// body limit, so an honest companion never meets it.
+pub const COMPANION_MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+
+/// The most sessions one `Sessions` snapshot may carry; a larger one is not stored (ADR 0066).
+pub const MAX_SESSIONS_PER_SNAPSHOT: usize = 256;
+
 pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUpgrade) -> Response {
+    let ws = ws
+        .max_message_size(COMPANION_MAX_MESSAGE_BYTES)
+        .max_frame_size(COMPANION_MAX_MESSAGE_BYTES);
     let token = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -96,7 +106,14 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
                 }
             }
             inbound = stream.next() => {
-                let Some(Ok(frame)) = inbound else { break };
+                let frame = match inbound {
+                    Some(Ok(frame)) => frame,
+                    Some(Err(e)) => {
+                        on_read_error(&app.metrics, companion_id, &e);
+                        break;
+                    }
+                    None => break,
+                };
                 match frame {
                     Message::Text(text) => {
                         let env: CompanionEnvelope = match serde_json::from_str(&text) {
@@ -128,6 +145,20 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
     );
     tracing::info!(%companion_id, "companion disconnected");
     app.notify("companion disconnected");
+}
+
+/// A read that ended the socket. A message over the cap is a dropped event, counted
+/// `too_large`; anything else (a reset) is logged only. The text is tungstenite's
+/// `Space limit exceeded`, pinned by `app::tests::an_oversized_companion_message_ends_the_socket`.
+fn on_read_error(metrics: &Metrics, companion_id: Uuid, e: &axum::Error) {
+    let text = e.to_string();
+    let too_large = text.contains("Space limit exceeded");
+    tracing::warn!(rubato.companion_id = %companion_id, error = %text, too_large, "companion socket read failed");
+    if too_large {
+        metrics
+            .events_dropped
+            .add(1, &[KeyValue::new(attr::DROP_REASON, "too_large")]);
+    }
 }
 
 /// Why an already recorded envelope counts as a dropped event, if it does. A companion replays
@@ -239,6 +270,13 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {
+                if sessions.len() > MAX_SESSIONS_PER_SNAPSHOT {
+                    tracing::warn!(rubato.companion_id = %companion_id, sessions = sessions.len(), cap = MAX_SESSIONS_PER_SNAPSHOT, "sessions snapshot over the cap");
+                    app.metrics
+                        .events_dropped
+                        .add(1, &[KeyValue::new(attr::DROP_REASON, "too_many_sessions")]);
+                    return Some(ServerMessage::Ack { seq: env.seq });
+                }
                 // Against every workspace's repos (ADR 0048): a session's repo is named by some map.
                 let union = app.union_repos().await;
                 if !union.is_empty() {

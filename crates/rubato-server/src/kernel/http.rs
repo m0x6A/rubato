@@ -71,6 +71,124 @@ pub async fn check_workspace(
     next.run(req).await
 }
 
+/// The body of the 403 answer for a write or websocket upgrade from another origin (ADR 0066).
+pub const CROSS_ORIGIN: &str = r#"{"reason":"cross_origin"}"#;
+
+/// `scheme://host[:port]` of a URL, lower case, without a path: what a browser sends as `Origin`.
+fn origin_of(url: &str) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    let host = u.host_str()?;
+    Some(match u.port() {
+        Some(p) => format!("{}://{host}:{p}", u.scheme()),
+        None => format!("{}://{host}", u.scheme()),
+    })
+    .map(|s| s.to_ascii_lowercase())
+}
+
+/// Whether a request comes from a browser page on another origin and must be refused (design
+/// 193 D1, the rule Go ships as `CrossOriginProtection`). Only unsafe methods and websocket
+/// upgrades are checked. Fetch metadata decides first; without it, a request with no `Origin`
+/// is not from a browser (the companion, `curl`) and passes; an `Origin` must be the public
+/// URL's or the request's own `Host`.
+pub fn cross_origin(
+    method: &axum::http::Method,
+    headers: &axum::http::HeaderMap,
+    public_url: &str,
+) -> bool {
+    use axum::http::{Method, header};
+    let upgrade = headers
+        .get(header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+    let safe = matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS);
+    if safe && !upgrade {
+        return false;
+    }
+    if let Some(site) = headers.get("sec-fetch-site") {
+        let site = site.to_str().unwrap_or("").to_ascii_lowercase();
+        return !(site == "same-origin" || site == "none");
+    }
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return false;
+    };
+    let origin = origin.to_str().unwrap_or("").to_ascii_lowercase();
+    if origin_of(public_url).is_some_and(|o| o == origin) {
+        return false;
+    }
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_ascii_lowercase);
+    match host {
+        Some(h) => origin != format!("http://{h}") && origin != format!("https://{h}"),
+        None => true,
+    }
+}
+
+/// Layer on every API and websocket route: a cross-origin write or upgrade answers 403
+/// `cross_origin`, counted on `rubato.web.rejected`, before any handler or session lookup.
+pub async fn same_origin(State(app): State<App>, req: Request, next: Next) -> Response {
+    if !cross_origin(req.method(), req.headers(), &app.config.public_url) {
+        return next.run(req).await;
+    }
+    let route = req
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let h = |name: &str| {
+        req.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("-")
+            .to_owned()
+    };
+    tracing::warn!(
+        rubato.route = %route,
+        method = %req.method(),
+        origin = %h("origin"),
+        sec_fetch_site = %h("sec-fetch-site"),
+        "cross-origin request refused"
+    );
+    app.reject(&route, "cross_origin", "-");
+    (
+        StatusCode::FORBIDDEN,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        CROSS_ORIGIN,
+    )
+        .into_response()
+}
+
+/// The Content-Security-Policy for this server (ADR 0066): only its own origin, its websocket,
+/// and the font subsets the build inlines as `data:`; never framed.
+pub fn content_security_policy(public_url: &str) -> String {
+    let ws = origin_of(public_url)
+        .map(|o| {
+            if let Some(rest) = o.strip_prefix("https://") {
+                format!(" wss://{rest}")
+            } else if let Some(rest) = o.strip_prefix("http://") {
+                format!(" ws://{rest}")
+            } else {
+                String::new()
+            }
+        })
+        .unwrap_or_default();
+    format!(
+        "default-src 'self'; connect-src 'self'{ws}; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    )
+}
+
+/// Add `Content-Security-Policy` and `X-Content-Type-Options: nosniff` to a response.
+pub fn add_security_headers(csp: &axum::http::HeaderValue, res: &mut Response) {
+    use axum::http::{HeaderValue, header};
+    let h = res.headers_mut();
+    h.insert(header::CONTENT_SECURITY_POLICY, csp.clone());
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+}
+
 /// Log `error!(slice, error, "request failed")` and answer 500.
 pub fn internal(slice: &'static str, e: impl std::fmt::Display) -> StatusCode {
     tracing::error!(slice, error = %e, "request failed");
@@ -81,6 +199,174 @@ pub fn internal(slice: &'static str, e: impl std::fmt::Display) -> StatusCode {
 mod tests {
     use super::*;
     use crate::kernel::telemetry::capture;
+
+    /// Design 193 D1, case by case. Each row is (method, headers, public URL, refused).
+    #[test]
+    fn cross_origin_table() {
+        use axum::http::{HeaderMap, Method};
+        const PUB: &str = "https://rubato.example";
+        const LAN: &str = "http://192.168.1.20:8081";
+        type Case<'a> = (Method, &'a [(&'a str, &'a str)], &'a str, bool);
+        let cases: &[Case] = &[
+            (
+                Method::GET,
+                &[("origin", "https://evil.example")],
+                PUB,
+                false,
+            ),
+            (
+                Method::HEAD,
+                &[("sec-fetch-site", "cross-site")],
+                PUB,
+                false,
+            ),
+            (
+                Method::OPTIONS,
+                &[("origin", "https://evil.example")],
+                PUB,
+                false,
+            ),
+            (Method::POST, &[], PUB, false),
+            (
+                Method::POST,
+                &[("sec-fetch-site", "same-origin")],
+                PUB,
+                false,
+            ),
+            (Method::POST, &[("sec-fetch-site", "none")], PUB, false),
+            (Method::POST, &[("sec-fetch-site", "same-site")], PUB, true),
+            (
+                Method::DELETE,
+                &[("sec-fetch-site", "cross-site")],
+                PUB,
+                true,
+            ),
+            // Fetch metadata decides before Origin: the dev proxy keeps localhost:5173.
+            (
+                Method::PUT,
+                &[
+                    ("sec-fetch-site", "same-origin"),
+                    ("origin", "http://localhost:5173"),
+                    ("host", "127.0.0.1:8080"),
+                ],
+                PUB,
+                false,
+            ),
+            (
+                Method::POST,
+                &[("origin", "https://rubato.example")],
+                PUB,
+                false,
+            ),
+            (
+                Method::POST,
+                &[("origin", "HTTPS://Rubato.Example")],
+                PUB,
+                false,
+            ),
+            (
+                Method::POST,
+                &[
+                    ("origin", "https://evil.example"),
+                    ("host", "rubato.example"),
+                ],
+                PUB,
+                true,
+            ),
+            (
+                Method::POST,
+                &[("origin", "null"), ("host", "rubato.example")],
+                PUB,
+                true,
+            ),
+            // The team's LAN deployment: plain http on a LAN address and port.
+            (
+                Method::POST,
+                &[
+                    ("origin", "http://192.168.1.20:8081"),
+                    ("host", "192.168.1.20:8081"),
+                ],
+                LAN,
+                false,
+            ),
+            (
+                Method::POST,
+                &[("origin", "http://192.168.1.20:8081")],
+                LAN,
+                false,
+            ),
+            (
+                Method::POST,
+                &[
+                    ("origin", "http://192.168.1.20:8082"),
+                    ("host", "192.168.1.20:8081"),
+                ],
+                LAN,
+                true,
+            ),
+            // Origin matches Host though the public URL is stale.
+            (
+                Method::POST,
+                &[
+                    ("origin", "http://10.0.0.5:8081"),
+                    ("host", "10.0.0.5:8081"),
+                ],
+                LAN,
+                false,
+            ),
+            // A websocket upgrade is a GET but is checked.
+            (
+                Method::GET,
+                &[
+                    ("upgrade", "websocket"),
+                    ("origin", "https://evil.example"),
+                    ("host", "rubato.example"),
+                ],
+                PUB,
+                true,
+            ),
+            (
+                Method::GET,
+                &[("upgrade", "websocket"), ("host", "rubato.example")],
+                PUB,
+                false,
+            ),
+            (
+                Method::GET,
+                &[("upgrade", "WebSocket"), ("sec-fetch-site", "same-origin")],
+                PUB,
+                false,
+            ),
+        ];
+        for (method, headers, public_url, refused) in cases {
+            let mut map = HeaderMap::new();
+            for (k, v) in *headers {
+                map.insert(*k, v.parse().unwrap());
+            }
+            assert_eq!(
+                cross_origin(method, &map, public_url),
+                *refused,
+                "{method} {headers:?} against {public_url}"
+            );
+        }
+        assert!(cases.iter().any(|c| c.3) && cases.iter().any(|c| !c.3));
+        println!("checked {} cross-origin cases", cases.len());
+    }
+
+    #[test]
+    fn the_policy_names_the_public_websocket_origin() {
+        let csp = content_security_policy("http://192.168.1.20:8081/");
+        assert!(
+            csp.contains("connect-src 'self' ws://192.168.1.20:8081;"),
+            "{csp}"
+        );
+        assert!(csp.contains("frame-ancestors 'none'"));
+        let csp = content_security_policy("https://rubato.example");
+        assert!(
+            csp.contains("connect-src 'self' wss://rubato.example;"),
+            "{csp}"
+        );
+    }
 
     #[test]
     fn internal_logs_slice_and_error() {

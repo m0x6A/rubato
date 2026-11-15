@@ -238,6 +238,7 @@ impl Config {
             );
             uuid::Uuid::new_v4().to_string()
         });
+        insecure_cookie_warning(&public_url, &mut warnings);
         Ok(Self {
             bind,
             public_url,
@@ -438,9 +439,49 @@ fn floor_companion_silent_secs(v: u64, warnings: &mut Vec<String>) -> u64 {
     }
 }
 
+/// Design 193 D3: an `http` public URL on a host that is not loopback sends the session cookie
+/// without `Secure`. Warned, not refused: the team runs on plain http on a LAN (plan 193, Q1).
+fn insecure_cookie_warning(public_url: &str, warnings: &mut Vec<String>) {
+    let Ok(u) = url::Url::parse(public_url) else {
+        return;
+    };
+    let loopback = match u.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => true,
+    };
+    if u.scheme() == "http" && !loopback {
+        warnings.push(format!(
+            "RUBATO_PUBLIC_URL {public_url} is http on a non-loopback host; the session cookie is sent without Secure"
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_public_url_off_loopback_warns() {
+        let warned = |url: &str| {
+            let mut w = Vec::new();
+            insecure_cookie_warning(url, &mut w);
+            !w.is_empty()
+        };
+        let cases = [
+            ("http://rubato.lan:8080", true),
+            ("http://192.168.1.20:8081", true),
+            ("http://127.0.0.1:8080", false),
+            ("http://localhost", false),
+            ("http://[::1]:1", false),
+            ("https://rubato.example", false),
+        ];
+        for (url, want) in cases {
+            assert_eq!(warned(url), want, "{url}");
+        }
+        println!("checked {} public URLs", cases.len());
+    }
 
     #[test]
     fn two_traffic_sources_are_a_startup_error_and_settings_never_print() {

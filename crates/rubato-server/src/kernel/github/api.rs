@@ -14,6 +14,9 @@ use std::time::Duration;
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const READ_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// The most pages of 100 issue comments read per issue: the newest 500 (design 193 D6).
+pub const MAX_COMMENT_PAGES: usize = 5;
+
 /// `#[instrument(name = …)]` takes a bare identifier.
 const GITHUB_CALL: &str = rubato_protocol::otel::span::GITHUB_CALL;
 
@@ -587,15 +590,36 @@ impl GitHubApi for Octo {
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "comments"))]
     async fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<Comment>> {
         let (o, r) = split_repo(repo)?;
-        let page = self
-            .client
-            .issues(o, r)
-            .list_comments(number)
-            .per_page(100)
-            .send()
-            .await?;
-        let all = self.client.all_pages(page).await?;
-        count_call("comments", (all.len() as u64).div_ceil(100).max(1));
+        let issues = self.client.issues(o, r);
+        let first = issues.list_comments(number).per_page(100).send().await?;
+        let pages = first.number_of_pages().unwrap_or(1);
+        // Design 193 D6: at most the newest MAX_COMMENT_PAGES pages; GitHub lists oldest first.
+        let all = if pages as usize <= MAX_COMMENT_PAGES {
+            let all = self.client.all_pages(first).await?;
+            count_call("comments", u64::from(pages.max(1)));
+            all
+        } else {
+            let from = pages - MAX_COMMENT_PAGES as u32 + 1;
+            let mut all = Vec::new();
+            for p in from..=pages {
+                let page = issues
+                    .list_comments(number)
+                    .per_page(100)
+                    .page(p)
+                    .send()
+                    .await?;
+                all.extend(page.items);
+            }
+            count_call("comments", 1 + MAX_COMMENT_PAGES as u64);
+            tracing::warn!(
+                rubato.repo = repo,
+                rubato.issue = number,
+                pages,
+                read = MAX_COMMENT_PAGES,
+                "issue comments cut"
+            );
+            all
+        };
         Ok(all
             .into_iter()
             .map(|c| Comment {
@@ -1028,6 +1052,91 @@ mod tests {
             "the default client retries: {with_retries}"
         );
         held.abort();
+    }
+
+    /// A stand-in for `GET /repos/o/r/issues/1/comments` with `pages` pages of 100 and
+    /// GitHub's `Link` header. Returns its base URL and the pages it was asked for.
+    async fn comment_pages(pages: u32) -> (String, std::sync::Arc<std::sync::Mutex<Vec<u32>>>) {
+        use axum::extract::Query;
+        use std::collections::HashMap;
+        let asked: std::sync::Arc<std::sync::Mutex<Vec<u32>>> = Default::default();
+        let log = asked.clone();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let me = base.clone();
+        let router = axum::Router::new().route(
+            "/repos/o/r/issues/1/comments",
+            axum::routing::get(move |Query(q): Query<HashMap<String, String>>| {
+                let log = log.clone();
+                let me = me.clone();
+                async move {
+                    let page: u32 = q.get("page").and_then(|p| p.parse().ok()).unwrap_or(1);
+                    log.lock().unwrap().push(page);
+                    let user = |n: &str| format!("https://x/{n}");
+                    let items: Vec<serde_json::Value> = (1..=100u64)
+                        .map(|i| {
+                            let id = u64::from(page - 1) * 100 + i;
+                            serde_json::json!({
+                                "id": id, "node_id": "n", "url": user("c"), "html_url": user("c"),
+                                "body": format!("comment {id}"), "author_association": "MEMBER",
+                                "created_at": "2026-11-15T00:00:00Z",
+                                "user": {"login": "m", "id": 1, "node_id": "u", "avatar_url": user("a"),
+                                    "gravatar_id": "", "url": user("u"), "html_url": user("u"),
+                                    "followers_url": user("f"), "following_url": user("f"),
+                                    "gists_url": user("g"), "starred_url": user("s"),
+                                    "subscriptions_url": user("s"), "organizations_url": user("o"),
+                                    "repos_url": user("r"), "events_url": user("e"),
+                                    "received_events_url": user("e"), "type": "User", "site_admin": false}
+                            })
+                        })
+                        .collect();
+                    let link = |p: u32, rel: &str| {
+                        format!("<{me}/repos/o/r/issues/1/comments?per_page=100&page={p}>; rel=\"{rel}\"")
+                    };
+                    let mut links = Vec::new();
+                    if page < pages {
+                        links.push(link(page + 1, "next"));
+                        links.push(link(pages, "last"));
+                    }
+                    let mut res = axum::response::IntoResponse::into_response(axum::Json(items));
+                    if !links.is_empty() {
+                        res.headers_mut()
+                            .insert("link", links.join(", ").parse().unwrap());
+                    }
+                    res
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (base, asked)
+    }
+
+    /// Design 193 D6: a long issue costs at most six calls and yields the newest 500 comments.
+    #[tokio::test(flavor = "current_thread")]
+    async fn issue_comments_read_at_most_five_pages() {
+        let (base, asked) = comment_pages(12).await;
+        let gh = Octo::with_base_uri("t", &base, Duration::from_secs(5)).unwrap();
+        let (events, _guard) = crate::kernel::telemetry::capture::start();
+        let got = gh.issue_comments("o/r", 1).await.unwrap();
+        assert_eq!(*asked.lock().unwrap(), [1, 8, 9, 10, 11, 12]);
+        assert_eq!(got.len(), 500);
+        assert_eq!((got[0].id, got[499].id), (701, 1200));
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| e.message == "issue comments cut" && e.level == tracing::Level::WARN)
+        );
+
+        let (base, asked) = comment_pages(3).await;
+        let gh = Octo::with_base_uri("t", &base, Duration::from_secs(5)).unwrap();
+        let got = gh.issue_comments("o/r", 1).await.unwrap();
+        assert_eq!(*asked.lock().unwrap(), [1, 2, 3]);
+        assert_eq!(got.len(), 300);
+        println!("checked a 12-page and a 3-page issue");
     }
 
     #[test]
