@@ -28,10 +28,10 @@ pub async fn connect(url: &str) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-/// Migration 0014 removes the raw hook payloads (ADR 0052). An UPDATE leaves the old bytes in
+/// Migration 0015 removes the raw hook payloads (ADR 0052). An UPDATE leaves the old bytes in
 /// free pages, and VACUUM cannot run inside a migration's transaction, so it runs here, once,
 /// right after that migration was applied.
-const PURGE_MIGRATION: i64 = 14;
+const PURGE_MIGRATION: i64 = 15;
 
 async fn applied(pool: &SqlitePool, version: i64) -> bool {
     sqlx::query("SELECT 1 FROM _sqlx_migrations WHERE version = ? AND success = 1")
