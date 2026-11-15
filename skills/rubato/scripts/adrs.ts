@@ -130,7 +130,21 @@ export async function pinAdrs(cwd: string, planPath: string, decisions = "docs/d
     }
     return f;
   });
-  const blobs = new Map(rows.map((r, i) => [r.adr, gitBlobSha(readFileSync(files[i] as string))]));
+  const { keepBlob } = await import("./lib/git.ts");
+  const blobs = new Map(
+    rows.map((r, i) => {
+      const bytes = readFileSync(files[i] as string);
+      // The pinned text stays readable by its blob sha, uncommitted, so a handoff that stopped
+      // after writing the acceptance can compare against it (#212). Best effort: outside a git
+      // checkout the pin still holds, and the handoff then counts the real blob.
+      try {
+        keepBlob(cwd, bytes);
+      } catch {
+        // not a git checkout
+      }
+      return [r.adr, gitBlobSha(bytes)] as const;
+    }),
+  );
   let inSection = false;
   const lines = text.split("\n").map((l) => {
     if (l.startsWith("## ")) {

@@ -6,8 +6,8 @@
 import { createHash } from "node:crypto";
 import { gitBlobSha, planSha } from "./plan-sha.ts";
 
-/** `a/./b/../c` → `a/c`; null when the path leaves the repository or is empty. */
-function normalisePath(path: string): string | null {
+/** `a/./b/../c` → `a/c`; null when the path leaves the repository or is empty. The skill keys pinned ADR rows by it (#212). */
+export function normalisePath(path: string): string | null {
   const parts: string[] = [];
   for (const seg of path.split("/")) {
     if (seg === "" || seg === ".") {
