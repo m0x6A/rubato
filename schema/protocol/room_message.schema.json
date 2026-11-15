@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RoomMessage",
+  "description": "One message of a room, oldest first in a `RoomView`.",
+  "type": "object",
+  "properties": {
+    "addressed": {
+      "description": "Agent handles this message addresses (`@<owner>-agent`), PR 11.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "author": {
+      "description": "The person's login, the agent's handle (`<owner>-agent`), or `rubato`.",
+      "type": "string"
+    },
+    "author_kind": {
+      "$ref": "#/$defs/RoomAuthorKind"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "notice": {
+      "description": "For a seam notice: the other issue and the seam both plans touch.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SeamNotice"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "text": {
+      "type": "string"
+    },
+    "turn_id": {
+      "description": "The turn this message made, or the turn an agent's message answers.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "id",
+    "author_kind",
+    "author",
+    "text",
+    "at"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    },
+    "RoomAuthorKind": {
+      "description": "Who wrote a room message.",
+      "oneOf": [
+        {
+          "description": "A person who may log in.",
+          "type": "string",
+          "const": "person"
+        },
+        {
+          "description": "An agent called into the room by its owner (PR 11).",
+          "type": "string",
+          "const": "agent"
+        },
+        {
+          "description": "Rubato itself: seam notices, limits reached.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    },
+    "SeamNotice": {
+      "description": "What a system seam notice is about (ADR 0057, Q6): posted once per pair of issue and seam.",
+      "type": "object",
+      "properties": {
+        "other": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "other_branch": {
+          "type": "string"
+        },
+        "seam": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seam",
+        "other",
+        "other_branch"
+      ]
+    }
+  }
+}

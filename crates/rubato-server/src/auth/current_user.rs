@@ -40,17 +40,24 @@ impl FromRequestParts<App> for CurrentUser {
         }
         let value = cookie_value(&parts.headers, COOKIE).ok_or(StatusCode::UNAUTHORIZED)?;
         let id = app.signer.verify(&value).ok_or(StatusCode::UNAUTHORIZED)?;
-        let Ok(Some((login, team_checked_at))) = store::web_session(&app.db, &id).await else {
+        let Ok(Some(session)) = store::web_session(&app.db, &id).await else {
             return Err(StatusCode::UNAUTHORIZED);
         };
+        let now = Utc::now();
         // As a GitHub App, a session counts only with a fresh team record (ADR 0022). This
         // runs on every route and on the websocket upgrade, so a session from before the
         // gate, or of someone who lost access, is refused too: 401, and the web logs in again.
-        if app.config.github_app.is_some() && !team::record_is_fresh(team_checked_at, Utc::now()) {
-            app.reject(parts.uri.path(), reason::TEAM_RECORD_STALE, &login);
+        if app.config.github_app.is_some() && !team::record_is_fresh(session.team_checked_at, now) {
+            app.reject(parts.uri.path(), reason::TEAM_RECORD_STALE, &session.login);
             return Err(StatusCode::UNAUTHORIZED);
         }
-        Ok(CurrentUser(login))
+        // In every mode a session ends with its cookie, after 30 days (ADR 0064); without the
+        // App this is the only limit on the server.
+        if !team::session_is_current(session.created_at, now) {
+            app.reject(parts.uri.path(), reason::SESSION_EXPIRED, &session.login);
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        Ok(CurrentUser(session.login))
     }
 }
 
@@ -68,5 +75,29 @@ mod tests {
         );
         assert_eq!(cookie_value(&h, COOKIE).as_deref(), Some("x.y"));
         assert_eq!(cookie_value(&h, "zzz"), None);
+    }
+
+    /// ADR 0062: a client, interactive or headless, never approves. A companion's pairing token
+    /// is not a web session: every web route, the plan approval among them, answers 401.
+    #[tokio::test]
+    async fn a_companions_token_is_not_a_web_session() {
+        use crate::kernel::config::Config;
+        use crate::kernel::github::FakeGitHub;
+        use crate::kernel::state::AppState;
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let mut cfg = Config::for_tests(url, "m0x6A");
+        cfg.dev_user = None;
+        let app = AppState::new(pool, cfg, std::sync::Arc::new(FakeGitHub::new()));
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri(rubato_protocol::approve::routes::PLAN_DRAFT_APPROVE)
+            .header("authorization", "Bearer a-companion-pairing-token")
+            .body(())
+            .unwrap();
+        let (mut parts, ()) = req.into_parts();
+        let got = CurrentUser::from_request_parts(&mut parts, &app).await;
+        assert_eq!(got.unwrap_err(), StatusCode::UNAUTHORIZED);
     }
 }

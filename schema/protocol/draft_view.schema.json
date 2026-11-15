@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DraftView",
+  "description": "A draft and its revisions, oldest first (`GET /api/drafts/{draft_id}`).",
+  "type": "object",
+  "properties": {
+    "branch": {
+      "type": "string"
+    },
+    "draft_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "imported_from": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "issue": {
+      "$ref": "#/$defs/IssueRef"
+    },
+    "original_author": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner": {
+      "type": "string"
+    },
+    "revisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DraftRevisionInfo"
+      }
+    }
+  },
+  "required": [
+    "draft_id",
+    "issue",
+    "branch",
+    "owner",
+    "revisions"
+  ],
+  "$defs": {
+    "DraftRevisionInfo": {
+      "description": "One settled revision, without its files.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "bundle_hash": {
+          "type": "string"
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parse_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plan_sha": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "rev",
+        "at",
+        "plan_sha",
+        "bundle_hash"
+      ]
+    },
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    }
+  }
+}

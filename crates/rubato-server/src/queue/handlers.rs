@@ -23,6 +23,7 @@ pub mod reason {
     pub const REVOKED_COMPANION: &str = "revoked_companion";
     pub const QUEUE_FULL: &str = "queue_full";
     pub const ORDER_MISMATCH: &str = "order_mismatch";
+    pub const UNKNOWN_REPO: &str = "unknown_repo";
 }
 
 type Refusal = (StatusCode, String);
@@ -64,6 +65,19 @@ pub async fn add(
     Json(req): Json<QueueRequest>,
 ) -> Result<StatusCode, Refusal> {
     let revoked = own_lane(&app, &user, req.companion_id).await?;
+    // A team route (ADR 0049): the repo must be one some workspace's map names (issue #163).
+    if !app
+        .union_repos()
+        .await
+        .iter()
+        .any(|r| r.eq_ignore_ascii_case(&req.issue.repo))
+    {
+        app.reject(routes::QUEUE, reason::UNKNOWN_REPO, &user);
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("{} is not a repo the map names", req.issue.repo),
+        ));
+    }
     let outcome = store::add(
         &app.db,
         req.companion_id,
@@ -231,5 +245,74 @@ mod tests {
         record_depth(&app).await;
         assert_eq!(depth(busy), Some(0));
         println!("checked 3 pairings over 2 ticks");
+    }
+
+    /// Issue #163: an issue of a repo no workspace's map names is refused on your own lane
+    /// (422, counted `unknown_repo`, no row); someone else's lane still answers 403 first; the
+    /// map's repo in other case is queued. Without the repo check the first add is 201.
+    #[tokio::test]
+    async fn an_issue_of_a_repo_no_map_names_is_not_queued() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = connect(&url).await.unwrap();
+        let (reader, metrics) = metric_reader::start();
+        let mut app = AppState::new(
+            pool,
+            Config::for_tests(url, "m0x6A"),
+            Arc::new(FakeGitHub::new()),
+        );
+        Arc::get_mut(&mut app).unwrap().metrics = metrics;
+        let map: rubato_protocol::SystemMap = serde_yaml_ng::from_str(
+            "version: 1\nname: t\nrepos: [{ name: o/r }]\nnodes: [{ id: a, kind: context }]\nseams: []\n",
+        )
+        .unwrap();
+        app.set_map(
+            rubato_protocol::DEFAULT_WORKSPACE,
+            crate::kernel::state::LoadedMap {
+                map,
+                version: "v".into(),
+                loaded_at: Utc::now(),
+                yaml: String::new(),
+            },
+        )
+        .await;
+        let mine = pairing(&app, "m0x6A", false).await;
+        let alices = pairing(&app, "alice", false).await;
+        let add_as = |user: &str, companion_id: Uuid, repo: &str| {
+            add(
+                State(app.clone()),
+                CurrentUser(user.to_owned()),
+                Json(QueueRequest {
+                    issue: IssueRef::new(repo, 1),
+                    companion_id,
+                }),
+            )
+        };
+        let refused = add_as("m0x6A", mine, "elsewhere/secret").await.unwrap_err();
+        assert_eq!(refused.0, StatusCode::UNPROCESSABLE_ENTITY, "{}", refused.1);
+        assert!(refused.1.contains("elsewhere/secret"), "{}", refused.1);
+        let other = add_as("m0x6A", alices, "elsewhere/secret")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            other.0,
+            StatusCode::FORBIDDEN,
+            "someone else's lane answers 403 first"
+        );
+        assert_eq!(
+            add_as("m0x6A", mine, "O/R").await.unwrap(),
+            StatusCode::CREATED
+        );
+        let rows = store::all(&app.db).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].issue, IssueRef::new("O/R", 1));
+        let counted = reader
+            .points(metric::WEB_REJECTED)
+            .into_iter()
+            .find(|p| p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("unknown_repo"))
+            .expect("counted");
+        assert_eq!(counted.value, 1);
+        assert_eq!(counted.attrs[attr::ROUTE], routes::QUEUE);
+        println!("checked 3 queue adds");
     }
 }

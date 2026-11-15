@@ -65,6 +65,10 @@ pub struct OpenIssueInfo {
     /// Login of the issue's author.
     #[serde(default)]
     pub author: String,
+    /// The author is a Bot account (`user.type == "Bot"`), as an issue the App created is
+    /// (ADR 0025, issue #165).
+    #[serde(default)]
+    pub author_is_bot: bool,
 }
 
 /// How much of an issue body is read for placement (ADR 0026, design A7).
@@ -166,6 +170,16 @@ pub trait GitHubApi: Send + Sync {
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>>;
     /// Commit sha a branch points at.
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>>;
+    /// The login of whoever made the last commit to `path` reachable from `sha` (ADR 0058):
+    /// one `GET /repos/{o}/{r}/commits?path=&sha=&per_page=1`. None when unknown.
+    async fn last_commit_author(
+        &self,
+        _repo: &str,
+        _path: &str,
+        _sha: &str,
+    ) -> Result<Option<String>> {
+        Ok(None)
+    }
     /// Branches starting with `prefix`, with their head commits.
     async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>>;
     /// The repo's open pull requests from its own branches (issue #49).
@@ -243,6 +257,11 @@ pub trait GitHubApi: Send + Sync {
     async fn refresh_issue_permission(&self) -> Result<bool> {
         Ok(self.can_create_issues())
     }
+    /// The login the App's own issues carry, `<app_slug>[bot]`, as the last installation read
+    /// gave it (issue #165). `None` until read, and on a port that is not an App.
+    fn app_login(&self) -> Option<String> {
+        None
+    }
     /// Open an issue: its number and page. Sent once, with no retry: an issue POST is not
     /// idempotent. A 403 clears [`GitHubApi::can_create_issues`] until the next refresh.
     /// Post an issue comment as the person whose user-to-server token this is (ADR 0030). Sent
@@ -305,13 +324,27 @@ pub fn issues_from_page(page: &serde_json::Value) -> Vec<OpenIssueInfo> {
                     .and_then(|a| a.as_str())
                     .unwrap_or_default()
                     .to_owned(),
+                author_is_bot: i.pointer("/user/type").and_then(|t| t.as_str()) == Some("Bot"),
             })
         })
         .collect()
 }
 
+/// `owner/name`, each half of `[A-Za-z0-9_.-]+` and neither `.` nor `..`, so no repo string
+/// can add a path segment or a query to a REST path (issue #163).
 fn split_repo(repo: &str) -> Result<(&str, &str)> {
-    repo.split_once('/').context("repo must be owner/name")
+    fn part(s: &str) -> bool {
+        !s.is_empty()
+            && s != "."
+            && s != ".."
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+    }
+    repo.split_once('/')
+        .filter(|(o, r)| part(o) && part(r))
+        .with_context(|| {
+            format!("repo must be owner/name of letters, digits, '_', '.' or '-', not {repo:?}")
+        })
 }
 
 // ----- octocrab ------------------------------------------------------------------------------
@@ -327,6 +360,8 @@ pub struct Octo {
     as_app: Option<AsApp>,
     /// The installation's Issues permission is `write`, as last read.
     issues_write: std::sync::atomic::AtomicBool,
+    /// `<app_slug>[bot]` from the installation, as last read (issue #165).
+    app_login: std::sync::Mutex<Option<String>>,
 }
 
 struct AsApp {
@@ -359,6 +394,7 @@ impl Octo {
             installation: false,
             as_app: None,
             issues_write: Default::default(),
+            app_login: Default::default(),
         })
     }
 
@@ -378,6 +414,7 @@ impl Octo {
                 installation_id: app.installation_id,
             }),
             issues_write: Default::default(),
+            app_login: Default::default(),
         })
     }
 }
@@ -459,6 +496,30 @@ impl GitHubApi for Octo {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "commits"))]
+    async fn last_commit_author(
+        &self,
+        repo: &str,
+        path: &str,
+        sha: &str,
+    ) -> Result<Option<String>> {
+        count_call("commits", 1);
+        let (o, r) = split_repo(repo)?;
+        let route = format!("/repos/{o}/{r}/commits");
+        let v = self
+            .client
+            .get::<serde_json::Value, _, _>(
+                route,
+                Some(&[("path", path), ("sha", sha), ("per_page", "1")]),
+            )
+            .await?;
+        // The GitHub login when the commit's author is a GitHub user, else the git author's name.
+        Ok(v.pointer("/0/author/login")
+            .or_else(|| v.pointer("/0/commit/author/name"))
+            .and_then(|x| x.as_str())
+            .map(str::to_owned))
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "branch"))]
@@ -825,6 +886,10 @@ impl GitHubApi for Octo {
         self.installation && self.issues_write.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    fn app_login(&self) -> Option<String> {
+        self.app_login.lock().unwrap().clone()
+    }
+
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "installation"))]
     async fn refresh_issue_permission(&self) -> Result<bool> {
         count_call("installation", 1);
@@ -834,6 +899,10 @@ impl GitHubApi for Octo {
         let route = format!("/app/installations/{}", a.installation_id);
         let v: serde_json::Value = a.app.get(route, None::<&()>).await?;
         let write = v.pointer("/permissions/issues").and_then(|p| p.as_str()) == Some("write");
+        // The App's issues carry `<app_slug>[bot]` as their author (issue #165).
+        if let Some(slug) = v.get("app_slug").and_then(|s| s.as_str()) {
+            *self.app_login.lock().unwrap() = Some(format!("{slug}[bot]"));
+        }
         let was = self
             .issues_write
             .swap(write, std::sync::atomic::Ordering::Relaxed);
@@ -956,6 +1025,25 @@ pub fn summarize_check_runs<'a>(
 mod tests {
     use super::*;
 
+    /// Issue #163: a repo string reaches REST paths only as a plain `owner/name`. Without the
+    /// character check in `split_repo`, `o/r/../..` and friends split and this fails.
+    #[test]
+    fn split_repo_accepts_only_owner_slash_name() {
+        let good = ["m0x6A/rubato", "o/r.js", "o/a_b-c", "O-1/R_2.x"];
+        let bad = [
+            "", "o", "o/", "/r", "o/r/x", "o/..", "o/.", "../r", "./r", "o/r?x=1", "o/r#1",
+            "o/r%2F", "o r/x", "o/r\n", "o\\r/x", "ö/r",
+        ];
+        for repo in good {
+            assert!(split_repo(repo).is_ok(), "{repo:?} should be accepted");
+        }
+        for repo in bad {
+            assert!(split_repo(repo).is_err(), "{repo:?} should be refused");
+        }
+        assert_eq!(split_repo("m0x6A/rubato").unwrap(), ("m0x6A", "rubato"));
+        println!("checked {} repo strings", good.len() + bad.len());
+    }
+
     /// A listener that accepts and never answers: the call must end as an error, not hang.
     #[tokio::test(flavor = "current_thread")]
     async fn hung_github_call_ends_with_an_error() {
@@ -1064,14 +1152,21 @@ mod tests {
         let long = format!("{}é{}", "a".repeat(BODY_EXCERPT_BYTES - 1), "b".repeat(100));
         let page = serde_json::json!([
             {"number": 1, "title": "T", "html_url": "u", "author_association": "MEMBER",
-             "user": {"login": "m0x6A"}, "body": "Map: seam web-server"},
+             "user": {"login": "m0x6A", "type": "User"}, "body": "Map: seam web-server"},
             {"number": 2, "title": "T", "html_url": "u", "body": null},
-            {"number": 3, "title": "T", "html_url": "u", "author_association": "NONE", "body": long}
+            {"number": 3, "title": "T", "html_url": "u", "author_association": "NONE", "body": long},
+            {"number": 4, "title": "T", "html_url": "u", "author_association": "NONE",
+             "user": {"login": "rubato[bot]", "type": "Bot"}, "body": "Rubato-Request: r-1"}
         ]);
         let issues = issues_from_page(&page);
         assert_eq!(issues[0].body, "Map: seam web-server");
         assert_eq!(issues[0].author_association, "MEMBER");
         assert_eq!(issues[0].author, "m0x6A");
+        // Issue #165: the Bot flag from `user.type`; no `user` reads as not a Bot.
+        assert_eq!(
+            issues.iter().map(|i| i.author_is_bot).collect::<Vec<_>>(),
+            [false, false, false, true]
+        );
         assert_eq!(issues[1].body, "");
         assert_eq!(issues[1].author_association, "");
         assert_eq!(

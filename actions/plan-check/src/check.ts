@@ -1,12 +1,32 @@
 /**
- * The plan check: unknown ids, seams without an O-row, schema validity. Legacy front-matter keys
- * are counted and reported, never failed (ADR 0027). One log line per plan,
+ * The plan check: unknown ids, seams without an O-row, schema validity, and an approval record
+ * that no longer names the plan (ADR 0054). Legacy front-matter keys are counted and reported,
+ * never failed (ADR 0027). One log line per plan,
  * named `rubato.plan.check`, carrying the `rubato.*` attributes from `rubato-protocol::otel`.
  */
 import { readFileSync } from "node:fs";
 import { mapIds, seamJoins, type SystemMap } from "./map.ts";
 import { legacyKeys, parsePlan, PlanParseError, type DataModel, type Plan, type PlanFlow } from "./parse-plan.ts";
+import { planSha } from "./plan-sha.ts";
 import { validator } from "./schema.ts";
+
+/**
+ * The plan's approval record against its text (ADR 0054): `none` without the keys, `partial`
+ * with some missing, `current` when `approved_sha` names the plan's approval hash, else `stale`.
+ */
+export type ApprovalCheck = "none" | "partial" | "current" | "stale";
+
+export function approvalCheck(plan: Plan, text: string): ApprovalCheck {
+  const r = plan.approval;
+  if (!r) {
+    return "none";
+  }
+  if (!r.approved_by || !r.approved_at || !r.approved_sha) {
+    return "partial";
+  }
+  const approved = r.approved_sha.toLowerCase();
+  return approved.length >= 7 && planSha(text).startsWith(approved) ? "current" : "stale";
+}
 
 export interface PlanCheckResult {
   path: string;
@@ -28,6 +48,8 @@ export interface PlanCheckResult {
   modelsOffSeam: string[];
   /** Front-matter keys ADR 0027 moved to issue comments (review, approval, track, status). Reported, never failed. */
   legacyKeys: string[];
+  /** The approval record against the plan's hash (ADR 0054); `partial` and `stale` fail. */
+  approval: ApprovalCheck;
   ok: boolean;
 }
 
@@ -105,6 +127,7 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
     modelsOffPart: [],
     modelsOffSeam: [],
     legacyKeys: legacyKeys(text),
+    approval: "none",
     ok: false,
   };
   let plan: Plan;
@@ -129,13 +152,16 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
   result.dataModelsChecked = plan.data_models?.length ?? 0;
   result.modelsOffPart = modelsOffPart(plan).map((m) => `${m.model} on ${m.part}`);
   result.modelsOffSeam = modelsOffSeam(plan).map((m) => `${m.model} over ${m.crosses}`);
+  result.approval = approvalCheck(plan, text);
   result.ok =
     result.schemaErrors.length === 0 &&
     result.unknownIds.length === 0 &&
     result.seamsWithoutORow.length === 0 &&
     result.flowsOffSeam.length === 0 &&
     result.modelsOffPart.length === 0 &&
-    result.modelsOffSeam.length === 0;
+    result.modelsOffSeam.length === 0 &&
+    result.approval !== "partial" &&
+    result.approval !== "stale";
   return result;
 }
 
@@ -160,6 +186,7 @@ export function logLine(r: PlanCheckResult): Record<string, unknown> {
     models_off_seam: r.modelsOffSeam,
     legacy_keys: r.legacyKeys.length,
     legacy_key_names: r.legacyKeys,
+    approval: r.approval,
     schema_errors: r.schemaErrors,
     parse_error: r.parseError,
     ok: r.ok,

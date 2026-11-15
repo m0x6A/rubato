@@ -5,7 +5,9 @@ mod apply;
 mod arm;
 mod sum;
 mod task;
+mod transcript;
 
 pub use arm::after_hook;
 pub use sum::{Spend, Usage, price_for, sum_file, sum_text};
 pub use task::{SpendJob, run};
+pub use transcript::{MAX_TRANSCRIPT_BYTES, Refusal, claude_projects_dir, read_transcript};

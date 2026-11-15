@@ -16,12 +16,21 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
+/// The server answered 401 to this companion's token: its pairing was revoked (ADR 0062).
+#[derive(Debug, thiserror::Error)]
+#[error("pairing revoked: the server refused this companion's token")]
+pub struct Revoked;
+
 #[derive(Clone)]
 pub struct Identity {
     pub companion_id: Uuid,
     pub user: String,
     pub version: String,
     pub token: String,
+    /// What this companion announces in Hello (`rubato_protocol::capability`).
+    pub capabilities: Vec<String>,
+    /// Interactive or headless (ADR 0062), sent in Hello.
+    pub client: rubato_protocol::ClientKind,
 }
 
 pub struct Client {
@@ -99,6 +108,14 @@ impl Client {
                 // Not a lost connection: reconnecting cannot make `seq.json` writable, and
                 // sending without a reservation would reuse numbers after the next restart.
                 Err(e) if e.is::<ReservationError>() => return Err(e),
+                // Reconnecting with a revoked token can never succeed: the companion stops, and
+                // with it every turn it started (plan 122 §D14).
+                Err(e) if e.is::<Revoked>() => {
+                    tracing::error!(
+                        "pairing revoked: the server refuses this companion's token; re-pair with `rubato-companion pair`"
+                    );
+                    return Err(e);
+                }
                 Err(e) => {
                     let _ = connected.send(false);
                     tracing::warn!(error = %e, retry_in_secs = backoff.as_secs(), "server connection lost");
@@ -126,9 +143,14 @@ impl Client {
             "authorization",
             format!("Bearer {}", self.identity.token).parse()?,
         );
-        let (ws, _) = tokio_tungstenite::connect_async(req)
-            .await
-            .context("websocket connect")?;
+        let (ws, _) = match tokio_tungstenite::connect_async(req).await {
+            Ok(ok) => ok,
+            // The server refuses a revoked pairing's token (ADR 0062): not a lost connection.
+            Err(tokio_tungstenite::tungstenite::Error::Http(r)) if r.status() == 401 => {
+                return Err(Revoked.into());
+            }
+            Err(e) => return Err(anyhow::Error::from(e).context("websocket connect")),
+        };
         let (mut sink, mut stream) = ws.split();
         let hello = self.envelope(CompanionMessage::Hello {
             companion_id: self.identity.companion_id,
@@ -136,6 +158,8 @@ impl Client {
             companion_version: self.identity.version.clone(),
             protocol_version: PROTOCOL_VERSION,
             last_seen_server_seq: self.last_server_seq,
+            capabilities: self.identity.capabilities.clone(),
+            client: self.identity.client,
         })?;
         let hello_seq = hello.seq;
         sink.send(Message::Text(serde_json::to_string(&hello)?.into()))
@@ -282,6 +306,8 @@ mod tests {
             user: "m0x6A".into(),
             version: "test".into(),
             token: "t".into(),
+            capabilities: vec![],
+            client: rubato_protocol::ClientKind::Interactive,
         }
     }
 
@@ -314,6 +340,39 @@ mod tests {
             .downcast_ref::<ReservationError>()
             .unwrap_or_else(|| panic!("not a reservation error: {e:#}"));
         assert_eq!(reservation.path, seq_path);
+    }
+
+    /// ADR 0062: a 401 at connect means the pairing was revoked. The client ends with `Revoked`
+    /// instead of retrying forever, so the companion stops and its turns with it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_401_at_connect_ends_the_client_as_revoked() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = s.read(&mut buf).await;
+                let _ = s
+                    .write_all(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let seq = Reservation::open(dir.path(), 0).unwrap();
+        let (_out_tx, out_rx) = mpsc::unbounded_channel();
+        let (in_tx, _in_rx) = mpsc::unbounded_channel();
+        let (connected, _connected_rx) = watch::channel(false);
+        let (_shutdown_tx, shutdown) = watch::channel(false);
+        let client = Client::new(format!("http://{addr}"), identity(), seq, 0);
+        let r = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.run(out_rx, in_tx, connected, shutdown),
+        )
+        .await
+        .expect("run returns instead of retrying a revoked token");
+        let e = r.expect_err("a revoked pairing is an error");
+        assert!(e.is::<Revoked>(), "not Revoked: {e:#}");
     }
 
     #[tokio::test(flavor = "current_thread")]

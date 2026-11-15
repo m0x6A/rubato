@@ -3,7 +3,7 @@
 //! - `companion_events` is read by its own insert: `(companion_id, seq)` is the replay dedupe
 //!   key (ADR 0012), so `record_event` answering false is how a replayed envelope is recognised.
 //!   Nothing else selects from it.
-//! - `session_snapshots` is read by `all_sessions`.
+//! - `session_snapshots` is read by `all_sessions` and `companion_has_session_on`.
 //! - `stale_events` has no reader. It is kept as the audit record of a never-silent event
 //!   (`rubato.session.stale`); the live signal is the log event and the alert, not this table
 //!   (plan 29 S6, D2).
@@ -11,7 +11,7 @@
 use crate::kernel::db::ts;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rubato_protocol::{SessionState, StaleSession};
+use rubato_protocol::{IssueRef, SessionState, StaleSession};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -49,6 +49,46 @@ pub async fn all_sessions(db: &SqlitePool) -> Result<Vec<SessionState>> {
         let v: Vec<SessionState> =
             serde_json::from_str(&r.get::<String, _>("sessions")).unwrap_or_default();
         out.extend(v);
+    }
+    Ok(out)
+}
+
+/// Whether this companion's stored snapshot has a session on `issue` (repo without case).
+pub async fn companion_has_session_on(
+    db: &SqlitePool,
+    companion_id: Uuid,
+    issue: &IssueRef,
+) -> Result<bool> {
+    let row = sqlx::query("SELECT sessions FROM session_snapshots WHERE companion_id = ?")
+        .bind(companion_id.to_string())
+        .fetch_optional(db)
+        .await?;
+    let Some(row) = row else { return Ok(false) };
+    let sessions: Vec<SessionState> =
+        serde_json::from_str(&row.get::<String, _>("sessions")).unwrap_or_default();
+    Ok(sessions.iter().any(|s| {
+        s.issue
+            .as_ref()
+            .is_some_and(|i| i.number == issue.number && i.repo.eq_ignore_ascii_case(&issue.repo))
+    }))
+}
+
+/// Each companion's stored snapshot, by the pairing's companion id: what the kernel's session
+/// cache starts from.
+pub async fn session_snapshots(
+    db: &SqlitePool,
+) -> Result<std::collections::HashMap<Uuid, Vec<SessionState>>> {
+    let rows = sqlx::query("SELECT companion_id, sessions FROM session_snapshots")
+        .fetch_all(db)
+        .await?;
+    let mut out = std::collections::HashMap::new();
+    for r in rows {
+        let Ok(id) = r.get::<String, _>("companion_id").parse::<Uuid>() else {
+            continue;
+        };
+        let v: Vec<SessionState> =
+            serde_json::from_str(&r.get::<String, _>("sessions")).unwrap_or_default();
+        out.insert(id, v);
     }
     Ok(out)
 }
