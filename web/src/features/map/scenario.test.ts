@@ -37,7 +37,7 @@ describe("a scenario resolved to the arrows the map draws (ADR 0024)", () => {
 
   it("every step of the team's own scenarios resolves", () => {
     const map = realMap();
-    expect((map.scenarios ?? []).map((s) => s.id)).toEqual(["start-a-session", "plan-comes-back", "propose-a-map-change"]);
+    expect((map.scenarios ?? []).map((s) => s.id)).toEqual(["start-a-session", "plan-comes-back", "propose-a-map-change", "plan-in-rubato"]);
     for (const sc of map.scenarios ?? []) {
       expect(resolveScenario(sc, seams(map)).unplaced, sc.id).toBe(0);
     }

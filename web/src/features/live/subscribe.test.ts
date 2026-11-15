@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onNeedsLogin, resetNeedsLogin } from "../../shared/api.ts";
+import { emitWebEvent, onWebEvent } from "./events.ts";
 import { subscribe } from "./subscribe.ts";
 
 class FakeSocket {
@@ -72,6 +73,47 @@ describe("subscribe (S24)", () => {
     FakeSocket.instances[0]?.onclose?.();
     await vi.advanceTimersByTimeAsync(1000);
     expect(FakeSocket.instances).toHaveLength(2);
+    stop();
+  });
+});
+
+describe("every event reaches the views that listen (plan 122)", () => {
+  it("a frame from the socket goes to onChanged and to every onWebEvent listener, until it stops listening", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    const onChanged = vi.fn();
+    const heard = vi.fn();
+    const off = onWebEvent(heard);
+    const stop = subscribe(onChanged, () => {});
+    const ev = { type: "updated", at: "2026-11-14T10:00:00Z", resource: { kind: "launch_messages", launch_id: "l1" } };
+    FakeSocket.instances[0]?.onmessage?.({ data: JSON.stringify(ev) });
+    expect(onChanged).toHaveBeenCalledWith(ev);
+    expect(heard).toHaveBeenCalledWith(ev);
+
+    off();
+    FakeSocket.instances[0]?.onmessage?.({ data: JSON.stringify(ev) });
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(onChanged).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it("an undecodable frame reaches nobody, and a listener that throws does not stop the others", () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const first = vi.fn(() => {
+      throw new Error("boom");
+    });
+    const second = vi.fn();
+    const offFirst = onWebEvent(first);
+    const offSecond = onWebEvent(second);
+    const stop = subscribe(() => {}, () => {});
+    FakeSocket.instances[0]?.onmessage?.({ data: "not json" });
+    expect(first).not.toHaveBeenCalled();
+    emitWebEvent({ type: "changed", at: "2026-11-14T10:00:00Z", reason: "hook" });
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalledTimes(1);
+    logged.mockRestore();
+    offFirst();
+    offSecond();
     stop();
   });
 });

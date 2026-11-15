@@ -270,6 +270,7 @@ mod tests {
                 repo: Some("o/node-only".into()),
                 path: None,
                 description: None,
+                service: None,
             }],
             seams: vec![],
             scenarios: vec![],
@@ -562,6 +563,7 @@ mod workspace_tests {
                     repo: Some("acme/auth".into()),
                     path: None,
                     description: None,
+                    service: None,
                 })
                 .collect(),
             seams: vec![],

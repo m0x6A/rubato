@@ -1,6 +1,7 @@
 //! Server configuration from the environment.
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use rubato_protocol::Limits;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -179,6 +180,10 @@ pub struct Config {
     pub default_spend_cap_usd: f64,
     pub default_attempt_limit: u32,
     pub pairing_ttl_secs: i64,
+    /// The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, RFC 3339, ADR 0054): `Approved:` comments
+    /// count only when posted before it, *Accept plan* refuses after it, and approval in Rubato
+    /// is on once it is set. Unset: comments count as before and approval in Rubato is refused.
+    pub comment_approvals_until: Option<DateTime<Utc>>,
     /// Problems found while reading the environment. `main` logs each as `warn!` once the
     /// subscriber exists, since `from_env` runs before it does (design D14).
     pub warnings: Vec<String>,
@@ -299,8 +304,27 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3),
             pairing_ttl_secs: 900,
+            comment_approvals_until: comment_approvals_until(
+                env("RUBATO_COMMENT_APPROVALS_UNTIL").as_deref(),
+            )?,
             warnings,
         })
+    }
+
+    /// The `cutover` line at start, at info: the time, or `unset` (plan 122 §D10).
+    pub fn report_cutover(&self) {
+        match self.comment_approvals_until {
+            Some(at) => tracing::info!(
+                cutover = %at.to_rfc3339(),
+                means = "approval comments count only before this time; plans are approved in Rubato",
+                "cutover"
+            ),
+            None => tracing::info!(
+                cutover = "unset",
+                means = "approval comments count; approval in Rubato is off",
+                "cutover"
+            ),
+        }
     }
 
     /// Whether a traffic source is configured: the development file or the production one.
@@ -381,9 +405,24 @@ impl Config {
             default_spend_cap_usd: 25.0,
             default_attempt_limit: 3,
             pairing_ttl_secs: 900,
+            comment_approvals_until: None,
             warnings: Vec::new(),
         }
     }
+}
+
+/// `RUBATO_COMMENT_APPROVALS_UNTIL`: an RFC 3339 time, or unset. A value that does not read
+/// stops the start: a cutover silently unset would keep counting comments the team thinks no
+/// longer count.
+fn comment_approvals_until(v: Option<&str>) -> Result<Option<DateTime<Utc>>> {
+    v.map(|t| {
+        DateTime::parse_from_rfc3339(t.trim())
+            .map(|d| d.with_timezone(&Utc))
+            .with_context(|| {
+                format!("RUBATO_COMMENT_APPROVALS_UNTIL={t:?} is not an RFC 3339 time")
+            })
+    })
+    .transpose()
 }
 
 fn trim_slash(url: String) -> String {
@@ -525,6 +564,43 @@ mod tests {
         assert_eq!(clamp_poll_secs(300, &mut w), 300);
         assert_eq!(clamp_poll_secs(30, &mut w), 30);
         assert!(w.is_empty(), "{w:?}");
+    }
+
+    /// ADR 0054: the cutover reads as RFC 3339 in any offset, is absent when unset, and a value
+    /// that does not read stops the start.
+    #[test]
+    fn the_cutover_is_an_rfc3339_time_or_unset() {
+        assert_eq!(comment_approvals_until(None).unwrap(), None);
+        let at = comment_approvals_until(Some("2026-11-20T09:00:00+01:00"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(at.to_rfc3339(), "2026-11-20T08:00:00+00:00");
+        for bad in ["2026-11-20", "tomorrow", "2026-11-20 08:00"] {
+            let e = comment_approvals_until(Some(bad)).unwrap_err().to_string();
+            assert!(e.contains("RUBATO_COMMENT_APPROVALS_UNTIL"), "{e}");
+        }
+    }
+
+    /// One `cutover` line at info, saying the time or `unset`.
+    #[test]
+    fn the_cutover_is_logged_once_at_start() {
+        let (events, _guard) = crate::kernel::telemetry::capture::start();
+        let mut c = Config::for_tests("sqlite::memory:".into(), "m0x6A");
+        c.report_cutover();
+        c.comment_approvals_until = comment_approvals_until(Some("2026-11-20T08:00:00Z")).unwrap();
+        c.report_cutover();
+        let events = events.lock().unwrap();
+        let lines: Vec<_> = events.iter().filter(|e| e.message == "cutover").collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().all(|e| e.level == tracing::Level::INFO));
+        assert_eq!(
+            lines[0].fields.get("cutover").map(String::as_str),
+            Some("unset")
+        );
+        assert_eq!(
+            lines[1].fields.get("cutover").map(String::as_str),
+            Some("2026-11-20T08:00:00+00:00")
+        );
     }
 
     /// #105: a typo cannot page for every companion or empty every bar.

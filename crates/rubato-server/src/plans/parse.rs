@@ -4,7 +4,7 @@
 
 use rubato_protocol::{
     AffectedPart, Assumption, AssumptionScope, DataModel, DataModelKind, FlowKind, IssueRef,
-    ModelChange, ORow, PartStatus, Plan, PlanFlow,
+    ModelChange, ORow, PartStatus, Plan, PlanApprovalRecord, PlanDecision, PlanFlow,
 };
 use thiserror::Error;
 
@@ -268,7 +268,17 @@ pub fn parse_plan(text: &str, path: &str) -> Result<Plan, PlanParseError> {
         assumed: vec![],
         flows: vec![],
         data_models: vec![],
+        decisions: vec![],
+        approval: None,
     };
+    let record = PlanApprovalRecord {
+        approved_by: get("approved_by").map(str::to_owned),
+        approved_at: get("approved_at").map(str::to_owned),
+        approved_sha: get("approved_sha").map(str::to_owned),
+    };
+    if record != PlanApprovalRecord::default() {
+        plan.approval = Some(record);
+    }
 
     let parts = table_after_heading(fm.body, "affected parts", "affected parts")?
         .ok_or(PlanParseError::NoAffectedParts)?;
@@ -400,6 +410,31 @@ pub fn parse_plan(text: &str, path: &str) -> Result<Plan, PlanParseError> {
             });
         }
     }
+    if let Some(t) = table_after_heading(fm.body, "decisions", "decisions")? {
+        let id = t
+            .headers
+            .iter()
+            .position(|h| h == "#")
+            .or_else(|| column(&t.headers, &["id"]))
+            .ok_or_else(|| PlanParseError::MissingColumn {
+                section: "decisions",
+                column: "id",
+                headers: t.headers.join(", "),
+            })?;
+        let decision = require(&t, "decisions", "decision", &["decision"])?;
+        let chosen = require(&t, "decisions", "chosen", &["chosen"])?;
+        let why = column(&t.headers, &["why"]);
+        let by = column(&t.headers, &["decided by", "by"]);
+        for row in &t.rows {
+            plan.decisions.push(PlanDecision {
+                id: clean_id(&cell(row, id)),
+                decision: cell(row, decision),
+                chosen: cell(row, chosen),
+                why: opt_cell(row, why),
+                decided_by: opt_cell(row, by),
+            });
+        }
+    }
     Ok(plan)
 }
 
@@ -520,6 +555,44 @@ mod tests {
             Err(PlanParseError::BadFlowKind("magic".into()))
         );
         println!("checked 4 plan fixtures, 6 flows");
+    }
+
+    /// `## Decisions` (ADR 0056) and the approval record (ADR 0054), as the TypeScript parser reads
+    /// them from the same fixtures.
+    #[test]
+    fn decisions_and_the_approval_record_match_typescript() {
+        let text = |name: &str| {
+            std::fs::read_to_string(root().join(format!("schema/fixtures/plans/{name}"))).unwrap()
+        };
+        let read = |name: &str| {
+            let p = format!("schema/fixtures/plans/{name}");
+            parse_plan(&text(name), &p).unwrap()
+        };
+        let plan = read("decisions.md");
+        let expected: Plan = serde_json::from_str(&text("decisions.json")).unwrap();
+        assert_eq!(plan, expected);
+        assert_eq!(plan.decisions.len(), 2);
+        assert!(read("valid.md").decisions.is_empty());
+        assert!(read("valid.md").approval.is_none());
+
+        let current = read("approval-current.md").approval.unwrap();
+        assert!(current.is_complete());
+        assert_eq!(current.approved_by.as_deref(), Some("m0x6A"));
+        assert_eq!(current.approved_at.as_deref(), Some("2026-11-20T10:00:00Z"));
+        assert_eq!(
+            current.approved_sha.as_deref(),
+            Some(rubato_protocol::approval_hash(&text("approval-current.md")).as_str()),
+            "the record names the plan it sits in"
+        );
+        let stale = read("approval-stale.md").approval.unwrap();
+        assert_ne!(
+            stale.approved_sha.as_deref(),
+            Some(rubato_protocol::approval_hash(&text("approval-stale.md")).as_str())
+        );
+        let partial = read("approval-partial.md").approval.unwrap();
+        assert!(!partial.is_complete());
+        assert!(partial.approved_at.is_none());
+        println!("checked 5 plan fixtures, 2 decisions, 3 approval records");
     }
 
     #[test]

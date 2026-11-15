@@ -6,4 +6,4 @@ mod downsample;
 mod store;
 
 pub use downsample::{MAX_POINTS, downsample};
-pub use store::{record, series};
+pub use store::{add_cost, record, series};

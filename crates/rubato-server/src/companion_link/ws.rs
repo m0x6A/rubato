@@ -4,7 +4,10 @@
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
-use crate::{launch, pairing, queue, spend_history};
+use crate::{
+    approve, launch, pairing, plan_drafts, queue, rooms, session_log, session_messages,
+    spend_history,
+};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -27,8 +30,9 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim)
-        .unwrap_or("");
-    let pairing = match pairing::authenticate(&app.db, token).await {
+        .unwrap_or("")
+        .to_owned();
+    let pairing = match pairing::authenticate(&app.db, &token).await {
         Ok(Some(p)) if p.revoked_at.is_none() => p,
         Ok(_) => {
             app.metrics
@@ -41,7 +45,35 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    ws.on_upgrade(move |socket| handle(app, pairing, socket))
+    ws.on_upgrade(move |socket| handle(app, pairing, token, socket))
+}
+
+/// The pairing again, read by the socket's token before an envelope is recorded (#161). `None`
+/// when it was revoked, re-paired with another token, or cannot be read: the envelope is
+/// refused and the socket closed. Counted as `rubato.events.dropped{rubato.reason="revoked"}`.
+async fn still_paired(
+    app: &App,
+    token: &str,
+    companion_id: Uuid,
+    seq: u64,
+) -> Option<pairing::PairingRow> {
+    let row = match pairing::authenticate(&app.db, token).await {
+        Ok(Some(p)) if p.revoked_at.is_none() && p.companion_id == companion_id => return Some(p),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::error!(rubato.companion_id = %companion_id, error = %e, "pairing re-check failed");
+            None
+        }
+    };
+    refuse_revoked(&app.metrics, companion_id, seq);
+    row
+}
+
+fn refuse_revoked(metrics: &Metrics, companion_id: Uuid, seq: u64) {
+    tracing::warn!(rubato.companion_id = %companion_id, seq, "envelope from a revoked pairing dropped");
+    metrics
+        .events_dropped
+        .add(1, &[KeyValue::new(attr::DROP_REASON, "revoked")]);
 }
 
 /// A bookkeeping write on the companion socket that failed. The envelope is still answered,
@@ -72,15 +104,16 @@ async fn send_env(
     }
 }
 
-async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
+async fn handle(app: App, mut pairing: pairing::PairingRow, token: String, socket: WebSocket) {
     let companion_id = pairing.companion_id;
     let user = pairing.user.clone();
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
-    app.companions
-        .lock()
-        .unwrap()
-        .insert(companion_id, CompanionConn { tx });
+    let entry = CompanionConn::new(tx, app.clock.now());
+    let conn = entry.conn;
+    // A newer socket for the same companion replaces the entry; dropping the older sender
+    // closes the older socket below.
+    app.companions.lock().unwrap().insert(companion_id, entry);
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
@@ -88,15 +121,22 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
     tracing::info!(%companion_id, %user, "companion connected");
     app.notify("companion connected");
 
-    loop {
+    let reason = loop {
         tokio::select! {
-            Some(msg) = rx.recv() => {
+            msg = rx.recv() => {
+                // The sender is gone: the pairing was revoked (`pairing::revoke` drops it after
+                // its `Error { auth }`), or a newer socket replaced this one. Close, so nothing
+                // more from this companion is applied (ADR 0062, #161).
+                let Some(msg) = msg else {
+                    let _ = sink.close().await;
+                    break "sender_dropped";
+                };
                 if !send_env(&app, companion_id, &mut sink, msg).await {
-                    break;
+                    break "closed";
                 }
             }
             inbound = stream.next() => {
-                let Some(Ok(frame)) = inbound else { break };
+                let Some(Ok(frame)) = inbound else { break "closed" };
                 match frame {
                     Message::Text(text) => {
                         let env: CompanionEnvelope = match serde_json::from_str(&text) {
@@ -107,26 +147,43 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
                                 continue;
                             }
                         };
+                        let Some(fresh) = still_paired(&app, &token, companion_id, env.seq).await else {
+                            let _ = send_env(&app, companion_id, &mut sink, ServerMessage::Error {
+                                code: "auth".into(),
+                                message: "pairing revoked".into(),
+                            }).await;
+                            let _ = sink.send(Message::Close(None)).await;
+                            break "revoked";
+                        };
+                        pairing = fresh;
                         if let Some(reply) = on_envelope(&app, &pairing, env).await
                             && !send_env(&app, companion_id, &mut sink, reply).await {
-                            break;
+                            break "closed";
                         }
                     }
                     Message::Ping(p) => {
                         let _ = sink.send(Message::Pong(p)).await;
                     }
-                    Message::Close(_) => break,
+                    Message::Close(_) => break "closed",
                     _ => {}
                 }
             }
         }
+    };
+    {
+        let mut companions = app.companions.lock().unwrap();
+        if companions
+            .get(&companion_id)
+            .is_some_and(|c| c.conn == conn)
+        {
+            companions.remove(&companion_id);
+        }
     }
-    app.companions.lock().unwrap().remove(&companion_id);
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
     );
-    tracing::info!(%companion_id, "companion disconnected");
+    tracing::info!(%companion_id, reason, "companion disconnected");
     app.notify("companion disconnected");
 }
 
@@ -165,16 +222,25 @@ async fn on_envelope(
         CompanionMessage::Launch(_) => "launch",
         CompanionMessage::CapHit(_) => "cap_hit",
         CompanionMessage::Stale(_) => "stale",
+        CompanionMessage::SessionMessageResult(_) => "session_message_result",
+        CompanionMessage::Draft(_) => "draft",
+        CompanionMessage::HandoffReport(_) => "handoff_report",
+        CompanionMessage::RoomReply(_) => "room_reply",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
     async move {
         let now = app.clock.now();
         if !matches!(env.message, CompanionMessage::Ack { .. }) {
-            let payload = serde_json::to_value(&env.message).unwrap_or_default();
+            let payload = stored_payload(&env.message);
             match store::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
                 Ok(false) => {
                     on_replay(&app.metrics, companion_id, &env);
+                    // A result whose envelope was recorded but not applied (a crash in between)
+                    // must still settle its message; applying it twice changes nothing.
+                    if let CompanionMessage::SessionMessageResult(r) = &env.message {
+                        session_messages::on_result(app, companion_id, r).await;
+                    }
                     return Some(ServerMessage::Ack { seq: env.seq });
                 }
                 Ok(true) => {}
@@ -193,11 +259,14 @@ async fn on_envelope(
             env.seq,
             pairing::touch(&app.db, companion_id, now).await,
         );
+        app.touch_companion(companion_id, now);
         match env.message {
             CompanionMessage::Hello {
                 companion_id: claimed,
                 protocol_version,
                 user,
+                capabilities,
+                client,
                 ..
             } => {
                 if claimed != companion_id || user != pairing.user {
@@ -217,11 +286,26 @@ async fn on_envelope(
                         ),
                     });
                 }
+                app.set_capabilities(companion_id, capabilities);
+                observe(
+                    "set_client",
+                    companion_id,
+                    env.seq,
+                    pairing::set_client(&app.db, companion_id, client).await,
+                );
+                // Queued here before the Welcome is answered: the socket sends the Welcome first.
+                session_messages::on_hello(app, companion_id).await;
                 Some(ServerMessage::Welcome {
                     server_version: crate::kernel::VERSION.to_owned(),
                     protocol_version: PROTOCOL_VERSION,
                     last_seen_companion_seq: pairing.last_companion_seq,
                     limits: app.config.limits,
+                    capabilities: vec![
+                        rubato_protocol::capability::SESSION_MESSAGES.to_owned(),
+                        rubato_protocol::capability::DRAFTS.to_owned(),
+                        rubato_protocol::capability::HANDOFF_REPORTS.to_owned(),
+                        rubato_protocol::capability::ROOM_REPLIES.to_owned(),
+                    ],
                 })
             }
             CompanionMessage::Heartbeat(h) => {
@@ -236,6 +320,10 @@ async fn on_envelope(
             }
             CompanionMessage::Hook(h) => {
                 tracing::info!(rubato.session_id = %h.session_id, rubato.hook_event = ?h.hook_event_name, "hook");
+                session_messages::on_hook(app, companion_id, &h).await;
+                session_log::on_hook(app, companion_id, &h).await;
+                // After the log has the Stop: a session-mode room turn's reply (ADR 0057).
+                rooms::on_hook(app, companion_id, &h).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {
@@ -253,6 +341,7 @@ async fn on_envelope(
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
+                app.set_sessions(companion_id, sessions.clone());
                 // Keyed by the pairing's companion id, never the one a session claims.
                 observe(
                     "record_spend",
@@ -262,6 +351,7 @@ async fn on_envelope(
                         .await,
                 );
                 record_sessions_by_state(&app.metrics, companion_id, &sessions);
+                session_messages::on_sessions(app, &sessions).await;
                 app.notify("sessions");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
@@ -270,6 +360,22 @@ async fn on_envelope(
                     Ok(Some(issue)) => {
                         tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result");
                         settle_queue(app, companion_id, &issue, &result).await;
+                        if let rubato_protocol::LaunchResult::Started {
+                            command_id,
+                            draft_restored,
+                            restore_skipped,
+                            ..
+                        } = &result
+                        {
+                            // ADR 0053, plan 122 §D5: what became of the draft, and an approval
+                            // that waited for this launch.
+                            if *draft_restored {
+                                tracing::info!(rubato.issue = %issue, launch_id = %command_id, "draft restored into the new worktree");
+                            } else if let Some(why) = restore_skipped {
+                                tracing::warn!(rubato.issue = %issue, launch_id = %command_id, reason = why.name(), "draft not restored");
+                            }
+                            approve::on_launch_started(app, *command_id).await;
+                        }
                     }
                     // Unknown, or sent to another companion (#162): nothing was written.
                     Ok(None) => {
@@ -308,6 +414,37 @@ async fn on_envelope(
                     store::store_stale(&app.db, &s).await,
                 );
                 app.notify("stale");
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::Draft(bundle) => {
+                // The launch decides the owner; a bundle for a launch of another companion, or
+                // for another issue, is not this companion's to send.
+                match launch::launch_target(&app.db, bundle.launch_id).await {
+                    Ok(Some(t)) if t.companion_id == companion_id && t.issue == bundle.issue => {
+                        plan_drafts::on_draft(app, &bundle, &t.user).await;
+                    }
+                    Ok(_) => {
+                        app.metrics
+                            .drafts_refused
+                            .add(1, &[KeyValue::new(attr::DROP_REASON, "unknown_launch")]);
+                        tracing::warn!(rubato.issue = %bundle.issue, "draft bundle for a launch this companion did not start");
+                    }
+                    Err(e) => tracing::error!(error = %format!("{e:#}"), "draft: reading the launch failed"),
+                }
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::HandoffReport(r) => {
+                // Recorded on the approval only for this companion's own launch of its issue.
+                approve::on_handoff_report(app, companion_id, &r).await;
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::RoomReply(r) => {
+                // Taken only from the companion the turn was sent to (ADR 0057).
+                rooms::on_room_reply(app, companion_id, &r).await;
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::SessionMessageResult(r) => {
+                session_messages::on_result(app, companion_id, &r).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Ack { .. } => None,
@@ -430,12 +567,51 @@ async fn settle_queue(
     }
 }
 
+/// The envelope as it is kept in `companion_events`. A hook's raw Claude Code payload is never
+/// stored, even from a companion that still sends it (ADR 0052), and the new kinds are kept as
+/// `{}` (plan 122 §D2): deduplication needs only the sequence, and the row's `kind` says what
+/// it was.
+fn stored_payload(m: &CompanionMessage) -> serde_json::Value {
+    match m {
+        CompanionMessage::Hook(h) if h.payload.is_some() => {
+            let mut h = h.clone();
+            h.payload = None;
+            serde_json::to_value(CompanionMessage::Hook(h)).unwrap_or_default()
+        }
+        CompanionMessage::SessionMessageResult(_) | CompanionMessage::Draft(_) => {
+            serde_json::json!({})
+        }
+        other => serde_json::to_value(other).unwrap_or_default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kernel::telemetry::{capture, metric_reader};
     use rubato_protocol::otel::metric;
     use rubato_protocol::{IssueRef, StateSource};
+
+    /// An old companion still sends the raw payload; the server never stores it (ADR 0052).
+    #[test]
+    fn a_hooks_raw_payload_is_not_stored() {
+        let ev = rubato_protocol::HookEvent::from_payload(
+            serde_json::json!({"session_id": "s", "hook_event_name": "PostToolUse", "cwd": "/w",
+                "tool_name": "Bash", "tool_response": {"stdout": "TOKEN=abc"}}),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        let m = CompanionMessage::Hook(ev);
+        let stored = stored_payload(&m).to_string();
+        assert!(!stored.contains("TOKEN=abc"), "{stored}");
+        assert!(stored.contains(r#""tool_name":"Bash""#), "{stored}");
+        let r = CompanionMessage::SessionMessageResult(rubato_protocol::SessionMessageResult {
+            message_id: Uuid::nil(),
+            outcome: rubato_protocol::SessionMessageOutcome::Delivered,
+            at: chrono::Utc::now(),
+        });
+        assert_eq!(stored_payload(&r), serde_json::json!({}));
+    }
 
     #[test]
     fn a_remote_spelled_differently_takes_the_maps_spelling() {
@@ -483,6 +659,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_revoked_envelope_is_counted_as_dropped_revoked() {
+        let (reader, metrics) = metric_reader::start();
+        refuse_revoked(&metrics, Uuid::new_v4(), 4);
+        let points = reader.points(metric::EVENTS_DROPPED);
+        let revoked = points
+            .iter()
+            .find(|p| p.attrs[attr::DROP_REASON] == "revoked")
+            .map(|p| p.value);
+        assert_eq!(revoked, Some(1), "{points:?}");
+    }
+
     fn session(companion_id: Uuid, status: SessionStatus) -> SessionState {
         SessionState {
             session_id: Some("s1".into()),
@@ -500,6 +688,8 @@ mod tests {
             spend_usd: None,
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         }
     }
 
@@ -635,6 +825,7 @@ mod tests {
             last_seen: None,
             server_seq: 0,
             last_companion_seq: 0,
+            client: rubato_protocol::ClientKind::Interactive,
         };
         (app, reader, pairing, tmp)
     }
@@ -668,6 +859,28 @@ mod tests {
             .iter()
             .map(|r| (r.get("bucket"), r.get("usd")))
             .collect()
+    }
+
+    /// Plan 122 §D6: every snapshot replaces that companion's entry in the kernel's session
+    /// cache, which slices that may not name this one read; the stored snapshots, read back by
+    /// `session_snapshots` at start, give the same picture.
+    #[tokio::test(flavor = "current_thread")]
+    async fn each_snapshot_replaces_the_companions_cached_sessions() {
+        let (app, _reader, pairing, _tmp) = spend_app().await;
+        let c = pairing.companion_id;
+        assert!(app.latest_sessions().is_empty());
+        on_envelope(&app, &pairing, spend_snapshot(c, 1, 1.0)).await;
+        assert_eq!(app.latest_sessions().len(), 1);
+        let mut idle = spend_snapshot(c, 2, 2.0);
+        if let CompanionMessage::Sessions { sessions } = &mut idle.message {
+            sessions[0].status = SessionStatus::Idle;
+        }
+        on_envelope(&app, &pairing, idle).await;
+        let cached = app.latest_sessions();
+        assert_eq!(cached.len(), 1, "replaced, not added");
+        assert_eq!(cached[0].status, SessionStatus::Idle);
+        let stored = store::session_snapshots(&app.db).await.unwrap();
+        assert_eq!(stored.get(&c), Some(&cached));
     }
 
     /// ADR 0012: a replayed envelope is only acked. Spend history never sees it.

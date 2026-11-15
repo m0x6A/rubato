@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CallInRequest",
+  "description": "Call an agent in (`POST` `routes::ROOM_AGENTS`): the owner's own launch joins at once; anyone\nelse's call is a request the owner answers.",
+  "type": "object",
+  "properties": {
+    "branch": {
+      "type": "string"
+    },
+    "launch_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "number": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "repo": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "repo",
+    "number",
+    "branch",
+    "launch_id"
+  ]
+}

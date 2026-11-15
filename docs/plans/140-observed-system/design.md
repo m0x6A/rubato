@@ -113,7 +113,7 @@ the merged attributes), and the Claude Code tool span as parent when tracing is 
 
 | Script | Span | Client spans (`peer.service`) |
 | --- | --- | --- |
-| `map.ts` | `rubato.skill.command` (`rubato.skill.command=map`) | `system-map` (reading the map file) |
+| `map.ts` | `rubato.skill.command` (`rubato.skill.subcommand=map`; the attribute cannot share the span's name in `otel.rs`) | `system-map` (reading the map file) |
 | `plan.ts init/check/sha/wait/adrs-pin` | `rubato.skill.command` | `plan-file`, `system-map`, `github` (each `gh` call in `wait`) |
 | `adrs.ts`, `adrs.ts accept` | `rubato.skill.command` | `github` |
 | `hooks.ts`, `install.ts` | `rubato.skill.command` | none |

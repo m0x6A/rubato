@@ -190,6 +190,7 @@ mod tests {
             repo: Some("o/r".into()),
             path: path.map(str::to_owned),
             description: Some(description.into()),
+            service: None,
         };
         SystemMap {
             version: 1,

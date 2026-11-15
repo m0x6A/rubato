@@ -73,6 +73,26 @@ pub async fn companion_has_session_on(
     }))
 }
 
+/// Each companion's stored snapshot, by the pairing's companion id: what the kernel's session
+/// cache starts from.
+pub async fn session_snapshots(
+    db: &SqlitePool,
+) -> Result<std::collections::HashMap<Uuid, Vec<SessionState>>> {
+    let rows = sqlx::query("SELECT companion_id, sessions FROM session_snapshots")
+        .fetch_all(db)
+        .await?;
+    let mut out = std::collections::HashMap::new();
+    for r in rows {
+        let Ok(id) = r.get::<String, _>("companion_id").parse::<Uuid>() else {
+            continue;
+        };
+        let v: Vec<SessionState> =
+            serde_json::from_str(&r.get::<String, _>("sessions")).unwrap_or_default();
+        out.insert(id, v);
+    }
+    Ok(out)
+}
+
 pub async fn store_stale(db: &SqlitePool, s: &StaleSession) -> Result<()> {
     sqlx::query("INSERT INTO stale_events (companion_id, payload, at) VALUES (?, ?, ?)")
         .bind(s.companion_id.to_string())

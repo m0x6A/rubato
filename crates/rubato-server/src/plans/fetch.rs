@@ -24,14 +24,17 @@ pub fn plan_path(map: &LoadedMap, issue: &IssueRef, branch: &str) -> String {
         .plan_path_for(&issue.repo, issue.number, &slug_of(branch, issue.number))
 }
 
+/// Read the plan of `branch` at its head `head_sha`, not at the branch name, and store the sha
+/// with it: a later push cannot change the text between the read and a permalink to it (ADR 0055).
 pub async fn fetch_and_store(
     app: &App,
     map: &LoadedMap,
     issue: &IssueRef,
     branch: &str,
+    head_sha: &str,
 ) -> Result<()> {
     let path = plan_path(map, issue, branch);
-    match app.github.file(&issue.repo, &path, branch).await? {
+    match app.github.file(&issue.repo, &path, head_sha).await? {
         Some(text) => match parse_plan(&text, &path) {
             Ok(mut plan) => {
                 plan.git_ref = Some(branch.to_owned());
@@ -47,7 +50,17 @@ pub async fn fetch_and_store(
                     );
                 }
                 let sha = approval_hash(&text);
-                store::upsert_plan(&app.db, issue, branch, &path, Some(&plan), None, &sha).await?;
+                store::upsert_plan(
+                    &app.db,
+                    issue,
+                    branch,
+                    &path,
+                    Some(&plan),
+                    None,
+                    &sha,
+                    head_sha,
+                )
+                .await?;
             }
             Err(e) => {
                 app.metrics.plan_parse_failures.add(
@@ -66,6 +79,7 @@ pub async fn fetch_and_store(
                     None,
                     Some(&e.to_string()),
                     &sha,
+                    head_sha,
                 )
                 .await?;
             }
