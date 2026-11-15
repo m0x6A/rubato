@@ -1,5 +1,6 @@
 mod discovery;
 mod hooks;
+mod launch_branch;
 mod launch_refusal;
 mod launch_timeout;
 mod pairing;

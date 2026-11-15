@@ -37,7 +37,7 @@ pub use github::{
     DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, trusted_author,
 };
 pub use hook::{HookEvent, HookEventKind};
-pub use ids::{IssueRef, MapRef, ParseIssueRefError};
+pub use ids::{IssueRef, MapRef, ParseIssueRefError, is_branch_slug};
 pub use issue_body::{
     MapPlacement, PinSuggestion, map_line, map_line_in, parse_map_line, parse_map_placement,
 };
@@ -51,8 +51,8 @@ pub use launch::{
 pub use layout::{MapLayout, Position};
 pub use limits::Limits;
 pub use map::{
-    Flow, FlowKind, MapNode, MapResponse, NodeKind, RepoRef, Scenario, ScenarioStep, Seam,
-    SystemMap,
+    Flow, FlowKind, MAP_ID_PATTERN, MapNode, MapResponse, NodeKind, RepoRef, Scenario,
+    ScenarioStep, Seam, SystemMap, is_map_id,
 };
 pub use map_draft::{DraftOp, DraftOpRequest, MapDraft, MapOp, Proposal, ProposalState};
 pub use message::{

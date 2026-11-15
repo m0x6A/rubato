@@ -1,17 +1,8 @@
 //! Apply draft operations to a map. Pure: the rules of what an operation may do (design S19).
 
 use rubato_protocol::SystemMap;
+use rubato_protocol::is_map_id as valid_id;
 use rubato_protocol::map_draft::{DraftOp, MapOp};
-
-fn valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        && !id.starts_with('-')
-        && !id.ends_with('-')
-}
 
 /// The map with `op` applied, or why it cannot be applied. Nothing is changed on refusal.
 pub fn apply(map: &SystemMap, op: &MapOp) -> Result<SystemMap, String> {

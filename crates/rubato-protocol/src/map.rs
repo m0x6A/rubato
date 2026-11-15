@@ -5,6 +5,23 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+/// The character rule for node and seam ids: lower-case ASCII letters, digits and hyphens, 1 to
+/// 64 characters, no hyphen at either end. An id becomes a URL segment, a resource attribute in
+/// the launch script, a CSS selector and a metric label, so the rule holds at the source
+/// (issue #155). The schema carries it as `pattern`; [`is_map_id`] is the same rule.
+pub const MAP_ID_PATTERN: &str = "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$";
+
+/// Whether `id` follows [`MAP_ID_PATTERN`].
+pub fn is_map_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        && !id.starts_with('-')
+        && !id.ends_with('-')
+}
+
 /// `system-map.yml`. Node and seam ids are the only identifiers pins and plans may use.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SystemMap {
@@ -92,6 +109,7 @@ pub enum NodeKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MapNode {
+    #[schemars(pattern(MAP_ID_PATTERN))]
     pub id: String,
     pub kind: NodeKind,
     /// `owner/name` of the repository holding the code, if any.
@@ -107,6 +125,7 @@ pub struct MapNode {
 /// A seam between two nodes. The owner side is woken when it breaks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Seam {
+    #[schemars(pattern(MAP_ID_PATTERN))]
     pub id: String,
     pub from: String,
     pub to: String,
@@ -184,6 +203,10 @@ fn carrying(carries: &Option<String>) -> String {
 pub enum MapError {
     #[error("duplicate id {0:?}")]
     DuplicateId(String),
+    #[error(
+        "id {id:?} ({what}) is not a map id: use lower-case letters, digits and hyphens, at most 64, no hyphen at either end"
+    )]
+    BadId { what: &'static str, id: String },
     #[error("seam {seam:?} references unknown node {node:?}")]
     UnknownNode { seam: String, node: String },
     #[error("seam {seam:?} owner {owner:?} is neither its from nor its to side")]
@@ -284,6 +307,19 @@ impl SystemMap {
     /// side, flows along their seam, every scenario step is exactly one declared flow.
     pub fn validate(&self) -> Result<(), Vec<MapError>> {
         let mut errors = Vec::new();
+        let ids = self
+            .nodes
+            .iter()
+            .map(|n| ("node", &n.id))
+            .chain(self.seams.iter().map(|s| ("seam", &s.id)));
+        for (what, id) in ids {
+            if !is_map_id(id) {
+                errors.push(MapError::BadId {
+                    what,
+                    id: id.clone(),
+                });
+            }
+        }
         let mut seen = BTreeSet::new();
         for id in self
             .nodes
@@ -427,6 +463,67 @@ mod tests {
         );
         assert!(m.node_ids().contains("a") && !m.node_ids().contains("a-b"));
         assert!(m.seam_ids().contains("a-b") && !m.seam_ids().contains("a"));
+    }
+
+    #[test]
+    fn map_ids_have_one_character_rule() {
+        let max = "a".repeat(64);
+        for ok in ["a", "a-b", "a--b", "0", "rubato-companion", max.as_str()] {
+            assert!(is_map_id(ok), "{ok:?}");
+        }
+        let over = "a".repeat(65);
+        for bad in [
+            "",
+            "A",
+            "a_b",
+            "a.b",
+            "a b",
+            "-a",
+            "a-",
+            "a'b",
+            "a'$(touch${IFS}p)'",
+            "ö",
+            over.as_str(),
+        ] {
+            assert!(!is_map_id(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn validate_refuses_node_and_seam_ids_outside_the_rule() {
+        let mut m = map(vec![seam("a-b", "a", "b", "a")]);
+        assert_eq!(m.validate(), Ok(()), "precondition");
+        m.nodes.push(node("Bad_Node"));
+        m.seams.push(seam("a'b", "a", "b", "a"));
+        let errors = m.validate().unwrap_err();
+        assert_eq!(
+            errors,
+            vec![
+                MapError::BadId {
+                    what: "node",
+                    id: "Bad_Node".into()
+                },
+                MapError::BadId {
+                    what: "seam",
+                    id: "a'b".into()
+                },
+            ]
+        );
+        assert_eq!(
+            errors[0].to_string(),
+            "id \"Bad_Node\" (node) is not a map id: use lower-case letters, digits and hyphens, at most 64, no hyphen at either end"
+        );
+    }
+
+    #[test]
+    fn the_schema_carries_the_id_pattern() {
+        let schema = serde_json::to_value(schemars::schema_for!(SystemMap)).unwrap();
+        for def in ["MapNode", "Seam"] {
+            assert_eq!(
+                schema["$defs"][def]["properties"]["id"]["pattern"], MAP_ID_PATTERN,
+                "{def}"
+            );
+        }
     }
 
     fn node(id: &str) -> MapNode {

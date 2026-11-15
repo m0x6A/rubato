@@ -50,6 +50,20 @@ describe("map", () => {
     ]);
   });
 
+  it("refuses node and seam ids outside the map id rule (issue #155)", () => {
+    // The same file `rubato-protocol/tests/map_ids.rs` reads as its must-fail case.
+    const text = readFileSync(resolve(root, "schema/fixtures/maps/bad-ids.yml"), "utf8");
+    let err: unknown;
+    try {
+      loadMapText(text, schemaDir);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(MapError);
+    const problems = (err as MapError).problems.filter((p) => p.includes("must match pattern"));
+    expect(problems.map((p) => p.split(" ")[0])).toEqual(["/nodes/1/id", "/nodes/2/id", "/nodes/3/id", "/seams/1/id"]);
+  });
+
   it("scenario fixtures", () => {
     // The same files `rubato_protocol::map::tests::scenario_fixtures` reads: same problems, same order.
     const dir = resolve(root, "schema/fixtures/maps");
