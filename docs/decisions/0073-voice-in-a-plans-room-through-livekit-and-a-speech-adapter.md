@@ -1,8 +1,8 @@
 # 0073. A plan's room may have a voice channel on a self-hosted LiveKit, and speech reaches agents only as room text through a speech adapter, behind a flag that is off by default
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, m0x6A/rubato#146), drafted at Mattias Jonsson's request of 2026-11-15 that #146 get a superseding ADR, built behind a flag that is off by default and not deployed; the provider adapter shape is a best-effort agent choice under his delegation; a human accepts it
+- **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-15; drafted by agent
 - **Seam:** web-server, web-livekit, server-speech
 - **Issue:** m0x6A/rubato#146
 
