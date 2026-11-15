@@ -1919,6 +1919,49 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 111,
+      "title": "Voice",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 137
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "A plan room's voice channel (ADR 0073), absent while RUBATO_VOICE is off. Speech calls per minute by op (stt, tts) and outcome (ok, timeout, status, transport, bad_body, empty, busy); the p95 seconds of each op; join tokens minted; failed joins the browser reported by reason (signal, ice, permission, insecure, other). SpeechProviderFailing fires when every call failed for 10 minutes. Joins failing as ice mean UDP or TURN; as insecure, Rubato is not on HTTPS.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_voice_op, rubato_outcome) (rate(rubato_voice_speech_total[5m]) * 60)",
+          "legendFormat": "{{rubato_voice_op}} {{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, rubato_voice_op) (rate(rubato_voice_duration_bucket[10m])))",
+          "legendFormat": "p95 s {{rubato_voice_op}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (rubato_outcome) (increase(rubato_voice_tokens_total[10m]))",
+          "legendFormat": "tokens {{rubato_outcome}}"
+        },
+        {
+          "refId": "D",
+          "expr": "sum by (rubato_reason) (increase(rubato_voice_join_failed_total[10m]))",
+          "legendFormat": "join failed {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }
