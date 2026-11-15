@@ -2,7 +2,9 @@
 
 use super::build::{OtherWorkspace, OverviewInputs, WorkspaceInputs};
 use crate::kernel::state::App;
-use crate::{companion_link, github_poll, launch, layout, pins, plans, queue, spend_history};
+use crate::{
+    companion_link, github_poll, launch, layout, pins, plans, queue, spend_history, traffic,
+};
 use anyhow::Result;
 
 pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs> {
@@ -24,6 +26,7 @@ pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs
         queue: queue::all(&app.db).await?,
         repo_pulls: github_poll::repo_pulls(&app.db).await?,
         traffic: app.traffic.read().await.clone(),
+        dismissals: traffic::dismissals(&app.db, ws).await?,
         spend: spend_history::series(&app.db).await?,
         workspaces: workspace_inputs(app, ws).await?,
     })

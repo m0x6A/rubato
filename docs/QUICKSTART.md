@@ -149,13 +149,36 @@ is rejected and the previous report kept. A source set up wrong (a bad URL, wind
 is failing from the start, and the log line says which variable. None of them is ever read as
 quiet.
 
-The namespaces travel in the report. Until a part can say which service it is (#140, ADR 0059),
-an end still matches the part whose id equals its `service.name`.
+**Which part a service is (ADR 0059).** A part says which service it is in the map, exactly as
+that service emits itself. Change it through the map draft like any other field:
+
+```yaml
+nodes:
+  - id: rubato-server
+    kind: context
+    service: { namespace: rubato, name: rubato-server }
+  - id: github
+    kind: external
+    service: { name: github }   # a virtual node from callers' peer.service: no namespace
+```
+
+How an edge end is read:
+
+- **It matches a part** only when namespace and name are both equal. A missing namespace equals
+  only a missing one. There is no match by id and none by name alone. A part without `service`
+  is never matched, and never shown as quiet.
+- **It becomes a ghost** when it emits a namespace but no part names it. The Traffic lens draws it
+  in a band right of the map, with its calls. Under *Map versus territory* it can be taken into
+  the draft, filled in from the telemetry, or dismissed for the workspace (ADR 0060).
+- **It is only counted** when it emits no namespace and no part matches it, as "with no namespace
+  and no part to match".
 
 **Development: a file.** `RUBATO_DEV_TRAFFIC=<file.json>` reads a traffic report from a file.
-Each edge names a client and a server by their map part id (the OTel `service.name`), and may
-add `client_namespace` and `server_namespace`. A name that matches no part is counted as
-unmapped:
+
+- **Names.** Each edge names a client and a server by their OTel `service.name`, and may add
+  `client_namespace` and `server_namespace`.
+- **Matching.** An edge without namespaces matches parts that declare `service: { name: … }`
+  with no namespace. A name with neither a namespace nor such a part is counted as unmapped:
 
 ```json
 {

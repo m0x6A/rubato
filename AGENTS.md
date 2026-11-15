@@ -109,7 +109,7 @@ plans           parse and keep plan files from issue branches   plans
 approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, issue_suggestions, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
-traffic         observed calls per seam from a traffic report   (none; latest report in memory)
+traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
@@ -142,7 +142,7 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 ```text
 live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
-map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player  PUT, DELETE /api/layout
+map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout; POST, DELETE /api/traffic/dismissals
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
@@ -178,7 +178,7 @@ plan       Plan and its affected parts, O-rows, assumptions
 github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord, ApprovalState
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
-traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, derive_traffic, limits
+traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
 ```
@@ -263,7 +263,7 @@ Each of these has an alert rule committed under `observability/alerts/` and a te
 
 ### Map versus territory
 
-Rubato's map is declared. Production traffic is observed. When the two disagree (a service calls a node the map does not connect it to, or a declared seam carries no traffic), that is a finding, shown on the map, not an error to suppress. v0 only shows it; nothing acts on it.
+Rubato's map is declared. Production traffic is observed. When the two disagree (a service calls a node the map does not connect it to, or a declared seam carries no traffic), that is a finding, shown on the map, not an error to suppress. The overlay only shows it; nothing acts on it by itself. A person may take a discrepancy into the shared map draft and merge it through the map's pull request like any other change, or dismiss it for the workspace (ADRs 0018, 0059, 0060). A part is matched to the service it says it is, by the `service.namespace` and `service.name` that service emits; Rubato never sets or derives them.
 
 ## Conventions
 

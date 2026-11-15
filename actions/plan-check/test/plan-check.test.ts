@@ -50,6 +50,26 @@ describe("map", () => {
     ]);
   });
 
+  it("service fixtures", () => {
+    // The same files `rubato_protocol::map::tests::service_fixtures` reads (ADR 0059).
+    const dir = resolve(root, "schema/fixtures/maps");
+    const good = loadMapText(readFileSync(resolve(dir, "services.yml"), "utf8"), schemaDir);
+    expect(good).toEqual(JSON.parse(readFileSync(resolve(dir, "services.json"), "utf8")));
+    let err: unknown;
+    try {
+      loadMapText(readFileSync(resolve(dir, "services-duplicate.yml"), "utf8"), schemaDir);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(MapError);
+    expect((err as MapError).problems).toEqual([
+      'parts "checkout" and "checkout-v2" both name service "shop/checkout"; a service is one part',
+      'parts "github" and "gh" both name service "github"; a service is one part',
+    ]);
+    // An unknown key inside service fails the schema (additionalProperties: false).
+    expect(() => loadMapText("version: 1\nname: x\nnodes:\n  - id: a\n    kind: context\n    service: { name: a, namspace: typo }\n", schemaDir)).toThrow(MapError);
+  });
+
   it("scenario fixtures", () => {
     // The same files `rubato_protocol::map::tests::scenario_fixtures` reads: same problems, same order.
     const dir = resolve(root, "schema/fixtures/maps");
