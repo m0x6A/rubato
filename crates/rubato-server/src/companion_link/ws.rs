@@ -4,7 +4,9 @@
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
-use crate::{launch, pairing, plan_drafts, queue, session_log, session_messages, spend_history};
+use crate::{
+    approve, launch, pairing, plan_drafts, queue, session_log, session_messages, spend_history,
+};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -167,6 +169,7 @@ async fn on_envelope(
         CompanionMessage::Stale(_) => "stale",
         CompanionMessage::SessionMessageResult(_) => "session_message_result",
         CompanionMessage::Draft(_) => "draft",
+        CompanionMessage::HandoffReport(_) => "handoff_report",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
@@ -237,6 +240,7 @@ async fn on_envelope(
                     capabilities: vec![
                         rubato_protocol::capability::SESSION_MESSAGES.to_owned(),
                         rubato_protocol::capability::DRAFTS.to_owned(),
+                        rubato_protocol::capability::HANDOFF_REPORTS.to_owned(),
                     ],
                 })
             }
@@ -326,6 +330,11 @@ async fn on_envelope(
                     }
                     Err(e) => tracing::error!(error = %format!("{e:#}"), "draft: reading the launch failed"),
                 }
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::HandoffReport(r) => {
+                // Recorded on the approval only for this companion's own launch of its issue.
+                approve::on_handoff_report(app, companion_id, &r).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::SessionMessageResult(r) => {

@@ -414,6 +414,22 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             }
             continue;
         }
+        // A link comment (ADR 0055): kept whoever wrote it; `approve` matches it to the
+        // approver, so nobody else's comment settles a link.
+        if let Some(approval_id) = super::links::link_approval(&c.body) {
+            let rec = super::links::LinkComment {
+                issue: issue.clone(),
+                comment_id: c.id,
+                author: c.author.clone(),
+                approval_id,
+                url: c.url.clone(),
+                created_at: c.created_at,
+            };
+            store::upsert_signal(&app.db, issue, c.id, "link", &serde_json::to_string(&rec)?)
+                .await?;
+            kept.push(c.id);
+            continue;
+        }
         if let Some(body) = DecisionRecord::parse_body(&c.body) {
             store::upsert_decision(
                 &app.db,

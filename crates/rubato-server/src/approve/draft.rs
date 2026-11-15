@@ -15,7 +15,7 @@ use crate::plan_drafts::{self, DraftRow, RevisionRow};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use rubato_protocol::approve::{reason, routes};
 use rubato_protocol::{
     AdrPin, DraftApproveRequest, DraftApproveResponse, IssueRef, SessionState, SessionStatus,
@@ -214,9 +214,11 @@ pub async fn approve_draft(
         plan_sha: rev.info.plan_sha.clone(),
         bundle_hash: rev.info.bundle_hash.clone(),
         approved_by: login.clone(),
-        approved_at: now,
+        // Whole seconds: the time the handoff writes into the plan is the same value.
+        approved_at: now.trunc_subsecs(0),
         self_approved: login.eq_ignore_ascii_case(&draft.owner),
         summary: req.summary.clone(),
+        handoff: None,
     };
     let created = records::insert(&app.db, &approval)
         .await
@@ -241,6 +243,8 @@ pub async fn approve_draft(
             self_approved = stored.self_approved,
             "plan approved in Rubato"
         );
+        let plan_path = rev.files.first().map(|f| f.path.as_str()).unwrap_or("");
+        super::deliver::on_recorded(&app, &stored, &draft.owner, plan_path).await;
         app.notify("approve");
     }
     Ok(answer(&stored, created))

@@ -930,6 +930,98 @@
           ]
         },
         {
+          "description": "The plan on the branch carries an approval record Rubato did not make, or one that differs\nfrom its own, or a hash that is not the approved one (ADR 0054, ADR 0055). No link\ncomment is posted for it.",
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "approval_record_mismatch"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "branch",
+            "reason"
+          ]
+        },
+        {
+          "description": "The link comment's outcome is unknown and the comments pass has not found it for 30\nminutes; a person may post it again (ADR 0055).",
+          "type": "object",
+          "properties": {
+            "approval_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "link_comment_waiting"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "approval_id"
+          ]
+        },
+        {
+          "description": "Rubato holds no usable token for the approver, so the link comment waits (ADR 0055).",
+          "type": "object",
+          "properties": {
+            "approver": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "link_waiting_for_approver"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "approver"
+          ]
+        },
+        {
+          "description": "The approval covers ADRs that live in the map repo, which this repo's handoff could not\naccept (ADR 0055, Q12).",
+          "type": "object",
+          "properties": {
+            "adrs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "adrs_not_accepted"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "adrs"
+          ]
+        },
+        {
           "description": "A plan file exists but does not parse.",
           "type": "object",
           "properties": {

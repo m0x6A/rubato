@@ -62,6 +62,7 @@ impl TestServer {
             capabilities: Arc::new(std::sync::Mutex::new(vec![
                 rubato_protocol::capability::SESSION_MESSAGES.into(),
                 rubato_protocol::capability::DRAFTS.into(),
+                rubato_protocol::capability::HANDOFF_REPORTS.into(),
             ])),
         };
         let st = srv.clone();
@@ -256,6 +257,8 @@ impl RubatoWorld {
                     ..Limits::default()
                 },
                 pricing: BTreeMap::new(),
+                // Never the developer's own skill: a scenario installs one here when it needs it.
+                skill_dir: Some(root.join("skill")),
                 ..CompanionConfig::default()
             },
         };
@@ -371,6 +374,7 @@ impl RubatoWorld {
             otel_resource: otel,
             map_version: Some("test".into()),
             plan_path: Some(format!("docs/plans/{issue}.md")),
+            planning: Default::default(),
         }
     }
 

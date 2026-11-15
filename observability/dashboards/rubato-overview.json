@@ -1688,6 +1688,156 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 104,
+      "title": "Approvals waiting for handoff",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 111
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Approvals in Rubato delivered to their session more than 30 minutes ago, still current, with no matching commit on the branch and no committed handoff report (ADR 0055). Above 0 for 30 minutes pages ApprovalNoHandoff. Look at the session's log for the rubato.plan.handoff line: plan_changed or bundle_changed means ask for a new approval; push_failed means a rerun pushes the same commit.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_plans_handoff_overdue)",
+          "legendFormat": "overdue"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 105,
+      "title": "Link comments missing",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 111
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Handoff commits on a branch whose link comment is not on the issue yet (ADR 0055): the approver's token is missing (finding LinkWaitingForApprover) or a post's outcome is unknown (LinkCommentWaiting). Above 0 for 30 minutes pages HandoffNoLinkComment; the rubato.plan.link_comment span says which.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_plans_link_comment_missing)",
+          "legendFormat": "missing"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 106,
+      "title": "Approval records that differ",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 111
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Plans read at the branch head whose approved_by, approved_at or approved_sha differ from Rubato's approval, or that carry keys Rubato never wrote (finding ApprovalRecordMismatch, ADR 0054). No link comment is posted for them. Above 0 for 5 minutes fires ApprovalRecordMismatch.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_plans_approval_record_mismatch)",
+          "legendFormat": "mismatched"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 107,
+      "title": "Draft revisions",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 117
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Draft revisions stored from launched sessions' settle points, and bundles refused by reason (too_large, no_plan, owner_conflict, unknown_launch; ADR 0053). Revisions at zero while sessions plan means the companion's mirror stopped or lacks the drafts capability.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rubato_drafts_revisions_total[15m]))",
+          "legendFormat": "revisions"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_reason) (increase(rubato_drafts_refused_total[15m]))",
+          "legendFormat": "refused {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 108,
+      "title": "Session log",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 117
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Prompts and replies stored in the session log from hook payloads (ADR 0052), and entries dropped by reason. Entries at zero while sessions work means hooks stopped carrying the text.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rubato_session_log_entries_total[15m]))",
+          "legendFormat": "entries"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_reason) (increase(rubato_session_log_dropped_total[15m]))",
+          "legendFormat": "dropped {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

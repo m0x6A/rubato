@@ -3,14 +3,15 @@
 use super::session_messages::{launched_session, post_and_wait_with};
 use crate::world::*;
 use cucumber::{given, then, when};
-use rubato_protocol::{CompanionMessage, HookEvent, HookEventKind, SessionMessageKind};
+use rubato_protocol::session_message::handoff_prompt;
+use rubato_protocol::{CompanionMessage, HookEvent, HookEventKind};
 use std::time::Duration;
 
-/// The text of the last session message the server sent.
-fn message_text(w: &RubatoWorld) -> String {
-    match &w.last_message.as_ref().expect("a message sent before").kind {
-        SessionMessageKind::Chat { text, .. } => text.clone(),
-    }
+/// The text the companion typed for the last session message: the chat text, or the handoff
+/// command for `plan_approved` (ADR 0055).
+pub(crate) fn message_text(w: &RubatoWorld) -> String {
+    let m = w.last_message.as_ref().expect("a message sent before");
+    handoff_prompt(&m.issue, &m.kind).unwrap_or_else(|| m.kind.text())
 }
 
 async fn submit(w: &RubatoWorld, prompt: String) {

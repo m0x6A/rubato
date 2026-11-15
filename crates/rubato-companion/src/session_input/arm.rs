@@ -14,8 +14,8 @@ use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
 use rubato_protocol::{
-    CompanionMessage, Limits, SessionMessage, SessionMessageOutcome, SessionMessageResult,
-    capability,
+    CompanionMessage, Limits, SessionMessage, SessionMessageKind, SessionMessageOutcome,
+    SessionMessageResult, capability,
 };
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -34,6 +34,9 @@ pub struct SessionInputTask {
     pub input: Arc<dyn SessionInput>,
     pub metrics: Arc<Metrics>,
     pub deliveries: Deliveries,
+    /// The installed rubato skill, read for each `plan_approved` (`kernel::skill`), so an upgrade
+    /// needs no companion restart.
+    pub skill_dir: std::path::PathBuf,
 }
 
 pub async fn run(
@@ -84,11 +87,25 @@ impl SessionInputTask {
 
     async fn deliver(&mut self, msg: &SessionMessage) -> Handled {
         let max_chars = self.limits.lock().unwrap().session_message_max_chars;
+        // Only a `plan_approved` needs the skill: read it then, as it is installed now.
+        let skill = match msg.kind {
+            SessionMessageKind::PlanApproved { .. } => {
+                crate::kernel::skill::installed_version(&self.skill_dir)
+            }
+            _ => None,
+        };
         let decision = {
             let reg = self.registry.lock().await;
-            decide(msg, &self.paired_user, &reg, max_chars, &self.deliveries)
+            decide(
+                msg,
+                &self.paired_user,
+                &reg,
+                max_chars,
+                &self.deliveries,
+                skill.as_deref(),
+            )
         };
-        let target = match decision {
+        let (target, text) = match decision {
             Decision::Answer(o) => {
                 let repeat = matches!(
                     o,
@@ -102,7 +119,7 @@ impl SessionInputTask {
                     failure,
                 };
             }
-            Decision::Paste { target, .. } => target,
+            Decision::Paste { target, text, .. } => (target, text),
         };
         // Before anything is typed: a record that cannot be written means no paste.
         if let Err(e) = self.deliveries.record(msg.id, Delivery::Typing, Utc::now()) {
@@ -116,7 +133,7 @@ impl SessionInputTask {
         let pasted = tokio::task::spawn_blocking({
             let input = self.input.clone();
             let key = msg.id.to_string();
-            let text = msg.kind.text().to_owned();
+            let text = text.clone();
             move || input.paste(&target, &key, &text)
         })
         .await;
@@ -128,12 +145,10 @@ impl SessionInputTask {
                     // answered `interrupted`: never typed twice.
                     tracing::error!(id = %msg.id, error = %format!("{e:#}"), "delivered, but not recorded as delivered");
                 }
-                self.registry.lock().await.mark_input_sent(
-                    msg.launch_id,
-                    at,
-                    msg.id,
-                    msg.kind.text(),
-                );
+                self.registry
+                    .lock()
+                    .await
+                    .mark_input_sent(msg.launch_id, at, msg.id, &text);
                 Handled {
                     outcome: SessionMessageOutcome::Delivered,
                     repeat: false,
@@ -298,6 +313,7 @@ mod tests {
             input: Arc::new(standin(dir.path())),
             metrics: Arc::new(metrics),
             deliveries: Deliveries::open(dir.path()).unwrap(),
+            skill_dir: dir.path().join("skill"),
         };
         Fixture {
             task,

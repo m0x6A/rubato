@@ -42,6 +42,9 @@ pub struct LaunchCommand {
     /// mirrors, with the bundle it names (ADR 0053). Absent from an older server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_path: Option<String>,
+    /// How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.
+    #[serde(default, skip_serializing_if = "crate::handoff::PlanningMode::is_git")]
+    pub planning: crate::handoff::PlanningMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]

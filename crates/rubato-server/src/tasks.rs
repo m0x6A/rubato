@@ -226,6 +226,9 @@ impl Poller {
         let pulls =
             github_poll::list_repo_pulls(app, &map.map, &mut view, &owned, lane == Lane::Full)
                 .await;
+        // Every tick, after the plans and comments are read: handoff commits get their link
+        // comment, found or posted once, and the handoff gauges are recorded (ADR 0055).
+        approve::reconcile_links(app).await;
         // After the comments pass: approvals posted from Rubato that GitHub did not confirm,
         // and the tokens of people with no session that still counts (ADR 0030).
         if lane == Lane::Full {
@@ -316,7 +319,7 @@ impl Poller {
             Some(head) => {
                 let key = (plans::plan_path(map, issue, &head.name), head.sha.clone());
                 if self.plan_heads.get(issue) != Some(&key) {
-                    plans::fetch_and_store(app, map, issue, &head.name).await?;
+                    plans::fetch_and_store(app, map, issue, &head.name, &head.sha).await?;
                     self.plan_heads.insert(issue.clone(), key);
                 }
                 github_poll::poll_pr(app, issue, &head.name, view, full).await?;
@@ -395,7 +398,7 @@ impl Poller {
                 if self.discovered.get(*issue) == Some(&key) {
                     continue;
                 }
-                match plans::fetch_and_store(app, map, issue, &head.name).await {
+                match plans::fetch_and_store(app, map, issue, &head.name, &head.sha).await {
                     Ok(()) => {
                         self.discovered.insert((*issue).clone(), key);
                         if plans::has_plan(&app.db, issue).await.unwrap_or(false) {

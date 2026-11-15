@@ -1,6 +1,6 @@
 //! `POST /api/launch`: start a session on an issue through one of the caller's own companions.
 
-use super::prompt::{PROMPT_TEMPLATE, is_slug, render_prompt, slugify};
+use super::prompt::{PROMPT_TEMPLATE, RUBATO_PROMPT_TEMPLATE, is_slug, render_prompt, slugify};
 use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
@@ -12,7 +12,8 @@ use axum::http::StatusCode;
 use chrono::Utc;
 use rubato_protocol::otel::{attr, event, span};
 use rubato_protocol::{
-    CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, ServerMessage,
+    CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, PlanningMode,
+    ServerMessage, capability, skill_has_handoff,
 };
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;
@@ -166,6 +167,14 @@ pub async fn launch(
     ]
     .into_iter()
     .collect();
+    let planning = planning_mode(
+        app.config.comment_approvals_until.is_some(),
+        &app.capabilities(companion.companion_id),
+    );
+    let template = match planning {
+        PlanningMode::Rubato => RUBATO_PROMPT_TEMPLATE,
+        PlanningMode::Git => PROMPT_TEMPLATE,
+    };
     let command = LaunchCommand {
         id: Uuid::new_v4(),
         user: user.clone(),
@@ -181,10 +190,11 @@ pub async fn launch(
         prompt: req
             .prompt
             .clone()
-            .unwrap_or_else(|| render_prompt(PROMPT_TEMPLATE, &vars)),
+            .unwrap_or_else(|| render_prompt(template, &vars)),
         otel_resource: otel,
         map_version: Some(map.version.clone()),
         plan_path: Some(plan_path),
+        planning,
     };
     store::store_launch(&app.db, ws.as_str(), companion.companion_id, &command)
         .await
@@ -198,7 +208,7 @@ pub async fn launch(
             "companion disconnected while launching".into(),
         ));
     }
-    tracing::info!(launch_id = %command.id, rubato.issue = %command.issue, rubato.user = %user, companion = %companion.companion_id, "{}", span::LAUNCH);
+    tracing::info!(launch_id = %command.id, rubato.issue = %command.issue, rubato.user = %user, companion = %companion.companion_id, planning = command.planning.name(), "{}", span::LAUNCH);
     app.notify("launch");
     Ok(Json(LaunchResponse {
         command,
@@ -249,5 +259,87 @@ mod tests {
             Some("m0x6A/rubato#30")
         );
         assert!(e.fields.contains_key("error"));
+    }
+}
+
+/// What a session needs from its companion to plan in Rubato (ADR 0053, plan 122 §D7): typed
+/// messages, mirrored drafts, the handoff typed and reported, and a skill with `plan.ts handoff`.
+const PLANNING_NEEDS: [&str; 3] = [
+    capability::SESSION_INPUT,
+    capability::DRAFT_MIRROR,
+    capability::PLAN_HANDOFF,
+];
+
+/// How a launched session plans: `rubato` only once the cutover is set (until then plans are
+/// approved by comment, so a draft in Rubato could never be approved) and only when the
+/// companion carries every part of it. Anything less plans in Git as before: a session half in
+/// Rubato would draft a plan nobody can hand off.
+pub fn planning_mode(cutover_set: bool, caps: &[String]) -> PlanningMode {
+    let has = |c: &str| caps.iter().any(|x| x == c);
+    let skill = caps
+        .iter()
+        .filter_map(|c| c.strip_prefix(capability::SKILL_PREFIX))
+        .any(skill_has_handoff);
+    if cutover_set && PLANNING_NEEDS.iter().all(|c| has(c)) && skill {
+        PlanningMode::Rubato
+    } else {
+        PlanningMode::Git
+    }
+}
+
+#[cfg(test)]
+mod planning_tests {
+    use super::*;
+
+    fn caps(list: &[&str]) -> Vec<String> {
+        list.iter().map(|c| (*c).to_owned()).collect()
+    }
+
+    const ALL: [&str; 4] = [
+        "session_input",
+        "draft_mirror",
+        "plan_handoff",
+        "skill:0.2.0",
+    ];
+
+    #[test]
+    fn rubato_only_after_the_cutover_and_with_every_capability() {
+        assert_eq!(planning_mode(true, &caps(&ALL)), PlanningMode::Rubato);
+        assert_eq!(
+            planning_mode(false, &caps(&ALL)),
+            PlanningMode::Git,
+            "no cutover: approval by comment"
+        );
+        for missing in ALL {
+            let fewer: Vec<&str> = ALL.iter().copied().filter(|c| *c != missing).collect();
+            assert_eq!(
+                planning_mode(true, &caps(&fewer)),
+                PlanningMode::Git,
+                "without {missing}"
+            );
+        }
+        assert_eq!(
+            planning_mode(true, &[]),
+            PlanningMode::Git,
+            "an older companion announces nothing"
+        );
+    }
+
+    #[test]
+    fn a_skill_older_than_the_handoff_plans_in_git() {
+        let old = [
+            "session_input",
+            "draft_mirror",
+            "plan_handoff",
+            "skill:0.1.0",
+        ];
+        assert_eq!(planning_mode(true, &caps(&old)), PlanningMode::Git);
+        let newer = [
+            "session_input",
+            "draft_mirror",
+            "plan_handoff",
+            "skill:0.3.1",
+        ];
+        assert_eq!(planning_mode(true, &caps(&newer)), PlanningMode::Rubato);
     }
 }

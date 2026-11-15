@@ -149,9 +149,16 @@ export function bundlePaths(planText: string, planPathIn: string): string[] {
 
 /** sha1 over the sorted lines `<path>\0<blob sha>\n`; the plan's blob sha is its approval hash. */
 export function bundleHash(planPath: string, files: Array<[string, string]>): string {
-  const lines = files
-    .map(([path, text]) => [path, path === planPath ? planSha(text) : gitBlobSha(text)] as [string, string])
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+  return bundleHashOfBlobs(files.map(([path, text]) => [path, path === planPath ? planSha(text) : gitBlobSha(text)]));
+}
+
+/**
+ * The same hash from each file's blob sha (the plan's: its approval hash). For a caller that
+ * knows a file's blob without its text: `plan.ts handoff` counts an ADR it has already accepted
+ * at the blob the plan pinned.
+ */
+export function bundleHashOfBlobs(blobs: Array<[string, string]>): string {
+  const lines = [...blobs].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   const h = createHash("sha1");
   for (const [path, blob] of lines) {
     h.update(`${path}\0${blob}\n`);

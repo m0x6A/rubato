@@ -180,6 +180,16 @@ pub mod metric {
     pub const DRAFTS_REVISIONS: &str = "rubato.drafts.revisions";
     /// Draft bundles not stored, by reason (`too_large`, `owner_conflict`, `unknown_launch`).
     pub const DRAFTS_REFUSED: &str = "rubato.drafts.refused";
+    /// Companion: handoff reports from `plan.ts handoff` forwarded to the server, by
+    /// `rubato.outcome` (ADR 0055).
+    pub const HANDOFF_REPORTS: &str = "rubato.handoff.reports";
+    /// Approvals delivered more than 30 minutes ago, still current, with no matching commit and
+    /// no `committed` handoff report (alert `ApprovalNoHandoff`, ADR 0055).
+    pub const PLANS_HANDOFF_OVERDUE: &str = "rubato.plans.handoff_overdue";
+    /// Handoff commits whose link comment is not posted (alert `HandoffNoLinkComment`).
+    pub const PLANS_LINK_COMMENT_MISSING: &str = "rubato.plans.link_comment_missing";
+    /// Plans on a branch whose approval record differs from Rubato's (alert `ApprovalRecordMismatch`).
+    pub const PLANS_APPROVAL_RECORD_MISMATCH: &str = "rubato.plans.approval_record_mismatch";
     /// `Approved:` comments first read at or after the cutover, which do not count (ADR 0054,
     /// finding `CommentApprovalIgnored`).
     pub const PLANS_COMMENT_AFTER_CUTOVER: &str = "rubato.plans.comment_after_cutover";
@@ -215,6 +225,8 @@ pub mod span {
     pub const SESSION_INPUT_DELIVER: &str = "rubato.session_input.deliver";
     /// Server: one draft bundle received.
     pub const PLAN_DRAFT: &str = "rubato.plan.draft";
+    /// Server: posting one link comment as the approver (ADR 0055).
+    pub const PLAN_LINK_COMMENT: &str = "rubato.plan.link_comment";
     /// One skill command, from `otel-emit.ts` (ADR 0061), with `rubato.skill.name`,
     /// `rubato.skill.subcommand` and `rubato.exit_code`.
     pub const SKILL_COMMAND: &str = "rubato.skill.command";
@@ -232,6 +244,11 @@ pub mod event {
     pub const PLAN_WAIT: &str = "rubato.plan.wait";
     /// A plan's pinned ADRs recorded as accepted by an approval (skill `adrs.ts accept`).
     pub const ADRS_ACCEPT: &str = "rubato.adrs.accept";
+    /// A plan handed off to Git after approval in Rubato (skill `plan.ts handoff`, ADR 0055).
+    pub const PLAN_HANDOFF: &str = "rubato.plan.handoff";
+    /// What `plan.ts handoff` did with its line: posted to the companion's `/handoff`, or why not
+    /// (stderr, for the agent to relay).
+    pub const PLAN_HANDOFF_REPORT: &str = "rubato.plan.handoff.report";
     /// An essential background task returned while shutdown was not requested.
     pub const TASK_EXITED: &str = "rubato.task.exited";
     /// Which local maps the skill matched for the session repo (`map.ts`, ADR 0044).
@@ -346,6 +363,10 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
         metric::DRAFTS_REFUSED,
+        metric::HANDOFF_REPORTS,
+        metric::PLANS_HANDOFF_OVERDUE,
+        metric::PLANS_LINK_COMMENT_MISSING,
+        metric::PLANS_APPROVAL_RECORD_MISMATCH,
         metric::PLANS_COMMENT_AFTER_CUTOVER,
         span::LAUNCH,
         span::HOOK_FORWARD,
@@ -359,6 +380,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::SESSION_MESSAGE_DISPATCH,
         span::SESSION_INPUT_DELIVER,
         span::PLAN_DRAFT,
+        span::PLAN_LINK_COMMENT,
         span::SKILL_COMMAND,
         span::SKILL_CALL,
         event::SESSION_STALE,
@@ -366,6 +388,8 @@ pub fn all_names() -> Vec<&'static str> {
         event::PLAN_CHECK,
         event::PLAN_WAIT,
         event::ADRS_ACCEPT,
+        event::PLAN_HANDOFF,
+        event::PLAN_HANDOFF_REPORT,
         event::TASK_EXITED,
         event::MAP_SELECT,
         event::PLAN_INIT,

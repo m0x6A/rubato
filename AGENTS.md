@@ -105,9 +105,9 @@ layout          where each part sits on the shared map          map_layout
 map             load and serve each workspace's map, the list    map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
 new_issue       create an issue as the App, pinned where begun  issue_creations
-plans           parse and keep plan files from issue branches   plans
+plans           plan files read at the issue branch head, kept  plans
 plan_drafts     plan drafts mirrored from worktrees, revisions  plan_drafts, plan_draft_revisions
-approve         accept a plan as yourself; approval in Rubato   plan_approvals, rubato_approvals
+approve         approval in Rubato, its handoff and link comment  plan_approvals, rubato_approvals, plan_links
 queue           issues queued on your own companions, in order  companion_queue
 session_messages  messages to your own launched session, at most once  session_messages
 session_log     prompts and last replies of launched sessions   session_log_entries
@@ -266,6 +266,10 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A plan whose affected nodes are not in the map.
 - Two open plans touching the same seam.
 - GitHub API rate limit under 10%.
+- A message for a session that waits for input, queued for more than 10 minutes.
+- An approval in Rubato that has not reached its branch 30 minutes after it was delivered.
+- A handoff commit whose link comment is not on the issue.
+- A plan whose committed approval record differs from Rubato's.
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

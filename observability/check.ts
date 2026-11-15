@@ -16,7 +16,19 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const REQUIRED = ["CompanionSilent", "SessionWorkingNoHooks", "PlanUnknownNodes", "SeamCollision", "GitHubRateLimitLow", "ServerPollSilent"];
+const REQUIRED = [
+  "CompanionSilent",
+  "SessionWorkingNoHooks",
+  "PlanUnknownNodes",
+  "SeamCollision",
+  "GitHubRateLimitLow",
+  "ServerPollSilent",
+  // Issue #122 (ADRs 0051, 0054, 0055).
+  "SessionMessageStuck",
+  "ApprovalNoHandoff",
+  "HandoffNoLinkComment",
+  "ApprovalRecordMismatch",
+];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
 const INTERACTIVE_MAP: [string, string][] = [
@@ -47,6 +59,17 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Blocked, by station left from", "rubato_issues_blocked_from"],
   // Issue #105: the Companions panel shows the N that CompanionSilent compares against.
   ["Companions", "rubato_companion_silent_secs"],
+  // Issue #122: the row "Planning in Rubato" the O-rows of its seams name.
+  ["Session messages by outcome", "rubato_session_messages_total"],
+  ["Oldest message waiting for an idle session", "rubato_session_messages_oldest_idle_queued_seconds"],
+  ["Companions by capability", "rubato_companions_by_capability"],
+  ["Approvals waiting for handoff", "rubato_plans_handoff_overdue"],
+  ["Link comments missing", "rubato_plans_link_comment_missing"],
+  ["Approval records that differ", "rubato_plans_approval_record_mismatch"],
+  ["Draft revisions", "rubato_drafts_revisions_total"],
+  ["Draft revisions", "rubato_drafts_refused_total"],
+  ["Session log", "rubato_session_log_entries_total"],
+  ["Session log", "rubato_session_log_dropped_total"],
   // Issue #142 (ADR 0061): the O-rows of the skill seams and companion-claude-code name this panel.
   ["Skills emitting", "traces_service_graph_request_total"],
 ];

@@ -15,13 +15,14 @@ paths.
 | plan | `scripts/plan.ts`, `scripts/lib/plan-sha.ts` | creates and checks the plan file at the agreed path (ADR 0005, 0009, 0027); prints the sha an approval names; pins proposed ADRs by blob (`adrs-pin`) |
 | review | `review-template.md`, `review-checklist.md` | the design-review step and its `Review:` comment (ADR 0027, 0028) |
 | approval | `scripts/plan.ts wait`, `scripts/adrs.ts accept`, `scripts/lib/comments.ts`, `scripts/lib/approval.ts` | waits for a person's approval and records the acceptance of the ADRs the plan pins (ADR 0035, seam `skill-github`) |
+| handoff | `scripts/plan.ts handoff`, `scripts/lib/handoff.ts`, `prompt-rubato.md` | in Rubato mode (`RUBATO_PLANNING=rubato`), turns an approval made in Rubato into one commit: the approval record, the pinned ADRs accepted in the map repo, the push, and a `rubato.plan.handoff` line posted to the companion (ADR 0053, 0055) |
 | adrs | `scripts/adrs.ts` | lists accepted ADRs so a plan does not contradict one |
 | hooks | `scripts/hooks.ts`, `hooks.json` | renders the hooks file for a companion endpoint (ADR 0013) |
 | install | `scripts/install.ts` | copies the skill, the vendored plan check and the schemas into a repo |
 | telemetry | `scripts/otel-emit.ts` | one span per command and a client span per call to another part, over OTLP/JSON with no dependencies (ADR 0061) |
 
 `scripts/lib/` is the shared kernel (git, the local config `local.ts`, vendoring). The files the
-skill ships as is (`SKILL.md`, `prompt.md`, `decision-template.md`, `review-template.md`,
+skill ships as is (`SKILL.md`, `prompt.md`, `prompt-rubato.md`, `decision-template.md`, `review-template.md`,
 `review-checklist.md`, `local.example.yml`)
 must stay byte-identical across refactors; connected repos receive them on install.
 

@@ -1,5 +1,6 @@
 //! Envelopes on the `companion-server` seam (ADR 0012): JSON over one outbound websocket.
 
+use crate::handoff::HandoffReport;
 use crate::hook::HookEvent;
 use crate::launch::{CapHit, LaunchCommand, LaunchResult};
 use crate::limits::Limits;
@@ -27,6 +28,12 @@ pub mod capability {
     pub const DRAFT_MIRROR: &str = "draft_mirror";
     /// The server takes `CompanionMessage::Draft`.
     pub const DRAFTS: &str = "drafts";
+    /// The companion types `plan_approved` and forwards the skill's handoff report (ADR 0055).
+    pub const PLAN_HANDOFF: &str = "plan_handoff";
+    /// The server takes `CompanionMessage::HandoffReport`.
+    pub const HANDOFF_REPORTS: &str = "handoff_reports";
+    /// Prefix of the installed skill's version, `skill:0.2.0`.
+    pub const SKILL_PREFIX: &str = "skill:";
 }
 
 /// Companion → server.
@@ -58,6 +65,8 @@ pub enum CompanionMessage {
     SessionMessageResult(SessionMessageResult),
     /// A launched session's plan bundle at a settle point (ADR 0053).
     Draft(DraftBundle),
+    /// What `plan.ts handoff` reported to the loopback endpoint (ADR 0055).
+    HandoffReport(HandoffReport),
     /// Acknowledges a server envelope by sequence.
     Ack {
         seq: u64,

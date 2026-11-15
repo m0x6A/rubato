@@ -47,6 +47,14 @@ export function findingText(f: Finding): string {
       return `the maps of ${f.workspaces.join(" and ")} give ${f.repo} different plan paths; the first one is used`;
     case "id_collision":
       return `${f.id} names different parts in ${f.workspaces.join(" and ")}; plans that name it may mean either`;
+    case "approval_record_mismatch":
+      return `${issueKey(f.issue)}: the plan on ${f.branch} carries an approval record Rubato did not make (${f.reason}); no link comment is posted`;
+    case "link_comment_waiting":
+      return `${issueKey(f.issue)}: the link comment for the handoff has not been found on the issue for 30 minutes; it may be posted again`;
+    case "link_waiting_for_approver":
+      return `${issueKey(f.issue)}: the link comment waits for ${f.approver} to log in to Rubato again`;
+    case "adrs_not_accepted":
+      return `${issueKey(f.issue)}: the approval covers ${f.adrs.join(", ")}, which live in the map repo and stay proposed until accepted there`;
   }
 }
 

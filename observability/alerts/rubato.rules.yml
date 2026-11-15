@@ -89,3 +89,56 @@ groups:
         annotations:
           summary: "The traffic report is {{ $value }}s old: the Traffic lens says unknown"
           panel: Traffic report age
+
+      # #122, ADR 0051: a message has waited more than 10 minutes while its launched session
+      # waits for input (last hook Stop or idle_prompt; a fresh launch never counts). The queue
+      # does not move: the companion is not live, lacks session_input, or keeps answering not_idle.
+      - alert: SessionMessageStuck
+        expr: max(rubato_session_messages_oldest_idle_queued_seconds) > 600
+        for: 5m
+        labels:
+          severity: ticket
+          seam: companion-server
+          owner: rubato-server
+        annotations:
+          summary: "A session message has waited {{ $value | humanizeDuration }} for a session that waits for input"
+          panel: Oldest message waiting for an idle session
+
+      # #122, ADR 0055: an approval delivered more than 30 minutes ago, still current, with no
+      # matching commit and no committed handoff report. A plan_changed handoff makes the
+      # approval no longer current, so it does not count.
+      - alert: ApprovalNoHandoff
+        expr: max(rubato_plans_handoff_overdue) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          seam: server-plan-file
+          owner: plan-file
+        annotations:
+          summary: "{{ $value }} approval(s) in Rubato have not reached their branch"
+          panel: Approvals waiting for handoff
+
+      # #122, ADR 0055: a handoff commit is on the branch, but its link comment is not on the issue.
+      - alert: HandoffNoLinkComment
+        expr: max(rubato_plans_link_comment_missing) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          seam: server-github
+          owner: rubato-server
+        annotations:
+          summary: "{{ $value }} handoff commit(s) have no link comment on their issue"
+          panel: Link comments missing
+
+      # #122, ADR 0054: the plan on a branch carries an approval record that differs from
+      # Rubato's, or one Rubato did not make. No link comment is posted for it.
+      - alert: ApprovalRecordMismatch
+        expr: max(rubato_plans_approval_record_mismatch) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          seam: server-plan-file
+          owner: plan-file
+        annotations:
+          summary: "{{ $value }} plan(s) carry an approval record that differs from Rubato's"
+          panel: Approval records that differ

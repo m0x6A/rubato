@@ -99,7 +99,7 @@ fn message_for(w: &RubatoWorld, id: Uuid, text: &str) -> SessionMessage {
     }
 }
 
-fn send(w: &mut RubatoWorld, m: SessionMessage) {
+pub(crate) fn send(w: &mut RubatoWorld, m: SessionMessage) {
     w.last_message = Some(m.clone());
     w.server().push(ServerMessage::SessionMessage(m));
 }
