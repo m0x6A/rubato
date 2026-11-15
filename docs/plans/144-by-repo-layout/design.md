@@ -133,23 +133,44 @@ A new pure module `web/src/features/map/bundles.ts`:
   a draft mark if any seam is in the draft; the badge shows ⚠ for collision or finding.
 
 In the grouping, a closed bundle is one React Flow edge of a new type `bundle` between `a` and
-`b`: a plain line and, at its middle, a badge button "N seam(s)" (`data-testid`
-`bundle-<a>-<b>`), with the state class and a title listing the seams. Hover (pointer enter on
-the badge, its line, or any open chip or label of the bundle; closes 400 ms after the last leave),
-focus, a click (toggles pinned), and `dragenter` of an issue row open it; an open bundle draws
+`b`: a plain line and a badge button "N seam(s)" (`data-testid` `bundle-<a>|<b>`), with the
+state class and a title listing the seams. Its badge and the open chips and flow labels of its
+seams carry `data-bundle`. A pointer tracker on the window reads what lies under the pointer at
+each move and opens the bundles found there; a bundle the pointer has left closes 400 ms later.
+Enter and leave events would not do: the badge gives way to the chips under the pointer, so it
+never hears the pointer leave, and a chip that appears under a still pointer never hears it enter.
+A click on the badge (or Enter, which then moves focus to the bundle's first chip) pins it open
+until a click on the canvas; `dragenter` of an issue row opens it too; an open bundle draws
 its seams exactly as the flat map does, so lenses, particles, reduced motion and the chip's drop
 target are unchanged. A closed bundle draws no particles and no chevrons. Pointer events do not
 fire during a native HTML5 drag, so a bundle opened by `dragenter` of an issue row stays open
 until `drop` or `dragend` on the document, not on the 400 ms hover timer. Outside the grouping nothing is bundled.
 
-ELK in the grouping: `elk.spacing.nodeNode` 40 → 60, so badges and part cards keep apart.
+ELK in the grouping: ELK lays out a compound node's children with that node's own options, so the
+root's `nodeNodeBetweenLayers: 200` never reached a box's parts, which sat 20 px apart; that,
+more than the number of seams, is why chips piled up (UX review, point 1). Each box now has
+`spacing.nodeNode` 60 and `nodeNodeBetweenLayers` 140; the root's `nodeNodeBetweenLayers` is 260
+in the grouping, room for a whole flow label between a box and the parts outside it.
 
-## D4. Flow labels read in full
+## D5. Labels placed clear of cards and of each other
+
+A seam that leaves a box often starts in the box's first column, so the middle of its curve lies
+on the last column's cards, and two curves that cross share a middle. A new pure module
+`web/src/features/map/labels.ts`: `bezierAt` is React Flow's curve from a right handle to a left
+one (checked equal to `getBezierPath`'s label point at 0.5); `placeLabels` takes the part cards'
+rectangles and, for each seam drawn in full and then each closed bundle, the rectangles of its
+labels (chip, flow labels below it, or badge, sizes estimated from the text with a 6 px margin),
+tries t = 0.5, 0.42, 0.58, … 0.1, 0.9 and keeps the first that touches no card and no label placed
+before it (else the least overlap). `SeamEdge` and `BundleEdge` draw their labels at the point
+for that t. The flat map passes no t and keeps React Flow's middles.
+
+## D4. Flow labels and names read in full
 
 The label's DOM holds the whole `carries` text; CSS clips it to the width of a layer gap with an
 ellipsis, and `:hover` / `:focus-within` lift the clip, wrap the text to at most 36ch and raise
 the label above its neighbours. The `title` stays. The inspector already lists every flow of a
-selected seam in full (`SeamFlows`).
+selected seam in full (`SeamFlows`). A part's name is never clipped: the card's title row wraps,
+so the kind moves under a name that would not fit beside it.
 
 ## What we watch
 
