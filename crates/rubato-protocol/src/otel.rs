@@ -246,6 +246,9 @@ pub mod event {
     pub const ADRS_ACCEPT: &str = "rubato.adrs.accept";
     /// A plan handed off to Git after approval in Rubato (skill `plan.ts handoff`, ADR 0055).
     pub const PLAN_HANDOFF: &str = "rubato.plan.handoff";
+    /// What `plan.ts handoff` did with its line: posted to the companion's `/handoff`, or why not
+    /// (stderr, for the agent to relay).
+    pub const PLAN_HANDOFF_REPORT: &str = "rubato.plan.handoff.report";
     /// An essential background task returned while shutdown was not requested.
     pub const TASK_EXITED: &str = "rubato.task.exited";
     /// Which local maps the skill matched for the session repo (`map.ts`, ADR 0044).
@@ -386,6 +389,7 @@ pub fn all_names() -> Vec<&'static str> {
         event::PLAN_WAIT,
         event::ADRS_ACCEPT,
         event::PLAN_HANDOFF,
+        event::PLAN_HANDOFF_REPORT,
         event::TASK_EXITED,
         event::MAP_SELECT,
         event::PLAN_INIT,
