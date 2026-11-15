@@ -900,7 +900,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, not_on_team, team_record_stale, installation_lookup_failed. Each has an info log line 'web write rejected' with the user.",
+      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, unknown_repo (an issue of a repo no map names, on pins, launch and queue), not_on_team, team_record_stale, installation_lookup_failed. Each has an info log line 'web write rejected' with the user.",
       "targets": [
         {
           "refId": "A",
@@ -1156,7 +1156,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Map: lines read from the open-issues listing (ADR 0026), by outcome: pinned (a member's line placed its issue), already_pinned, unknown_id and kind_mismatch (the line names no part or seam of that kind in the map; the issue stays in Not pinned), counted once per line; untrusted_author (someone outside the team wrote the line, so it is only a suggestion), counted per listing. Each tick logs 'backlog placement' with listed, map_lines, untrusted, suggested and none. Lines stop being read if the listing fails: see Backlog age.",
+      "description": "Map: lines read from the open-issues listing (ADR 0026), by outcome: pinned (a member's line placed its issue), already_pinned, unknown_id and kind_mismatch (the line names no part or seam of that kind in the map; the issue stays in Not pinned), unknown_repo (the issue's repo is not named by that workspace's map), counted once per line; untrusted_author (someone outside the team wrote the line, so it is only a suggestion), counted per listing. Each tick logs 'backlog placement' with listed, map_lines, untrusted, suggested and none. Lines stop being read if the listing fails: see Backlog age.",
       "targets": [
         {
           "refId": "A",

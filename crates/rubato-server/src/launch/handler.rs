@@ -11,6 +11,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::Utc;
 use rubato_protocol::launch::reason as launch_reason;
+use rubato_protocol::launch::routes;
 use rubato_protocol::otel::{attr, event, span};
 use rubato_protocol::{
     CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, PlanningMode,
@@ -71,6 +72,12 @@ pub async fn start(
         .map_of(ws)
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
+    // A pin row from before the repo check, or of a repo the map has since dropped, does not
+    // start a session that reads it (issue #163).
+    if let Err((reason, msg)) = pins::check_repo(&map.map, &map.version, &req.issue.repo) {
+        app.reject(routes::LAUNCH, reason, user);
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, msg));
+    }
     let mine: Vec<pairing::PairingRow> = pairing::list_pairings(&app.db, Some(user))
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
