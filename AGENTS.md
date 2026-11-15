@@ -174,7 +174,8 @@ launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; L
 layout     MapLayout, Position; LAYOUT
 map        SystemMap, Scenario, MapResponse; MAP, MAP_RELOAD
 map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
-plan       Plan and its affected parts, O-rows, assumptions
+plan       Plan and its affected parts, O-rows, assumptions, decisions, the approval record
+plan_hash  approval_hash (the record left out), bundle_paths, bundle_hash; shared fixtures with plan-check
 github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord, ApprovalState
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE

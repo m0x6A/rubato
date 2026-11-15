@@ -1,8 +1,9 @@
 //! The plan file's machine-readable parts (ADR 0005, ADR 0009).
 //!
 //! A plan is Markdown on the issue branch. Its frontmatter carries `issue`, `spend_cap_usd`
-//! and `attempt_limit`; the `## Affected parts` and `## O-rows` tables are parsed into the
-//! types below and validated against `schema/plan.schema.json`.
+//! and `attempt_limit`, and after approval in Rubato the approval record (ADR 0054); the
+//! `## Affected parts`, `## O-rows` and other tables are parsed into the types below and
+//! validated against `schema/plan.schema.json`.
 
 use crate::ids::IssueRef;
 use crate::map::FlowKind;
@@ -35,6 +36,46 @@ pub struct Plan {
     /// from its `## Data models` table (ADR 0031). Optional; empty when absent or "None."
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub data_models: Vec<DataModel>,
+    /// The decisions recorded while the plan was drafted, from its `## Decisions` table
+    /// (ADR 0056). Optional; empty when absent or "None."
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<PlanDecision>,
+    /// The approval record in the front matter, written at handoff (ADR 0054). Absent when the
+    /// plan has none of its keys; a record with a key missing is kept as it is, so the check can
+    /// report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<PlanApprovalRecord>,
+}
+
+/// One row of the plan's `## Decisions` table (ADR 0056).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanDecision {
+    pub id: String,
+    pub decision: String,
+    pub chosen: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+}
+
+/// The approval record a handoff writes into the front matter (ADR 0054): who approved, when, and
+/// the approval hash of the plan they approved. Left out of that hash.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PlanApprovalRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_sha: Option<String>,
+}
+
+impl PlanApprovalRecord {
+    /// All three keys are present.
+    pub fn is_complete(&self) -> bool {
+        self.approved_by.is_some() && self.approved_at.is_some() && self.approved_sha.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -248,6 +289,8 @@ mod tests {
             assumed: vec![],
             flows: vec![],
             data_models: vec![],
+            decisions: vec![],
+            approval: None,
         }
     }
 
@@ -417,6 +460,8 @@ mod fit_tests {
                 crosses: Some("web-server".into()),
                 note: None,
             }],
+            decisions: vec![],
+            approval: None,
         }
     }
 
