@@ -6,13 +6,13 @@
  */
 import { execFileSync } from "node:child_process";
 import { createServer, type IncomingHttpHeaders } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bundleHash, bundlePaths } from "../../../actions/plan-check/src/bundle.ts";
-import { pinAdrs } from "../scripts/adrs.ts";
+import { acceptedText, pinAdrs, rubatoAcceptance } from "../scripts/adrs.ts";
 import { install } from "../scripts/install.ts";
 import { HANDOFF_EXIT, type HandoffArgs, handoff, parseHandoffArgs, withApprovalRecord } from "../scripts/lib/handoff.ts";
 import type { Workspace } from "../scripts/lib/local.ts";
@@ -166,7 +166,7 @@ describe("plan.ts handoff: the approval becomes one commit (ADR 0055)", () => {
     const w = await makeWorld();
     const a = w.args();
     const adr = join(w.work, ADR);
-    writeFileSync(adr, ADR_TEXT.replace("- **Status:** proposed", "- **Status:** accepted").replace(/- \*\*Decided by:\*\*.*/, `- **Decided by:** m0x6A, accepted 2026-11-20, approved in Rubato ${URL} (self); drafted by agent (test)`));
+    writeFileSync(adr, acceptedText(ADR_TEXT, rubatoAcceptance("m0x6A", "2026-11-20", URL, true)));
     const r = await handoff(w.ws, w.work, a, quiet);
     expect(r.code).toBe(HANDOFF_EXIT.committed);
     expect(r.line.adrs_accepted).toEqual(["0099"]);
@@ -464,5 +464,92 @@ describe("plan.ts handoff keeps ADR paths in the decisions folder (#210)", () =>
     const r = await handoff(w.ws, w.work, a, quiet);
     expect(r.code).toBe(HANDOFF_EXIT.bundle_changed);
     expect(snapshot(w)).toBe(before);
+  });
+});
+
+describe("plan.ts handoff counts an ADR at its pinned blob only for the text it would write (#212)", () => {
+  const accepted = (text: string) => acceptedText(text, rubatoAcceptance("m0x6A", "2026-11-20", URL, true));
+
+  it("an ADR edited after the approval, with the accepted lines set, is bundle_changed and nothing is written", async () => {
+    const w = await makeWorld();
+    const a = w.args();
+    // Status and Decided by read exactly as this approval writes them; the decision text does not.
+    writeFileSync(join(w.work, ADR), accepted(ADR_TEXT).replace("Try it.\n", "Do something nobody approved.\n"));
+    const before = snapshot(w);
+    const r = await handoff(w.ws, w.work, a, quiet);
+    expect([r.code, r.line.outcome]).toEqual([HANDOFF_EXIT.bundle_changed, "bundle_changed"]);
+    expect(r.line.error).toContain("ADR 0099 reads as accepted by this approval but its text differs from the acceptance over its pinned text");
+    expect(snapshot(w)).toBe(before);
+  });
+
+  it("an ADR pinned already accepted, its Decided by rewritten as this approval would, is bundle_changed", async () => {
+    const w = await makeWorld();
+    const alice = acceptedText(ADR_TEXT, "alice, accepted 2026-11-01");
+    writeFileSync(join(w.work, ADR), alice);
+    await pinAdrs(w.work, PLAN);
+    const a = w.args();
+    // The handoff never writes over an ADR that was not proposed; this text claims it did.
+    writeFileSync(join(w.work, ADR), accepted(alice));
+    const before = snapshot(w);
+    const r = await handoff(w.ws, w.work, a, quiet);
+    expect(r.line.outcome).toBe("bundle_changed");
+    expect(r.line.error).toContain("was not proposed");
+    expect(snapshot(w)).toBe(before);
+  });
+
+  it("the handoff keeps the pinned text itself: a run stopped after its ADR write, with the pin's object gone, finishes on the rerun", async () => {
+    const w = await makeWorld();
+    const a = w.args();
+    const pin = gitBlobSha(ADR_TEXT);
+    rmSync(join(w.work, ".git/objects", pin.slice(0, 2), pin.slice(2)), { force: true });
+    // Stop the first run at its commit, after it wrote the record and the acceptance.
+    const hook = join(w.work, ".git/hooks/pre-commit");
+    writeFileSync(hook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const first = await handoff(w.ws, w.work, a, quiet);
+    expect(first.line.outcome).toBe("error");
+    expect(readFileSync(join(w.work, ADR), "utf8")).toBe(accepted(ADR_TEXT));
+    rmSync(hook);
+    const again = await handoff(w.ws, w.work, a, quiet);
+    expect(again.line).toMatchObject({ outcome: "committed", adrs_accepted: ["0099"] });
+  });
+
+  it("adrs-pin outside a git checkout still fills the Blob column", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rubato-pin-"));
+    mkdirSync(join(dir, "docs/decisions"), { recursive: true });
+    mkdirSync(join(dir, "docs/plans"), { recursive: true });
+    writeFileSync(join(dir, ADR), ADR_TEXT);
+    writeFileSync(join(dir, PLAN), `# Plan\n\n## ADRs proposed\n\n| ADR | File | Blob |\n| --- | --- | --- |\n| 0099 | ${ADR} | x |\n`);
+    const rows = await pinAdrs(dir, PLAN);
+    expect(rows[0]?.blob).toBe(gitBlobSha(ADR_TEXT));
+    expect(readFileSync(join(dir, PLAN), "utf8")).toContain(gitBlobSha(ADR_TEXT));
+  });
+
+  it("a ./ row that stopped before its commit is committed on the rerun", async () => {
+    const w = await makeWorld();
+    const plan = join(w.work, PLAN);
+    writeFileSync(plan, readFileSync(plan, "utf8").replace(`| 0099 | ${ADR} |`, `| 0099 | ./${ADR} |`));
+    const a = w.args();
+    writeFileSync(join(w.work, ADR), accepted(ADR_TEXT));
+    const r = await handoff(w.ws, w.work, a, quiet);
+    expect(r.line).toMatchObject({ outcome: "committed", adrs_accepted: ["0099"] });
+  });
+
+  it("an accepted ADR whose pinned text is not in git counts at its real blob: bundle_changed", async () => {
+    const w = await makeWorld();
+    const a = w.args();
+    writeFileSync(join(w.work, ADR), accepted(ADR_TEXT));
+    // Pinned in another clone: the object for the pinned blob is not in this one.
+    const pin = gitBlobSha(ADR_TEXT);
+    rmSync(join(w.work, ".git/objects", pin.slice(0, 2), pin.slice(2)), { force: true });
+    const before = snapshot(w);
+    const r = await handoff(w.ws, w.work, a, quiet);
+    expect(r.line.outcome).toBe("bundle_changed");
+    expect(snapshot(w)).toBe(before);
+  });
+
+  it("adrs-pin keeps each pinned ADR's text as a git object, so a stopped handoff can find it", async () => {
+    const w = await makeWorld();
+    expect(git(w.work, "cat-file", "-t", gitBlobSha(ADR_TEXT))).toBe("blob");
+    expect(git(w.work, "cat-file", "blob", gitBlobSha(ADR_TEXT))).toBe(ADR_TEXT.trim());
   });
 });

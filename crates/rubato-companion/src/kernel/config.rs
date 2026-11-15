@@ -156,18 +156,61 @@ impl Workspace {
     /// (`$XDG_CONFIG_HOME/rubato`, else `~/.config/rubato`), then the old `workspace.yml` there
     /// when only it exists. A new machine gets `local.yml`.
     pub fn default_path() -> PathBuf {
-        for var in ["RUBATO_LOCAL", "RUBATO_WORKSPACE"] {
-            if let Ok(p) = std::env::var(var) {
-                return PathBuf::from(p);
+        Self::resolve(None).0
+    }
+
+    /// The config path to read, from `--workspace` when given, else as `default_path` finds it,
+    /// and whether it was found by an old name, for the one warning at start (#132).
+    pub fn resolve(explicit: Option<PathBuf>) -> (PathBuf, bool) {
+        match explicit {
+            Some(p) => {
+                let old = Self::is_old_name(&p);
+                (p, old)
             }
+            None => Self::path_in(
+                std::env::var("RUBATO_LOCAL").ok(),
+                std::env::var("RUBATO_WORKSPACE").ok(),
+                &config_dir(),
+            ),
         }
-        let local = config_dir().join("local.yml");
-        let old = config_dir().join("workspace.yml");
+    }
+
+    /// `default_path` from explicit inputs, and whether it was found by an old name
+    /// (`RUBATO_WORKSPACE`, or a file still called `workspace.yml`), so the caller can warn once
+    /// as the skill does (ADR 0044, #132).
+    pub fn path_in(
+        local_env: Option<String>,
+        workspace_env: Option<String>,
+        dir: &Path,
+    ) -> (PathBuf, bool) {
+        if let Some(p) = local_env {
+            let p = PathBuf::from(p);
+            let old = Self::is_old_name(&p);
+            return (p, old);
+        }
+        if let Some(p) = workspace_env {
+            return (PathBuf::from(p), true);
+        }
+        let local = dir.join("local.yml");
+        let old = dir.join("workspace.yml");
         if !local.exists() && old.exists() {
-            old
+            (old, true)
         } else {
-            local
+            (local, false)
         }
+    }
+
+    /// A config file still named `workspace.yml`.
+    pub fn is_old_name(path: &Path) -> bool {
+        path.file_name().is_some_and(|n| n == "workspace.yml")
+    }
+
+    /// The one warning for a config found by its old name, worded as the skill words it.
+    pub fn old_name_warning(path: &Path) -> String {
+        format!(
+            "{}: workspace.yml is now local.yml (and RUBATO_WORKSPACE is RUBATO_LOCAL); rename it",
+            path.display()
+        )
     }
 
     pub fn repo(&self, name: &str) -> Option<&WorkspaceRepo> {
@@ -336,6 +379,50 @@ pub const HOOK_HEADER_FILE: &str = "hook-auth.header";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The old name is found and flagged: `RUBATO_WORKSPACE`, a `workspace.yml` left alone, or one
+    /// named by `RUBATO_LOCAL`; `local.yml` and an empty directory are not (#132).
+    #[test]
+    fn a_config_found_by_its_old_name_is_flagged_once_and_local_yml_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        assert_eq!(
+            Workspace::path_in(None, None, d),
+            (d.join("local.yml"), false)
+        );
+        std::fs::write(d.join("workspace.yml"), "").unwrap();
+        assert_eq!(
+            Workspace::path_in(None, None, d),
+            (d.join("workspace.yml"), true)
+        );
+        std::fs::write(d.join("local.yml"), "").unwrap();
+        assert_eq!(
+            Workspace::path_in(None, None, d),
+            (d.join("local.yml"), false)
+        );
+        assert_eq!(
+            Workspace::path_in(None, Some("/x/any.yml".into()), d),
+            (PathBuf::from("/x/any.yml"), true)
+        );
+        assert_eq!(
+            Workspace::path_in(Some("/x/workspace.yml".into()), None, d),
+            (PathBuf::from("/x/workspace.yml"), true)
+        );
+        assert_eq!(
+            Workspace::path_in(Some("/x/local.yml".into()), Some("/y.yml".into()), d),
+            (PathBuf::from("/x/local.yml"), false)
+        );
+        assert_eq!(
+            Workspace::resolve(Some("/x/workspace.yml".into())),
+            (PathBuf::from("/x/workspace.yml"), true)
+        );
+        assert_eq!(
+            Workspace::resolve(Some("/x/local.yml".into())),
+            (PathBuf::from("/x/local.yml"), false)
+        );
+        let w = Workspace::old_name_warning(&d.join("workspace.yml"));
+        assert!(w.contains("workspace.yml is now local.yml"), "{w}");
+    }
 
     #[test]
     fn an_atomic_write_is_private_and_leaves_no_temp_file() {
