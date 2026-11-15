@@ -1,8 +1,8 @@
 # 0070. Retire tmux-ide; the companion runs tmux and git itself
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, m0x6A/rubato#147), asked by Mattias Jonsson; a human accepts. First drafted as 0050 on 2026-11-14 and approved with plan 62db41a; renumbered and refreshed against main, because main gave 0050 to rooms
+- **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-15; drafted by agent
 - **Seam:** companion-tmux-ide, companion-server
 - **Issue:** m0x6A/rubato#147
 
