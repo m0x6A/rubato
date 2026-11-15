@@ -54,6 +54,12 @@ pub mod attr {
     pub const DRAFT_REV: &str = "rubato.draft.rev";
     /// A `rubato_approvals` row (ADR 0054).
     pub const APPROVAL_ID: &str = "rubato.approval_id";
+    /// A plan's room, `repo#number@branch` (ADR 0057).
+    pub const ROOM: &str = "rubato.room";
+    /// A command's exit code (`rubato.room.fork_turn`).
+    pub const EXIT_CODE: &str = "rubato.exit_code";
+    /// What a model call cost in USD (`rubato.room.fork_turn`).
+    pub const COST_USD: &str = "rubato.cost_usd";
 }
 
 /// Metric instrument names.
@@ -172,6 +178,10 @@ pub mod metric {
     pub const DRAFTS_REVISIONS: &str = "rubato.drafts.revisions";
     /// Draft bundles not stored, by reason (`too_large`, `owner_conflict`, `unknown_launch`).
     pub const DRAFTS_REFUSED: &str = "rubato.drafts.refused";
+    /// Room turns by `rubato.outcome` (answered, failed, stopped) (ADR 0057).
+    pub const ROOMS_AGENT_TURNS: &str = "rubato.rooms.agent_turns";
+    /// Times the agent turn limit stopped a room's turns.
+    pub const ROOMS_TURN_LIMIT_HITS: &str = "rubato.rooms.turn_limit_hits";
     /// Companion: handoff reports from `plan.ts handoff` forwarded to the server, by
     /// `rubato.outcome` (ADR 0055).
     pub const HANDOFF_REPORTS: &str = "rubato.handoff.reports";
@@ -219,6 +229,8 @@ pub mod span {
     pub const PLAN_DRAFT: &str = "rubato.plan.draft";
     /// Server: posting one link comment as the approver (ADR 0055).
     pub const PLAN_LINK_COMMENT: &str = "rubato.plan.link_comment";
+    /// Companion: one read-only fork turn for a room (exit, cost).
+    pub const ROOM_FORK_TURN: &str = "rubato.room.fork_turn";
 }
 
 /// Event (log record) names.
@@ -274,6 +286,9 @@ pub fn all_names() -> Vec<&'static str> {
         attr::LOG_KIND,
         attr::DRAFT_REV,
         attr::APPROVAL_ID,
+        attr::ROOM,
+        attr::EXIT_CODE,
+        attr::COST_USD,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -330,6 +345,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
         metric::DRAFTS_REFUSED,
+        metric::ROOMS_AGENT_TURNS,
+        metric::ROOMS_TURN_LIMIT_HITS,
         metric::HANDOFF_REPORTS,
         metric::PLANS_HANDOFF_OVERDUE,
         metric::PLANS_LINK_COMMENT_MISSING,
@@ -348,6 +365,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::SESSION_INPUT_DELIVER,
         span::PLAN_DRAFT,
         span::PLAN_LINK_COMMENT,
+        span::ROOM_FORK_TURN,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,

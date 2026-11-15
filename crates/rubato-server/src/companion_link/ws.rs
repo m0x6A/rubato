@@ -5,7 +5,8 @@ use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
 use crate::{
-    approve, launch, pairing, plan_drafts, queue, session_log, session_messages, spend_history,
+    approve, launch, pairing, plan_drafts, queue, rooms, session_log, session_messages,
+    spend_history,
 };
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -178,6 +179,7 @@ async fn on_envelope(
         CompanionMessage::SessionMessageResult(_) => "session_message_result",
         CompanionMessage::Draft(_) => "draft",
         CompanionMessage::HandoffReport(_) => "handoff_report",
+        CompanionMessage::RoomReply(_) => "room_reply",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
@@ -256,6 +258,7 @@ async fn on_envelope(
                         rubato_protocol::capability::SESSION_MESSAGES.to_owned(),
                         rubato_protocol::capability::DRAFTS.to_owned(),
                         rubato_protocol::capability::HANDOFF_REPORTS.to_owned(),
+                        rubato_protocol::capability::ROOM_REPLIES.to_owned(),
                     ],
                 })
             }
@@ -273,6 +276,8 @@ async fn on_envelope(
                 tracing::info!(rubato.session_id = %h.session_id, rubato.hook_event = ?h.hook_event_name, "hook");
                 session_messages::on_hook(app, companion_id, &h).await;
                 session_log::on_hook(app, companion_id, &h).await;
+                // After the log has the Stop: a session-mode room turn's reply (ADR 0057).
+                rooms::on_hook(app, companion_id, &h).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {
@@ -366,6 +371,11 @@ async fn on_envelope(
             CompanionMessage::HandoffReport(r) => {
                 // Recorded on the approval only for this companion's own launch of its issue.
                 approve::on_handoff_report(app, companion_id, &r).await;
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::RoomReply(r) => {
+                // Taken only from the companion the turn was sent to (ADR 0057).
+                rooms::on_room_reply(app, companion_id, &r).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::SessionMessageResult(r) => {

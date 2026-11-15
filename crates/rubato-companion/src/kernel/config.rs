@@ -92,6 +92,9 @@ pub struct CompanionConfig {
     pub headless_turn_max_secs: u64,
     /// A headless turn with no stream event for this long is killed, `failed { quiet }` (A19).
     pub headless_quiet_max_secs: u64,
+    /// Deadline for one read-only fork turn of a room agent (ADR 0057). Its first turn re-reads
+    /// the whole session uncached, so it gets longer than other commands.
+    pub fork_timeout_secs: u64,
 }
 
 impl CompanionConfig {
@@ -127,6 +130,7 @@ impl Default for CompanionConfig {
             mode: rubato_protocol::ClientKind::Interactive,
             headless_turn_max_secs: 4 * 60 * 60,
             headless_quiet_max_secs: 15 * 60,
+            fork_timeout_secs: 600,
         }
     }
 }

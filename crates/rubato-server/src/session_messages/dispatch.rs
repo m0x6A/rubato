@@ -59,7 +59,8 @@ pub async fn dispatch(app: &App, launch_id: Uuid) {
             return;
         }
         let handoff = app.announced(target.companion_id, capability::PLAN_HANDOFF);
-        let row = match store::take_next(&app.db, launch_id, now, handoff).await {
+        let turns = app.announced(target.companion_id, capability::ROOM_TURNS);
+        let row = match store::take_next(&app.db, launch_id, now, handoff, turns).await {
             Ok(Some(r)) => r,
             Ok(None) => return,
             Err(e) => {

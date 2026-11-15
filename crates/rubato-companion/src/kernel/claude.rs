@@ -1,17 +1,29 @@
-//! Headless Claude Code turns (ADR 0059, plan 122 §D14). Each turn is one `claude -p` child that
-//! leads its own process group; the companion holds it, reads its stream-json stdout, and is the
-//! authority for the turn's end, its reply and its liveness. Hooks, if they fire, are cross-checked
-//! only. Bounded twice: a total time and a time without any stream event (A19).
+//! Claude Code as a headless CLI. Every turn is one `claude -p` child that leads its own process
+//! group; the companion holds it, reads its stream-json stdout, and is the authority for the
+//! turn's end, its reply and its liveness. Bounded twice: a total time and a time without any
+//! stream event (A19). A Drop guard kills the group on every exit path, a panic included.
 //!
-//! At most one turn per session runs. The caller records `pgid` and `started_at`, so that after a
-//! restart [`same_group_alive`] can tell a live turn of ours from a reused pid.
+//! Two kinds of turn run on the same [`spawn`]:
+//! - headless sessions (ADR 0059, plan 122 §D14): the first turn ([`first_turn_args`]) and resume
+//!   turns ([`resume_args`]). At most one per session; the caller records `pgid` and
+//!   `started_at`, so that after a restart [`same_group_alive`] can tell a live turn of ours from
+//!   a reused pid;
+//! - read-only fork turns of a room agent (ADR 0057, plan 122 §D8, [`Claude`]): `claude -p --resume
+//!   <session> --fork-session --permission-mode plan`, later turns `--resume` the fork. The
+//!   spike showed a fork leaves the live session's transcript alone. No Rubato hooks: the launch's
+//!   `hooks.json` reaches a session only through `--settings` in `launch.sh`, which a fork never
+//!   gets; the fork's settings say `disableAllHooks`, so hooks a developer installed by hand do
+//!   not fire either; and the `RUBATO_*` variables `launch.sh` exports are removed. The turn's
+//!   text goes on stdin, so its length meets no argument limit.
+//!
+//! Both read the stream with [`parse_event`].
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 
@@ -46,6 +58,10 @@ pub struct TurnRequest {
     pub args: Vec<String>,
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
+    /// Variables the child must not inherit.
+    pub env_remove: Vec<String>,
+    /// Written to the child's stdin, then closed; None gives it no stdin.
+    pub stdin: Option<String>,
     pub max_total: Duration,
     pub max_quiet: Duration,
 }
@@ -102,6 +118,11 @@ pub struct TurnEnd {
     pub cost_usd: Option<f64>,
     /// The `result` event said `is_error`.
     pub is_error: bool,
+    /// The `result` event's `subtype` (`success`, `error_max_turns`, …).
+    pub subtype: Option<String>,
+    /// The session the turn ran in, from the `result` event or else the `init` one: a fork's
+    /// own session, for the next `--resume`.
+    pub session_id: Option<String>,
     /// Set when the companion killed it.
     pub killed: Option<KillReason>,
     pub ended_at: DateTime<Utc>,
@@ -136,18 +157,31 @@ pub fn spawn(
     cmd.args(&req.args)
         .current_dir(&req.cwd)
         .envs(req.env.iter().cloned())
-        .stdin(Stdio::null())
+        .stdin(if req.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0)
         // A panic or an aborted task drops the child: its group goes with it.
         .kill_on_drop(true);
+    for v in &req.env_remove {
+        cmd.env_remove(v);
+    }
     let mut child = cmd
         .spawn()
         .with_context(|| format!("starting {}", req.program))?;
     let pgid = child.id().context("turn has no pid")?;
     let started_at = Utc::now();
     let stdout = child.stdout.take().context("turn stdout")?;
+    if let (Some(text), Some(mut stdin)) = (req.stdin.clone(), child.stdin.take()) {
+        // Dropped once written: the child sees the end of its input.
+        tokio::spawn(async move {
+            let _ = stdin.write_all(text.as_bytes()).await;
+        });
+    }
     let (progress_tx, progress_rx) = mpsc::unbounded_channel();
     let (end_tx, end_rx) = oneshot::channel();
     let (kill_tx, mut kill_rx) = oneshot::channel::<KillReason>();
@@ -156,9 +190,7 @@ pub fn spawn(
         let _guard = GroupGuard(pgid);
         let mut lines = BufReader::new(stdout).lines();
         let deadline = tokio::time::Instant::now() + req.max_total;
-        let mut result_text = None;
-        let mut cost_usd = None;
-        let mut is_error = false;
+        let mut stream = Stream::default();
         let mut killed = None;
         loop {
             tokio::select! {
@@ -179,11 +211,7 @@ pub fn spawn(
                     }
                     Ok(Ok(Some(l))) => {
                         let _ = progress_tx.send(TurnProgress::Activity(Utc::now()));
-                        if let Some(r) = parse_result(&l) {
-                            result_text = r.text;
-                            cost_usd = r.cost_usd;
-                            is_error = r.is_error;
-                        }
+                        stream.read(&l);
                     }
                     // End of output: the turn is ending.
                     Ok(_) => break,
@@ -194,14 +222,7 @@ pub fn spawn(
             kill_group(pgid);
         }
         let status = child.wait().await.ok();
-        let _ = end_tx.send(TurnEnd {
-            exit_code: status.and_then(|s| s.code()),
-            result_text,
-            cost_usd,
-            is_error,
-            killed,
-            ended_at: Utc::now(),
-        });
+        let _ = end_tx.send(stream.end(status.and_then(|s| s.code()), killed));
     });
     Ok((
         RunningTurn {
@@ -230,23 +251,96 @@ pub fn kill_group(pgid: u32) {
     super::proc::signal_group("-KILL", pgid);
 }
 
-struct ResultEvent {
-    text: Option<String>,
-    cost_usd: Option<f64>,
-    is_error: bool,
+/// One stream-json event the companion reads.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamEvent {
+    /// `{"type":"system","subtype":"init","session_id":…}`.
+    Init { session_id: Option<String> },
+    /// `{"type":"result","result":"…","total_cost_usd":…,"is_error":…,"session_id":…}`.
+    Result {
+        text: Option<String>,
+        cost_usd: Option<f64>,
+        is_error: bool,
+        subtype: Option<String>,
+        session_id: Option<String>,
+    },
 }
 
-/// The stream-json `result` event: `{"type":"result","result":"…","total_cost_usd":…}`.
-fn parse_result(line: &str) -> Option<ResultEvent> {
-    let v: serde_json::Value = serde_json::from_str(line).ok()?;
-    if v.get("type")?.as_str()? != "result" {
-        return None;
+/// One line of stream-json, when it is an event the companion reads.
+pub fn parse_event(line: &str) -> Option<StreamEvent> {
+    let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_owned);
+    match v.get("type")?.as_str()? {
+        "system" => Some(StreamEvent::Init {
+            session_id: s("session_id"),
+        }),
+        "result" => Some(StreamEvent::Result {
+            text: s("result"),
+            cost_usd: v.get("total_cost_usd").and_then(|c| c.as_f64()),
+            is_error: v.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false),
+            subtype: s("subtype"),
+            session_id: s("session_id"),
+        }),
+        _ => None,
     }
-    Some(ResultEvent {
-        text: v.get("result").and_then(|r| r.as_str()).map(str::to_owned),
-        cost_usd: v.get("total_cost_usd").and_then(|c| c.as_f64()),
-        is_error: v.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false),
-    })
+}
+
+/// What a stream said so far: the last result, and the session.
+#[derive(Debug, Default)]
+struct Stream {
+    result_text: Option<String>,
+    cost_usd: Option<f64>,
+    is_error: bool,
+    subtype: Option<String>,
+    session_id: Option<String>,
+}
+
+impl Stream {
+    fn read(&mut self, line: &str) {
+        match parse_event(line) {
+            Some(StreamEvent::Init { session_id }) if self.session_id.is_none() => {
+                self.session_id = session_id;
+            }
+            Some(StreamEvent::Result {
+                text,
+                cost_usd,
+                is_error,
+                subtype,
+                session_id,
+            }) => {
+                self.result_text = text;
+                self.cost_usd = cost_usd;
+                self.is_error = is_error;
+                self.subtype = subtype;
+                if session_id.is_some() {
+                    self.session_id = session_id;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn end(self, exit_code: Option<i32>, killed: Option<KillReason>) -> TurnEnd {
+        TurnEnd {
+            exit_code,
+            result_text: self.result_text,
+            cost_usd: self.cost_usd,
+            is_error: self.is_error,
+            subtype: self.subtype,
+            session_id: self.session_id,
+            killed,
+            ended_at: Utc::now(),
+        }
+    }
+}
+
+/// A whole stream-json output read at once, as [`spawn`] reads it line by line.
+pub fn parse_stream(stdout: &str, exit_code: Option<i32>) -> TurnEnd {
+    let mut s = Stream::default();
+    for line in stdout.lines() {
+        s.read(line);
+    }
+    s.end(exit_code, None)
 }
 
 /// Whether the group `pgid`, started at `started_at`, still runs. A pid reused by another process
@@ -284,6 +378,132 @@ fn parse_etime(s: &str) -> Option<u64> {
     Some(days * 86_400 + h * 3_600 + m * 60 + sec)
 }
 
+// ----- read-only fork turns (ADR 0057) ------------------------------------------------------
+
+/// The fork's own settings: no hooks at all.
+pub const NO_HOOKS: &str = r#"{"disableAllHooks":true}"#;
+
+/// What `launch.sh` exports for a launched session; a fork carries none of it.
+pub const LAUNCH_ENV: &[&str] = &[
+    "RUBATO_LAUNCH_ID",
+    "RUBATO_HOOK_URL",
+    "RUBATO_HOOK_TOKEN",
+    "RUBATO_PLANNING",
+    "TMUX",
+];
+
+/// How the companion runs fork turns.
+#[derive(Debug, Clone)]
+pub struct Claude {
+    /// `companion.claude_command`, run through `sh` as `launch.sh` runs it.
+    pub command: String,
+    /// A fork turn's deadline, both in total and without a stream event.
+    pub timeout: Duration,
+}
+
+/// What one fork turn gave back.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Turn {
+    /// The final `result` text; empty when the turn failed.
+    pub text: String,
+    /// The session the turn ran in: the fork's, for the next `--resume`.
+    pub session_id: Option<String>,
+    pub cost_usd: Option<f64>,
+    pub exit_code: Option<i32>,
+    /// Why the turn has no answer, when it has none.
+    pub error: Option<String>,
+}
+
+impl Turn {
+    /// A fork turn's answer from how its child ended. A failed turn keeps its cost.
+    pub fn from_end(end: TurnEnd) -> Self {
+        let error = if let Some(k) = end.killed {
+            Some(format!("killed: {}", k.name()))
+        } else if end.is_error {
+            let subtype = end.subtype.as_deref().unwrap_or("error");
+            Some(match end.result_text.as_deref() {
+                Some(t) if !t.is_empty() => format!("{subtype}: {t}"),
+                _ => subtype.to_owned(),
+            })
+        } else if end.result_text.is_none() {
+            Some(format!(
+                "no result from claude (exit {})",
+                end.exit_code.map_or("signal".to_owned(), |c| c.to_string())
+            ))
+        } else {
+            None
+        };
+        Turn {
+            text: if error.is_none() {
+                end.result_text.unwrap_or_default()
+            } else {
+                String::new()
+            },
+            session_id: end.session_id,
+            cost_usd: end.cost_usd,
+            exit_code: end.exit_code,
+            error,
+        }
+    }
+}
+
+/// The arguments of one fork turn: `fork` makes a new fork of `resume`; otherwise `resume` is
+/// the fork itself.
+pub fn turn_args(resume: &str, fork: bool) -> Vec<String> {
+    let mut a: Vec<String> = vec!["-p".into(), "--resume".into(), resume.into()];
+    if fork {
+        a.push("--fork-session".into());
+    }
+    a.extend(
+        [
+            "--permission-mode",
+            "plan",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--settings",
+            NO_HOOKS,
+        ]
+        .map(String::from),
+    );
+    a
+}
+
+impl Claude {
+    /// The request for one fork turn in `worktree`, with `prompt` on stdin.
+    pub fn request(&self, worktree: &Path, resume: &str, fork: bool, prompt: &str) -> TurnRequest {
+        let mut args = vec![
+            "-c".to_owned(),
+            format!("{} \"$@\"", self.command),
+            "sh".to_owned(),
+        ];
+        args.extend(turn_args(resume, fork));
+        TurnRequest {
+            program: "sh".into(),
+            args,
+            cwd: worktree.to_path_buf(),
+            env: vec![],
+            env_remove: LAUNCH_ENV.iter().map(|v| (*v).to_owned()).collect(),
+            stdin: Some(prompt.to_owned()),
+            max_total: self.timeout,
+            max_quiet: self.timeout,
+        }
+    }
+
+    /// Start one fork turn on [`spawn`]: bounded and killable like any turn.
+    pub fn start(
+        &self,
+        worktree: &Path,
+        resume: &str,
+        fork: bool,
+        prompt: &str,
+    ) -> Result<(RunningTurn, oneshot::Receiver<TurnEnd>)> {
+        let (running, _progress, end) =
+            spawn(self.request(worktree, resume, fork, prompt)).context("running the fork turn")?;
+        Ok((running, end))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +522,8 @@ mod tests {
             args: resume_args("s1", "hello", "acceptEdits"),
             cwd: dir.to_owned(),
             env: vec![],
+            env_remove: vec![],
+            stdin: None,
             max_total: Duration::from_secs(10),
             max_quiet: Duration::from_secs(10),
         }
@@ -422,5 +644,95 @@ echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"
         let pgid = turn.pgid;
         end.await.unwrap();
         assert!(!same_group_alive(pgid, turn.started_at, Utc::now()));
+    }
+
+    #[test]
+    fn a_first_fork_turn_forks_and_a_later_one_resumes_the_fork() {
+        let first = turn_args("s1", true);
+        assert_eq!(
+            first[..7],
+            [
+                "-p",
+                "--resume",
+                "s1",
+                "--fork-session",
+                "--permission-mode",
+                "plan",
+                "--output-format"
+            ]
+        );
+        assert!(first.contains(&"--verbose".to_owned()));
+        let later = turn_args("fork-1", false);
+        assert!(!later.contains(&"--fork-session".to_owned()));
+        assert_eq!(later[..3], ["-p", "--resume", "fork-1"]);
+    }
+
+    #[test]
+    fn the_stream_gives_text_session_and_cost_and_a_failed_turn_keeps_its_cost() {
+        let out = r#"{"type":"system","subtype":"init","session_id":"fork-1"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"thinking"}]}}
+not json at all
+{"type":"result","subtype":"success","is_error":false,"result":"Because b keeps the seam.","session_id":"fork-1","total_cost_usd":0.1}"#;
+        let t = Turn::from_end(parse_stream(out, Some(0)));
+        assert_eq!(t.text, "Because b keeps the seam.");
+        assert_eq!(t.session_id.as_deref(), Some("fork-1"));
+        assert_eq!(t.cost_usd, Some(0.1));
+        assert_eq!(t.error, None);
+
+        let failed = r#"{"type":"system","subtype":"init","session_id":"fork-2"}
+{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.05}"#;
+        let t = Turn::from_end(parse_stream(failed, Some(1)));
+        assert_eq!(t.error.as_deref(), Some("error_max_turns"));
+        assert_eq!(
+            (t.text.as_str(), t.cost_usd),
+            ("", Some(0.05)),
+            "a failed turn still cost"
+        );
+        assert_eq!(
+            t.session_id.as_deref(),
+            Some("fork-2"),
+            "from init when the result has none"
+        );
+
+        let t = Turn::from_end(parse_stream("", Some(2)));
+        assert!(t.error.unwrap().contains("no result from claude (exit 2)"));
+    }
+
+    /// The fork on the shared spawn: the prompt arrives on stdin, the launch's variables do not,
+    /// and the turn runs in the worktree.
+    #[tokio::test]
+    async fn a_fork_turn_reads_its_prompt_from_stdin_without_the_launch_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("log");
+        let p = standin(
+            dir.path(),
+            &format!(
+                "{{ echo \"ARGS: $*\"; env | grep '^RUBATO_'; echo \"PWD: $PWD\"; cat; }} > '{}'\necho '{{\"type\":\"result\",\"is_error\":false,\"result\":\"ok\",\"session_id\":\"f\",\"total_cost_usd\":0.01}}'",
+                log.display()
+            ),
+        );
+        let claude = Claude {
+            command: p,
+            timeout: Duration::from_secs(10),
+        };
+        let prompt = "Messages from the plan's room follow.\n\nalice: why b?";
+        let (_t, _p, end) = spawn(claude.request(dir.path(), "s1", true, prompt)).unwrap();
+        let t = Turn::from_end(end.await.unwrap());
+        assert_eq!((t.text.as_str(), t.cost_usd), ("ok", Some(0.01)));
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            text.contains("ARGS: -p --resume s1 --fork-session"),
+            "{text}"
+        );
+        assert!(text.ends_with(prompt), "{text}");
+
+        // A launch variable set for the child is still removed: `env_remove` wins.
+        let mut r = claude.request(dir.path(), "s1", false, prompt);
+        r.env.push(("RUBATO_HOOK_TOKEN".into(), "x".into()));
+        let (_t, _p, end) = spawn(r).unwrap();
+        end.await.unwrap();
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(!text.lines().any(|l| l.starts_with("RUBATO_")), "{text}");
+        assert!(!text.contains("--fork-session"), "{text}");
     }
 }

@@ -5,6 +5,21 @@
  * Where the approval is.
  */
 export type ApproveState = ("posted" | "opening")
+/**
+ * What a call-in did.
+ */
+export type CallInResponse = ({
+agent: RoomAgent
+outcome: "joined"
+} | {
+outcome: "requested"
+request: RoomRequest
+})
+/**
+ * Why an agent left a room.
+ */
+export type LeftReason = ("dismissed" | "timed_out" | "session_ended")
+export type RequestState = ("pending" | "accepted" | "declined" | "withdrawn")
 export type CapKind = ("spend" | "attempts")
 /**
  * Companion → server.
@@ -30,7 +45,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | {
 seq: number
 type: "ack"
 })
@@ -399,6 +414,10 @@ status: "denied"
 status: "expired"
 })
 /**
+ * The owner answers a request (`POST` `routes::ROOM_REQUEST`), or its asker withdraws it.
+ */
+export type RequestAnswer = ("accept" | "decline" | "withdraw")
+/**
  * Who wrote a room message.
  */
 export type RoomAuthorKind = ("person" | "agent" | "system")
@@ -455,7 +474,29 @@ url: string
 } | {
 kind: "stop"
 requested_by: string
+} | {
+/**
+ * The person whose message made the turn.
+ */
+addressed_by: string
+/**
+ * The fork's session id from an earlier turn: `--resume` it without `--fork-session`.
+ */
+fork_session_id?: (string | null)
+kind: "room_turn"
+mode: RoomTurnMode
+room: RoomKey
+/**
+ * The room since the agent's last turn, framed as quoted discussion with each author
+ * (`room_turn_text`), cut to `Limits.room_context_max_chars`.
+ */
+text: string
+turn_id: string
 }))
+/**
+ * Where a room turn runs (plan 122 §D8).
+ */
+export type RoomTurnMode = ("session" | "fork")
 /**
  * Pushed to browsers over `/ws/web`. Clients refetch the overview on `Changed`.
  */
@@ -495,9 +536,12 @@ repo: string
 export interface RubatoProtocol {
 ApproveRequest?: ApproveRequest
 ApproveResponse?: ApproveResponse
+CallInRequest?: CallInRequest
+CallInResponse?: CallInResponse
 CapHit?: CapHit
 CompanionEnvelope?: CompanionEnvelope
 DecisionRecord?: DecisionRecord
+DismissRequest?: DismissRequest
 DraftApproveRequest?: DraftApproveRequest
 DraftApproveResponse?: DraftApproveResponse
 DraftOpRequest?: DraftOpRequest
@@ -538,6 +582,7 @@ ProposeResponse?: ProposeResponse
 PullRequestState?: PullRequestState
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
+RequestAnswerBody?: RequestAnswerBody
 RoomMessage?: RoomMessage
 RoomPostRequest?: RoomPostRequest
 RoomView?: RoomView
@@ -578,6 +623,44 @@ export interface ApproveResponse {
 body: string
 comment_url?: (string | null)
 state: ApproveState
+}
+/**
+ * Call an agent in (`POST` `routes::ROOM_AGENTS`): the owner's own launch joins at once; anyone
+ * else's call is a request the owner answers.
+ */
+export interface CallInRequest {
+branch: string
+launch_id: string
+number: number
+repo: string
+}
+/**
+ * An agent called into a room (ADR 0057): who is in, called by whom, since when.
+ */
+export interface RoomAgent {
+called_by: string
+/**
+ * `<owner>-agent`, what a message names to address it.
+ */
+handle: string
+joined_at: string
+last_turn_at?: (string | null)
+launch_id: string
+left_at?: (string | null)
+left_reason?: (LeftReason | null)
+owner: string
+}
+/**
+ * A teammate's request to call someone else's agent in, pending until the owner answers.
+ */
+export interface RoomRequest {
+answered_at?: (string | null)
+at: string
+id: string
+launch_id: string
+owner: string
+requested_by: string
+state: RequestState
 }
 /**
  * A cap was hit. An event, not a log line; the issue becomes *Blocked*.
@@ -701,6 +784,12 @@ export interface HandoffReport {
 type: "handoff_report"
 }
 /**
+ * An agent's answer to a room turn (ADR 0057).
+ */
+export interface RoomReply {
+type: "room_reply"
+}
+/**
  * A decision recorded as an issue comment with the `Decision:` template (ADR 0014).
  */
 export interface DecisionRecord {
@@ -714,6 +803,15 @@ options?: (string | null)
 title: string
 url: string
 why?: (string | null)
+}
+/**
+ * Dismiss an agent (`DELETE` `routes::ROOM_AGENTS`): its owner, or whoever called it in.
+ */
+export interface DismissRequest {
+branch: string
+handle: string
+number: number
+repo: string
 }
 /**
  * Approve one version of a draft (ADR 0054): the newest revision of the draft on `branch`,
@@ -1019,6 +1117,10 @@ author: string
  * The branch the approval names; else the branch Rubato reads the plan from.
  */
 branch?: (string | null)
+/**
+ * The bundle an approval given in Rubato covers (the plan, its design note, its ADRs).
+ */
+bundle_hash?: (string | null)
 /**
  * The comment's id, for a comment approval.
  */
@@ -1489,6 +1591,18 @@ heartbeat_interval_secs?: number
  * How often the server looks for a plan file on a live branch.
  */
 plan_poll_interval_secs?: number
+/**
+ * An agent not addressed for this long leaves the room (ADR 0057).
+ */
+room_agent_idle_secs?: number
+/**
+ * Turns made by agents' messages in a row, with no person posting, before Rubato stops.
+ */
+room_agent_turn_limit?: number
+/**
+ * The room context a turn carries, in characters (A9).
+ */
+room_context_max_chars?: number
 /**
  * The longest room message a person may post, in characters (ADR 0057).
  */
@@ -2110,10 +2224,17 @@ export interface QueueRequest {
 companion_id: string
 issue: IssueRef
 }
+export interface RequestAnswerBody {
+answer: RequestAnswer
+}
 /**
  * One message of a room, oldest first in a `RoomView`.
  */
 export interface RoomMessage {
+/**
+ * Agent handles this message addresses (`@<owner>-agent`), PR 11.
+ */
+addressed?: string[]
 at: string
 /**
  * The person's login, the agent's handle (`<owner>-agent`), or `rubato`.
@@ -2126,6 +2247,10 @@ id: string
  */
 notice?: (SeamNotice | null)
 text: string
+/**
+ * The turn this message made, or the turn an agent's message answers.
+ */
+turn_id?: (string | null)
 }
 /**
  * What a system seam notice is about (ADR 0057, Q6): posted once per pair of issue and seam.
@@ -2148,10 +2273,18 @@ text: string
  * A room and its messages (`GET` `routes::ROOM`).
  */
 export interface RoomView {
+/**
+ * Agents called in, present ones first (PR 11).
+ */
+agents?: RoomAgent[]
 branch: string
 messages: RoomMessage[]
 number: number
 repo: string
+/**
+ * Requests to call an agent in, pending ones first.
+ */
+requests?: RoomRequest[]
 }
 export interface ServerEnvelope {
 message: ServerMessage
@@ -2227,6 +2360,14 @@ spend_cap_usd: number
  * GitHub login the command is addressed to.
  */
 user: string
+}
+/**
+ * Which room: the query of `GET` `routes::ROOM`, and the key of a post.
+ */
+export interface RoomKey {
+branch: string
+number: number
+repo: string
 }
 /**
  * Web → server: send this text to the launch's session.

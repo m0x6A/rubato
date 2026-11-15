@@ -146,6 +146,10 @@ pub struct Metrics {
     pub drafts_refused: Counter<u64>,
     /// `Approved:` comments first read at or after the cutover (ADR 0054).
     pub plans_comment_after_cutover: Counter<u64>,
+    /// Room turns by `rubato.outcome`: answered, failed, stopped (ADR 0057).
+    pub rooms_agent_turns: Counter<u64>,
+    /// Times the agent turn limit stopped a room's turns.
+    pub rooms_turn_limit_hits: Counter<u64>,
     /// Approvals delivered over 30 minutes ago, current, not on their branch (ADR 0055).
     pub plans_handoff_overdue: Gauge<u64>,
     /// Handoff commits whose link comment is not posted (ADR 0055).
@@ -221,6 +225,8 @@ impl Metrics {
             plans_comment_after_cutover: m
                 .u64_counter(otel::metric::PLANS_COMMENT_AFTER_CUTOVER)
                 .build(),
+            rooms_agent_turns: m.u64_counter(otel::metric::ROOMS_AGENT_TURNS).build(),
+            rooms_turn_limit_hits: m.u64_counter(otel::metric::ROOMS_TURN_LIMIT_HITS).build(),
             plans_handoff_overdue: m.u64_gauge(otel::metric::PLANS_HANDOFF_OVERDUE).build(),
             plans_link_comment_missing: m
                 .u64_gauge(otel::metric::PLANS_LINK_COMMENT_MISSING)

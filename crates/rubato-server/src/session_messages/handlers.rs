@@ -213,7 +213,7 @@ pub async fn send(
             author: user.clone(),
         },
         author: user.clone(),
-        priority: 1,
+        priority: super::enqueue::CHAT_PRIORITY,
         state: SessionMessageState::Queued,
         created_at: now,
         pushed_at: None,

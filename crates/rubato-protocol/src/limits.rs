@@ -28,6 +28,12 @@ pub struct Limits {
     pub draft_max_bytes: u64,
     /// The longest room message a person may post, in characters (ADR 0057).
     pub room_message_max_chars: u64,
+    /// The room context a turn carries, in characters (A9).
+    pub room_context_max_chars: u64,
+    /// An agent not addressed for this long leaves the room (ADR 0057).
+    pub room_agent_idle_secs: u64,
+    /// Turns made by agents' messages in a row, with no person posting, before Rubato stops.
+    pub room_agent_turn_limit: u32,
 }
 
 impl Default for Limits {
@@ -43,6 +49,9 @@ impl Default for Limits {
             session_log_max_chars: 16000,
             draft_max_bytes: 1_048_576,
             room_message_max_chars: 8000,
+            room_context_max_chars: 16000,
+            room_agent_idle_secs: 1800,
+            room_agent_turn_limit: 3,
         }
     }
 }

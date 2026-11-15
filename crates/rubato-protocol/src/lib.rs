@@ -96,15 +96,20 @@ pub use progress::{
 };
 pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
-pub use room::{RoomAuthorKind, RoomKey, RoomMessage, RoomPostRequest, RoomView, SeamNotice};
+pub use room::{
+    CallInRequest, CallInResponse, DismissRequest, LeftReason, RequestAnswer, RequestAnswerBody,
+    RequestState, RoomAgent, RoomAuthorKind, RoomKey, RoomMessage, RoomPostRequest, RoomReply,
+    RoomRequest, RoomView, SeamNotice, addressed_handles, agent_handle,
+};
 pub use session::{
     BlockCause, ClientKind, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource,
     TmuxLocation,
 };
 pub use session_log::{LaunchLog, LogKind, LogRole, SessionLogEntry};
 pub use session_message::{
-    LaunchMessages, MessageRefusal, SessionMessage, SessionMessageKind, SessionMessageOutcome,
-    SessionMessageRequest, SessionMessageResult, SessionMessageState, SessionMessageView,
+    LaunchMessages, MessageRefusal, ROOM_TURN_PREAMBLE, RoomTurnMode, SessionMessage,
+    SessionMessageKind, SessionMessageOutcome, SessionMessageRequest, SessionMessageResult,
+    SessionMessageState, SessionMessageView, room_turn_text,
 };
 pub use traffic::{
     ObservedTraffic, SeamTraffic, SourceStatus, TrafficEdge, TrafficReport, TrafficState,

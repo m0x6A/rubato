@@ -4,6 +4,7 @@ import { ApiError } from "../../shared/api.ts";
 import { issueKey, relative } from "../../shared/format.ts";
 import { useWebResource } from "../live/index.ts";
 import { type RoomKey, roomApi, roomFailureText } from "./api.ts";
+import { Presence } from "./Presence.tsx";
 
 /** `Limits.room_message_max_chars`'s default, for an overview that does not carry the limits. */
 export const ROOM_MAX_CHARS = 8000;
@@ -37,8 +38,9 @@ interface Props {
 
 /**
  * The plan's room (ADR 0057): the team discusses the plan here, and Rubato posts a notice when
- * another plan touches one of its seams. Everyone reads it; anyone logged in posts. Agents come
- * with call-in (PR 11); their messages already read as theirs.
+ * another plan touches one of its seams. Everyone reads it; anyone logged in posts. An agent
+ * joins only when its owner calls it in (PR 11); a message that names it makes a turn, and its
+ * reply shows under that message.
  */
 export function RoomSection(props: Props) {
   const room = roomFor(props.issue);
@@ -46,7 +48,7 @@ export function RoomSection(props: Props) {
   return room ? <Room key={`${room.repo}#${room.number}:${room.branch}`} room={room} {...props} /> : null;
 }
 
-function Room({ room, me, maxChars, onOpenIssue, canOpen, onShowSeam }: Props & { room: RoomKey }) {
+function Room({ room, issue, me, maxChars, onOpenIssue, canOpen, onShowSeam }: Props & { room: RoomKey }) {
   const heading = useId();
   // The server says `updated` for this room when a message is added.
   const { data, error, reload } = useWebResource({ kind: "room", ...room }, () => roomApi.get(room), roomFailureText);
@@ -55,6 +57,9 @@ function Room({ room, me, maxChars, onOpenIssue, canOpen, onShowSeam }: Props & 
   const [said, setSaid] = useState<{ text: string; failed: boolean } | null>(null);
   // One post at a time, also for two key presses inside one render.
   const busy = useRef(false);
+  // One call-in, answer or dismissal at a time.
+  const [acting, setActing] = useState(false);
+  const actBusy = useRef(false);
 
   // A post shows at once; the next read of the room carries it too, so it is kept once.
   const messages = useMemo(() => {
@@ -93,6 +98,42 @@ function Room({ room, me, maxChars, onOpenIssue, canOpen, onShowSeam }: Props & 
     [room, reload],
   );
 
+  const act = useCallback(
+    async (run: () => Promise<string>): Promise<boolean> => {
+      if (actBusy.current) {
+        return false;
+      }
+      actBusy.current = true;
+      setActing(true);
+      setSaid(null);
+      try {
+        setSaid({ text: await run(), failed: false });
+        void reload();
+        return true;
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 401)) {
+          setSaid({ text: `Not done: ${roomFailureText(e)}`, failed: true });
+        }
+        return false;
+      } finally {
+        actBusy.current = false;
+        setActing(false);
+      }
+    },
+    [reload],
+  );
+
+  // An agent's reply goes under the message whose turn it answers; one whose turn is not shown
+  // stays in its place.
+  const turns = new Set(messages.filter((m) => m.author_kind !== "agent" && m.turn_id).map((m) => m.turn_id as string));
+  const isReply = (m: RoomMessage) => m.author_kind === "agent" && !!m.turn_id && turns.has(m.turn_id);
+  const replies = new Map<string, RoomMessage[]>();
+  for (const m of messages.filter(isReply)) {
+    replies.set(m.turn_id as string, [...(replies.get(m.turn_id as string) ?? []), m]);
+  }
+  const present = (data?.agents ?? []).filter((a) => !a.left_at);
+  const launched = (issue.sessions ?? []).filter((s) => s.launch_id && s.branch === room.branch);
+
   return (
     <section className="room" aria-labelledby={heading} data-testid="room">
       <h3 id={heading} style={{ marginTop: 12 }}>
@@ -100,16 +141,26 @@ function Room({ room, me, maxChars, onOpenIssue, canOpen, onShowSeam }: Props & 
       </h3>
       <p className="muted">The plan's room: the whole team reads it.</p>
       {error && <p className="warn">The room could not be read: {error}</p>}
+      {data && (
+        <Presence room={room} me={me} agents={data.agents ?? []} requests={data.requests ?? []} sessions={launched} planOnBranch={issue.plan?.git_ref === room.branch} acting={acting} act={act} />
+      )}
       {data === null && messages.length === 0 ? (
         !error && <p className="muted">Loading the room…</p>
       ) : messages.length === 0 ? (
         <p className="muted">No messages yet.</p>
       ) : (
         <ol className="plain room-log" aria-label="Messages in the room">
-          {messages.map((m) => (
-            <Message key={m.id} m={m} onOpenIssue={onOpenIssue} canOpen={canOpen} onShowSeam={onShowSeam} />
-          ))}
+          {messages
+            .filter((m) => !isReply(m))
+            .map((m) => (
+              <Message key={m.id} m={m} replies={m.author_kind !== "agent" && m.turn_id ? (replies.get(m.turn_id) ?? []) : []} onOpenIssue={onOpenIssue} canOpen={canOpen} onShowSeam={onShowSeam} />
+            ))}
         </ol>
+      )}
+      {me && present.length > 0 && (
+        <p className="muted room-address-hint" data-testid="room-address-hint">
+          To ask an agent, name it: {present.map((a) => `@${a.handle}`).join(", ")}. Its reply shows under your message.
+        </p>
       )}
       {me ? <Compose sending={sending} maxChars={maxChars} onSend={send} /> : <p className="muted">Log in to post in the room.</p>}
       <p className="muted room-said" role="status">
@@ -126,8 +177,9 @@ function Room({ room, me, maxChars, onOpenIssue, canOpen, onShowSeam }: Props & 
 
 type Links = Pick<Props, "onOpenIssue" | "canOpen" | "onShowSeam">;
 
-function Message({ m, ...links }: { m: RoomMessage } & Links) {
+function Message({ m, replies = [], ...links }: { m: RoomMessage; replies?: RoomMessage[] } & Links) {
   const who = m.author_kind === "system" ? "Rubato" : m.author;
+  const addressed = m.addressed ?? [];
   return (
     <li className={`room-msg ${m.author_kind}`} data-testid={`room-message-${m.id}`}>
       <div className="room-meta">
@@ -136,9 +188,17 @@ function Message({ m, ...links }: { m: RoomMessage } & Links) {
         <time className="muted" dateTime={m.at} title={new Date(m.at).toLocaleString()}>
           {relative(m.at)}
         </time>
+        {addressed.length > 0 && <span className="room-addressed">to {addressed.map((h) => `@${h}`).join(", ")}</span>}
       </div>
       <p className="room-text">{m.text}</p>
       {m.notice && <Notice n={m.notice} {...links} />}
+      {replies.length > 0 && (
+        <ol className="plain room-replies" aria-label="Replies to this message">
+          {replies.map((r) => (
+            <Message key={r.id} m={r} {...links} />
+          ))}
+        </ol>
+      )}
     </li>
   );
 }

@@ -33,6 +33,7 @@ pub fn record_of(a: &RubatoApproval) -> ApprovalRecord {
         source: ApprovalSource::Rubato,
         comment_id: None,
         approval_id: Some(a.id),
+        bundle_hash: Some(a.bundle_hash.clone()),
         author: a.approved_by.clone(),
         sha: Some(a.plan_sha.clone()),
         branch: Some(a.branch.clone()),
@@ -62,19 +63,36 @@ pub fn merge(
     out
 }
 
+/// What a Rubato approval is compared with before handoff: its draft's newest revision. The
+/// plan's hash when the bundle is the one approved; else the newest bundle's hash, so an approval
+/// of an older design note or ADR shows as for an earlier version and the new one can be approved.
+pub fn rubato_target(a: &RubatoApproval, newest: &(String, String)) -> String {
+    let (plan_sha, bundle_hash) = newest;
+    if bundle_hash.eq_ignore_ascii_case(&a.bundle_hash) {
+        plan_sha.clone()
+    } else {
+        bundle_hash.clone()
+    }
+}
+
 /// The merged list as stored now.
 pub async fn approvals(app: &App) -> Result<Approvals> {
     let comments = github_poll::all_approvals(&app.db).await?;
-    let newest: HashMap<Uuid, String> = plan_drafts::latest_drafts(app)
+    let newest: HashMap<Uuid, (String, String)> = plan_drafts::latest_drafts(app)
         .await?
         .into_iter()
-        .map(|d| (d.summary.draft_id, d.summary.plan_sha))
+        .map(|d| {
+            (
+                d.summary.draft_id,
+                (d.summary.plan_sha, d.summary.bundle_hash),
+            )
+        })
         .collect();
     let rubato = records::all(&app.db)
         .await?
         .into_iter()
         .map(|a| {
-            let target = newest.get(&a.draft_id).cloned();
+            let target = newest.get(&a.draft_id).map(|n| rubato_target(&a, n));
             (a, target)
         })
         .collect();

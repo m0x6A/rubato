@@ -234,6 +234,27 @@
           "default": 60,
           "minimum": 0
         },
+        "room_agent_idle_secs": {
+          "description": "An agent not addressed for this long leaves the room (ADR 0057).",
+          "type": "integer",
+          "format": "uint64",
+          "default": 1800,
+          "minimum": 0
+        },
+        "room_agent_turn_limit": {
+          "description": "Turns made by agents' messages in a row, with no person posting, before Rubato stops.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 3,
+          "minimum": 0
+        },
+        "room_context_max_chars": {
+          "description": "The room context a turn carries, in characters (A9).",
+          "type": "integer",
+          "format": "uint64",
+          "default": 16000,
+          "minimum": 0
+        },
         "room_message_max_chars": {
           "description": "The longest room message a person may post, in characters (ADR 0057).",
           "type": "integer",
@@ -277,6 +298,43 @@
       "enum": [
         "git",
         "rubato"
+      ]
+    },
+    "RoomKey": {
+      "description": "Which room: the query of `GET` `routes::ROOM`, and the key of a post.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "branch"
+      ]
+    },
+    "RoomTurnMode": {
+      "description": "Where a room turn runs (plan 122 §D8).",
+      "oneOf": [
+        {
+          "description": "Planning, no plan on the branch: typed into the working session at idle.",
+          "type": "string",
+          "const": "session"
+        },
+        {
+          "description": "Building, the plan on the branch: `claude -p --resume … --fork-session --permission-mode\nplan` in the worktree, with no Rubato hooks.",
+          "type": "string",
+          "const": "fork"
+        }
       ]
     },
     "ServerMessage": {
@@ -513,6 +571,49 @@
           "required": [
             "kind",
             "requested_by"
+          ]
+        },
+        {
+          "description": "A person addressed the owner's agent in the plan's room (ADR 0057, plan 122 §D8). The\ncompanion types `text` into the working session while planning, or runs it in a\nread-only fork while building; the reply comes back as `RoomReply`.",
+          "type": "object",
+          "properties": {
+            "addressed_by": {
+              "description": "The person whose message made the turn.",
+              "type": "string"
+            },
+            "fork_session_id": {
+              "description": "The fork's session id from an earlier turn: `--resume` it without `--fork-session`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "room_turn"
+            },
+            "mode": {
+              "$ref": "#/$defs/RoomTurnMode"
+            },
+            "room": {
+              "$ref": "#/$defs/RoomKey"
+            },
+            "text": {
+              "description": "The room since the agent's last turn, framed as quoted discussion with each author\n(`room_turn_text`), cut to `Limits.room_context_max_chars`.",
+              "type": "string"
+            },
+            "turn_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "room",
+            "turn_id",
+            "addressed_by",
+            "text",
+            "mode"
           ]
         }
       ],

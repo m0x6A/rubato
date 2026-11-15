@@ -108,6 +108,14 @@ pub fn router(app: App) -> Router {
         )
         .route(rubato_protocol::room::routes::ROOM, get(rooms::room))
         .route(
+            rubato_protocol::room::routes::ROOM_AGENTS,
+            post(rooms::call_in).delete(rooms::dismiss),
+        )
+        .route(
+            rubato_protocol::room::routes::ROOM_REQUEST,
+            post(rooms::answer),
+        )
+        .route(
             rubato_protocol::room::routes::ROOM_MESSAGES,
             post(rooms::post),
         )
@@ -219,6 +227,19 @@ mod tests {
             (
                 Method::POST,
                 rubato_protocol::room::routes::ROOM_MESSAGES.into(),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_AGENTS.into(),
+            ),
+            (
+                Method::DELETE,
+                rubato_protocol::room::routes::ROOM_AGENTS.into(),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_REQUEST
+                    .replace("{request_id}", &uuid::Uuid::new_v4().to_string()),
             ),
         ];
         // Every map-scoped route again under `/api/w/{ws}` for a configured workspace (ADR 0049).

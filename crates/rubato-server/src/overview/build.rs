@@ -1433,6 +1433,7 @@ mod tests {
             source: rubato_protocol::ApprovalSource::Comment,
             comment_id: Some(id),
             approval_id: None,
+            bundle_hash: None,
             author: "m0x6A".into(),
             sha: sha.map(str::to_owned),
             branch: branch.map(str::to_owned),

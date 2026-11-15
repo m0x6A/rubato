@@ -142,6 +142,8 @@ impl Headless {
             args: all,
             cwd: worktree.to_owned(),
             env: vec![],
+            env_remove: vec![],
+            stdin: None,
             max_total: self.inner.cfg.max_total,
             max_quiet: self.inner.cfg.max_quiet,
         })?;
@@ -211,7 +213,7 @@ impl Headless {
                         }
                         if spend_at.elapsed() >= SPEND_CHECK_EVERY {
                             spend_at = std::time::Instant::now();
-                            self.hook(&session_id, &worktree, "HeadlessProgress", None);
+                            self.hook(&session_id, &worktree, "HeadlessProgress", None, None);
                         }
                     }
                     None => progress_open = false,
@@ -227,6 +229,8 @@ impl Headless {
             result_text: None,
             cost_usd: None,
             is_error: true,
+            subtype: None,
+            session_id: None,
             killed: turn.kill_reason,
             ended_at: Utc::now(),
         });
@@ -288,11 +292,15 @@ impl Headless {
             })
         };
         if !real_stop {
+            // One prompt id for the pair, as Claude Code gives them: the session log keys its
+            // entries by it, and a room turn's reply is found through it (plan 122 §D8).
+            let prompt_id = Uuid::new_v4().to_string();
             self.hook(
                 session_id,
                 worktree,
                 "UserPromptSubmit",
                 Some(("prompt", prompt)),
+                Some(&prompt_id),
             );
             self.hook(
                 session_id,
@@ -301,10 +309,11 @@ impl Headless {
                 end.result_text
                     .clone()
                     .map(|t| ("last_assistant_message", t)),
+                Some(&prompt_id),
             );
         }
         if matches!(reason, Some(KillReason::Stop | KillReason::Revoke)) {
-            self.hook(session_id, worktree, "SessionEnd", None);
+            self.hook(session_id, worktree, "SessionEnd", None, None);
             let mut reg = self.inner.registry.lock().await;
             if let Some(e) = reg.find_by_launch(launch_id) {
                 e.status = SessionStatus::Ended;
@@ -316,7 +325,14 @@ impl Headless {
     }
 
     /// A hook as Claude Code would have sent it, into the companion's own hook channel.
-    fn hook(&self, session_id: &str, cwd: &Path, name: &str, text: Option<(&str, String)>) {
+    fn hook(
+        &self,
+        session_id: &str,
+        cwd: &Path,
+        name: &str,
+        text: Option<(&str, String)>,
+        prompt_id: Option<&str>,
+    ) {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default();
@@ -328,6 +344,9 @@ impl Headless {
         });
         if let Some((k, v)) = text {
             p[k] = serde_json::Value::String(v);
+        }
+        if let Some(id) = prompt_id {
+            p["prompt_id"] = serde_json::Value::String(id.to_owned());
         }
         if let Some(ev) = HookEvent::from_payload(p, Utc::now()) {
             let _ = self.inner.hooks.send(ev);
