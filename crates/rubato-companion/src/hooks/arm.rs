@@ -74,7 +74,18 @@ async fn forward(
             reg.snapshot(),
         )
     };
-    let _ = out.send(CompanionMessage::Hook(ev.clone()));
+    // Only the allowlisted payload leaves the machine (ADR 0052).
+    let (wire, trimmed) = super::wire::for_wire(ev);
+    if trimmed {
+        metrics.hook_payload_trimmed.add(
+            1,
+            &[KeyValue::new(
+                attr::HOOK_EVENT,
+                format!("{:?}", ev.hook_event_name),
+            )],
+        );
+    }
+    let _ = out.send(CompanionMessage::Hook(wire));
     let _ = out.send(CompanionMessage::Sessions { sessions: snapshot });
     (issue, transcript, cap)
 }

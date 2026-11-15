@@ -81,3 +81,26 @@ async fn then_blocked_by(w: &mut RubatoWorld, cause: String) {
         .unwrap_or_default();
     assert_eq!(got, cause, "blocked_by in {s:?}");
 }
+
+/// The payload of the last hook the server received (ADR 0052: only the allowlist leaves).
+async fn last_forwarded_payload(w: &mut RubatoWorld) -> serde_json::Value {
+    w.server()
+        .wait_for(Duration::from_secs(10), |m| match m {
+            CompanionMessage::Hook(h) => Some(h.payload.clone().unwrap_or_default()),
+            _ => None,
+        })
+        .await
+        .expect("a forwarded hook")
+}
+
+#[then(expr = "the forwarded hook payload has no key {string}")]
+async fn then_payload_lacks(w: &mut RubatoWorld, key: String) {
+    let p = last_forwarded_payload(w).await;
+    assert!(p.get(&key).is_none(), "{key} left the machine: {p}");
+}
+
+#[then(expr = "the forwarded hook payload keeps key {string}")]
+async fn then_payload_keeps(w: &mut RubatoWorld, key: String) {
+    let p = last_forwarded_payload(w).await;
+    assert!(p.get(&key).is_some(), "{key} was cut: {p}");
+}

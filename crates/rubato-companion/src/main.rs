@@ -64,6 +64,7 @@ async fn main() -> Result<()> {
                 "paired as {} (companion {})",
                 state.user, state.companion_id
             );
+            eprintln!("{}", pairing::WHAT_LEAVES);
             Ok(())
         }
         Cmd::Run => {
