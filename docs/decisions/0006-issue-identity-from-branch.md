@@ -1,6 +1,6 @@
 # 0006. Issue identity comes from the branch name
 
-- **Status:** accepted
+- **Status:** accepted; superseded in part by 0062
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (recorded in AGENTS.md)
 - **Seam:** companion-tmux-ide
