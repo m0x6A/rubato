@@ -178,8 +178,9 @@ already ours.
   changes the `let Some(Ok(frame)) = inbound` line in `handle`. D5 adds a guard at the top of the
   `Sessions` arm, where #185 inserts `own_sessions`. Whichever lands second rebases. The hunks are
   a few lines each.
-- New tests go in a new file, `tests/hardening.rs`, not in `tests/integration.rs`, which all three
-  PRs extend.
+- New end-to-end tests go in `app.rs` `tests` (they read the in-memory metric reader, which is
+  `cfg(test)` in the lib), not in `tests/integration.rs`, which all three PRs extend. The only
+  change there is the two proposal-body assertions of D7 (`tests/integration.rs:2992,2996`).
 
 ## Why one pull request
 
