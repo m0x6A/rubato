@@ -18,8 +18,61 @@ paths.
 | adrs | `scripts/adrs.ts` | lists accepted ADRs so a plan does not contradict one |
 | hooks | `scripts/hooks.ts`, `hooks.json` | renders the hooks file for a companion endpoint (ADR 0013) |
 | install | `scripts/install.ts` | copies the skill, the vendored plan check and the schemas into a repo |
+| telemetry | `scripts/otel-emit.ts` | one span per command and a client span per call to another part, over OTLP/JSON with no dependencies (ADR 0061) |
 
 `scripts/lib/` is the shared kernel (git, the local config `local.ts`, vendoring). The files the
 skill ships as is (`SKILL.md`, `prompt.md`, `decision-template.md`, `review-template.md`,
 `review-checklist.md`, `local.example.yml`)
 must stay byte-identical across refactors; connected repos receive them on install.
+
+## Telemetry from any skill
+
+`scripts/otel-emit.ts` sends spans using only Node built-ins (ADR 0061).
+
+### Settings
+
+It reads the standard OpenTelemetry env. Inside a Claude Code session, which strips `OTEL_*` from
+the commands it runs, it reads the companion's `RUBATO_OTEL_*` mirror instead:
+
+| Setting | Read from |
+| --- | --- |
+| endpoint | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, else `OTEL_EXPORTER_OTLP_ENDPOINT` + `/v1/traces`, else the `RUBATO_` mirrors |
+| headers | `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,…`), else `RUBATO_OTEL_EXPORTER_OTLP_HEADERS` |
+| `service.namespace` and other resource attributes | `OTEL_RESOURCE_ATTRIBUTES`, else `RUBATO_OTEL_RESOURCE_ATTRIBUTES` |
+| parent span | `TRACEPARENT`, which Claude Code sets for Bash when its tracing is on |
+
+`service.name` is the skill's name.
+
+### When it sends
+
+- **Nothing is sent** when there is no endpoint, the protocol is `grpc`, or
+  `OTEL_SDK_DISABLED=true`.
+- **Otherwise one POST** per process, with an 800 ms timeout.
+- **Failures are silent.** Stdout, stderr and the exit code never change.
+
+### Using it
+
+A TypeScript skill wraps its entry point and its calls to other parts:
+
+```ts
+import { call, runCommand } from "./otel-emit.ts";
+
+process.exitCode = await runCommand("my-skill", "sync", async () => {
+  call("github", () => gh(["issue", "list"])); // client span, peer.service=github
+  return 0;
+});
+```
+
+A skill that is only Markdown and shell wraps a command. The command's output and exit code are
+kept:
+
+```sh
+node --experimental-strip-types <skill dir>/scripts/otel-emit.ts span --skill my-skill --peer github -- gh issue list
+```
+
+### Naming
+
+- **The other side** is named in `--peer` or `call()` by its map id. Declare that part's
+  `service` in the map (ADR 0059) so the service graph's edge lands on it.
+- **Span and attribute names** come from `crates/rubato-protocol/src/otel.rs`.
+  `test/otel-names.test.ts` fails on any other `rubato.*` name in the scripts.

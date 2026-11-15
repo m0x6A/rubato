@@ -1,0 +1,56 @@
+{
+  "why": "a namespaced service no part names is a ghost with its edges; the same name in two namespaces is two ghosts; a namespaceless end matches only a namespaceless part; a part without service is never matched or quiet; an end with no identity is counted",
+  "now": "2026-11-13T12:00:00Z",
+  "fetch_secs": 60,
+  "report": {
+    "observed_at": "2026-11-13T12:00:00Z",
+    "window_secs": 3600,
+    "edges": [
+      { "client": "checkout", "client_namespace": "shop", "server": "payments", "server_namespace": "shop", "calls": 5, "errors": 1 },
+      { "client": "checkout", "client_namespace": "shop-test", "server": "payments", "server_namespace": "shop-test", "calls": 2, "errors": 0 },
+      { "client": "b", "server": "payments", "server_namespace": "shop", "calls": 7, "errors": 0 },
+      { "client": "a", "server": "github", "calls": 3, "errors": 0 },
+      { "client": "f", "server": "b", "calls": 4, "errors": 0 },
+      { "client": "payments", "client_namespace": "shop", "server": "f", "calls": 9, "errors": 0 },
+      { "client": "checkout", "client_namespace": "shop", "server": "b", "server_namespace": "shop", "calls": 1, "errors": 0 }
+    ]
+  },
+  "expect": {
+    "traffic": {
+      "state": "fresh",
+      "observed_at": "2026-11-13T12:00:00Z",
+      "window_secs": 3600,
+      "seams": [
+        { "seam": "b-e", "forward_calls": 7, "reverse_calls": 0, "errors": 0 }
+      ],
+      "undeclared": [
+        { "from": "a", "to": "gh", "calls": 3, "errors": 0 }
+      ],
+      "observed_parts": ["a", "b", "e", "gh"],
+      "ghosts": [
+        { "service": { "namespace": "shop", "name": "checkout" }, "calls_in": 0, "calls_out": 6, "errors": 1 },
+        { "service": { "namespace": "shop-test", "name": "checkout" }, "calls_in": 0, "calls_out": 2, "errors": 0 },
+        { "service": { "namespace": "shop-test", "name": "payments" }, "calls_in": 2, "calls_out": 0, "errors": 0 },
+        { "service": { "namespace": "shop", "name": "b" }, "calls_in": 1, "calls_out": 0, "errors": 0 }
+      ],
+      "ghost_edges": [
+        { "from": { "kind": "ghost", "service": { "namespace": "shop", "name": "checkout" } }, "to": { "kind": "part", "id": "e" }, "calls": 5, "errors": 1 },
+        { "from": { "kind": "ghost", "service": { "namespace": "shop-test", "name": "checkout" } }, "to": { "kind": "ghost", "service": { "namespace": "shop-test", "name": "payments" } }, "calls": 2, "errors": 0 },
+        { "from": { "kind": "ghost", "service": { "namespace": "shop", "name": "checkout" } }, "to": { "kind": "ghost", "service": { "namespace": "shop", "name": "b" } }, "calls": 1, "errors": 0 }
+      ],
+      "ghosts_truncated": false,
+      "unmapped_services": 1,
+      "unmapped_sample": ["f"],
+      "truncated": false
+    },
+    "findings": [
+      { "kind": "seam_quiet", "seam": "a-b", "window_secs": 3600 },
+      { "kind": "seam_quiet", "seam": "a-b-events", "window_secs": 3600 },
+      { "kind": "undeclared_traffic", "from": "a", "to": "gh", "calls": 3 },
+      { "kind": "observed_only_part", "service": { "namespace": "shop", "name": "checkout" }, "calls": 6 },
+      { "kind": "observed_only_part", "service": { "namespace": "shop-test", "name": "checkout" }, "calls": 2 },
+      { "kind": "observed_only_part", "service": { "namespace": "shop-test", "name": "payments" }, "calls": 2 },
+      { "kind": "observed_only_part", "service": { "namespace": "shop", "name": "b" }, "calls": 1 }
+    ]
+  }
+}

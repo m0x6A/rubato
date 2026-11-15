@@ -26,6 +26,15 @@ pub fn slugify(title: &str) -> String {
     }
 }
 
+/// A branch slug of the shape `slugify` makes: words of letters and digits joined by single
+/// hyphens. A slug passed in a launch request must have it; it becomes the branch, the
+/// worktree folder and part of the companion's launch script.
+pub fn is_slug(s: &str) -> bool {
+    s.chars().count() <= 100
+        && s.split('-')
+            .all(|w| !w.is_empty() && w.chars().all(char::is_alphanumeric))
+}
+
 pub fn render_prompt(template: &str, vars: &BTreeMap<&str, String>) -> String {
     let mut out = template.to_owned();
     for (k, v) in vars {
@@ -46,6 +55,32 @@ mod tests {
         );
         assert_eq!(slugify("Add the map view"), "add-map-view");
         assert_eq!(slugify(""), "work");
+    }
+
+    #[test]
+    fn slugs_from_titles_pass_the_check_and_odd_ones_do_not() {
+        for t in [
+            "Add the map view",
+            "Öppna kartan",
+            "",
+            "v0.2 — fix: x'y",
+            "a--b",
+        ] {
+            assert!(is_slug(&slugify(t)), "{t:?} -> {:?}", slugify(t));
+        }
+        for bad in [
+            "",
+            "x';touch p;'",
+            "..",
+            "a--b",
+            "-a",
+            "a-",
+            "a b",
+            "a/b",
+            "$(id)",
+        ] {
+            assert!(!is_slug(bad), "{bad:?}");
+        }
     }
 
     #[test]

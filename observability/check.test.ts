@@ -87,6 +87,8 @@ test("a dashboard without the Map versus territory panels is rejected (#104)", (
     'the dashboard has no "Quiet seams and undeclared edges" panel that queries rubato_traffic_seams_quiet',
     'the dashboard has no "Quiet seams and undeclared edges" panel that queries rubato_traffic_undeclared_edges',
     'the dashboard has no "Quiet seams and undeclared edges" panel that queries rubato_traffic_unmapped_services',
+    'the dashboard has no "Quiet seams and undeclared edges" panel that queries rubato_traffic_ghost_parts',
+    'the dashboard has no "Quiet seams and undeclared edges" panel that queries rubato_traffic_dismissals',
     'the dashboard has no "Traffic fetches" panel that queries rubato_traffic_fetches_total',
   ]);
 });
