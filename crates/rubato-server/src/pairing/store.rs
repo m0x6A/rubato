@@ -24,7 +24,7 @@ pub struct PairingRow {
     pub last_seen: Option<DateTime<Utc>>,
     pub server_seq: u64,
     pub last_companion_seq: u64,
-    /// Interactive or headless, from its last Hello (ADR 0059, migration 0022).
+    /// Interactive or headless, from its last Hello (ADR 0059, migration 0023).
     pub client: rubato_protocol::ClientKind,
 }
 
