@@ -10,11 +10,12 @@ use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
     ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
     DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, ObservedTraffic,
-    OpenIssue, Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls, ReviewRecord,
-    SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress, derive_traffic,
-    plan_fit,
+    OpenIssue, Plan, Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls,
+    ReviewRecord, SessionState, SessionStatus, SpendPoint, SystemMap, blocked_from,
+    derive_progress, derive_traffic, plan_fit,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 /// The other workspaces an issue of this overview may also belong to (ADR 0045). Empty, and
 /// `here` absent, with one workspace: the overview is then as it was before workspaces.
@@ -31,8 +32,8 @@ pub struct WorkspaceInputs {
 pub struct OtherWorkspace {
     pub id: String,
     pub name: String,
-    /// Absent until its map has loaded once.
-    pub map: Option<rubato_protocol::SystemMap>,
+    /// Absent until its map has loaded once. Shared with the server's state, not copied.
+    pub map: Option<Arc<LoadedMap>>,
     pub pinned: HashSet<IssueRef>,
     pub launched: HashSet<IssueRef>,
 }
@@ -46,14 +47,21 @@ impl OtherWorkspace {
             || self
                 .map
                 .as_ref()
-                .is_some_and(|m| names_repo(m, &issue.repo))
+                .is_some_and(|m| names_repo(&m.map, &issue.repo))
     }
 }
 
-fn names_repo(m: &rubato_protocol::SystemMap, repo: &str) -> bool {
-    m.repos_named().iter().any(|r| r.eq_ignore_ascii_case(repo))
+/// Whether the map names `repo`, compared without case, as `repos_named` would answer it but
+/// without building a set on every call (#171).
+fn names_repo(m: &SystemMap, repo: &str) -> bool {
+    m.repos
+        .iter()
+        .map(|r| r.name.as_str())
+        .chain(m.nodes.iter().filter_map(|n| n.repo.as_deref()))
+        .any(|r| r.eq_ignore_ascii_case(repo))
 }
 
+#[derive(Clone)]
 pub struct OverviewInputs {
     pub pins: Vec<IssuePin>,
     pub sessions: Vec<SessionState>,
@@ -138,7 +146,7 @@ fn cap_hit_blocks(kind: Option<CapKind>, sessions: &[SessionState]) -> bool {
 /// An approval of the current plan counts only while the plan fits the map (ADR 0029): with
 /// `fits == Some(false)` its version is `DoesNotFit`.
 pub fn approval_state(
-    approvals: &[&(ApprovalRecord, Option<String>)],
+    approvals: &[(ApprovalRecord, Option<String>)],
     plan: Option<&PlanRow>,
     fits: Option<bool>,
 ) -> Option<ApprovalState> {
@@ -173,6 +181,55 @@ pub fn approval_state(
     })
 }
 
+/// Rows of one table by issue, in their order: grouped once, then each issue's rows moved out
+/// with `take` (#171), instead of a linear filter and a copy per issue.
+struct ByIssue<T>(HashMap<IssueRef, Vec<T>>);
+
+impl<T> ByIssue<T> {
+    fn group(rows: impl IntoIterator<Item = (IssueRef, T)>) -> Self {
+        let mut by: HashMap<IssueRef, Vec<T>> = HashMap::new();
+        for (issue, row) in rows {
+            by.entry(issue).or_default().push(row);
+        }
+        Self(by)
+    }
+
+    fn take(&mut self, issue: &IssueRef) -> Vec<T> {
+        self.0.remove(issue).unwrap_or_default()
+    }
+}
+
+/// What `connected_repos` counts over every row, read before the rows move into the issues.
+/// Keys are repo names in lower case: a remote may spell a repo differently from the map.
+#[derive(Default)]
+struct RepoCounts {
+    /// Live sessions with an issue, by the issue's repo.
+    sessions: HashMap<String, u32>,
+    /// Live sessions without an issue, by the session's repo.
+    unattributed: HashMap<String, u32>,
+    /// Listed open issues, by repo.
+    open_issues: HashMap<String, u32>,
+}
+
+impl RepoCounts {
+    fn of(sessions: &[SessionState], listed: &[OpenIssue]) -> Self {
+        let mut c = Self::default();
+        for s in sessions.iter().filter(|s| s.status != SessionStatus::Ended) {
+            match (&s.issue, &s.repo) {
+                (Some(i), _) => *c.sessions.entry(i.repo.to_ascii_lowercase()).or_default() += 1,
+                (None, Some(r)) => *c.unattributed.entry(r.to_ascii_lowercase()).or_default() += 1,
+                (None, None) => {}
+            }
+        }
+        for i in listed {
+            *c.open_issues
+                .entry(i.issue.repo.to_ascii_lowercase())
+                .or_default() += 1;
+        }
+        c
+    }
+}
+
 /// The issue a handoff finding is about.
 fn handoff_issue(f: &Finding) -> Option<&IssueRef> {
     match f {
@@ -185,20 +242,46 @@ fn handoff_issue(f: &Finding) -> Option<&IssueRef> {
 }
 
 pub fn build(
-    inputs: &OverviewInputs,
+    inputs: OverviewInputs,
     map: Option<&LoadedMap>,
     limits: &Limits,
     now: DateTime<Utc>,
 ) -> Built {
+    let OverviewInputs {
+        pins,
+        sessions,
+        plans,
+        drafts,
+        mut prs,
+        decisions,
+        reviews,
+        approvals,
+        ignored_approvals,
+        approvals_in_rubato,
+        approval_findings,
+        launched,
+        cap_hits,
+        mut meta,
+        launch_map_versions,
+        backlog: (listed, listings),
+        uncovered_repos,
+        layout,
+        repo_pulls,
+        queue: _,
+        traffic,
+        dismissals,
+        mut spend,
+        workspaces: ws,
+    } = inputs;
+
     // Issues of interest: pinned, launched, planned, or with a session.
-    let mut issues: BTreeSet<IssueRef> = inputs.pins.iter().map(|p| p.issue.clone()).collect();
-    issues.extend(inputs.launched.iter().cloned());
-    issues.extend(inputs.plans.iter().map(|p| p.issue.clone()));
-    issues.extend(inputs.drafts.iter().map(|d| d.issue.clone()));
-    issues.extend(inputs.sessions.iter().filter_map(|s| s.issue.clone()));
+    let mut issues: BTreeSet<IssueRef> = pins.iter().map(|p| p.issue.clone()).collect();
+    issues.extend(launched.iter().cloned());
+    issues.extend(plans.iter().map(|p| p.issue.clone()));
+    issues.extend(drafts.iter().map(|d| d.issue.clone()));
+    issues.extend(sessions.iter().filter_map(|s| s.issue.clone()));
     // With several workspaces, only the issues this one holds: pinned or launched here, or in a
     // repo its map names. An issue no workspace holds shows in `default`, so none is lost.
-    let ws = &inputs.workspaces;
     if let Some((here_id, _)) = &ws.here {
         // Pinned in another workspace, in a repo this map names: shown here with "pinned in".
         if let Some(m) = map {
@@ -211,7 +294,7 @@ pub fn build(
                 );
             }
         }
-        let pinned_here: HashSet<&IssueRef> = inputs.pins.iter().map(|p| &p.issue).collect();
+        let pinned_here: HashSet<&IssueRef> = pins.iter().map(|p| &p.issue).collect();
         issues.retain(|i| {
             pinned_here.contains(i)
                 || ws.launched_here.contains(i)
@@ -221,41 +304,72 @@ pub fn build(
         });
     }
 
-    let mut out = Vec::new();
+    // Read over every row before the rows move into the issues: the backlog leaves out every
+    // issue that is pinned, launched or worked on, shown here or not, and the repo counts
+    // count every session and listed issue.
+    let counts = RepoCounts::of(&sessions, &listed);
+    // An issue tracked only because its branch carries a plan is still not pinned: it stays
+    // in the backlog until a person or a `Map:` line places it (ADR 0032).
+    let backlog_issues: Vec<OpenIssue> = {
+        let placed_or_worked: HashSet<&IssueRef> = pins
+            .iter()
+            .map(|p| &p.issue)
+            .chain(launched.iter())
+            .chain(sessions.iter().filter_map(|s| s.issue.as_ref()))
+            .collect();
+        listed
+            .into_iter()
+            .filter(|i| !placed_or_worked.contains(&i.issue))
+            .collect()
+    };
+    let pulls = pulls_with_checks(&prs, repo_pulls);
+
+    let mut unpinned_sessions: Vec<SessionState> = Vec::new();
+    let mut sessions_by = ByIssue::group(sessions.into_iter().filter_map(|s| match &s.issue {
+        Some(i) => Some((i.clone(), s)),
+        None => {
+            unpinned_sessions.push(s);
+            None
+        }
+    }));
+    let mut pins_by = ByIssue::group(pins.into_iter().map(|p| (p.issue.clone(), p)));
+    // The first plan row of an issue is the one shown, as a `find` over the rows would pick.
+    let mut plans_by: HashMap<IssueRef, PlanRow> = HashMap::new();
+    for p in plans {
+        plans_by.entry(p.issue.clone()).or_insert(p);
+    }
+    let mut decisions_by = ByIssue::group(decisions.into_iter().map(|d| (d.issue.clone(), d)));
+    let mut reviews_by = ByIssue::group(reviews.into_iter().map(|r| (r.issue.clone(), r)));
+    let mut approvals_by = ByIssue::group(approvals.into_iter().map(|a| (a.0.issue.clone(), a)));
+    let mut versions_by = ByIssue::group(launch_map_versions);
+    let mut drafts_by = ByIssue::group(drafts.into_iter().map(|d| (d.issue.clone(), d)));
+    let mut ignored_by =
+        ByIssue::group(ignored_approvals.into_iter().map(|a| (a.issue.clone(), a)));
+
+    let mut out = Vec::with_capacity(issues.len());
     let mut findings = Vec::new();
+    // The handoffs' findings, for the issues this overview holds (ADR 0055); pushed after the
+    // per-issue findings, as before.
+    let handoff_findings: Vec<Finding> = approval_findings
+        .into_iter()
+        .filter(|f| handoff_issue(f).is_some_and(|i| issues.contains(i)))
+        .collect();
     // Plans written as drafts and not on a branch: they count on seams too (ADR 0053).
-    let mut draft_plans: Vec<(IssueRef, rubato_protocol::Plan)> = Vec::new();
-    for issue in &issues {
-        let pins: Vec<MapRef> = inputs
-            .pins
-            .iter()
-            .filter(|p| &p.issue == issue)
-            .map(|p| p.target.clone())
-            .collect();
-        let sessions: Vec<SessionState> = inputs
-            .sessions
-            .iter()
-            .filter(|s| s.issue.as_ref() == Some(issue))
-            .cloned()
-            .collect();
-        let plan_row = inputs.plans.iter().find(|p| &p.issue == issue);
-        let plan = plan_row.and_then(|p| p.plan.clone());
+    let mut draft_plans: Vec<(IssueRef, Plan)> = Vec::new();
+    for issue in issues {
+        let issue_pins = pins_by.take(&issue);
+        let pinned_at = issue_pins.iter().map(|p| p.pinned_at).max();
+        let pins: Vec<MapRef> = issue_pins.into_iter().map(|p| p.target).collect();
+        let sessions = sessions_by.take(&issue);
+        let mut plan_row = plans_by.remove(&issue);
+        // The plan moves onto the summary; the row keeps what the approval reads.
+        let plan = plan_row.as_mut().and_then(|p| p.plan.take());
         // The newest draft of the issue (ADR 0053); with several branches, the newest revision.
-        let latest_draft = inputs
-            .drafts
-            .iter()
-            .filter(|d| &d.issue == issue)
+        let latest_draft = drafts_by
+            .take(&issue)
+            .into_iter()
             .max_by_key(|d| d.summary.at);
-        let draft = latest_draft.map(|d| {
-            let mut summary = d.summary.clone();
-            summary.live = sessions.iter().any(|s| {
-                s.status != SessionStatus::Ended
-                    && s.branch.as_deref() == Some(d.summary.branch.as_str())
-                    && s.user.eq_ignore_ascii_case(&d.summary.owner)
-            });
-            summary
-        });
-        if let Some(d) = latest_draft
+        if let Some(d) = &latest_draft
             && let Some((other, at)) = &d.conflict
             && now.signed_duration_since(*at) < chrono::Duration::hours(24)
         {
@@ -266,9 +380,20 @@ pub fn build(
                 other: other.clone(),
             });
         }
-        let draft_plan = latest_draft.and_then(|d| d.plan.clone());
+        let (draft, draft_plan) = match latest_draft {
+            Some(d) => {
+                let mut summary = d.summary;
+                summary.live = sessions.iter().any(|s| {
+                    s.status != SessionStatus::Ended
+                        && s.branch.as_deref() == Some(summary.branch.as_str())
+                        && s.user.eq_ignore_ascii_case(&summary.owner)
+                });
+                (Some(summary), d.plan)
+            }
+            None => (None, None),
+        };
         let plan_on_branch = plan.is_some();
-        if let Some(row) = plan_row
+        if let Some(row) = &plan_row
             && let Some(err) = &row.parse_error
         {
             findings.push(Finding::PlanParseError {
@@ -277,16 +402,16 @@ pub fn build(
                 error: err.clone(),
             });
         }
-        let pr = inputs.prs.get(issue);
-        let cap_kind = inputs.cap_hits.get(issue).copied();
+        let pr = prs.remove(&issue);
+        let cap_kind = cap_hits.get(&issue).copied();
         let progress_inputs = ProgressInputs {
             pins: &pins,
-            launched: inputs.launched.contains(issue),
+            launched: launched.contains(&issue),
             sessions: &sessions,
             plan_on_branch,
             draft_plan: draft_plan.is_some(),
             cap_hit: cap_kind.filter(|_| cap_hit_blocks(cap_kind, &sessions)),
-            pr,
+            pr: pr.as_ref(),
             now,
             session_stale_secs: limits.session_stale_secs,
         };
@@ -296,32 +421,28 @@ pub fn build(
         let last_seen = sessions
             .iter()
             .map(|s| s.last_seen)
-            .chain(pr.map(|p| p.updated_at))
-            .chain(
-                inputs
-                    .pins
-                    .iter()
-                    .filter(|p| &p.issue == issue)
-                    .map(|p| p.pinned_at),
-            )
+            .chain(pr.as_ref().map(|p| p.updated_at))
+            .chain(pinned_at)
             .max()
             .unwrap_or(now);
+        // Where the plan fits this workspace's map: read once, for "fits in" and for the fit.
+        let fit_here = match (&plan_row, map) {
+            (Some(row), Some(m)) => plan_fit(plan.as_ref(), row.parse_error.as_deref(), &m.map),
+            _ => None,
+        };
         // Where else the plan fits (ADR 0045): an approval counts when it fits any of the
         // issue's workspaces, and unknown ids are a finding only when it fits none.
         let mut fits_in: Vec<String> = Vec::new();
         let mut fit_elsewhere: Option<rubato_protocol::PlanFit> = None;
-        if let (Some((_, here_name)), Some(row)) = (&ws.here, plan_row) {
-            if map
-                .and_then(|m| plan_fit(plan.as_ref(), row.parse_error.as_deref(), &m.map))
-                .is_some_and(|f| f.fits)
-            {
+        if let (Some((_, here_name)), Some(row)) = (&ws.here, &plan_row) {
+            if fit_here.as_ref().is_some_and(|f| f.fits) {
                 fits_in.push(here_name.clone());
             }
-            for o in ws.others.iter().filter(|o| o.holds(issue)) {
+            for o in ws.others.iter().filter(|o| o.holds(&issue)) {
                 if let Some(f) = o
                     .map
                     .as_ref()
-                    .and_then(|m| plan_fit(plan.as_ref(), row.parse_error.as_deref(), m))
+                    .and_then(|m| plan_fit(plan.as_ref(), row.parse_error.as_deref(), &m.map))
                     .filter(|f| f.fits)
                 {
                     fits_in.push(o.name.clone());
@@ -332,7 +453,7 @@ pub fn build(
         let pinned_in: Vec<String> = ws
             .others
             .iter()
-            .filter(|o| o.pinned.contains(issue))
+            .filter(|o| o.pinned.contains(&issue))
             .map(|o| o.name.clone())
             .collect();
         if let (Some(p), Some(m), true) =
@@ -358,57 +479,42 @@ pub fn build(
                 });
             }
         }
+        let meta = meta.remove(&issue).unwrap_or_default();
         // Only while the issue is open on GitHub (#135): a closed issue whose work merged elsewhere
         // never reaches Done, and its old launch would be flagged forever. Unknown is not closed.
-        let closed = inputs
-            .meta
-            .get(issue)
-            .and_then(|m| m.github_state.as_deref())
-            == Some("closed");
-        if let (Some(m), false) = (map, closed) {
-            for (i, v) in &inputs.launch_map_versions {
-                if i == issue && *v != m.version && state != ProgressState::Done {
-                    findings.push(Finding::MapVersionMismatch {
-                        issue: issue.clone(),
-                        launched_with: v.clone(),
-                        current: m.version.clone(),
-                    });
-                    break;
-                }
-            }
+        let closed = meta.github_state.as_deref() == Some("closed");
+        let versions = versions_by.take(&issue);
+        if let (Some(m), false) = (map, closed)
+            && state != ProgressState::Done
+            && let Some(v) = versions.into_iter().find(|v| *v != m.version)
+        {
+            findings.push(Finding::MapVersionMismatch {
+                issue: issue.clone(),
+                launched_with: v,
+                current: m.version.clone(),
+            });
         }
-        let review = inputs
-            .reviews
-            .iter()
-            .filter(|r| &r.issue == issue)
-            .max_by_key(|r| (r.created_at, r.comment_id))
-            .cloned();
-        let approvals: Vec<_> = inputs
-            .approvals
-            .iter()
-            .filter(|(a, _)| &a.issue == issue)
-            .collect();
-        let fit = match (plan_row, map) {
-            (Some(row), Some(m)) => plan_fit(plan.as_ref(), row.parse_error.as_deref(), &m.map),
-            _ => None,
-        };
+        let review = reviews_by
+            .take(&issue)
+            .into_iter()
+            .max_by_key(|r| (r.created_at, r.comment_id));
         // Not fitting here but in another of its workspaces: that fit is shown and counts there.
-        let fit = match (fit, fit_elsewhere) {
+        let fit = match (fit_here, fit_elsewhere) {
             (Some(here), Some(there)) if !here.fits => Some(there),
             (here, _) => here,
         };
-        for a in inputs
-            .ignored_approvals
-            .iter()
-            .filter(|a| &a.issue == issue)
-        {
+        for a in ignored_by.take(&issue) {
             findings.push(Finding::CommentApprovalIgnored {
                 issue: issue.clone(),
-                author: a.author.clone(),
+                author: a.author,
                 created_at: a.created_at,
             });
         }
-        let approval = approval_state(&approvals, plan_row, fit.as_ref().map(|f| f.fits));
+        let approval = approval_state(
+            &approvals_by.take(&issue),
+            plan_row.as_ref(),
+            fit.as_ref().map(|f| f.fits),
+        );
         if approval
             .as_ref()
             .is_some_and(|a| a.version == ApprovalVersion::DoesNotFit)
@@ -427,8 +533,7 @@ pub fn build(
                 current_sha: current.clone(),
             });
         }
-        let meta = inputs.meta.get(issue);
-        let spend: Option<f64> = {
+        let spend_usd: Option<f64> = {
             let v: Vec<f64> = sessions.iter().filter_map(|s| s.spend_usd).collect();
             if v.is_empty() {
                 None
@@ -436,63 +541,51 @@ pub fn build(
                 Some(v.iter().sum())
             }
         };
+        let session_ids = sessions
+            .iter()
+            .filter_map(|s| s.session_id.clone())
+            .collect();
         // ADR 0058: a plan on a branch with no draft and no counted approval, once plans are
         // approved in Rubato.
-        let outside_rubato = inputs.approvals_in_rubato
+        let outside_rubato = approvals_in_rubato
             && approval.is_none()
-            && plan_row.is_some_and(|p| draft.as_ref().is_none_or(|d| d.branch != p.branch));
+            && plan_row
+                .as_ref()
+                .is_some_and(|p| draft.as_ref().is_none_or(|d| d.branch != p.branch));
+        if !plan_on_branch && let Some(p) = draft_plan {
+            draft_plans.push((issue.clone(), p));
+        }
         out.push(IssueSummary {
-            issue: issue.clone(),
-            title: meta.and_then(|m| m.title.clone()),
-            url: meta.and_then(|m| m.url.clone()),
-            pins,
+            title: meta.title,
+            url: meta.url,
             progress: Progress {
                 issue: issue.clone(),
                 state,
                 last_seen,
-                pinned_to: vec![],
-                session_ids: sessions
-                    .iter()
-                    .filter_map(|s| s.session_id.clone())
-                    .collect(),
+                pinned_to: pins.clone(),
+                session_ids,
                 reason,
                 blocked_from,
             },
+            pins,
             sessions,
             plan,
-            pull_request: pr.cloned(),
-            decisions: inputs
-                .decisions
-                .iter()
-                .filter(|d| &d.issue == issue)
-                .cloned()
-                .collect(),
+            pull_request: pr,
+            decisions: decisions_by.take(&issue),
             review,
             approval,
             fit,
-            plan_sha: plan_row.and_then(|p| p.approval_sha.clone()),
-            spend_usd: spend,
-            spend_history: inputs.spend.get(issue).cloned().unwrap_or_default(),
+            plan_sha: plan_row.and_then(|p| p.approval_sha),
+            spend_usd,
+            spend_history: spend.remove(&issue).unwrap_or_default(),
             fits_in,
             pinned_in,
             outside_rubato,
             draft,
+            issue,
         });
-        if !plan_on_branch && let Some(p) = draft_plan {
-            draft_plans.push((issue.clone(), p));
-        }
     }
-    for s in &mut out {
-        s.progress.pinned_to = s.pins.clone();
-    }
-    // The handoffs' findings, for the issues this overview holds (ADR 0055).
-    findings.extend(
-        inputs
-            .approval_findings
-            .iter()
-            .filter(|f| handoff_issue(f).is_some_and(|i| issues.contains(i)))
-            .cloned(),
-    );
+    findings.extend(handoff_findings);
 
     // Two or more open plans on one seam: plans on a branch, then drafts not on one (the same
     // grouping a room's seam notices read, `seam_groups`).
@@ -518,17 +611,10 @@ pub fn build(
         }
     }
 
-    let unpinned_sessions = inputs
-        .sessions
-        .iter()
-        .filter(|s| s.issue.is_none())
-        .cloned()
-        .collect();
     findings.extend(
-        inputs
-            .sessions
+        unpinned_sessions
             .iter()
-            .filter(|s| s.issue.is_none() && s.status != SessionStatus::Ended)
+            .filter(|s| s.status != SessionStatus::Ended)
             .map(|s| Finding::UnattributedSession {
                 companion: s.companion_id,
                 branch: s.branch.clone(),
@@ -536,8 +622,7 @@ pub fn build(
             }),
     );
     findings.extend(
-        inputs
-            .uncovered_repos
+        uncovered_repos
             .iter()
             .map(|repo| Finding::RepoNotCovered { repo: repo.clone() }),
     );
@@ -547,9 +632,9 @@ pub fn build(
         Some(m) => {
             let (t, f) = derive_traffic(
                 &m.map,
-                inputs.traffic.report.as_ref(),
-                &inputs.traffic.source,
-                &inputs.dismissals,
+                traffic.report.as_ref(),
+                &traffic.source,
+                &dismissals,
                 now,
             );
             findings.extend(f);
@@ -557,27 +642,12 @@ pub fn build(
         }
         None => ObservedTraffic::default(),
     };
-    let pulls = pulls_with_checks(inputs);
-    let repos = connected_repos(inputs, map, &out, &pulls);
+    let repos = connected_repos(&counts, &uncovered_repos, map, &out, &pulls);
 
     // The backlog: listed open issues that are not tracked above, and one entry per repo the
     // map names, listed or not, so "not listed yet" is said and not shown as empty.
-    // An issue tracked only because its branch carries a plan is still not pinned: it stays
-    // here until a person or a `Map:` line places it (ADR 0032).
-    let placed_or_worked: BTreeSet<&IssueRef> = inputs
-        .pins
-        .iter()
-        .map(|p| &p.issue)
-        .chain(inputs.launched.iter())
-        .chain(inputs.sessions.iter().filter_map(|s| s.issue.as_ref()))
-        .collect();
-    let (listed, listings) = &inputs.backlog;
     let backlog = Backlog {
-        issues: listed
-            .iter()
-            .filter(|i| !placed_or_worked.contains(&i.issue))
-            .cloned()
-            .collect(),
+        issues: backlog_issues,
         repos: match map {
             Some(m) => m
                 .map
@@ -596,7 +666,7 @@ pub fn build(
                         })
                 })
                 .collect(),
-            None => listings.clone(),
+            None => listings,
         },
     };
     // Positions only for parts the map has now: a row for a removed part is not served (and
@@ -605,12 +675,10 @@ pub fn build(
         positions: match map {
             Some(m) => {
                 let parts = m.map.node_ids();
-                inputs
-                    .layout
+                layout
                     .positions
-                    .iter()
+                    .into_iter()
                     .filter(|(id, _)| parts.contains(id.as_str()))
-                    .map(|(id, p)| (id.clone(), *p))
                     .collect()
             }
             None => Default::default(),
@@ -630,16 +698,16 @@ pub fn build(
 
 /// The stored listings, with each tracked pull request's checks taken from `pull_requests`
 /// (ADR 0023 reads them every tick), so the two never disagree and nothing is copied.
-fn pulls_with_checks(inputs: &OverviewInputs) -> Vec<RepoPulls> {
-    let tracked: HashMap<(&str, u64), &PullRequestState> = inputs
-        .prs
+fn pulls_with_checks(
+    prs: &HashMap<IssueRef, PullRequestState>,
+    repo_pulls: Vec<RepoPulls>,
+) -> Vec<RepoPulls> {
+    let tracked: HashMap<(&str, u64), &PullRequestState> = prs
         .values()
         .map(|p| ((p.repo.as_str(), p.number), p))
         .collect();
-    inputs
-        .repo_pulls
-        .iter()
-        .cloned()
+    repo_pulls
+        .into_iter()
         .map(|mut r| {
             for p in &mut r.pulls {
                 if let Some(t) = tracked.get(&(p.repo.as_str(), p.number)) {
@@ -654,7 +722,8 @@ fn pulls_with_checks(inputs: &OverviewInputs) -> Vec<RepoPulls> {
 /// One row per repo the map names, then repos of tracked work outside the map. Repo names are
 /// compared without case: a remote may spell a repo differently from the map.
 fn connected_repos(
-    inputs: &OverviewInputs,
+    counts: &RepoCounts,
+    uncovered_repos: &[String],
     map: Option<&LoadedMap>,
     issues: &[IssueSummary],
     pulls: &[RepoPulls],
@@ -674,40 +743,28 @@ fn connected_repos(
             names.push((repo.to_owned(), false));
         }
     }
-    let live = |s: &&SessionState| s.status != SessionStatus::Ended;
     names
         .into_iter()
-        .map(|(repo, in_map)| ConnectedRepo {
-            open_pulls: pulls
-                .iter()
-                .filter(|p| same(&p.repo, &repo))
-                .map(|p| p.pulls.len() as u32)
-                .sum(),
-            covered: !inputs.uncovered_repos.iter().any(|u| same(u, &repo)),
-            open_issues: inputs
-                .backlog
-                .0
-                .iter()
-                .filter(|i| same(&i.issue.repo, &repo))
-                .count() as u32,
-            plans: issues
-                .iter()
-                .filter(|i| same(&i.issue.repo, &repo) && i.plan.is_some())
-                .count() as u32,
-            sessions: inputs
-                .sessions
-                .iter()
-                .filter(live)
-                .filter(|s| s.issue.as_ref().is_some_and(|i| same(&i.repo, &repo)))
-                .count() as u32,
-            unattributed: inputs
-                .sessions
-                .iter()
-                .filter(live)
-                .filter(|s| s.issue.is_none() && s.repo.as_deref().is_some_and(|r| same(r, &repo)))
-                .count() as u32,
-            in_map,
-            repo,
+        .map(|(repo, in_map)| {
+            let key = repo.to_ascii_lowercase();
+            let count = |by: &HashMap<String, u32>| by.get(&key).copied().unwrap_or(0);
+            ConnectedRepo {
+                open_pulls: pulls
+                    .iter()
+                    .filter(|p| same(&p.repo, &repo))
+                    .map(|p| p.pulls.len() as u32)
+                    .sum(),
+                covered: !uncovered_repos.iter().any(|u| same(u, &repo)),
+                open_issues: count(&counts.open_issues),
+                plans: issues
+                    .iter()
+                    .filter(|i| same(&i.issue.repo, &repo) && i.plan.is_some())
+                    .count() as u32,
+                sessions: count(&counts.sessions),
+                unattributed: count(&counts.unattributed),
+                in_map,
+                repo,
+            }
         })
         .collect()
 }
@@ -908,7 +965,7 @@ mod tests {
             n.service = Some(rubato_protocol::ServiceId::new(None, &n.id));
         }
         let map = &map;
-        let without = build(&inputs, Some(map), &Limits::default(), now());
+        let without = build(inputs.clone(), Some(map), &Limits::default(), now());
         let edge = |client: &str, server: &str, calls| TrafficEdge {
             client: client.into(),
             server: server.into(),
@@ -945,7 +1002,7 @@ mod tests {
             author: "m0x6A".into(),
             at: now(),
         }];
-        let with = build(&inputs, Some(map), &Limits::default(), now());
+        let with = build(inputs.clone(), Some(map), &Limits::default(), now());
         assert_eq!(with.traffic.ghosts.len(), 1, "{:?}", with.traffic);
         assert_eq!(with.traffic.dismissed.len(), 1);
         assert_eq!(with.traffic.state, TrafficState::Fresh);
@@ -979,7 +1036,7 @@ mod tests {
             ended,
         ];
         inputs.uncovered_repos = vec!["other/repo".into()];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let unattributed: Vec<_> = built
             .findings
             .iter()
@@ -1012,7 +1069,7 @@ mod tests {
             plan(&a, "companion-server", "rubato-companion"),
             plan(&b, "companion-server", "rubato-orchestrator"),
         ];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert!(built.findings.iter().any(|f| matches!(f, Finding::SeamCollision { seam, issues } if seam == "companion-server" && issues.len() == 2)));
         assert!(built.findings.iter().any(|f| matches!(f, Finding::UnknownIds { issue, ids } if *issue == b && ids == &vec!["rubato-orchestrator".to_string()])));
         assert!(
@@ -1053,7 +1110,7 @@ mod tests {
         let mut s = session(&a, SessionStatus::Idle, StateSource::Hook);
         s.branch = Some("issue/1-x".into());
         inputs.sessions = vec![s];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs, Some(&map()), &Limits::default(), now());
         assert!(built.findings.iter().any(|f| matches!(f, Finding::SeamCollision { seam, issues } if seam == "companion-server" && issues.len() == 2)), "two drafts on one seam");
         assert!(built.findings.iter().any(|f| matches!(f, Finding::DraftOwnerConflict { issue, other, .. } if *issue == b && other == "alice")));
         let ia = built.issues.iter().find(|i| i.issue == a).unwrap();
@@ -1080,7 +1137,7 @@ mod tests {
             session(&a, SessionStatus::Working, StateSource::Hook),
             session(&a, SessionStatus::Idle, StateSource::Hook),
         ];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert_eq!(built.issues[0].progress.state, ProgressState::Building);
         assert_eq!(built.issues[0].spend_usd, Some(3.0));
         let (by_state, by_seam) = counts(&built);
@@ -1099,7 +1156,7 @@ mod tests {
                 .map(|s| session(&a, s, StateSource::Hook))
                 .into_iter()
                 .collect();
-            let built = build(&inputs, None, &Limits::default(), now());
+            let built = build(inputs.clone(), None, &Limits::default(), now());
             built.issues[0].progress.state
         };
         let working = Some(SessionStatus::Working);
@@ -1131,13 +1188,13 @@ mod tests {
         let mut s = session(&a, SessionStatus::Blocked, StateSource::Hook);
         s.blocked_by = Some(BlockCause::PermissionPrompt);
         inputs.sessions = vec![s];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let p = &built.issues[0].progress;
         assert_eq!(p.state, ProgressState::Blocked);
         assert_eq!(p.blocked_from, Some(ProgressState::Building));
         // Waiting for input after its turn, the same session leaves from Designed.
         inputs.sessions[0].blocked_by = Some(BlockCause::IdlePrompt);
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert_eq!(
             built.issues[0].progress.blocked_from,
             Some(ProgressState::Designed)
@@ -1157,7 +1214,7 @@ mod tests {
             pinned_at: now(),
         }];
         inputs.cap_hits = HashMap::from([(a.clone(), CapKind::Attempts)]);
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let p = &built.issues[0].progress;
         assert_eq!(p.state, ProgressState::Blocked);
         assert_eq!(p.blocked_from, None);
@@ -1173,13 +1230,13 @@ mod tests {
         let a = IssueRef::new("o/r", 1);
         let mut inputs = empty();
         inputs.sessions = vec![session(&a, SessionStatus::Blocked, StateSource::Hook)];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert_eq!(
             built.issues[0].progress.blocked_from,
             Some(ProgressState::Designing)
         );
         inputs.plans = vec![plan(&a, "web-server", "web")];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert_eq!(
             built.issues[0].progress.blocked_from,
             Some(ProgressState::Building)
@@ -1200,7 +1257,7 @@ mod tests {
         inputs.plans = vec![plan(&a, "web-server", "web")];
         inputs.launched = HashSet::from([c.clone()]);
         inputs.cap_hits = HashMap::from([(c.clone(), CapKind::Attempts)]);
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let by = blocked_from_counts(&built);
         let keys: Vec<&str> = by.keys().copied().collect();
         assert_eq!(
@@ -1239,7 +1296,7 @@ mod tests {
             pinned_by: "m0x6A".into(),
             pinned_at: now(),
         }];
-        let before = build(&inputs, Some(&map()), &Limits::default(), now());
+        let before = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert!(before.layout.positions.is_empty());
 
         let at = |x: f64| Position { x, y: 1.0 };
@@ -1248,7 +1305,7 @@ mod tests {
             ("gone".to_owned(), at(9.0)),
         ]
         .into();
-        let after = build(&inputs, Some(&map()), &Limits::default(), now());
+        let after = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let placed: Vec<&str> = after.layout.positions.keys().map(String::as_str).collect();
         assert_eq!(
             placed,
@@ -1261,7 +1318,7 @@ mod tests {
         );
         assert_eq!(after.findings, before.findings);
         // With no map there is nothing to place.
-        let none = build(&inputs, None, &Limits::default(), now());
+        let none = build(inputs.clone(), None, &Limits::default(), now());
         assert!(none.layout.positions.is_empty());
     }
 
@@ -1277,7 +1334,7 @@ mod tests {
             pinned_by: "m0x6A".into(),
             pinned_at: now(),
         }];
-        let before = build(&inputs, Some(&map()), &Limits::default(), now());
+        let before = build(inputs.clone(), Some(&map()), &Limits::default(), now());
 
         // The pinned issue and one nobody tracks are queued, and a part is moved.
         let queued = |issue: IssueRef, position: u32| QueuedIssue {
@@ -1291,7 +1348,7 @@ mod tests {
         inputs.queue = vec![queued(pinned.clone(), 0), queued(IssueRef::new(repo, 2), 1)];
         inputs.layout.positions =
             [("rubato-server".to_owned(), Position { x: 1.0, y: 2.0 })].into();
-        let after = build(&inputs, Some(&map()), &Limits::default(), now());
+        let after = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert_eq!(
             after.issues, before.issues,
             "state and reason are unchanged"
@@ -1327,7 +1384,7 @@ mod tests {
         ];
         let mut inputs = empty();
         inputs.plans = vec![row];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let off: Vec<&Finding> = built
             .findings
             .iter()
@@ -1362,7 +1419,7 @@ mod tests {
             SessionStatus::Working,
             StateSource::Hook,
         )];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let backlog: Vec<u64> = built
             .backlog
             .issues
@@ -1379,7 +1436,7 @@ mod tests {
     #[test]
     fn every_map_repo_has_a_listing_entry_even_before_its_first_listing() {
         let mut inputs = empty();
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let loaded = map();
         let named: Vec<&str> = loaded.map.repos_named().into_iter().collect();
         assert!(!named.is_empty(), "the committed map names a repo");
@@ -1407,7 +1464,7 @@ mod tests {
             truncated: true,
             error: Some("rate limited".into()),
         }];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert_eq!(
             built.backlog.repos[0].error.as_deref(),
             Some("rate limited")
@@ -1420,7 +1477,7 @@ mod tests {
     fn an_uncovered_repo_is_a_finding() {
         let mut inputs = empty();
         inputs.uncovered_repos = vec!["o/left-out".into()];
-        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        let built = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert!(
             built
                 .findings
@@ -1441,7 +1498,7 @@ mod tests {
         );
         s.issue = None;
         inputs.sessions = vec![s];
-        let built = build(&inputs, None, &Limits::default(), now());
+        let built = build(inputs.clone(), None, &Limits::default(), now());
         assert!(built.issues.is_empty());
         assert_eq!(built.unpinned_sessions.len(), 1);
     }
@@ -1471,7 +1528,7 @@ mod tests {
     }
 
     fn approval_of(inputs: &OverviewInputs, issue: &IssueRef) -> (ApprovalVersion, Vec<Finding>) {
-        let built = build(inputs, None, &Limits::default(), now());
+        let built = build(inputs.clone(), None, &Limits::default(), now());
         let one = built.issues.iter().find(|i| &i.issue == issue).unwrap();
         let stale = built
             .findings
@@ -1605,7 +1662,7 @@ mod tests {
         inputs.drafts = vec![draft_of(&a, CURRENT)];
         inputs.approvals = merged.counted;
         inputs.ignored_approvals = merged.ignored;
-        let built = build(&inputs, None, &Limits::default(), now());
+        let built = build(inputs, None, &Limits::default(), now());
         let one = built
             .issues
             .iter()
@@ -1634,7 +1691,7 @@ mod tests {
         inputs.drafts = vec![draft_of(&a, CURRENT)];
         inputs.approvals = merged.counted;
         inputs.ignored_approvals = merged.ignored;
-        let built = build(&inputs, None, &Limits::default(), now());
+        let built = build(inputs, None, &Limits::default(), now());
         let one = built.issues.iter().find(|i| i.issue == a).unwrap();
         assert_eq!(
             one.approval.as_ref().unwrap().record.source,
@@ -1710,7 +1767,7 @@ mod tests {
             url: "u".into(),
         };
         inputs.reviews = vec![review(2, "passed after fixes"), review(1, "2 blockers")];
-        let built = build(&inputs, None, &Limits::default(), now());
+        let built = build(inputs.clone(), None, &Limits::default(), now());
         let one = built.issues.iter().find(|i| i.issue == a).unwrap();
         assert_eq!(one.review.as_ref().unwrap().outcome, "passed after fixes");
         assert!(one.approval.is_none());
@@ -1720,16 +1777,13 @@ mod tests {
 /// Findings about a repo two workspaces' maps name (ADR 0045), for the overview of `here`: the
 /// maps give it different plan paths, or an id that both name is a part with a different repo in
 /// each. `maps` is every workspace's map by name, in config order. Shown, never refused.
-pub fn cross_workspace_findings(
-    here: &str,
-    maps: &[(String, rubato_protocol::SystemMap)],
-) -> Vec<Finding> {
-    let Some((_, mine)) = maps.iter().find(|(n, _)| n == here) else {
+pub fn cross_workspace_findings(here: &str, maps: &[(&str, &SystemMap)]) -> Vec<Finding> {
+    let Some((_, mine)) = maps.iter().find(|(n, _)| *n == here) else {
         return vec![];
     };
     let mut out = Vec::new();
     for repo in mine.repos_named() {
-        let sharing: Vec<&(String, rubato_protocol::SystemMap)> =
+        let sharing: Vec<&(&str, &SystemMap)> =
             maps.iter().filter(|(_, m)| names_repo(m, repo)).collect();
         if sharing.len() < 2 {
             continue;
@@ -1738,7 +1792,7 @@ pub fn cross_workspace_findings(
         if sharing.iter().any(|(_, m)| path(m) != path(mine)) {
             out.push(Finding::PlanPathConflict {
                 repo: repo.to_string(),
-                workspaces: sharing.iter().map(|(n, _)| n.clone()).collect(),
+                workspaces: sharing.iter().map(|(n, _)| (*n).to_owned()).collect(),
             });
         }
         for node in mine.nodes.iter().filter(|n| {
@@ -1756,7 +1810,7 @@ pub fn cross_workspace_findings(
                             .eq_ignore_ascii_case(node.repo.as_deref().unwrap_or(""))
                     })
                 })
-                .map(|(n, _)| n.clone())
+                .map(|(n, _)| (*n).to_owned())
                 .collect();
             if !differs.is_empty() {
                 let mut workspaces = vec![here.to_string()];
@@ -1774,6 +1828,10 @@ pub fn cross_workspace_findings(
 #[cfg(test)]
 mod cross_workspace_tests {
     use super::*;
+
+    fn borrowed(maps: &[(String, SystemMap)]) -> Vec<(&str, &SystemMap)> {
+        maps.iter().map(|(n, m)| (n.as_str(), m)).collect()
+    }
     use rubato_protocol::{MapNode, NodeKind, RepoRef, SystemMap};
 
     fn map(plan_path: Option<&str>, nodes: &[(&str, &str)]) -> SystemMap {
@@ -1803,7 +1861,7 @@ mod cross_workspace_tests {
 
     #[test]
     fn a_shared_repo_with_two_plan_paths_or_an_id_meaning_two_parts_is_a_finding() {
-        let maps = vec![
+        let owned = vec![
             ("admin".to_string(), map(None, &[("auth-api", "acme/auth")])),
             (
                 "shop".to_string(),
@@ -1813,6 +1871,7 @@ mod cross_workspace_tests {
                 ),
             ),
         ];
+        let maps = borrowed(&owned);
         let f = cross_workspace_findings("admin", &maps);
         assert!(
             f.contains(&Finding::PlanPathConflict {
@@ -1833,7 +1892,7 @@ mod cross_workspace_tests {
             ("admin".to_string(), map(None, &[("auth-api", "acme/auth")])),
             ("shop".to_string(), map(None, &[("auth-api", "acme/auth")])),
         ];
-        assert!(cross_workspace_findings("admin", &quiet).is_empty());
+        assert!(cross_workspace_findings("admin", &borrowed(&quiet)).is_empty());
         // One workspace: never.
         assert!(cross_workspace_findings("admin", &maps[..1]).is_empty());
     }
@@ -1876,7 +1935,7 @@ mod closed_mismatch_tests {
                 },
             );
         }
-        let built = build(&inputs, Some(&map), &Limits::default(), Utc::now());
+        let built = build(inputs.clone(), Some(&map), &Limits::default(), Utc::now());
         let mut flagged: Vec<u64> = built
             .findings
             .iter()

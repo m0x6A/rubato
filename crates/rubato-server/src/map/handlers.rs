@@ -19,8 +19,8 @@ pub async fn map(
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(Json(MapResponse {
-        map: m.map,
-        version: m.version,
+        map: m.map.clone(),
+        version: m.version.clone(),
         loaded_at: m.loaded_at,
     }))
 }
@@ -41,8 +41,8 @@ pub async fn map_reload(
     })?;
     app.notify_ws("map", ws.as_str());
     Ok(Json(MapResponse {
-        map: m.map,
-        version: m.version,
+        map: m.map.clone(),
+        version: m.version.clone(),
         loaded_at: m.loaded_at,
     }))
 }
@@ -50,9 +50,11 @@ pub async fn map_reload(
 /// Every configured workspace in switcher order, named by its entry or else by its map.
 pub async fn list(app: &App) -> Vec<WorkspaceInfo> {
     let (entries, _) = app.config.workspace_entries();
+    // One read guard for every workspace, and only the fields the list shows (#171).
+    let maps = app.maps.read().await;
     let mut out = Vec::with_capacity(entries.len());
     for w in entries {
-        let loaded = app.map_of(&w.id).await;
+        let loaded = maps.get(&w.id);
         out.push(WorkspaceInfo {
             name: w
                 .name

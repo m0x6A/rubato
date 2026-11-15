@@ -84,7 +84,7 @@ pub struct AppState {
     pub web_tx: broadcast::Sender<WebEvent>,
     /// The loaded map of each workspace, by workspace id (ADR 0044). A workspace whose map has
     /// never loaded has no entry.
-    pub maps: RwLock<BTreeMap<String, LoadedMap>>,
+    pub maps: RwLock<BTreeMap<String, Arc<LoadedMap>>>,
     pub metrics: Metrics,
     pub signer: Signer,
     pub traffic: RwLock<TrafficLatest>,
@@ -167,16 +167,23 @@ impl AppState {
 
     /// The loaded map of workspace `default`: what every route served before workspaces, and
     /// what unprefixed routes serve (ADR 0049).
-    pub async fn default_map(&self) -> Option<LoadedMap> {
+    pub async fn default_map(&self) -> Option<Arc<LoadedMap>> {
         self.map_of(rubato_protocol::DEFAULT_WORKSPACE).await
     }
 
-    pub async fn map_of(&self, ws: &str) -> Option<LoadedMap> {
+    /// A shared pointer to the loaded map, not a copy (#171): a reload swaps the pointer, and a
+    /// reader holding the old one keeps a consistent map.
+    pub async fn map_of(&self, ws: &str) -> Option<Arc<LoadedMap>> {
         self.maps.read().await.get(ws).cloned()
     }
 
-    pub async fn set_map(&self, ws: &str, map: LoadedMap) {
-        self.maps.write().await.insert(ws.to_string(), map);
+    pub async fn set_map(&self, ws: &str, map: LoadedMap) -> Arc<LoadedMap> {
+        let map = Arc::new(map);
+        self.maps
+            .write()
+            .await
+            .insert(ws.to_string(), Arc::clone(&map));
+        map
     }
 
     /// Every distinct repo the loaded maps name, each once (ADR 0048), in order.
@@ -324,5 +331,46 @@ impl AppState {
             Some(c) => c.tx.send(msg).is_ok(),
             None => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::github::FakeGitHub;
+
+    fn loaded(version: &str) -> LoadedMap {
+        LoadedMap {
+            map: serde_yaml_ng::from_str("version: 1\nname: m\nnodes: []\nseams: []\n").unwrap(),
+            version: version.into(),
+            loaded_at: Utc::now(),
+            yaml: format!("# {version}"),
+        }
+    }
+
+    /// #171: a read hands out the loaded map, not a copy; a reload swaps it and leaves a reader
+    /// holding the old one with a consistent map.
+    #[tokio::test]
+    async fn map_of_shares_one_map_and_a_reload_swaps_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = Config::for_tests(
+            format!("sqlite://{}/s.db?mode=rwc", tmp.path().display()),
+            "m0x6A",
+        );
+        let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
+        let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
+        let set = app.set_map("default", loaded("v1")).await;
+        let (a, b) = (
+            app.map_of("default").await.unwrap(),
+            app.default_map().await.unwrap(),
+        );
+        assert!(
+            Arc::ptr_eq(&a, &b) && Arc::ptr_eq(&a, &set),
+            "a read copied the map"
+        );
+        app.set_map("default", loaded("v2")).await;
+        assert_eq!((a.version.as_str(), a.yaml.as_str()), ("v1", "# v1"));
+        assert_eq!(app.map_of("default").await.unwrap().version, "v2");
+        assert!(app.map_of("other").await.is_none());
     }
 }

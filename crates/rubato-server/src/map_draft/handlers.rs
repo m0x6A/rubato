@@ -3,14 +3,15 @@
 use super::store::{self, Appended, Changed};
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
-use crate::kernel::state::App;
+use crate::kernel::state::{App, LoadedMap};
 use crate::pins;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::Utc;
+use rubato_protocol::MapRef;
 use rubato_protocol::map_draft::{DRAFT_MAX_OPS, DraftOpRequest, MapOp, routes};
-use rubato_protocol::{MapRef, SystemMap};
+use std::sync::Arc;
 
 pub(super) const SLICE: &str = "map_draft";
 
@@ -30,10 +31,9 @@ pub(super) type Refusal = (StatusCode, String);
 pub(super) const FROZEN: &str =
     "The draft is being proposed and takes no changes. Withdraw the proposal to edit it again.";
 
-pub(super) async fn loaded_map(app: &App, ws: &str) -> Result<SystemMap, Refusal> {
+pub(super) async fn loaded_map(app: &App, ws: &str) -> Result<Arc<LoadedMap>, Refusal> {
     app.map_of(ws)
         .await
-        .map(|m| m.map)
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))
 }
 
@@ -77,7 +77,7 @@ pub async fn add_op(
     let outcome = store::append(
         &app.db,
         ws.as_str(),
-        &map,
+        &map.map,
         &req,
         &user,
         Utc::now(),

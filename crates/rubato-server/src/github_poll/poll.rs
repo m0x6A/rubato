@@ -15,7 +15,7 @@ use rubato_protocol::{
     ApprovalRecord, ApprovalSource, ChecksStatus, DecisionRecord, IssueRef, PullRequestState,
     ReviewRecord, trusted_author,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Where an issue stands after its metadata step this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,12 +98,12 @@ pub async fn read_meta(
 }
 
 /// Which of several branches of one issue a caller already knows to prefer (ADR 0032).
-#[derive(Debug, Clone, Default)]
-pub struct BranchPrefs {
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BranchPrefs<'a> {
     /// The branch the newest `Approved:` names.
-    pub approved: Option<String>,
+    pub approved: Option<&'a str>,
     /// The branch the stored plan was read from.
-    pub stored: Option<String>,
+    pub stored: Option<&'a str>,
 }
 
 /// The listings of one tick, per repo, made on first use and shared by that repo's issues. A
@@ -132,7 +132,7 @@ impl RepoView {
         &mut self,
         app: &App,
         issue: &IssueRef,
-        prefer: &BranchPrefs,
+        prefer: &BranchPrefs<'_>,
     ) -> Result<Option<BranchHead>> {
         if !self.branches.contains_key(&issue.repo) {
             let listed = app
@@ -156,7 +156,7 @@ impl RepoView {
         let named = |name: Option<&str>| {
             name.and_then(|n| candidates.iter().find(|b| b.name == n).cloned())
         };
-        if let Some(b) = named(prefer.approved.as_deref()) {
+        if let Some(b) = named(prefer.approved) {
             return Ok(Some(b));
         }
         for b in &candidates {
@@ -169,12 +169,13 @@ impl RepoView {
                 return Ok(Some(b.clone()));
             }
         }
-        Ok(named(prefer.stored.as_deref()).or_else(|| candidates.into_iter().next()))
+        Ok(named(prefer.stored).or_else(|| candidates.into_iter().next()))
     }
 
-    /// The `issue/` branches of every listed repo, read on first use (one listing per repo per
-    /// tick, shared with [`Self::branch`]).
-    pub async fn heads(&mut self, app: &App, repo: &str) -> Vec<BranchHead> {
+    /// The issue numbers the `issue/` branches of a repo name, read on first use (one listing
+    /// per repo per tick, shared with [`Self::branch`]). A set, not a copy of every branch
+    /// (#171): the caller only asks whether an issue has one.
+    pub async fn head_issues(&mut self, app: &App, repo: &str) -> HashSet<u64> {
         if !self.branches.contains_key(repo) {
             let listed = app
                 .github
@@ -183,7 +184,13 @@ impl RepoView {
                 .map_err(|e| format!("{e:#}"));
             self.branches.insert(repo.to_owned(), listed);
         }
-        self.branches[repo].clone().unwrap_or_default()
+        match &self.branches[repo] {
+            Ok(heads) => heads
+                .iter()
+                .filter_map(|b| IssueRef::number_from_branch(&b.name))
+                .collect(),
+            Err(_) => HashSet::new(),
+        }
     }
 
     /// `Some(pr)` when the open listing has a pull request from `branch`, `Some(None)` when the
