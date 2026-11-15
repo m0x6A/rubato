@@ -16,6 +16,30 @@ pub enum WebEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<String>,
     },
+    /// One resource changed that the overview does not carry (plan 122): only a view showing it
+    /// refetches it. The overview is not refetched.
+    Updated {
+        at: DateTime<Utc>,
+        resource: WebResource,
+    },
+}
+
+/// A resource a view can refetch on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WebResource {
+    /// `GET` `session_message::routes::LAUNCH_MESSAGES` for this launch.
+    LaunchMessages { launch_id: uuid::Uuid },
+    /// `GET` `session_log::routes::LAUNCH_LOG` for this launch.
+    LaunchLog { launch_id: uuid::Uuid },
+    /// `GET` `plan_draft::routes::DRAFT` (and its revisions) for this draft.
+    Draft { draft_id: uuid::Uuid },
+    /// `GET` `room::routes::ROOM` for this plan's room (ADR 0057).
+    Room {
+        repo: String,
+        number: u64,
+        branch: String,
+    },
 }
 
 /// Route path for the browser websocket.

@@ -150,6 +150,32 @@ export async function pinAdrs(cwd: string, planPath: string, decisions = "docs/d
   return rows;
 }
 
+/** An ADR's status word: `proposed`, `accepted`, `superseded`, … */
+export function adrStatus(text: string): string {
+  return field(text, "Status").split(/\s+/)[0] ?? "";
+}
+
+/**
+ * The ADR moved to accepted (ADR 0035, ADR 0055): *Decided by* names who accepted it and how,
+ * and keeps who drafted it. Shared by `adrs.ts accept` and `plan.ts handoff`.
+ */
+export function acceptedText(text: string, acceptedBy: string): string {
+  const decider = field(text, "Decided by").replace(/;\s*a human accepts\s*$/, "");
+  return text
+    .replace(/^- \*\*Status:\*\*\s*proposed\b.*$/m, "- **Status:** accepted")
+    .replace(/^- \*\*Decided by:\*\*.*$/m, `- **Decided by:** ${acceptedBy}; drafted by ${decider}`);
+}
+
+/** How `plan.ts handoff` names an acceptance by a Rubato approval: approver, date, link, self. */
+export function rubatoAcceptance(by: string, date: string, url: string, self: boolean): string {
+  return `${by}, accepted ${date}, approved in Rubato ${url}${self ? " (self)" : ""}`;
+}
+
+/** Whether the ADR is accepted by the Rubato approval at `url`: a handoff already wrote it. */
+export function acceptedInRubato(text: string, url: string): boolean {
+  return adrStatus(text) === "accepted" && field(text, "Decided by").includes(`approved in Rubato ${url}`);
+}
+
 export type AcceptResult = { code: number; line: Record<string, unknown> };
 
 /**
@@ -232,15 +258,11 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
       refused.push({ adr: r.adr, reason: "adr_changed" });
       continue;
     }
-    if (field(text, "Status").split(/\s+/)[0] !== "proposed") {
+    if (adrStatus(text) !== "proposed") {
       refused.push({ adr: r.adr, reason: "not_proposed" });
       continue;
     }
-    const decider = field(text, "Decided by").replace(/;\s*a human accepts\s*$/, "");
-    const next = text
-      .replace(/^- \*\*Status:\*\*\s*proposed\b.*$/m, "- **Status:** accepted")
-      .replace(/^- \*\*Decided by:\*\*.*$/m, `- **Decided by:** ${c.user.login}, accepted ${today} by approval comment ${c.html_url}${self ? " (self)" : ""}; drafted by ${decider}`);
-    writes.push([abs, next]);
+    writes.push([abs, acceptedText(text, `${c.user.login}, accepted ${today} by approval comment ${c.html_url}${self ? " (self)" : ""}`)]);
     accepted.push(r.adr);
   }
   const pinned = new Set(rows.map((r) => r.file));

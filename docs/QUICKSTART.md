@@ -276,6 +276,23 @@ code and approve. The companion stores its pairing token in
 
 The *Companions* tab shows your machine as connected. Leave it running; it reconnects by itself.
 
+**What leaves your machine** (ADR 0052), which `pair` also prints:
+- the sessions the companion sees: repo, branch, issue, status and spend;
+- heartbeats and launch results;
+- each hook's event name and metadata: session, cwd, tool name;
+- for sessions started from Rubato only, your prompts and the agent's replies, cut to
+  `Limits.session_log_max_chars`. The whole team reads them in the session's log;
+- for sessions started from Rubato only, the plan the session writes: the plan file at its
+  path, the design note it links and the ADRs it proposes, up to `Limits.draft_max_bytes`, as a
+  draft the team reads in Rubato (ADR 0053). Nothing else in the worktree is read.
+- for sessions started from Rubato only, the agent's answers to turns in the plan's room, when
+  you called it in: typed into the session while planning, or from a read-only fork while
+  building, with the fork's cost. Everyone who reads the room reads them (ADR 0057).
+
+Tool input and output stay on your machine, and so do the prompts and replies of sessions you
+start yourself. The companion cuts every hook payload to an allowlist before it leaves, and the
+server keeps only the log text, never a hook payload.
+
 ## 7. Put an issue through the flow
 
 1. Open a small issue on `m0x6A/rubato`, for example a docs fix. Note its number *n*.

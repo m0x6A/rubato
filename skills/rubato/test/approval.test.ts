@@ -40,6 +40,17 @@ describe("comments.ts reads approvals as the server does", () => {
     expect(trustedAuthor("OWNER", true)).not.toBe(true);
   });
 
+  it("reads the shared ADR pin fixtures as rubato_protocol::adr_pins does", () => {
+    // The server refuses approval with `adrs_unpinned` from the same rows (ADR 0054).
+    const dir = join(root, "schema/fixtures/plans/adr-pins");
+    const cases = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    expect(cases.length).toBe(2);
+    for (const f of cases) {
+      const want = JSON.parse(readFileSync(join(dir, f.replace(/\.md$/, ".json")), "utf8"));
+      expect(pinnedAdrs(readFileSync(join(dir, f), "utf8")), f).toEqual(want);
+    }
+  });
+
   it("counts the newest trusted approval, unedited, naming the sha", () => {
     const sha = "1e29c8fac8411763ac280e957033f587924db5c5";
     const c = (id: number, at: string, body: string, extra: Partial<GhComment> = {}): GhComment => ({
@@ -358,11 +369,16 @@ describe("install ships the wait (ADR 0035)", () => {
     install(to, false);
     const shipped = (d: string): string[] =>
       readdirSync(join(skill, d), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? shipped(join(d, e.name)) : [join(d, e.name)]));
-    const files = ["SKILL.md", "hooks.json", "prompt.md", "decision-template.md", "review-template.md", "review-checklist.md", "local.example.yml", ...shipped("scripts")];
+    const files = ["SKILL.md", "hooks.json", "prompt.md", "prompt-rubato.md", "decision-template.md", "review-template.md", "review-checklist.md", "local.example.yml", ...shipped("scripts")];
     for (const f of files) {
       expect(readFileSync(join(to, f)).equals(readFileSync(join(skill, f))), f).toBe(true);
     }
     expect(files).toContain(join("scripts", "lib", "comments.ts"));
+    expect(files).toContain(join("scripts", "lib", "handoff.ts"));
+    // The companion reads the installed version for `skill:<version>` (ADR 0055).
+    const installed = JSON.parse(readFileSync(join(to, "package.json"), "utf8")) as { version?: string };
+    expect(installed.version).toBe((JSON.parse(readFileSync(join(skill, "package.json"), "utf8")) as { version: string }).version);
+    expect(readFileSync(join(to, "vendor", "plan-check", "bundle.ts")).equals(readFileSync(join(root, "actions/plan-check/src/bundle.ts")))).toBe(true);
     symlinkSync(join(skill, "node_modules"), join(to, "node_modules"));
 
     const w = makeWorld();

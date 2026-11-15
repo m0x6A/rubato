@@ -93,7 +93,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
 `/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces, telemetry, db connection, `AppState` with a map per workspace, signer, `http::internal` and `http::Ws`, GitHub port); slices:
+(config, workspaces, telemetry, db connection, `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -105,10 +105,15 @@ layout          where each part sits on the shared map          map_layout
 map             load and serve each workspace's map, the list    map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
 new_issue       create an issue as the App, pinned where begun  issue_creations
-plans           parse and keep plan files from issue branches   plans
-approve         accept a plan as yourself, posted once          plan_approvals
+plans           plan files read at the issue branch head, kept  plans
+plan_drafts     plan drafts mirrored from worktrees, revisions  plan_drafts, plan_draft_revisions
+approve         approval in Rubato, its handoff and link comment  plan_approvals, rubato_approvals, plan_links
 queue           issues queued on your own companions, in order  companion_queue
+session_messages  messages to your own launched session, at most once  session_messages
+session_log     prompts and last replies of launched sessions   session_log_entries
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, issue_suggestions, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
+import          a plan written outside Rubato becomes your draft  (none)
+rooms           a plan's room: messages, seam notices, agents called in, turns  room_messages, room_agents, room_requests
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
@@ -118,17 +123,21 @@ web_link        websocket fan-out to browsers                   (none)
 <!-- slices: rubato-companion -->
 `crates/rubato-companion/src/`: composition root `lib.rs`, `main.rs`, `runtime.rs` (channels,
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
-state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline);
+state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline,
+the `SessionInput` port whose first adapter is the tmux paste, `claude` for headless `claude -p` turns as
+process groups, ADR 0062);
 slices:
 
 ```text
-pairing      device-code pairing with a GitHub login            pair
-server_link  outbound websocket, outbox, acks, Welcome limits   client task (essential)
-sessions     Registry, identity from the branch, discovery      reconcile (essential), events watcher (best-effort)
-hooks        loopback hook receiver, hooks template, apply_hook  hook server, dropped counter (essential)
-launch       LaunchCommand: own user only, worktree, tmux, exec  launch task (essential)
-spend        transcript cost, spend cap, CapHit                  after each hook
-stale        heartbeat, stale sessions                           heartbeat, sweep (essential)
+pairing        device-code pairing with a GitHub login                            pair
+server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
+sessions       Registry, identity, discovery, launches.json, headless turns        reconcile (essential, not headless), events watcher (best-effort)
+hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
+launch         LaunchCommand: own user only, worktree, tmux or a headless turn    launch task (essential)
+spend          transcript cost, spend cap, CapHit                                 after each hook
+stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
+session_input  SessionMessage: own user, launched here, idle, typed once; stop    session input task (essential)
+plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
 ```
 <!-- /slices -->
 <!-- slices: web -->
@@ -140,19 +149,21 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 `features/features.test.ts`:
 
 ```text
-live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
+live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
+chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout; POST, DELETE /api/traffic/dismissals
 issues      issue list, not-pinned backlog, detail, start gate   (none)
-companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
+companions  pair with a code, lanes (sessions, queue, headless badge), revoke  POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
 queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
 launch      start a session through your own companion           POST /api/launch
 drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
 findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
-plans       proposed and open plans, where they fit, Accept plan  POST /api/plans/approve
+plans       proposed and open plans, fit, Accept plan, drafts    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
 repos       connected repos, what each provides, loose sessions  (none)
+room        a plan's room: messages, notices, agents called in   GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id
 workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
 ```
 <!-- /slices -->
@@ -162,7 +173,7 @@ Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; 
 modules, each with the types and `routes` its seam uses (every type re-exported at the root):
 
 ```text
-approve    ApproveRequest, ApproveResponse, reasons; PLAN_APPROVE
+approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
 auth       Me; ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
 session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
@@ -174,8 +185,9 @@ launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; L
 layout     MapLayout, Position; LAYOUT
 map        SystemMap, Scenario, MapResponse; MAP, MAP_RELOAD
 map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
-plan       Plan and its affected parts, O-rows, assumptions
-github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord, ApprovalState
+plan       Plan and its affected parts, O-rows, assumptions, decisions, the approval record
+plan_hash  approval_hash (the record left out), bundle_paths, bundle_hash, adr_pins; shared fixtures with plan-check and the skill
+github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord and its source, ApprovalState, comment_counts
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
@@ -258,6 +270,10 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A plan whose affected nodes are not in the map.
 - Two open plans touching the same seam.
 - GitHub API rate limit under 10%.
+- A message for a session that waits for input, queued for more than 10 minutes.
+- An approval in Rubato that has not reached its branch 30 minutes after it was delivered.
+- A handoff commit whose link comment is not on the issue.
+- A plan whose committed approval record differs from Rubato's.
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

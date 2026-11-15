@@ -30,6 +30,116 @@
         "at",
         "reason"
       ]
+    },
+    {
+      "description": "One resource changed that the overview does not carry (plan 122): only a view showing it\nrefetches it. The overview is not refetched.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "resource": {
+          "$ref": "#/$defs/WebResource"
+        },
+        "type": {
+          "type": "string",
+          "const": "updated"
+        }
+      },
+      "required": [
+        "type",
+        "at",
+        "resource"
+      ]
     }
-  ]
+  ],
+  "$defs": {
+    "WebResource": {
+      "description": "A resource a view can refetch on its own.",
+      "oneOf": [
+        {
+          "description": "`GET` `session_message::routes::LAUNCH_MESSAGES` for this launch.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "launch_messages"
+            },
+            "launch_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "launch_id"
+          ]
+        },
+        {
+          "description": "`GET` `session_log::routes::LAUNCH_LOG` for this launch.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "launch_log"
+            },
+            "launch_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "launch_id"
+          ]
+        },
+        {
+          "description": "`GET` `plan_draft::routes::DRAFT` (and its revisions) for this draft.",
+          "type": "object",
+          "properties": {
+            "draft_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "draft"
+            }
+          },
+          "required": [
+            "kind",
+            "draft_id"
+          ]
+        },
+        {
+          "description": "`GET` `room::routes::ROOM` for this plan's room (ADR 0057).",
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "room"
+            },
+            "number": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "repo",
+            "number",
+            "branch"
+          ]
+        }
+      ]
+    }
+  }
 }

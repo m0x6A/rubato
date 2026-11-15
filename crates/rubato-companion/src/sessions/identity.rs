@@ -184,6 +184,14 @@ mod tests {
             head_mtime: None,
             branch_drift: None,
             blocked_by: None,
+            last_hook: None,
+            last_hook_idle: false,
+            last_hook_at: None,
+            input_sent_at: None,
+            hooks_lost: false,
+            pasted: Vec::new(),
+            plan_path: None,
+            restored_hash: None,
         }
     }
 

@@ -23,6 +23,50 @@
     "message"
   ],
   "$defs": {
+    "DraftFile": {
+      "description": "One file of a bundle, as it is in the worktree.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Repository path, as `bundle_paths` gives it.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "text"
+      ]
+    },
+    "DraftRestore": {
+      "description": "Server → companion, in `LaunchCommand.draft`: a parked draft's newest settled revision.",
+      "type": "object",
+      "properties": {
+        "draft_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "files": {
+          "description": "Repository paths, relative, as `bundle_paths` gives them; the plan first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DraftFile"
+          }
+        },
+        "rev": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "draft_id",
+        "rev",
+        "files"
+      ]
+    },
     "IssueRef": {
       "description": "A GitHub issue, addressed as `owner/name#number`.",
       "type": "object",
@@ -66,6 +110,17 @@
           "description": "`issue/<n>-<slug>`.",
           "type": "string"
         },
+        "draft": {
+          "description": "The newest settled revision of the launcher's parked draft on this branch, for the\ncompanion to write into a worktree this launch creates (ADR 0053, plan 122 §D5). Sent\nonly to a companion that announced `draft_restore`, and only while no plan is on the branch.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftRestore"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "id": {
           "type": "string",
           "format": "uuid"
@@ -93,6 +148,17 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "plan_path": {
+          "description": "Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion\nmirrors, with the bundle it names (ADR 0053). Absent from an older server.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "planning": {
+          "description": "How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.",
+          "$ref": "#/$defs/PlanningMode"
         },
         "prompt": {
           "description": "Initial prompt for the session.",
@@ -140,6 +206,13 @@
           "default": 600,
           "minimum": 0
         },
+        "draft_max_bytes": {
+          "description": "The largest plan bundle the companion mirrors (ADR 0053); a larger one is sent without\nits files, refused as too large.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 1048576,
+          "minimum": 0
+        },
         "github_poll_interval_secs": {
           "description": "How often the server polls GitHub for PRs, checks and decision comments per live issue.",
           "type": "integer",
@@ -161,6 +234,48 @@
           "default": 60,
           "minimum": 0
         },
+        "room_agent_idle_secs": {
+          "description": "An agent not addressed for this long leaves the room (ADR 0057).",
+          "type": "integer",
+          "format": "uint64",
+          "default": 1800,
+          "minimum": 0
+        },
+        "room_agent_turn_limit": {
+          "description": "Turns made by agents' messages in a row, with no person posting, before Rubato stops.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 3,
+          "minimum": 0
+        },
+        "room_context_max_chars": {
+          "description": "The room context a turn carries, in characters (A9).",
+          "type": "integer",
+          "format": "uint64",
+          "default": 16000,
+          "minimum": 0
+        },
+        "room_message_max_chars": {
+          "description": "The longest room message a person may post, in characters (ADR 0057).",
+          "type": "integer",
+          "format": "uint64",
+          "default": 8000,
+          "minimum": 0
+        },
+        "session_log_max_chars": {
+          "description": "The longest prompt or reply the companion forwards for the session log (ADR 0052); longer\ntext is cut and marked truncated.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 16000,
+          "minimum": 0
+        },
+        "session_message_max_chars": {
+          "description": "The longest session message the companion types (ADR 0051); longer ones are refused.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 8000,
+          "minimum": 0
+        },
         "session_stale_secs": {
           "description": "A *working* session with no hook event for longer than this renders *unknown*.",
           "type": "integer",
@@ -177,6 +292,51 @@
         }
       }
     },
+    "PlanningMode": {
+      "description": "How a launched session plans (ADR 0053): `git` is today's flow (commit, push, `Review:` and\n`Approved:` comments); `rubato` drafts in Rubato and hands off at approval. The server sends\n`rubato` only after the cutover and to a companion and skill that can carry it.",
+      "type": "string",
+      "enum": [
+        "git",
+        "rubato"
+      ]
+    },
+    "RoomKey": {
+      "description": "Which room: the query of `GET` `routes::ROOM`, and the key of a post.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "branch"
+      ]
+    },
+    "RoomTurnMode": {
+      "description": "Where a room turn runs (plan 122 §D8).",
+      "oneOf": [
+        {
+          "description": "Planning, no plan on the branch: typed into the working session at idle.",
+          "type": "string",
+          "const": "session"
+        },
+        {
+          "description": "Building, the plan on the branch: `claude -p --resume … --fork-session --permission-mode\nplan` in the worktree, with no Rubato hooks.",
+          "type": "string",
+          "const": "fork"
+        }
+      ]
+    },
     "ServerMessage": {
       "description": "Server → companion.",
       "oneOf": [
@@ -184,6 +344,13 @@
           "description": "Answer to `Hello`.",
           "type": "object",
           "properties": {
+            "capabilities": {
+              "description": "What this server can take (`capability`). Absent from an older server.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "last_seen_companion_seq": {
               "description": "Last companion sequence the server has; the companion replays newer events.",
               "type": "integer",
@@ -228,6 +395,20 @@
           ]
         },
         {
+          "description": "Text for one session the paired user launched (ADR 0051).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_message"
+            }
+          },
+          "$ref": "#/$defs/SessionMessage",
+          "required": [
+            "type"
+          ]
+        },
+        {
           "type": "object",
           "properties": {
             "seq": {
@@ -266,6 +447,182 @@
             "message"
           ]
         }
+      ]
+    },
+    "SessionMessage": {
+      "description": "Server → companion: something to type into one launched session.",
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "launch_id": {
+          "description": "The launch the message is for. A `/clear` changes the session id, not the launch.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "session_id": {
+          "description": "The launch's Claude Code session id as the server last knew it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "user": {
+          "description": "GitHub login of the session's paired user. The companion refuses any other.",
+          "type": "string"
+        }
+      },
+      "oneOf": [
+        {
+          "description": "Text a person typed in Rubato for their own session.",
+          "type": "object",
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "chat"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text",
+            "author"
+          ]
+        },
+        {
+          "description": "A team member approved the session's plan in Rubato (ADR 0054): the companion types the\nhandoff command with the approval record as arguments (ADR 0055). Goes first.",
+          "type": "object",
+          "properties": {
+            "approval_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "approved_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "approved_by": {
+              "type": "string"
+            },
+            "approved_sha": {
+              "type": "string"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "bundle_hash": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "plan_approved"
+            },
+            "plan_path": {
+              "type": "string"
+            },
+            "self_approved": {
+              "description": "The approver owns the draft.",
+              "type": "boolean"
+            },
+            "url": {
+              "description": "Rubato's link to the approval, written into accepted ADRs.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "approval_id",
+            "approved_by",
+            "approved_at",
+            "approved_sha",
+            "bundle_hash",
+            "branch",
+            "plan_path",
+            "self_approved",
+            "url"
+          ]
+        },
+        {
+          "description": "The owner stops their own session (ADR 0062): the companion kills the running turn's\nprocess group (headless) or the tmux session (interactive). Never queued, not held\nbehind an in-flight message, and not waiting for idle. Sent only to a companion that\nannounced `session_stop`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "stop"
+            },
+            "requested_by": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "requested_by"
+          ]
+        },
+        {
+          "description": "A person addressed the owner's agent in the plan's room (ADR 0057, plan 122 §D8). The\ncompanion types `text` into the working session while planning, or runs it in a\nread-only fork while building; the reply comes back as `RoomReply`.",
+          "type": "object",
+          "properties": {
+            "addressed_by": {
+              "description": "The person whose message made the turn.",
+              "type": "string"
+            },
+            "fork_session_id": {
+              "description": "The fork's session id from an earlier turn: `--resume` it without `--fork-session`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "room_turn"
+            },
+            "mode": {
+              "$ref": "#/$defs/RoomTurnMode"
+            },
+            "room": {
+              "$ref": "#/$defs/RoomKey"
+            },
+            "text": {
+              "description": "The room since the agent's last turn, framed as quoted discussion with each author\n(`room_turn_text`), cut to `Limits.room_context_max_chars`.",
+              "type": "string"
+            },
+            "turn_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "room",
+            "turn_id",
+            "addressed_by",
+            "text",
+            "mode"
+          ]
+        }
+      ],
+      "required": [
+        "id",
+        "user",
+        "launch_id",
+        "issue",
+        "created_at"
       ]
     }
   }

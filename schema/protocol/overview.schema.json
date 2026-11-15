@@ -14,6 +14,14 @@
       "type": "boolean",
       "default": false
     },
+    "comment_approvals_until": {
+      "description": "The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, ADR 0054), when one is configured: plans are\napproved in Rubato, and an `Approved:` comment posted at or after it does not count. Absent\nbefore the cutover is set, and from an older server: *Accept plan* as before.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
     "companion_silent_secs": {
       "description": "The companion stale threshold N in seconds, from the server's config\n(`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and\n`CompanionSilent` fires past it (#105). An older server's overview reads as 600.",
       "type": "integer",
@@ -147,9 +155,17 @@
       ]
     },
     "ApprovalRecord": {
-      "description": "A person's approval of a plan, first line `Approved: plan <sha>` or\n`Approved: plan <sha> on <branch>` (ADR 0027). Only a trusted author's approval counts.",
+      "description": "A person's approval of a plan (ADR 0054): an issue comment whose first line is\n`Approved: plan <sha>` or `Approved: plan <sha> on <branch>` (ADR 0027), from a trusted\nauthor only; or an approval given in Rubato, with its `approval_id` and no comment.",
       "type": "object",
       "properties": {
+        "approval_id": {
+          "description": "The `rubato_approvals` row, for an approval given in Rubato.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
         "author": {
           "type": "string"
         },
@@ -160,8 +176,19 @@
             "null"
           ]
         },
+        "bundle_hash": {
+          "description": "The bundle an approval given in Rubato covers (the plan, its design note, its ADRs).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "comment_id": {
-          "type": "integer",
+          "description": "The comment's id, for a comment approval.",
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "uint64",
           "minimum": 0
         },
@@ -185,16 +212,35 @@
             "null"
           ]
         },
+        "source": {
+          "description": "Absent for a comment, which is all an approval was before ADR 0054.",
+          "$ref": "#/$defs/ApprovalSource"
+        },
         "url": {
+          "description": "The comment's URL; empty for an approval given in Rubato.",
           "type": "string"
         }
       },
       "required": [
         "issue",
-        "comment_id",
         "author",
         "created_at",
         "url"
+      ]
+    },
+    "ApprovalSource": {
+      "description": "Where an approval was given (ADR 0054).",
+      "oneOf": [
+        {
+          "description": "An `Approved:` comment on the issue (ADR 0027). Counted only when posted before the\ncutover, `RUBATO_COMMENT_APPROVALS_UNTIL`.",
+          "type": "string",
+          "const": "comment"
+        },
+        {
+          "description": "An approval given in Rubato, recorded in `rubato_approvals`.",
+          "type": "string",
+          "const": "rubato"
+        }
       ]
     },
     "ApprovalState": {
@@ -380,6 +426,21 @@
           "description": "No checks configured.",
           "type": "string",
           "const": "none"
+        }
+      ]
+    },
+    "ClientKind": {
+      "description": "What kind of client a companion is (ADR 0062). Every client has one owner and never approves.",
+      "oneOf": [
+        {
+          "description": "Sessions in the developer's tmux, input pasted into the pane.",
+          "type": "string",
+          "const": "interactive"
+        },
+        {
+          "description": "No terminal: each turn is a `claude -p` child process the companion holds.",
+          "type": "string",
+          "const": "headless"
         }
       ]
     },
@@ -742,6 +803,81 @@
         "created_at"
       ]
     },
+    "DraftSummary": {
+      "description": "A draft as the overview carries it, per issue: its newest settled revision.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "bundle_hash": {
+          "type": "string"
+        },
+        "draft_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "imported_from": {
+          "description": "The branch an imported plan was found on (ADR 0058).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "live": {
+          "description": "The owner's launched session for this branch is live: the draft is being worked on.\nOtherwise it is parked. Derived on each overview build.",
+          "type": "boolean"
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "original_author": {
+          "description": "Who last committed the imported plan file, kept with the draft the importer owns.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner": {
+          "description": "The paired user whose launch first mirrored to this branch.",
+          "type": "string"
+        },
+        "parse_error": {
+          "description": "Why the plan in that revision does not parse, when it does not.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plan_sha": {
+          "description": "The approval hash of the plan in that revision (ADR 0054).",
+          "type": "string"
+        },
+        "rev": {
+          "description": "The newest settled revision, 1-based.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "draft_id",
+        "branch",
+        "owner",
+        "rev",
+        "at",
+        "plan_sha",
+        "bundle_hash",
+        "live"
+      ]
+    },
     "Finding": {
       "description": "Map versus territory, and plans that disagree with the map. Shown, never suppressed.",
       "oneOf": [
@@ -791,6 +927,127 @@
             "kind",
             "seam",
             "issues"
+          ]
+        },
+        {
+          "description": "Another person's launched session wrote a plan bundle on a branch whose draft someone\nelse owns; it was not stored (ADR 0053). Taking a draft over is Import.",
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "draft_owner_conflict"
+            },
+            "other": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "branch",
+            "owner",
+            "other"
+          ]
+        },
+        {
+          "description": "The plan on the branch carries an approval record Rubato did not make, or one that differs\nfrom its own, or a hash that is not the approved one (ADR 0054, ADR 0055). No link\ncomment is posted for it.",
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "approval_record_mismatch"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "branch",
+            "reason"
+          ]
+        },
+        {
+          "description": "The link comment's outcome is unknown and the comments pass has not found it for 30\nminutes; a person may post it again (ADR 0055).",
+          "type": "object",
+          "properties": {
+            "approval_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "link_comment_waiting"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "approval_id"
+          ]
+        },
+        {
+          "description": "Rubato holds no usable token for the approver, so the link comment waits (ADR 0055).",
+          "type": "object",
+          "properties": {
+            "approver": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "link_waiting_for_approver"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "approver"
+          ]
+        },
+        {
+          "description": "The approval covers ADRs that live in the map repo, which this repo's handoff could not\naccept (ADR 0055, Q12).",
+          "type": "object",
+          "properties": {
+            "adrs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "adrs_not_accepted"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "adrs"
           ]
         },
         {
@@ -929,6 +1186,32 @@
           "required": [
             "kind",
             "issue"
+          ]
+        },
+        {
+          "description": "An `Approved:` comment posted at or after the cutover: not counted, since plans are\napproved in Rubato (ADR 0054).",
+          "type": "object",
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "comment_approval_ignored"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "author",
+            "created_at"
           ]
         },
         {
@@ -1345,6 +1628,17 @@
             "$ref": "#/$defs/DecisionRecord"
           }
         },
+        "draft": {
+          "description": "The issue's plan draft in Rubato, its newest settled revision (ADR 0053). Absent when the\nissue has none.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "fit": {
           "description": "Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.",
           "anyOf": [
@@ -1365,6 +1659,10 @@
         },
         "issue": {
           "$ref": "#/$defs/IssueRef"
+        },
+        "outside_rubato": {
+          "description": "The plan on the issue's branch was written outside Rubato (ADR 0058): the branch has no\ndraft and no approval counts. It is shown with its fit, cannot be approved as it stands,\nand can be imported. Only once the cutover is set; before it, plans are approved by comment.",
+          "type": "boolean"
         },
         "pinned_in": {
           "description": "Names of the other workspaces where the issue is pinned (ADR 0047): \"pinned in <name>\".",
@@ -1956,6 +2254,10 @@
     "PairingInfo": {
       "type": "object",
       "properties": {
+        "client": {
+          "description": "Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.",
+          "$ref": "#/$defs/ClientKind"
+        },
         "companion_id": {
           "type": "string",
           "format": "uuid"
@@ -2041,6 +2343,17 @@
             "$ref": "#/$defs/AffectedPart"
           }
         },
+        "approval": {
+          "description": "The approval record in the front matter, written at handoff (ADR 0054). Absent when the\nplan has none of its keys; a record with a key missing is kept as it is, so the check can\nreport it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanApprovalRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "assumed": {
           "type": "array",
           "items": {
@@ -2060,6 +2373,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/DataModel"
+          }
+        },
+        "decisions": {
+          "description": "The decisions recorded while the plan was drafted, from its `## Decisions` table\n(ADR 0056). Optional; empty when absent or \"None.\"",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanDecision"
           }
         },
         "flows": {
@@ -2107,6 +2427,62 @@
         "issue",
         "path",
         "affected_parts"
+      ]
+    },
+    "PlanApprovalRecord": {
+      "description": "The approval record a handoff writes into the front matter (ADR 0054): who approved, when, and\nthe approval hash of the plan they approved. Left out of that hash.",
+      "type": "object",
+      "properties": {
+        "approved_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "PlanDecision": {
+      "description": "One row of the plan's `## Decisions` table (ADR 0056).",
+      "type": "object",
+      "properties": {
+        "chosen": {
+          "type": "string"
+        },
+        "decided_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "why": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "decision",
+        "chosen"
       ]
     },
     "PlanFit": {
@@ -2744,6 +3120,10 @@
         "cwd": {
           "type": "string"
         },
+        "hooks_lost": {
+          "description": "The companion restarted and could not take its old hook port back, so this launched\nsession's hooks go nowhere: chat and mirroring need a relaunch (plan 122 §D1).",
+          "type": "boolean"
+        },
         "issue": {
           "description": "Resolved from the branch, or from the launch when the branch does not follow the convention.",
           "anyOf": [
@@ -2758,6 +3138,14 @@
         "last_seen": {
           "type": "string",
           "format": "date-time"
+        },
+        "launch_id": {
+          "description": "The Rubato launch this session belongs to, when Rubato launched it (ADR 0051).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
         },
         "repo": {
           "description": "`owner/name` from `origin`.",
@@ -2875,6 +3263,11 @@
           "description": "The companion just launched it; no event yet.",
           "type": "string",
           "const": "launch"
+        },
+        {
+          "description": "A headless companion holds the session's turn as its own child process (ADR 0062): the\nturn's end, reply and liveness come from that process, not from tmux or hooks. Sent only\nto a server that announced `session_stop`.",
+          "type": "string",
+          "const": "headless"
         }
       ]
     },

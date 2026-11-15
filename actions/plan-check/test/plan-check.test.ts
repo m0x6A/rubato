@@ -1,10 +1,12 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkPlanFile, logLine } from "../src/check.ts";
 import { parseArgs } from "../src/cli.ts";
 import { loadMap, loadMapText, MapError, mapIds } from "../src/map.ts";
 import { parsePlan } from "../src/parse-plan.ts";
+import { planSha } from "../src/plan-sha.ts";
+import { bundleHash, bundlePaths } from "../src/bundle.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const schemaDir = resolve(root, "schema");
@@ -296,5 +298,52 @@ describe("several maps (issue #89, ADR 0045)", () => {
     expect(a.map).toBe("a.yml");
     expect(a.maps).toEqual(["a.yml", "b.yml"]);
     expect(a.repo).toBe("acme/auth");
+  });
+});
+
+describe("plan form for approval in Rubato (ADR 0054, ADR 0056)", () => {
+  it("decisions fixture matches Rust", () => {
+    // `plans::parse::tests::decisions_and_the_approval_record_match_typescript` reads the same files.
+    const path = "schema/fixtures/plans/decisions.md";
+    const plan = parsePlan(readFileSync(resolve(root, path), "utf8"), path);
+    expect(plan).toEqual(JSON.parse(readFileSync(resolve(fixtures, "decisions.json"), "utf8")));
+    expect(plan.decisions).toHaveLength(2);
+    expect(parsePlan(readFileSync(resolve(fixtures, "valid.md"), "utf8"), "v.md").decisions).toBeUndefined();
+  });
+
+  it("the approval hash matches the shared fixtures, and the record does not change it", () => {
+    const dir = resolve(fixtures, "approval-hash");
+    const cases = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+    expect(cases).toEqual(["crlf.md", "edited.md", "ticked.md", "unticked.md", "with-keys.md"]);
+    for (const f of cases) {
+      expect(planSha(readFileSync(resolve(dir, f), "utf8")), f).toBe(readFileSync(resolve(dir, f.replace(/\.md$/, ".txt")), "utf8").trim());
+    }
+    console.log(`checked ${cases.length} approval-hash fixtures`);
+  });
+
+  it("passes a current approval record and fails a stale or partial one, on purpose", () => {
+    const current = checkPlanFile(resolve(fixtures, "approval-current.md"), map, schemaDir);
+    expect(current.approval).toBe("current");
+    expect(current.ok).toBe(true);
+    const stale = checkPlanFile(resolve(fixtures, "approval-stale.md"), map, schemaDir);
+    expect(stale.approval).toBe("stale");
+    expect(stale.ok).toBe(false);
+    const partial = checkPlanFile(resolve(fixtures, "approval-partial.md"), map, schemaDir);
+    expect(partial.approval).toBe("partial");
+    expect(partial.ok).toBe(false);
+    const none = checkPlanFile(resolve(fixtures, "valid.md"), map, schemaDir);
+    expect(none.approval).toBe("none");
+    expect(none.ok).toBe(true);
+    expect(logLine(stale).approval).toBe("stale");
+  });
+
+  it("bundle paths and hash match the shared fixture (Rust: plan_hash tests)", () => {
+    const dir = resolve(fixtures, "bundle");
+    const c = JSON.parse(readFileSync(resolve(dir, "case.json"), "utf8"));
+    expect(bundlePaths(readFileSync(resolve(dir, "plan.md"), "utf8"), c.plan_path)).toEqual(c.paths);
+    expect(bundleHash(c.plan_path, c.files)).toBe(c.hash);
+    const edited = c.files.map(([p, t]: [string, string], i: number) => [p, i === 1 ? t + "one more line\n" : t]);
+    expect(bundleHash(c.plan_path, edited)).not.toBe(c.hash);
+    expect(bundlePaths("[a](../../../etc/passwd) [d](122-x/design.md#d1) [e](https://x.test/122-x/y.md)\n", "docs/plans/122.md")).toEqual(["docs/plans/122.md", "docs/plans/122-x/design.md"]);
   });
 });
