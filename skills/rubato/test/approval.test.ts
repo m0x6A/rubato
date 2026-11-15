@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -386,14 +386,16 @@ describe("install ships the wait (ADR 0035)", () => {
     w.stub({ comments: [comment(1, `Approved: plan ${w.sha}`)] });
     const yml = join(w.work, "..", "workspace.yml");
     writeFileSync(yml, `map:\n  repo: acme/map\n  path: system-map.yml\n  local: ${w.work}\nrepos: []\n`);
-    const out = execFileSync("node", ["--experimental-strip-types", join(to, "scripts/plan.ts"), "wait", "--once", w.plan], {
-      cwd: w.work,
-      encoding: "utf8",
-      env: { ...process.env, RUBATO_WORKSPACE: yml },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const last = JSON.parse(out.trim().split("\n").at(-1) as string) as { kind: string };
-    expect(last.kind).toBe("approved");
-    console.log(`checked ${files.length} shipped files and one installed wait`);
+    // Retired at the cutover (ADR 0054): even with an Approved: comment there, the installed
+    // copy's wait and accept refuse, and say why.
+    const run = (args: string[]) =>
+      spawnSync("node", ["--experimental-strip-types", ...args], { cwd: w.work, encoding: "utf8", env: { ...process.env, RUBATO_WORKSPACE: yml } });
+    const waited = run([join(to, "scripts/plan.ts"), "wait", "--once", w.plan]);
+    expect(waited.status).toBe(11);
+    expect(JSON.parse(waited.stdout.trim())).toEqual({ event: "rubato.plan.wait", kind: "exited", reason: "approval_in_rubato" });
+    const accepted = run([join(to, "scripts/adrs.ts"), "accept", "--comment", "https://github.com/acme/map/issues/1#issuecomment-1"]);
+    expect(accepted.status).toBe(11);
+    expect(JSON.parse(accepted.stdout.trim())).toMatchObject({ event: "rubato.adrs.accept", reason: "approval_in_rubato" });
+    console.log(`checked ${files.length} shipped files and the installed wait and accept, retired`);
   });
 });

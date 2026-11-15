@@ -70,6 +70,11 @@ export RUBATO_GITHUB_APP_INSTALLATION_ID=...   # from step 3
 # secret and stable: rotating it makes every stored token unreadable (everyone logs in again).
 # The App must have "Expire user authorization tokens" on (the default).
 export RUBATO_TOKEN_KEY="$(openssl rand -hex 32)"
+# The cutover (ADR 0054): from this time on plans are approved in Rubato, and an Approved:
+# comment posted at or after it does not count. Leave it unset until every companion and skill
+# is upgraded (the "Companions by capability" panel shows session_input, draft_mirror and
+# plan_handoff for each); while unset, plans are approved by comment as before.
+# export RUBATO_COMMENT_APPROVALS_UNTIL=2026-11-20T10:00:00Z
 export RUBATO_MAP_REPO=m0x6A/rubato
 export RUBATO_MAP_PATH=docs/design/rubato-map.yml
 export RUBATO_MAP_REF=main
@@ -312,9 +317,20 @@ What happens next, and what to watch:
   `rubato.branch` and `rubato.node` set as OTel resource attributes. Attach with
   `tmux attach -t rubato@issue-n-<slug>` to watch or take over.
 - The issue moves to **Started**, then **Designing** as the first hook events arrive.
-- The session, following the skill, writes `docs/plans/n.md`, checks it and pushes it. On the
-  next poll the issue is **Designed** and the plan's affected parts paint the map. Two plans on
-  one seam show as a finding on that seam.
+- The session, following the skill, writes `docs/plans/n.md` and checks it.
+  - **Before the cutover** it pushes the plan and posts a `Review:` comment, and a person
+    approves it with an `Approved:` comment.
+  - **After the cutover** it leaves the draft uncommitted in the worktree. At each pause the
+    companion mirrors the plan, its design note and its proposed ADRs to Rubato, and the issue
+    shows the draft with every revision and what changed since you last looked. Talk to your
+    session from the issue panel; the agent replies with `Review:` and `Summary:` there. Press
+    **Approve** on the newest revision. The companion types the handoff, the plan reaches the
+    branch in one commit with the approval record, and the issue gets one link comment from
+    you.
+
+  Once the plan is on the branch, or a draft has settled, the issue is **Designed** and the
+  plan's affected parts paint the map. Two plans on one seam show as a finding on that seam,
+  and as a notice in both plans' rooms.
 - Spend appears on the session row as the transcript grows; at the cap the companion kills the
   session and the issue is **Blocked**.
 - Open a PR from the branch: **In review** when checks are green, **Done** when merged. The

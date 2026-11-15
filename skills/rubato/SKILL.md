@@ -1,6 +1,6 @@
 ---
 name: rubato
-description: Plan work on a GitHub issue from the team's shared system map. Use when starting on an issue in a repo connected to Rubato, when asked to "plan this", "where does this fit" or "how big is this", or when a session was launched by Rubato (the prompt says so). Loads the map and accepted ADRs, sizes the track, writes the plan at the agreed path in the agreed form, runs the design review and posts it as a Review: comment, asks a person for approval, and records decisions as Decision: comments. In Rubato mode (RUBATO_PLANNING=rubato) the draft stays in the worktree, the review and summary are replies, and approval in Rubato ends in plan.ts handoff.
+description: Plan work on a GitHub issue from the team's shared system map. Use when starting on an issue in a repo connected to Rubato, when asked to "plan this", "where does this fit" or "how big is this", or when a session was launched by Rubato (the prompt says so). Loads the map and accepted ADRs, sizes the track, writes the plan at the agreed path in the agreed form with its decisions in it, and runs the design review. In a session Rubato launched (RUBATO_PLANNING=rubato) the draft stays in the worktree, the review and summary are replies, and approval in Rubato ends in plan.ts handoff; a plan written elsewhere is pushed and imported in Rubato.
 ---
 
 # rubato: plan from the map
@@ -8,15 +8,16 @@ description: Plan work on a GitHub issue from the team's shared system map. Use 
 Each developer orchestrates their own agents. Rubato keeps the whole picture. Your part is to
 plan from the shared map, name only ids that exist, answer the 3 am question for every seam
 you touch, and leave the plan where the team and the plan check can read it. Review and
-approval are issue comments that Rubato reads and shows; they are never written into the plan.
+approval happen in Rubato (ADR 0054): a person approves the plan there, and only
+`plan.ts handoff` writes the approval record into the plan.
 
 Scripts run with `node --experimental-strip-types <skill dir>/scripts/<name>.ts`. The skill
 dir is where this file lives. If `node_modules` is missing there, run `npm install --omit=dev`
 in it once.
 
-**Which mode.** Read `RUBATO_PLANNING` first. Unset or `git`: the git mode, every section below
-as written. `rubato`: the Rubato mode (§9), used only when a launch says so (ADR 0053). It keeps
-§1–§4 and replaces the commit, the comments and the approval of §5–§7.
+**Which mode.** Read `RUBATO_PLANNING` first. `rubato`: the session was launched by Rubato, and
+plans in Rubato (§9, ADR 0053). Unset or `git`: a session someone started by hand; §5–§7 say how
+its plan reaches Rubato. Both keep §1–§4.
 
 ## 1. Read the map and the decisions
 
@@ -120,72 +121,38 @@ It prints one `rubato.plan.check` line. Fix every unknown id and every missing O
 Before any code, review the plan (and the design note on the full track). If a design-reviewer
 agent is available, run it once on the plan; otherwise review it yourself. Either way, go through
 `review-checklist.md` row by row. Take every blocker: fix the plan, or turn it into a numbered
-question for a person. Then commit the plan on the `issue/<n>-<slug>` branch and push it.
+question for a person. Give the result in your reply in the form of `review-template.md`, first
+line `Review: <track> — <outcome>`. Nothing about the review goes into the plan file, and it is
+not an issue comment.
 
-Post the result on the issue, from `review-template.md`. Its first line is
-`Review: <track> — <outcome>`, and it names the plan's sha:
-
-```
-node --experimental-strip-types scripts/plan.ts sha docs/plans/<n>.md
-gh issue comment <n> --body-file <file>
-```
-
-Rubato shows the review on the issue. Nothing about the review goes into the plan file.
+In a session started by hand, then commit the plan on the `issue/<n>-<slug>` branch and push it.
 
 ## 6. Approval
 
-Approving a plan is a person's job. Ask for it in your reply and on the issue. To approve, the
-person comments a line that reads `Approved: plan <sha>`, or `Approved: plan <sha> on <branch>`
-when the issue has several branches, with the sha that `plan.ts sha` prints.
+Approving a plan is a person's job, and it happens in Rubato (ADR 0054). Never write the approval
+record yourself and never post an `Approved:` comment: one posted after the cutover does not
+count.
 
-That sha ignores task checkboxes, so ticking tasks keeps an approval current; any other edit
-needs a new one, and Rubato marks the old approval as for an earlier version. Never post an
-approval yourself, even with the person's `gh`. Rubato counts it only from a team member, and
-writing it for them defeats the record. A plan with a `seam` question open waits for the answer
-and the approval. A `node` assumption does not wait.
+- **A session Rubato launched** (§9): the approval arrives as a prompt with a `plan.ts handoff`
+  command.
+- **A session started by hand**: the pushed plan shows in Rubato as *outside Rubato* (ADR 0058).
+  Tell the person to open the issue there and press *Import*: a plan that fits becomes their
+  draft, and one that does not is rewritten by a session of theirs. From then on it is approved
+  in Rubato like any draft.
 
-**Wait for it yourself** (ADR 0035). Right after asking, push the plan and start the wait in the
-background (in Claude Code: a background command, or Monitor on its output), and keep doing what
-does not need the approval:
+A plan that proposes ADRs lists them under `## ADRs proposed` (`ADR | File | Blob`); fill the
+Blob column with `plan.ts adrs-pin` before asking, so the approval covers their text. The
+approval accepts them, and `plan.ts handoff` records that in its commit.
 
-```
-node --experimental-strip-types scripts/plan.ts wait docs/plans/<n>.md
-```
-
-It prints one `rubato.plan.wait` line per event (`started`, then `review`, `decision`,
-`approved_earlier`, `untrusted`, `edited`, `poll_failed`) and ends with `approved` (exit 0) or
-`exited` with a reason: `not_pushed` or `local_edit` (push the plan, exit 4), `does_not_fit`
-(fix it, exit 5), `gh_failed` (check `gh auth status`, exit 6), `plan_changed` (the plan changed
-on the branch; ask for a new approval, exit 7). It counts only what Rubato counts: the newest
-approval from a team member, never edited, naming the sha of the plan as pushed, with the plan
-fitting the map.
-
-**The approval accepts the plan's ADRs.** A plan that proposes ADRs lists them under
-`## ADRs proposed` (`ADR | File | Blob`); fill the Blob column with `plan.ts adrs-pin` before
-asking, so the approval covers their text. On `approved`, in the map repo's checkout on the plan
-branch:
-
-```
-node --experimental-strip-types scripts/adrs.ts accept --comment <the approval's url>
-```
-
-It reads the comment again from GitHub, checks everything again, and moves each pinned ADR still
-at its blob to `accepted`, naming the approver, the date, the comment and `(self)` when the
-approver runs this session. Commit that change on the plan branch with the comment's link and
-push. An ADR changed after it was pinned is refused (`adr_changed`): update the plan, pin again,
-ask again. Outside the map repo it writes nothing and prints what the approval would accept.
+`plan.ts wait` and `adrs.ts accept --comment` are retired: both print `approval_in_rubato` and
+exit 11.
 
 ## 7. Record decisions
 
-A decision made during the work is an issue comment, from `decision-template.md`:
-
-```
-gh issue comment <n> --body-file <file>
-```
-
-First line `Decision: <one-line title>`, then `## Context`, `## Options`, `## Chosen`,
-`## Why`. Rubato shows it on the issue's node. A decision that touches a seam is an ADR in the
-map repo instead; draft it as *proposed* and let a human accept it.
+A decision made during the work is a row of the plan's `## Decisions` table (`# | Decision |
+Chosen | Why | Decided by`), written as it is made, so the approval covers it (ADR 0056). A
+decision that touches a seam is an ADR in the map repo instead; draft it as *proposed*, list it
+under `## ADRs proposed`, and let a human accept it with the plan.
 
 ## 8. Caps
 
@@ -202,9 +169,8 @@ plan and check it as in §1–§4. Then:
 - **The draft stays uncommitted** in this worktree: the plan, its design note and the ADRs it
   proposes. Do not commit or push them. The companion sends the files to Rubato each time you
   stop, as a revision.
-- **No `Review:`, `Approved:` or `Decision:` comments**, and no `plan.ts wait` or
-  `adrs.ts accept`. Rubato reads your replies instead (ADR 0056); the first non-empty line of a
-  reply is what it goes by.
+- **No `Review:`, `Approved:` or `Decision:` comments.** Rubato reads your replies instead
+  (ADR 0056); the first non-empty line of a reply is what it goes by.
 - **The review is a reply.** Review the plan as in §5, then reply with the review in the form of
   `review-template.md`, first line `Review: <track> — <outcome>`.
 - **Decisions are rows** of the plan's `## Decisions` table (`# | Decision | Chosen | Why |
@@ -245,8 +211,8 @@ approval stale; Rubato shows that, and a new approval sends the handoff again.
 - Don't write the plan anywhere but the agreed path.
 - Don't write track, review, approval or status into the plan's front matter. In Rubato mode
   `plan.ts handoff` writes the approval record, and nothing else does.
-- Don't post an approval; ask a person for it.
-- Don't steer another developer's agent; coordinate through the issue.
+- Don't post an approval or write the approval record; a person approves in Rubato.
+- Don't steer another developer's agent; coordinate through the issue and the plan's room.
 - Don't install the hooks yourself; the companion injects `hooks.json` at launch. To opt a
   manual session in: `node --experimental-strip-types scripts/hooks.ts --port <p> --token <t>
   --out .claude/settings.local.json`.
