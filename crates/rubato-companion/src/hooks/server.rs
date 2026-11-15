@@ -1,8 +1,9 @@
-//! The loopback hook receiver (ADR 0013): `POST /hook` on 127.0.0.1 with a bearer token.
-//! Claude Code's hook command is `curl ... --data-binary @-`, so the body is the hook's stdin
-//! JSON as is. A launched session's command also sends `X-Rubato-Launch` (plan 122 §D1). The
-//! port and token are kept across restarts when the port can be bound again, so sessions
-//! launched earlier keep posting to a live port.
+//! The loopback hook receiver (ADR 0013): `POST /hook` on 127.0.0.1 with a per-start bearer
+//! token, which the hook command reads from a 0600 header file (`curl -H @<file>`, ADR 0063) and
+//! this side compares in constant time. The body is the hook's stdin JSON as is
+//! (`--data-binary @-`). A launched session's command also sends `X-Rubato-Launch` (plan 122
+//! §D1). The port and token are kept across restarts when the port can be bound again, so
+//! sessions launched earlier keep posting to a live port.
 
 use crate::kernel::config::HookEndpoint;
 use axum::Router;
@@ -124,6 +125,16 @@ impl HookServer {
     }
 }
 
+/// Compare without stopping at the first differing byte, so the time taken does not tell how
+/// much of a guess was right. The length is not secret (every token is 32 characters).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let diff = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    std::hint::black_box(diff) == 0
+}
+
 /// The launch id a launched session's hook command sends. Empty (a session not launched from
 /// Rubato expands the variable to nothing) or not a UUID reads as none.
 fn launch_id(headers: &HeaderMap) -> Option<Uuid> {
@@ -140,7 +151,8 @@ fn authorized(st: &AppState, headers: &HeaderMap) -> bool {
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    auth.strip_prefix("Bearer ").map(str::trim) == Some(st.token.as_str())
+    let presented = auth.strip_prefix("Bearer ").map(str::trim).unwrap_or("");
+    ct_eq(presented.as_bytes(), st.token.as_bytes())
 }
 
 /// `POST /handoff`: the skill's handoff line, for the launch its header names. Never a launch
@@ -222,6 +234,24 @@ mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
         assert_ne!(t, new_token());
+    }
+
+    #[test]
+    fn ct_eq_compares_whole_tokens() {
+        let t = new_token();
+        assert!(ct_eq(t.as_bytes(), t.clone().as_bytes()));
+        let mut wrong = t.clone().into_bytes();
+        wrong[31] ^= 1;
+        assert!(!ct_eq(&wrong, t.as_bytes()), "last byte differs");
+        wrong = t.clone().into_bytes();
+        wrong[0] ^= 1;
+        assert!(!ct_eq(&wrong, t.as_bytes()), "first byte differs");
+        assert!(
+            !ct_eq(&t.as_bytes()[..31], t.as_bytes()),
+            "a prefix is not the token"
+        );
+        assert!(!ct_eq(b"", t.as_bytes()));
+        assert!(ct_eq(b"", b""));
     }
 
     #[test]

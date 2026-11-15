@@ -269,6 +269,9 @@ pub mod event {
     pub const PLAN_HANDOFF_REPORT: &str = "rubato.plan.handoff.report";
     /// An essential background task returned while shutdown was not requested.
     pub const TASK_EXITED: &str = "rubato.task.exited";
+    /// A hook's transcript not read for spend (ADR 0063), with `rubato.reason`; counted as
+    /// `rubato.events.dropped` with `rubato.reason = transcript`.
+    pub const TRANSCRIPT_REFUSED: &str = "rubato.transcript.refused";
     /// Which local maps the skill matched for the session repo (`map.ts`, ADR 0044).
     pub const MAP_SELECT: &str = "rubato.map.select";
     /// A plan skeleton written by `plan.ts init`.
@@ -416,6 +419,7 @@ pub fn all_names() -> Vec<&'static str> {
         event::PLAN_HANDOFF,
         event::PLAN_HANDOFF_REPORT,
         event::TASK_EXITED,
+        event::TRANSCRIPT_REFUSED,
         event::MAP_SELECT,
         event::PLAN_INIT,
     ]

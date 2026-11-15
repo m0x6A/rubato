@@ -197,15 +197,18 @@ impl Launcher {
         };
         let launch_dir = self.state_dir.join("launches").join(cmd.id.to_string());
         std::fs::create_dir_all(&launch_dir)?;
+        // The token goes in a 0600 header file curl reads; never in a hook command (ADR 0063).
+        let header_path = HookEndpoint::header_path(&launch_dir);
+        self.hook_endpoint.write_header(&header_path)?;
         let hooks_path = launch_dir.join("hooks.json");
         write_private(
             &hooks_path,
-            render_hooks(HOOKS_TEMPLATE, &self.hook_endpoint)?.as_bytes(),
+            render_hooks(HOOKS_TEMPLATE, self.hook_endpoint.port, &header_path)?.as_bytes(),
         )?;
         let prompt_path = launch_dir.join("prompt.txt");
         std::fs::write(&prompt_path, &cmd.prompt)?;
         let script_path = launch_dir.join("launch.sh");
-        // Private: it exports the hook token (`RUBATO_HOOK_TOKEN`), like `hooks.json` holds it.
+        // Private: it exports the hook token (`RUBATO_HOOK_TOKEN`), like the header file holds it.
         write_private(
             &script_path,
             launcher_script(

@@ -268,8 +268,10 @@ describe("plan.ts handoff reports to the companion", () => {
       expect(req?.headers["authorization"]).toBe("Bearer tok");
       expect(req?.headers["content-type"]).toBe("application/json");
       expect(req?.headers["x-rubato-launch"]).toBe("launch-1");
-      // The hooks send the token the same way.
-      expect(readFileSync(join(root, "skills/rubato/hooks.json"), "utf8")).toContain("Authorization: Bearer {token}");
+      // The hooks send the token the same way, from the 0600 header file curl reads (ADR 0063):
+      // the companion writes that one `Authorization: Bearer` line into it.
+      expect(readFileSync(join(root, "skills/rubato/hooks.json"), "utf8")).toContain("-H @{header_file}");
+      expect(readFileSync(join(root, "crates/rubato-companion/src/kernel/config.rs"), "utf8")).toContain('format!("Authorization: Bearer {}\\n", self.token)');
     } finally {
       await s.close();
     }

@@ -433,7 +433,7 @@ impl Dispatch<'_> {
                 _ = shutdown.changed() => break,
                 Some(ev) = hook_rx.recv() => {
                     let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id, &self.cfg.state_dir, self.limits).await;
-                    spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux, self.headless).await;
+                    spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux, self.metrics, self.headless).await;
                     plan_mirror::on_hook(&ev, self.plan_mirror);
                 }
                 // A `plan.ts handoff` report from `/handoff` (ADR 0055).

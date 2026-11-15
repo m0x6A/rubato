@@ -1,7 +1,8 @@
 //! Steps for `features/hooks.feature`.
 
 use crate::world::*;
-use cucumber::{then, when};
+use cucumber::{given, then, when};
+use rubato_companion::kernel::config::{HookEndpoint, ModelPrice};
 use rubato_protocol::CompanionMessage;
 use std::time::Duration;
 
@@ -80,6 +81,45 @@ async fn then_blocked_by(w: &mut RubatoWorld, cause: String) {
         .map(|c| c.name().to_owned())
         .unwrap_or_default();
     assert_eq!(got, cause, "blocked_by in {s:?}");
+}
+
+/// Spend is summed only with pricing configured; set it before the daemon starts.
+#[given(expr = "the companion prices models starting with {string}")]
+async fn given_pricing(w: &mut RubatoWorld, prefix: String) {
+    w.workspace.companion.pricing.insert(
+        prefix,
+        ModelPrice {
+            input: 1.0,
+            output: 1.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+        },
+    );
+}
+
+#[when(expr = "Claude Code posts the recorded hook {string} naming {string} as its transcript")]
+async fn when_post_hook_transcript(w: &mut RubatoWorld, fixture: String, transcript: String) {
+    let mut v: serde_json::Value =
+        serde_json::from_str(&RubatoWorld::hook_fixture(&fixture)).unwrap();
+    v["transcript_path"] = serde_json::Value::String(transcript);
+    w.last_status = Some(w.post_body(&v.to_string(), true).await);
+    assert_eq!(w.last_status, Some(202));
+}
+
+/// ADR 0063: the token is in a 0600 file curl reads, never in the command (argv is public).
+#[then("the hook header file is private and no hook command holds the token")]
+async fn then_header_private(w: &mut RubatoWorld) {
+    use std::os::unix::fs::PermissionsExt;
+    let token = w.handles.as_ref().unwrap().hook_endpoint.token.clone();
+    let header = HookEndpoint::header_path(&w.state_dir);
+    assert_eq!(
+        std::fs::metadata(&header).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(std::fs::read_to_string(&header).unwrap().contains(&token));
+    let cmd = w.rendered_stop_command();
+    assert!(!cmd.contains(&token), "{cmd}");
+    assert!(cmd.contains(&format!("@'{}'", header.display())), "{cmd}");
 }
 
 /// The payload of the last hook the server received (ADR 0052: only the allowlist leaves).
