@@ -8,8 +8,8 @@ describe("buildGraph from docs/design/rubato-map.yml", () => {
   it("has every node and seam of the real map", () => {
     const g = buildGraph(overview());
     expect(g.nodes.map((n) => n.id).sort()).toEqual(realMap().nodes.map((n) => n.id).sort());
-    expect(g.nodes.length).toBe(11);
-    expect(g.edges.length).toBe(12);
+    expect(g.nodes.length).toBe(13);
+    expect(g.edges.length).toBe(14);
     expect(g.edges.find((e) => e.id === "companion-server")).toMatchObject({ from: "rubato-companion", to: "rubato-server", owner: "rubato-server" });
   });
 
@@ -49,7 +49,7 @@ describe("buildGraph from docs/design/rubato-map.yml", () => {
 
   it("lays out every node with ELK", async () => {
     const pos = await layout(buildGraph(overview()));
-    expect(pos.size).toBe(11);
+    expect(pos.size).toBe(13);
     const xs = new Set([...pos.values()].map((p) => Math.round(p.x)));
     expect(xs.size).toBeGreaterThan(1);
   });

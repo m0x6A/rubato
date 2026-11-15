@@ -71,6 +71,14 @@ nodes:
     kind: external
     description: The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Exports its own OTel.
 
+  - id: livekit
+    kind: external
+    description: "Self-hosted WebRTC media server (Apache 2.0) beside Rubato, run by the team, never started by Rubato. Carries a plan room's voice channel between browsers, behind the voice flag (ADR 0073)."
+
+  - id: speech-provider
+    kind: external
+    description: "Speech-to-text and text-to-speech over an OpenAI-compatible HTTP API, local (Speaches, whisper.cpp, Kokoro) or hosted, chosen by configuration (ADR 0073)."
+
 seams:
   - id: companion-server
     from: rubato-companion
@@ -206,10 +214,33 @@ seams:
     guard: generated web/src/protocol.ts diffed in CI
     description: "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map."
     flows:
-      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room" }
+      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073)" }
       - { kind: control, from: rubato-server, to: web, carries: "WebEvent Changed over /ws/web: fetch the overview again; Updated: fetch one draft, log or room" }
-      - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages" }
+      - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages; behind the voice flag, a push-to-talk utterance for a room (ADR 0073)" }
       - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan" }
+
+  - id: web-livekit
+    from: web
+    to: livekit
+    carries: "WebRTC audio of a plan room's voice channel, joined with a LiveKit token Rubato minted (livekit-client)"
+    owner: web
+    guard: "voice token tests decode every claim with the secret, and a wrong secret fails; livekit-client mocked in Vitest; the server never connects to LiveKit"
+    description: "People in a plan's room hear each other through the team's own LiveKit. Rubato only mints the join token; the audio never passes through Rubato (ADR 0073)."
+    flows:
+      - { kind: control, from: web, to: livekit, carries: "join a plan room's voice channel with a ten-minute join token: microphone only, the login as name" }
+      - { kind: data, from: web, to: livekit, carries: "each person's microphone audio" }
+      - { kind: data, from: livekit, to: web, carries: "the other participants' audio and who is in the voice channel" }
+
+  - id: server-speech
+    from: rubato-server
+    to: speech-provider
+    carries: "POST {base}/audio/transcriptions and {base}/audio/speech, behind the Speech port with a fake adapter for tests"
+    owner: rubato-server
+    guard: "Speech port tests against the fake adapter and a recorded OpenAI-compatible stub; SpeechProviderFailing alert"
+    description: "The server turns one push-to-talk utterance into room text and an agent's reply into a short spoken clip. No audio is stored (ADR 0073)."
+    flows:
+      - { kind: data, from: rubato-server, to: speech-provider, carries: "one utterance's audio to transcribe; the spoken cut of an agent's reply to synthesize" }
+      - { kind: data, from: speech-provider, to: rubato-server, carries: "the transcript; the synthesized clip" }
 
 # Journeys through the system, step by step over the flows above (ADR 0024). The map view plays
 # them. A step names `carries` only where its seam has two flows with the same kind and direction.
