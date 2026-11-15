@@ -102,7 +102,7 @@
           "kind": "external"
         },
         {
-          "description": "Session runner (TypeScript CLI, npm tmux-ide, tmux >= 3.7). worktree create, events, team --json, send, wait, MCP. Version pinned by the companion.",
+          "description": "Retired by ADR 0070: the companion runs tmux and git itself and no longer calls tmux-ide. The id stays so merged plans that name it still check (plan 147 Q1).",
           "id": "tmux-ide",
           "kind": "external"
         },
@@ -143,13 +143,6 @@
               "says": "the server sends the launch to your own companion only",
               "seam": "companion-server",
               "to": "rubato-companion"
-            },
-            {
-              "from": "rubato-companion",
-              "kind": "control",
-              "says": "the companion creates a worktree on the issue branch",
-              "seam": "companion-tmux-ide",
-              "to": "tmux-ide"
             },
             {
               "from": "rubato-companion",
@@ -527,24 +520,10 @@
           "to": "github"
         },
         {
-          "carries": "worktree create, events --follow --json, team --json, send, wait",
-          "description": "The companion asks tmux-ide to create worktrees and sessions, and reads which sessions exist and what state they are in.",
-          "flows": [
-            {
-              "carries": "worktree create, send, wait",
-              "from": "rubato-companion",
-              "kind": "control",
-              "to": "tmux-ide"
-            },
-            {
-              "carries": "team --json and events --follow --json: sessions, panes, agent status",
-              "from": "tmux-ide",
-              "kind": "data",
-              "to": "rubato-companion"
-            }
-          ],
+          "carries": "nothing; retired by ADR 0070",
+          "description": "Retired by ADR 0070: the companion makes worktrees with git and sessions with tmux itself, and takes state from hooks only. Kept so merged plans that name it still check (plan 147 Q1); a follow-up retires the id.",
           "from": "rubato-companion",
-          "guard": "Gherkin against real tmux-ide on tmux -L rubato-test; version pinned (2.9.x), reported as rubato.tmux_ide.version; low-confidence state renders unknown",
+          "guard": "the companion's Gherkin suite runs with no tmux-ide installed; rubato.launches by outcome on the Launches by outcome panel",
           "id": "companion-tmux-ide",
           "owner": "rubato-companion",
           "to": "tmux-ide"
