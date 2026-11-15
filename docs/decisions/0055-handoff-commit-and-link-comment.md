@@ -1,8 +1,8 @@
 # 0055. The approved plan reaches the branch in one handoff commit, and the issue gets one link comment from the approver
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's decisions in #122 ("the issue keeps track of its plan", "handoff commit carries the approval") and his answers of 2026-11-14 (summary from the agent's reply; connected-repo ADRs stay proposed); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/122#issuecomment-6891477242 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's decisions in #122 ("the issue keeps track of its plan", "handoff commit carries the approval") and his answers of 2026-11-14 (summary from the agent's reply; connected-repo ADRs stay proposed)
 - **Seam:** server-github, skill-plan-file, companion-claude-code
 - **Issue:** m0x6A/rubato#122
 

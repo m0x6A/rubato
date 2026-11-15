@@ -1,8 +1,8 @@
 # 0058. A plan written outside Rubato is shown but not approvable; Import makes it a draft the importer owns
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's decisions in #122 ("seen, not approvable"; Import is agent work) and his answer of 2026-11-14 on #139 (the importer owns); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/122#issuecomment-6891477242 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's decisions in #122 ("seen, not approvable"; Import is agent work) and his answer of 2026-11-14 on #139 (the importer owns)
 - **Seam:** server-plan-file, web-server, server-github
 - **Issue:** m0x6A/rubato#122
 
