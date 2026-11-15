@@ -310,6 +310,40 @@ describe("adrs.ts accept (ADR 0035)", () => {
     expect(elsewhere.line).toMatchObject({ refused: "not_map_repo", would_accept: ["0099"] });
     expect(readFileSync(join(w.work, w.adr), "utf8")).toBe(before);
   });
+
+  it("refuses an ADR file outside the decisions folder, and still accepts the one inside (#195)", async () => {
+    const outside = join(w.work, "..", "outside.md");
+    const text = "# 0095. Outside\n\n- **Status:** proposed\n- **Decided by:** agent\n- **Seam:** none\n- **Issue:** acme/map#9\n\n## Decision\n\nNot in the folder.\n";
+    writeFileSync(outside, text);
+    symlinkSync("../../../outside.md", join(w.work, "docs/decisions/0096-link.md"));
+    const blob = gitBlobSha(text);
+    const rows = [
+      ["0093", "../outside.md"],
+      ["0094", "docs/decisions/../../../outside.md"],
+      ["0095", outside],
+      ["0096", "docs/decisions/0096-link.md"],
+    ];
+    writeFileSync(join(w.work, w.plan), `${readFileSync(join(w.work, w.plan), "utf8")}${rows.map(([n, f]) => `| ${n} | ${f} | ${blob} |\n`).join("")}`);
+    git(w.work, "add", "-A");
+    git(w.work, "commit", "-q", "-m", "escaping rows");
+    git(w.work, "push", "-q");
+    const sha = planSha(readFileSync(join(w.work, w.plan), "utf8"));
+    w.stub({ comments: [comment(1, `Approved: plan ${sha}`)] });
+    const r = await accept(w.ws, w.work, "1", w.plan, "2026-11-15");
+    expect(r.code).toBe(1);
+    expect(r.line).toMatchObject({ accepted: ["0099"], refused: rows.map(([adr]) => ({ adr, reason: "outside_decisions" })) });
+    expect(readFileSync(outside, "utf8")).toBe(text);
+    console.log(`checked ${rows.length} escaping rows and one inside`);
+  });
+
+  it("adrs-pin refuses a row outside the decisions folder and leaves the plan as it was (#195)", async () => {
+    writeFileSync(join(w.work, "..", "outside.md"), "# 0093. Outside\n");
+    const plan = join(w.work, w.plan);
+    writeFileSync(plan, `${readFileSync(plan, "utf8")}| 0093 | ../outside.md | x |\n`);
+    const before = readFileSync(plan, "utf8");
+    await expect(pinAdrs(w.work, w.plan)).rejects.toThrow(/outside docs\/decisions: \.\.\/outside\.md/);
+    expect(readFileSync(plan, "utf8")).toBe(before);
+  });
 });
 
 describe("no comment is posted by wait or accept (ADR 0027)", () => {

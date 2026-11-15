@@ -19,17 +19,21 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version: ${{ inputs.node-version }}
+    # The versions in package-lock.json, as tested here; no install scripts run in the consumer's job.
     - name: Install plan-check dependencies
       shell: bash
-      run: cd "${{ github.action_path }}" && npm install --no-audit --no-fund --omit=dev
+      run: cd "$GITHUB_ACTION_PATH" && npm ci --ignore-scripts --omit=dev --no-audit --no-fund
+    # Inputs reach the shell through env only, quoted, so a value is a path or a glob, never code (#195).
     - name: Check plans
       shell: bash
       env:
+        MAP: ${{ inputs.map }}
         MAPS: ${{ inputs.maps }}
+        PLANS: ${{ inputs.plans }}
       run: |
         extra=()
         while IFS= read -r m; do [ -n "$m" ] && extra+=(--map "$m"); done <<< "$MAPS"
-        node --experimental-strip-types "${{ github.action_path }}/src/cli.ts" --map "${{ inputs.map }}" "${extra[@]}" --schema-dir "${{ github.action_path }}/../../schema" --plans "${{ inputs.plans }}"
+        node --experimental-strip-types "$GITHUB_ACTION_PATH/src/cli.ts" --map "$MAP" "${extra[@]}" --schema-dir "$GITHUB_ACTION_PATH/../../schema" --plans "$PLANS"
