@@ -43,7 +43,7 @@ test("must fail: a panel wider than the viewport is caught", { tag: ["@look.fits
 });
 
 // Issue #193 (ADR 0066): the app runs under its Content-Security-Policy without a violation.
-test("the app loads under its Content-Security-Policy with no violation", async ({ page }) => {
+test("the app loads under its Content-Security-Policy with no violation", { tag: "@security.content-security-policy" }, async ({ page }) => {
   await page.addInitScript(() => {
     const w = window as unknown as { __csp: string[] };
     w.__csp = [];
@@ -63,7 +63,7 @@ test("the app loads under its Content-Security-Policy with no violation", async 
   expect(violations).toEqual([]);
 });
 
-test("must fail: an inline style is refused by the policy", async ({ page }) => {
+test("must fail: an inline style is refused by the policy", { tag: ["@security.content-security-policy", "@selftest"] }, async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("node-web")).toBeVisible();
   await expect(page.addStyleTag({ content: ".panel { min-width: 1200px; }" })).rejects.toThrow(/Content Security Policy/);
