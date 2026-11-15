@@ -4,7 +4,7 @@
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
-use crate::{launch, pairing, queue, spend_history};
+use crate::{launch, pairing, queue, session_messages, spend_history};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -80,7 +80,7 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
     app.companions
         .lock()
         .unwrap()
-        .insert(companion_id, CompanionConn { tx });
+        .insert(companion_id, CompanionConn::new(tx, app.clock.now()));
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
@@ -165,16 +165,22 @@ async fn on_envelope(
         CompanionMessage::Launch(_) => "launch",
         CompanionMessage::CapHit(_) => "cap_hit",
         CompanionMessage::Stale(_) => "stale",
+        CompanionMessage::SessionMessageResult(_) => "session_message_result",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
     async move {
         let now = app.clock.now();
         if !matches!(env.message, CompanionMessage::Ack { .. }) {
-            let payload = serde_json::to_value(stored_form(&env.message)).unwrap_or_default();
+            let payload = stored_payload(&env.message);
             match store::record_event(&app.db, companion_id, env.seq, kind, &payload, now).await {
                 Ok(false) => {
                     on_replay(&app.metrics, companion_id, &env);
+                    // A result whose envelope was recorded but not applied (a crash in between)
+                    // must still settle its message; applying it twice changes nothing.
+                    if let CompanionMessage::SessionMessageResult(r) = &env.message {
+                        session_messages::on_result(app, companion_id, r).await;
+                    }
                     return Some(ServerMessage::Ack { seq: env.seq });
                 }
                 Ok(true) => {}
@@ -193,11 +199,13 @@ async fn on_envelope(
             env.seq,
             pairing::touch(&app.db, companion_id, now).await,
         );
+        app.touch_companion(companion_id, now);
         match env.message {
             CompanionMessage::Hello {
                 companion_id: claimed,
                 protocol_version,
                 user,
+                capabilities,
                 ..
             } => {
                 if claimed != companion_id || user != pairing.user {
@@ -217,11 +225,15 @@ async fn on_envelope(
                         ),
                     });
                 }
+                app.set_capabilities(companion_id, capabilities);
+                // Queued here before the Welcome is answered: the socket sends the Welcome first.
+                session_messages::on_hello(app, companion_id).await;
                 Some(ServerMessage::Welcome {
                     server_version: crate::kernel::VERSION.to_owned(),
                     protocol_version: PROTOCOL_VERSION,
                     last_seen_companion_seq: pairing.last_companion_seq,
                     limits: app.config.limits,
+                    capabilities: vec![rubato_protocol::capability::SESSION_MESSAGES.to_owned()],
                 })
             }
             CompanionMessage::Heartbeat(h) => {
@@ -236,6 +248,7 @@ async fn on_envelope(
             }
             CompanionMessage::Hook(h) => {
                 tracing::info!(rubato.session_id = %h.session_id, rubato.hook_event = ?h.hook_event_name, "hook");
+                session_messages::on_hook(app, companion_id, &h).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {
@@ -257,6 +270,7 @@ async fn on_envelope(
                         .await,
                 );
                 record_sessions_by_state(&app.metrics, companion_id, &sessions);
+                session_messages::on_sessions(app, &sessions).await;
                 app.notify("sessions");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
@@ -289,6 +303,10 @@ async fn on_envelope(
                     store::store_stale(&app.db, &s).await,
                 );
                 app.notify("stale");
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            CompanionMessage::SessionMessageResult(r) => {
+                session_messages::on_result(app, companion_id, &r).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Ack { .. } => None,
@@ -375,16 +393,18 @@ async fn settle_queue(
 }
 
 /// The envelope as it is kept in `companion_events`. A hook's raw Claude Code payload is never
-/// stored, even from a companion that still sends it (ADR 0052); deduplication needs only the
-/// sequence.
-fn stored_form(m: &CompanionMessage) -> std::borrow::Cow<'_, CompanionMessage> {
+/// stored, even from a companion that still sends it (ADR 0052), and the new kinds are kept as
+/// `{}` (plan 122 §D2): deduplication needs only the sequence, and the row's `kind` says what
+/// it was.
+fn stored_payload(m: &CompanionMessage) -> serde_json::Value {
     match m {
         CompanionMessage::Hook(h) if h.payload.is_some() => {
             let mut h = h.clone();
             h.payload = None;
-            std::borrow::Cow::Owned(CompanionMessage::Hook(h))
+            serde_json::to_value(CompanionMessage::Hook(h)).unwrap_or_default()
         }
-        other => std::borrow::Cow::Borrowed(other),
+        CompanionMessage::SessionMessageResult(_) => serde_json::json!({}),
+        other => serde_json::to_value(other).unwrap_or_default(),
     }
 }
 
@@ -405,11 +425,15 @@ mod tests {
         )
         .unwrap();
         let m = CompanionMessage::Hook(ev);
-        let stored = serde_json::to_string(&*stored_form(&m)).unwrap();
+        let stored = stored_payload(&m).to_string();
         assert!(!stored.contains("TOKEN=abc"), "{stored}");
         assert!(stored.contains(r#""tool_name":"Bash""#), "{stored}");
-        let hb = CompanionMessage::Ack { seq: 1 };
-        assert!(matches!(stored_form(&hb), std::borrow::Cow::Borrowed(_)));
+        let r = CompanionMessage::SessionMessageResult(rubato_protocol::SessionMessageResult {
+            message_id: Uuid::nil(),
+            outcome: rubato_protocol::SessionMessageOutcome::Delivered,
+            at: chrono::Utc::now(),
+        });
+        assert_eq!(stored_payload(&r), serde_json::json!({}));
     }
 
     #[test]
@@ -448,6 +472,8 @@ mod tests {
             spend_usd: None,
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         }
     }
 

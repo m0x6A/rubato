@@ -27,6 +27,7 @@ pub mod pulls;
 pub mod queue;
 pub mod schema;
 pub mod session;
+pub mod session_message;
 pub mod traffic;
 pub mod web_link;
 pub mod workspace;
@@ -58,6 +59,7 @@ pub use map::{
 pub use map_draft::{DraftOp, DraftOpRequest, MapDraft, MapOp, Proposal, ProposalState};
 pub use message::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
+    capability,
 };
 pub use pairing::{
     PairApproveRequest, PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse,
@@ -81,10 +83,14 @@ pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use session::{
     BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
 };
+pub use session_message::{
+    LaunchMessages, MessageRefusal, SessionMessage, SessionMessageKind, SessionMessageOutcome,
+    SessionMessageRequest, SessionMessageResult, SessionMessageState, SessionMessageView,
+};
 pub use traffic::{
     DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, ObservedTraffic, SeamTraffic,
     SourceStatus, TrafficDismissal, TrafficEdge, TrafficEnd, TrafficReport, TrafficState,
     UndeclaredEdge, derive_traffic,
 };
-pub use web_link::WebEvent;
+pub use web_link::{WebEvent, WebResource};
 pub use workspace::{DEFAULT_WORKSPACE, WorkspaceInfo, is_workspace_id};

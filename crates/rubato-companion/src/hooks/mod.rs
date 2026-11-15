@@ -8,6 +8,6 @@ mod template;
 mod wire;
 
 pub use arm::{HookOutcome, count_dropped, on_event, seed_forwarded};
-pub use server::{HookServer, new_token};
+pub use server::{HookServer, LAUNCH_HEADER, new_token};
 pub use template::{HOOKS_TEMPLATE, render_hooks};
 pub use wire::PAYLOAD_ALLOWLIST;

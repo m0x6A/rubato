@@ -161,6 +161,13 @@
           "default": 60,
           "minimum": 0
         },
+        "session_message_max_chars": {
+          "description": "The longest session message the companion types (ADR 0051); longer ones are refused.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 8000,
+          "minimum": 0
+        },
         "session_stale_secs": {
           "description": "A *working* session with no hook event for longer than this renders *unknown*.",
           "type": "integer",
@@ -184,6 +191,13 @@
           "description": "Answer to `Hello`.",
           "type": "object",
           "properties": {
+            "capabilities": {
+              "description": "What this server can take (`capability`). Absent from an older server.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "last_seen_companion_seq": {
               "description": "Last companion sequence the server has; the companion replays newer events.",
               "type": "integer",
@@ -228,6 +242,20 @@
           ]
         },
         {
+          "description": "Text for one session the paired user launched (ADR 0051).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_message"
+            }
+          },
+          "$ref": "#/$defs/SessionMessage",
+          "required": [
+            "type"
+          ]
+        },
+        {
           "type": "object",
           "properties": {
             "seq": {
@@ -266,6 +294,69 @@
             "message"
           ]
         }
+      ]
+    },
+    "SessionMessage": {
+      "description": "Server → companion: something to type into one launched session.",
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "launch_id": {
+          "description": "The launch the message is for. A `/clear` changes the session id, not the launch.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "session_id": {
+          "description": "The launch's Claude Code session id as the server last knew it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "user": {
+          "description": "GitHub login of the session's paired user. The companion refuses any other.",
+          "type": "string"
+        }
+      },
+      "oneOf": [
+        {
+          "description": "Text a person typed in Rubato for their own session.",
+          "type": "object",
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "chat"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text",
+            "author"
+          ]
+        }
+      ],
+      "required": [
+        "id",
+        "user",
+        "launch_id",
+        "issue",
+        "created_at"
       ]
     }
   }

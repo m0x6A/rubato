@@ -959,8 +959,9 @@ async fn await_reason(web: &mut Ws, reason: &str) {
             panic!("web socket closed waiting for {reason:?}")
         };
         let ev: rubato_protocol::WebEvent = serde_json::from_str(&t).unwrap();
-        let rubato_protocol::WebEvent::Changed { reason: got, .. } = ev;
-        if got == reason {
+        if let rubato_protocol::WebEvent::Changed { reason: got, .. } = ev
+            && got == reason
+        {
             return;
         }
     }
@@ -1224,6 +1225,8 @@ async fn attempt_limit_does_not_block_a_running_issue() {
                 spend_usd: None,
                 branch_drift: None,
                 blocked_by: None,
+                launch_id: None,
+                hooks_lost: false,
             }],
         },
     };

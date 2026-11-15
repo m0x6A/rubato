@@ -94,6 +94,13 @@
           "description": "First message after connect. Carries the pairing identity and where to resume from.",
           "type": "object",
           "properties": {
+            "capabilities": {
+              "description": "What this companion can take (`capability`). Absent from an older companion.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "companion_id": {
               "type": "string",
               "format": "uuid"
@@ -215,6 +222,20 @@
           ]
         },
         {
+          "description": "The answer to one `SessionMessage` (ADR 0051).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_message_result"
+            }
+          },
+          "$ref": "#/$defs/SessionMessageResult",
+          "required": [
+            "type"
+          ]
+        },
+        {
           "description": "Acknowledges a server envelope by sequence.",
           "type": "object",
           "properties": {
@@ -287,6 +308,14 @@
         },
         "hook_event_name": {
           "$ref": "#/$defs/HookEventKind"
+        },
+        "launch_id": {
+          "description": "The launch the hook came from, from the `X-Rubato-Launch` header the launched session's\nhook command sends (plan 122 §D1). Keeps a launch across a `/clear` that changes the\nsession id. Absent for a session not launched from Rubato and from an older companion.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
         },
         "notification_type": {
           "description": "`notification_type` for `Notification` events, such as `permission_prompt` or `idle_prompt`.",
@@ -465,6 +494,36 @@
         }
       ]
     },
+    "MessageRefusal": {
+      "description": "Why the companion did not type a message.",
+      "oneOf": [
+        {
+          "description": "The message's user is not this companion's paired user (ADR 0004).",
+          "type": "string",
+          "const": "not_paired_user"
+        },
+        {
+          "description": "No session this companion launched has that launch id.",
+          "type": "string",
+          "const": "not_launched_here"
+        },
+        {
+          "description": "The launch is known but has no live session to type into.",
+          "type": "string",
+          "const": "unknown_session"
+        },
+        {
+          "description": "Longer than `Limits.session_message_max_chars`.",
+          "type": "string",
+          "const": "too_long"
+        },
+        {
+          "description": "The session's tmux pane is not known.",
+          "type": "string",
+          "const": "no_pane"
+        }
+      ]
+    },
     "RefusalReason": {
       "oneOf": [
         {
@@ -488,6 +547,98 @@
           "type": "string",
           "const": "missing_dependency"
         }
+      ]
+    },
+    "SessionMessageResult": {
+      "description": "Companion → server: the answer to one `SessionMessage`.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "message_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "oneOf": [
+        {
+          "description": "Typed into the session, once. A repeated push of a delivered id answers this again\nwithout typing.",
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "delivered"
+            }
+          },
+          "required": [
+            "outcome"
+          ]
+        },
+        {
+          "description": "The session was working; nothing was typed. The server queues it again.",
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "not_idle"
+            }
+          },
+          "required": [
+            "outcome"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "refused"
+            },
+            "reason": {
+              "$ref": "#/$defs/MessageRefusal"
+            }
+          },
+          "required": [
+            "outcome",
+            "reason"
+          ]
+        },
+        {
+          "description": "The companion stopped while pasting this id: whether it reached the session is unknown.",
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "interrupted"
+            }
+          },
+          "required": [
+            "outcome"
+          ]
+        },
+        {
+          "description": "The paste failed; nothing was typed.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "outcome",
+            "error"
+          ]
+        }
+      ],
+      "required": [
+        "message_id",
+        "at"
       ]
     },
     "SessionState": {
@@ -525,6 +676,10 @@
         "cwd": {
           "type": "string"
         },
+        "hooks_lost": {
+          "description": "The companion restarted and could not take its old hook port back, so this launched\nsession's hooks go nowhere: chat and mirroring need a relaunch (plan 122 §D1).",
+          "type": "boolean"
+        },
         "issue": {
           "description": "Resolved from the branch, or from the launch when the branch does not follow the convention.",
           "anyOf": [
@@ -539,6 +694,14 @@
         "last_seen": {
           "type": "string",
           "format": "date-time"
+        },
+        "launch_id": {
+          "description": "The Rubato launch this session belongs to, when Rubato launched it (ADR 0051).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
         },
         "repo": {
           "description": "`owner/name` from `origin`.",

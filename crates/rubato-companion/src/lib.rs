@@ -6,7 +6,7 @@
 //! Organised by vertical slices (ADR 0015): one module per capability, a `kernel` of leaf
 //! infrastructure that names no slice, and a composition root (`lib.rs`, `runtime.rs`) that
 //! names every slice. Slices: `pairing`, `server_link`, `sessions`, `hooks`, `launch`, `spend`,
-//! `stale`. `slices.rs` checks the layout.
+//! `stale`, `session_input`. `slices.rs` checks the layout.
 
 pub mod kernel;
 pub mod runtime;
@@ -15,6 +15,7 @@ pub mod hooks;
 pub mod launch;
 pub mod pairing;
 pub mod server_link;
+pub mod session_input;
 pub mod sessions;
 pub mod spend;
 pub mod stale;

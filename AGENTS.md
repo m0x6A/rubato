@@ -108,6 +108,7 @@ new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
 approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
+session_messages  messages to your own launched session, at most once  session_messages
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, issue_suggestions, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
@@ -118,17 +119,19 @@ web_link        websocket fan-out to browsers                   (none)
 <!-- slices: rubato-companion -->
 `crates/rubato-companion/src/`: composition root `lib.rs`, `main.rs`, `runtime.rs` (channels,
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
-state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline);
+state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline,
+the `SessionInput` port whose first adapter is the tmux paste);
 slices:
 
 ```text
-pairing      device-code pairing with a GitHub login            pair
-server_link  outbound websocket, outbox, acks, Welcome limits   client task (essential)
-sessions     Registry, identity from the branch, discovery      reconcile (essential), events watcher (best-effort)
-hooks        loopback hook receiver, hooks template, apply_hook  hook server, dropped counter (essential)
-launch       LaunchCommand: own user only, worktree, tmux, exec  launch task (essential)
-spend        transcript cost, spend cap, CapHit                  after each hook
-stale        heartbeat, stale sessions                           heartbeat, sweep (essential)
+pairing        device-code pairing with a GitHub login                            pair
+server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
+sessions       Registry, identity from the branch, discovery, launches.json       reconcile (essential), events watcher (best-effort)
+hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
+launch         LaunchCommand: own user only, worktree, tmux, exec                 launch task (essential)
+spend          transcript cost, spend cap, CapHit                                 after each hook
+stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
+session_input  SessionMessage: own user, launched here, idle, typed once          session input task (essential)
 ```
 <!-- /slices -->
 <!-- slices: web -->
@@ -140,8 +143,9 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 `features/features.test.ts`:
 
 ```text
-live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
+live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
+chat        talk to your own launched session, message states    GET, POST /api/launches/:id/messages
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout; POST, DELETE /api/traffic/dismissals
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id

@@ -1585,6 +1585,109 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Planning in Rubato",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 104
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 101,
+      "title": "Session messages by outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 105
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Messages people sent from Rubato to their own launched sessions, as they settle (ADR 0051): delivered, not_idle (the session was working; queued again), refused (the reason is in the log line), failed, interrupted and delivery_unknown (pushed, no answer while the companion stayed live, never pushed again). A rise in delivery_unknown is a companion that receives but does not answer: look for 'session message delivery unknown' with rubato.session_message.id, and the companion's rubato.session_input.deliver span.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_session_messages_total[15m]))",
+          "legendFormat": "{{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 102,
+      "title": "Oldest message waiting for an idle session",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 105
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Seconds the oldest queued message has waited while its launched session waits for input (last hook Stop or idle_prompt). It should drain within a dispatch; a climbing line is a queue that does not move: the companion is not live, lacks session_input, or keeps answering not_idle. Alert SessionMessageStuck (plan 122 PR 7).",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_session_messages_oldest_idle_queued_seconds)",
+          "legendFormat": "oldest"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 103,
+      "title": "Companions by capability",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 105
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Connected companions per capability they announced in Hello (ADR 0051). Planning in Rubato is switched on (the cutover) only once every companion shows session_input; one that does not is an older companion its owner must upgrade.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (rubato_capability) (rubato_companions_by_capability)",
+          "legendFormat": "{{rubato_capability}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

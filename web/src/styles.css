@@ -219,6 +219,24 @@ button.link:hover { text-decoration: underline; }
 .new-issue label { display: flex; flex-direction: column; gap: 2px; }
 .new-issue textarea, .new-issue input, .new-issue select { width: 100%; box-sizing: border-box; font: inherit; }
 .new-issue-start { margin: 8px 0; }
+/* chat: messages to your own launched session, read by the whole team (ADR 0051) */
+tr.chat-row > td { padding-top: 0; }
+.chat-toggle { padding: 2px 8px; font-size: 12px; min-height: 24px; }
+.chat { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.chat p { margin: 0; }
+.chat-msg { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); }
+.chat-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.chat-text { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.msg-state { font-size: 12px; color: var(--muted); }
+.msg-state.sent { color: var(--accent-ink); }
+.msg-state.delivered { color: var(--ok-ink); }
+.msg-state.refused, .msg-state.failed { color: var(--bad-ink); }
+.msg-state.delivery_unknown { color: var(--warn-ink); }
+.chat-unknown { margin-top: 4px; }
+.chat-unknown button { padding: 2px 8px; min-height: 24px; font-size: 12px; }
+.chat-compose { display: flex; flex-direction: column; gap: 4px; }
+.chat-compose textarea { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); resize: vertical; }
+.chat-compose-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .repo-status { font-size: 12px; gap: 2px; }
 .repo-status li.warn { font-size: 12px; }
 /* "Pin to…": the keyboard twin of the drag */

@@ -10,6 +10,10 @@ export type CapKind = ("spend" | "attempts")
  * Companion → server.
  */
 export type CompanionMessage = ({
+/**
+ * What this companion can take (`capability`). Absent from an older companion.
+ */
+capabilities?: string[]
 companion_id: string
 companion_version: string
 /**
@@ -22,7 +26,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | {
 seq: number
 type: "ack"
 })
@@ -59,6 +63,28 @@ error: string
 outcome: "failed"
 })
 export type RefusalReason = ("attempt_limit_reached" | "not_paired_user" | "already_running" | "missing_dependency")
+/**
+ * The answer to one `SessionMessage` (ADR 0051).
+ */
+export type SessionMessageResult = ({
+type: "session_message_result"
+} & ({
+outcome: "delivered"
+} | {
+outcome: "not_idle"
+} | {
+outcome: "refused"
+reason: MessageRefusal
+} | {
+outcome: "interrupted"
+} | {
+error: string
+outcome: "failed"
+}))
+/**
+ * Why the companion did not type a message.
+ */
+export type MessageRefusal = ("not_paired_user" | "not_launched_here" | "unknown_session" | "too_long" | "no_pane")
 /**
  * What a person can dismiss on the overlay (ADR 0060).
  */
@@ -227,6 +253,11 @@ export type DataModelKind = ("table" | "type" | "schema" | "event" | "file")
 export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
 export type ChecksStatus = (("green" | "red" | "pending") | "none")
 /**
+ * Where a message is, as the server holds it. Derived from what happened; a row is never
+ * pushed again once it is `delivery_unknown`.
+ */
+export type SessionMessageState = (("delivered" | "refused" | "failed") | "queued" | "sent" | "delivery_unknown")
+/**
  * Companion → server: what happened to a launch command.
  */
 export type LaunchResult1 = ({
@@ -326,6 +357,10 @@ status: "expired"
  */
 export type ServerMessage = ({
 /**
+ * What this server can take (`capability`). Absent from an older server.
+ */
+capabilities?: string[]
+/**
  * Last companion sequence the server has; the companion replays newer events.
  */
 last_seen_companion_seq: number
@@ -333,7 +368,7 @@ limits: Limits
 protocol_version: number
 server_version: string
 type: "welcome"
-} | LaunchCommand1 | {
+} | LaunchCommand1 | SessionMessage | {
 seq: number
 type: "ack"
 } | {
@@ -342,9 +377,19 @@ message: string
 type: "error"
 })
 /**
+ * Text for one session the paired user launched (ADR 0051).
+ */
+export type SessionMessage = ({
+type: "session_message"
+} & {
+author: string
+kind: "chat"
+text: string
+})
+/**
  * Pushed to browsers over `/ws/web`. Clients refetch the overview on `Changed`.
  */
-export type WebEvent = {
+export type WebEvent = ({
 at: string
 reason: string
 type: "changed"
@@ -353,6 +398,17 @@ type: "changed"
  * load; ADR 0049). Absent: every workspace may have changed, so every client refetches.
  */
 workspace?: (string | null)
+} | {
+at: string
+resource: WebResource
+type: "updated"
+})
+/**
+ * A resource a view can refetch on its own.
+ */
+export type WebResource = {
+kind: "launch_messages"
+launch_id: string
 }
 
 export interface RubatoProtocol {
@@ -370,6 +426,7 @@ IssuePin?: IssuePin
 IssueRef?: IssueRef
 IssueSummary?: IssueSummary
 LaunchCommand?: LaunchCommand
+LaunchMessages?: LaunchMessages
 LaunchRequest?: LaunchRequest
 LaunchResponse?: LaunchResponse
 LaunchResult?: LaunchResult1
@@ -395,6 +452,8 @@ PullRequestState?: PullRequestState
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
 ServerEnvelope?: ServerEnvelope
+SessionMessageRequest?: SessionMessageRequest
+SessionMessageView?: SessionMessageView
 SessionState?: SessionState
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
@@ -479,10 +538,19 @@ branch_drift?: (string | null)
 companion_id: string
 cwd: string
 /**
+ * The companion restarted and could not take its old hook port back, so this launched
+ * session's hooks go nowhere: chat and mirroring need a relaunch (plan 122 §D1).
+ */
+hooks_lost?: boolean
+/**
  * Resolved from the branch, or from the launch when the branch does not follow the convention.
  */
 issue?: (IssueRef | null)
 last_seen: string
+/**
+ * The Rubato launch this session belongs to, when Rubato launched it (ADR 0051).
+ */
+launch_id?: (string | null)
 /**
  * `owner/name` from `origin`.
  */
@@ -644,6 +712,12 @@ export interface HookEvent1 {
  */
 cwd: string
 hook_event_name: HookEventKind
+/**
+ * The launch the hook came from, from the `X-Rubato-Launch` header the launched session's
+ * hook command sends (plan 122 §D1). Keeps a launch across a `/clear` that changes the
+ * session id. Absent for a session not launched from Rubato and from an older companion.
+ */
+launch_id?: (string | null)
 /**
  * `notification_type` for `Notification` events, such as `permission_prompt` or `idle_prompt`.
  */
@@ -1022,6 +1096,47 @@ spend_cap_usd: number
 user: string
 }
 /**
+ * The messages of one launch, newest last, and whether its companion can take them.
+ */
+export interface LaunchMessages {
+/**
+ * The companion announced `session_input` the last time it said Hello. False for an older
+ * companion: the web says "upgrade the companion".
+ */
+companion_can_receive: boolean
+/**
+ * The companion is connected and heard from within two heartbeats.
+ */
+companion_live: boolean
+launch_id: string
+messages: SessionMessageView[]
+/**
+ * The launch's paired user: only they may send.
+ */
+owner: string
+}
+/**
+ * One message as the web shows it.
+ */
+export interface SessionMessageView {
+author: string
+created_at: string
+/**
+ * The refusal reason or the error, when there is one.
+ */
+detail?: (string | null)
+id: string
+/**
+ * `chat` for now.
+ */
+kind: string
+launch_id: string
+outcome_at?: (string | null)
+pushed_at?: (string | null)
+state: SessionMessageState
+text: string
+}
+/**
  * Start a session on an issue. Only the caller's own companions are eligible (ADR 0004).
  */
 export interface LaunchRequest {
@@ -1059,6 +1174,10 @@ heartbeat_interval_secs?: number
  * How often the server looks for a plan file on a live branch.
  */
 plan_poll_interval_secs?: number
+/**
+ * The longest session message the companion types (ADR 0051); longer ones are refused.
+ */
+session_message_max_chars?: number
 /**
  * A *working* session with no hook event for longer than this renders *unknown*.
  */
@@ -1774,6 +1893,12 @@ spend_cap_usd: number
  * GitHub login the command is addressed to.
  */
 user: string
+}
+/**
+ * Web → server: send this text to the launch's session.
+ */
+export interface SessionMessageRequest {
+text: string
 }
 /**
  * Emitted once when a *working* session goes quiet for longer than the stale threshold.

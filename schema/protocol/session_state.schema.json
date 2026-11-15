@@ -35,6 +35,10 @@
     "cwd": {
       "type": "string"
     },
+    "hooks_lost": {
+      "description": "The companion restarted and could not take its old hook port back, so this launched\nsession's hooks go nowhere: chat and mirroring need a relaunch (plan 122 §D1).",
+      "type": "boolean"
+    },
     "issue": {
       "description": "Resolved from the branch, or from the launch when the branch does not follow the convention.",
       "anyOf": [
@@ -49,6 +53,14 @@
     "last_seen": {
       "type": "string",
       "format": "date-time"
+    },
+    "launch_id": {
+      "description": "The Rubato launch this session belongs to, when Rubato launched it (ADR 0051).",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
     },
     "repo": {
       "description": "`owner/name` from `origin`.",

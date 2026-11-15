@@ -153,6 +153,13 @@ pub struct SessionState {
     /// older companion and for a block tmux-ide reported: read as mid-turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_by: Option<BlockCause>,
+    /// The Rubato launch this session belongs to, when Rubato launched it (ADR 0051).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_id: Option<Uuid>,
+    /// The companion restarted and could not take its old hook port back, so this launched
+    /// session's hooks go nowhere: chat and mirroring need a relaunch (plan 122 §D1).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hooks_lost: bool,
 }
 
 impl SessionState {
@@ -223,6 +230,8 @@ mod tests {
             spend_usd: None,
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         };
         (s, now)
     }

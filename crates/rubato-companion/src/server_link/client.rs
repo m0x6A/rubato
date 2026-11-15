@@ -22,6 +22,8 @@ pub struct Identity {
     pub user: String,
     pub version: String,
     pub token: String,
+    /// What this companion announces in Hello (`rubato_protocol::capability`).
+    pub capabilities: Vec<String>,
 }
 
 pub struct Client {
@@ -136,6 +138,7 @@ impl Client {
             companion_version: self.identity.version.clone(),
             protocol_version: PROTOCOL_VERSION,
             last_seen_server_seq: self.last_server_seq,
+            capabilities: self.identity.capabilities.clone(),
         })?;
         let hello_seq = hello.seq;
         sink.send(Message::Text(serde_json::to_string(&hello)?.into()))
@@ -248,6 +251,7 @@ mod tests {
             user: "m0x6A".into(),
             version: "test".into(),
             token: "t".into(),
+            capabilities: vec![],
         }
     }
 

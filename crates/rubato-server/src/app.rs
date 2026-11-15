@@ -7,7 +7,7 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, launch, layout, map, map_draft, new_issue, overview, pairing,
-    pins, queue, traffic, web_link,
+    pins, queue, session_messages, traffic, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -93,6 +93,10 @@ pub fn router(app: App) -> Router {
             delete(pairing::revoke),
         )
         .route(pr::PAIR_APPROVE, post(pairing::approve))
+        .route(
+            rubato_protocol::session_message::routes::LAUNCH_MESSAGES,
+            get(session_messages::list).post(session_messages::send),
+        )
         .route(pr::PAIR_START, post(pairing::start))
         .route(pr::PAIR_POLL, post(pairing::poll))
         .route(pr::COMPANION_WS, get(companion_link::upgrade))

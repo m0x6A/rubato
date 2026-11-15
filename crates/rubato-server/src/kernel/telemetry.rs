@@ -134,6 +134,12 @@ pub struct Metrics {
     /// The configured companion stale threshold N in seconds (#105). No unit, so the series
     /// stays `rubato_companion_silent_secs`, the name `CompanionSilent` reads.
     pub companion_silent_secs: Gauge<u64>,
+    /// Session messages as they settle, by outcome and kind (ADR 0051).
+    pub session_messages: Counter<u64>,
+    /// Age of the oldest message queued for a launch whose session waits for input.
+    pub session_messages_oldest_idle_queued: Gauge<u64>,
+    /// Connected companions per announced capability.
+    pub companions_by_capability: Gauge<u64>,
 }
 
 impl Metrics {
@@ -190,6 +196,14 @@ impl Metrics {
             traffic_dismissals: m.u64_gauge(otel::metric::TRAFFIC_DISMISSALS).build(),
             spend_points: m.u64_counter(otel::metric::SPEND_POINTS).build(),
             companion_silent_secs: m.u64_gauge(otel::metric::COMPANION_SILENT_SECS).build(),
+            session_messages: m.u64_counter(otel::metric::SESSION_MESSAGES).build(),
+            session_messages_oldest_idle_queued: m
+                .u64_gauge(otel::metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED)
+                .with_description(
+                    "seconds the oldest message has waited for a session that waits for input",
+                )
+                .build(),
+            companions_by_capability: m.u64_gauge(otel::metric::COMPANIONS_BY_CAPABILITY).build(),
         }
     }
 

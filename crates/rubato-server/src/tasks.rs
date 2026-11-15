@@ -9,7 +9,7 @@
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
     approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins,
-    plans, queue, traffic,
+    plans, queue, session_messages, traffic,
 };
 use anyhow::{Result, anyhow};
 use rubato_protocol::otel::event;
@@ -254,6 +254,10 @@ impl Poller {
         }
         map_draft::record_gauges(app).await;
         queue::record_depth(app).await;
+        let sessions = companion_link::all_sessions(&app.db)
+            .await
+            .unwrap_or_default();
+        session_messages::record_gauges(app, &sessions).await;
         github_poll::record_rate_limit(app).await;
         overview::refresh_gauges(app).await?;
         app.notify("poll");
@@ -426,6 +430,13 @@ pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
             traffic::run(app.clone(), shutdown.clone()),
         );
     }
+    tasks.spawn("session_messages_sweep", Kind::Essential, {
+        let (app, shutdown) = (app.clone(), shutdown.clone());
+        async move {
+            session_messages::run_sweep(app, shutdown).await;
+            Ok(())
+        }
+    });
     tasks.spawn("poll", Kind::Essential, async move {
         run(app, shutdown).await;
         Ok(())

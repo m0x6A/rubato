@@ -3,5 +3,7 @@ mod hooks;
 mod launch_refusal;
 mod launch_timeout;
 mod pairing;
+mod restart;
+mod session_messages;
 mod stale;
 mod worktree;
