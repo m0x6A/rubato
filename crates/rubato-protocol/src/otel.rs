@@ -103,7 +103,8 @@ pub mod metric {
     pub const BACKLOG_MAP_LINES: &str = "rubato.backlog.map_lines";
     /// Issues created from Rubato (ADR 0025), by `rubato.outcome`: `created` (the create call
     /// answered), `found` (a create that did not answer, seen in the listing by its
-    /// `Rubato-Request:` line), `failed` (refused, or unseen for ten minutes).
+    /// `Rubato-Request:` line), `failed` (refused, or unseen for ten minutes), `ignored` (that line
+    /// on an issue the App did not write, once per listing, issue #165).
     pub const ISSUES_CREATED: &str = "rubato.issues.created";
     /// Creations sent and not yet confirmed, recorded every poll tick.
     pub const ISSUES_OPENING: &str = "rubato.issues.opening";

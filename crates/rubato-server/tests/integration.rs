@@ -3995,6 +3995,66 @@ async fn a_create_that_timed_out_is_found_by_its_request_line() {
     assert_eq!(h.creates(), 1);
 }
 
+/// Issue #165: only the App's own issue finishes a create that timed out. Two later issues copy
+/// its `Rubato-Request:` line, one from a stranger and one from another Bot, both numbered above
+/// the App's; neither is pinned, with the App's login known or not yet read.
+#[tokio::test]
+async fn a_request_line_counts_only_on_the_apps_issue() {
+    use rubato_protocol::CreationState;
+    for app_login in [Some("rubato[bot]"), None] {
+        let h = harness().await;
+        h.can_create(true);
+        h.github.with(|g| {
+            g.issue_times_out = true;
+            g.app_login = app_login.map(str::to_owned);
+        });
+        let req = new_issue("r-1", MapRef::seam("web-server"));
+        let (status, _) = h.create_issue(&req).await;
+        assert_eq!(status, 202);
+        let apps = h.github.inner.lock().unwrap().open["m0x6A/rubato"][0].clone();
+        assert!(apps.author_is_bot && apps.body.contains("Rubato-Request: r-1"));
+        h.github.with(|g| {
+            let copy = |n: u64, author: &str, bot: bool, association: &str| {
+                rubato_server::kernel::github::OpenIssueInfo {
+                    number: n,
+                    url: format!("https://github.com/m0x6A/rubato/issues/{n}"),
+                    author: author.into(),
+                    author_is_bot: bot,
+                    author_association: association.into(),
+                    ..apps.clone()
+                }
+            };
+            let open = g.open.get_mut("m0x6A/rubato").unwrap();
+            open.push(copy(apps.number + 1, "stranger", false, "NONE"));
+            if app_login.is_some() {
+                open.push(copy(apps.number + 2, "other-app[bot]", true, "NONE"));
+            }
+        });
+
+        tasks::poll_once(&h.app).await.unwrap();
+        let (status, r) = h.create_issue(&req).await;
+        assert_eq!(
+            (status, r.state),
+            (200, CreationState::Created),
+            "{app_login:?}"
+        );
+        assert_eq!(
+            r.issue.as_ref().map(|i| i.number),
+            Some(apps.number),
+            "{app_login:?}: the App's issue, not a copy"
+        );
+        let ov = h.overview("m0x6A").await;
+        let pinned: Vec<u64> = ov
+            .issues
+            .iter()
+            .filter(|i| i.issue.repo == "m0x6A/rubato")
+            .map(|i| i.issue.number)
+            .filter(|n| *n >= apps.number)
+            .collect();
+        assert_eq!(pinned, [apps.number], "{app_login:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_create_unseen_for_ten_minutes_fails() {
     use rubato_protocol::CreationState;

@@ -60,19 +60,38 @@ impl Listed {
         &self.fresh
     }
 
-    /// Listed issues whose body carries a `Rubato-Request:` line (ADR 0025), as
-    /// (issue, page, request id): how a create GitHub did not confirm is found.
-    pub fn requests(&self) -> Vec<(IssueRef, String, String)> {
-        let mut v: Vec<_> = self
+    /// Listed issues whose body carries a `Rubato-Request:` line (ADR 0025), in issue order:
+    /// how a create GitHub did not confirm is found. Whoever wrote them; `new_issue` decides
+    /// which count (issue #165).
+    pub fn requests(&self) -> Vec<Request> {
+        let mut v: Vec<Request> = self
             .open
             .iter()
             .filter_map(|(issue, i)| {
-                parse_request_line(&i.body).map(|id| (issue.clone(), i.url.clone(), id))
+                parse_request_line(&i.body).map(|request_id| Request {
+                    issue: issue.clone(),
+                    url: i.url.clone(),
+                    request_id,
+                    author: i.author.clone(),
+                    author_is_bot: i.author_is_bot,
+                })
             })
             .collect();
-        v.sort();
+        v.sort_by(|a, b| (&a.issue, &a.request_id).cmp(&(&b.issue, &b.request_id)));
         v
     }
+}
+
+/// A listed issue with a `Rubato-Request:` line, and who wrote it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+    pub issue: IssueRef,
+    pub url: String,
+    pub request_id: String,
+    /// Login of the issue's author.
+    pub author: String,
+    /// The author is a Bot account, as the App is.
+    pub author_is_bot: bool,
 }
 
 /// List each repo any workspace's map names, once (ADR 0048), and store the result; each

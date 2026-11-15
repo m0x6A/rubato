@@ -65,6 +65,10 @@ pub struct OpenIssueInfo {
     /// Login of the issue's author.
     #[serde(default)]
     pub author: String,
+    /// The author is a Bot account (`user.type == "Bot"`), as an issue the App created is
+    /// (ADR 0025, issue #165).
+    #[serde(default)]
+    pub author_is_bot: bool,
 }
 
 /// How much of an issue body is read for placement (ADR 0026, design A7).
@@ -243,6 +247,11 @@ pub trait GitHubApi: Send + Sync {
     async fn refresh_issue_permission(&self) -> Result<bool> {
         Ok(self.can_create_issues())
     }
+    /// The login the App's own issues carry, `<app_slug>[bot]`, as the last installation read
+    /// gave it (issue #165). `None` until read, and on a port that is not an App.
+    fn app_login(&self) -> Option<String> {
+        None
+    }
     /// Open an issue: its number and page. Sent once, with no retry: an issue POST is not
     /// idempotent. A 403 clears [`GitHubApi::can_create_issues`] until the next refresh.
     /// Post an issue comment as the person whose user-to-server token this is (ADR 0030). Sent
@@ -305,6 +314,7 @@ pub fn issues_from_page(page: &serde_json::Value) -> Vec<OpenIssueInfo> {
                     .and_then(|a| a.as_str())
                     .unwrap_or_default()
                     .to_owned(),
+                author_is_bot: i.pointer("/user/type").and_then(|t| t.as_str()) == Some("Bot"),
             })
         })
         .collect()
@@ -327,6 +337,8 @@ pub struct Octo {
     as_app: Option<AsApp>,
     /// The installation's Issues permission is `write`, as last read.
     issues_write: std::sync::atomic::AtomicBool,
+    /// `<app_slug>[bot]` from the installation, as last read (issue #165).
+    app_login: std::sync::Mutex<Option<String>>,
 }
 
 struct AsApp {
@@ -359,6 +371,7 @@ impl Octo {
             installation: false,
             as_app: None,
             issues_write: Default::default(),
+            app_login: Default::default(),
         })
     }
 
@@ -378,6 +391,7 @@ impl Octo {
                 installation_id: app.installation_id,
             }),
             issues_write: Default::default(),
+            app_login: Default::default(),
         })
     }
 }
@@ -825,6 +839,10 @@ impl GitHubApi for Octo {
         self.installation && self.issues_write.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    fn app_login(&self) -> Option<String> {
+        self.app_login.lock().unwrap().clone()
+    }
+
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "installation"))]
     async fn refresh_issue_permission(&self) -> Result<bool> {
         count_call("installation", 1);
@@ -834,6 +852,10 @@ impl GitHubApi for Octo {
         let route = format!("/app/installations/{}", a.installation_id);
         let v: serde_json::Value = a.app.get(route, None::<&()>).await?;
         let write = v.pointer("/permissions/issues").and_then(|p| p.as_str()) == Some("write");
+        // The App's issues carry `<app_slug>[bot]` as their author (issue #165).
+        if let Some(slug) = v.get("app_slug").and_then(|s| s.as_str()) {
+            *self.app_login.lock().unwrap() = Some(format!("{slug}[bot]"));
+        }
         let was = self
             .issues_write
             .swap(write, std::sync::atomic::Ordering::Relaxed);
@@ -1064,14 +1086,21 @@ mod tests {
         let long = format!("{}é{}", "a".repeat(BODY_EXCERPT_BYTES - 1), "b".repeat(100));
         let page = serde_json::json!([
             {"number": 1, "title": "T", "html_url": "u", "author_association": "MEMBER",
-             "user": {"login": "m0x6A"}, "body": "Map: seam web-server"},
+             "user": {"login": "m0x6A", "type": "User"}, "body": "Map: seam web-server"},
             {"number": 2, "title": "T", "html_url": "u", "body": null},
-            {"number": 3, "title": "T", "html_url": "u", "author_association": "NONE", "body": long}
+            {"number": 3, "title": "T", "html_url": "u", "author_association": "NONE", "body": long},
+            {"number": 4, "title": "T", "html_url": "u", "author_association": "NONE",
+             "user": {"login": "rubato[bot]", "type": "Bot"}, "body": "Rubato-Request: r-1"}
         ]);
         let issues = issues_from_page(&page);
         assert_eq!(issues[0].body, "Map: seam web-server");
         assert_eq!(issues[0].author_association, "MEMBER");
         assert_eq!(issues[0].author, "m0x6A");
+        // Issue #165: the Bot flag from `user.type`; no `user` reads as not a Bot.
+        assert_eq!(
+            issues.iter().map(|i| i.author_is_bot).collect::<Vec<_>>(),
+            [false, false, false, true]
+        );
         assert_eq!(issues[1].body, "");
         assert_eq!(issues[1].author_association, "");
         assert_eq!(

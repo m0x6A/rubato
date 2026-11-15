@@ -11,7 +11,7 @@ mod pulls;
 mod store;
 mod suggest;
 
-pub use backlog::{BACKLOG_MAX_PER_REPO, Listed, MapLine, list_open_issues};
+pub use backlog::{BACKLOG_MAX_PER_REPO, Listed, MapLine, Request, list_open_issues};
 pub use coverage::check_coverage;
 pub use poll::{
     BranchPrefs, CommentsRead, RepoView, Standing, has_open_pr, poll_comments, poll_pr,

@@ -135,10 +135,12 @@ impl Poller {
         let found: Vec<new_issue::Found> = listed
             .requests()
             .into_iter()
-            .map(|(issue, url, request_id)| new_issue::Found {
-                issue,
-                url,
-                request_id,
+            .map(|r| new_issue::Found {
+                issue: r.issue,
+                url: r.url,
+                request_id: r.request_id,
+                author: r.author,
+                author_is_bot: r.author_is_bot,
             })
             .collect();
         new_issue::reconcile(app, &found, listed.fresh_repos()).await;
