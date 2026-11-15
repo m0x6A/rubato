@@ -109,6 +109,7 @@ plans           parse and keep plan files from issue branches   plans
 approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
 session_messages  messages to your own launched session, at most once  session_messages
+session_log     prompts and last replies of launched sessions   session_log_entries
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, issue_suggestions, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
@@ -145,7 +146,7 @@ session_input  SessionMessage: own user, launched here, idle, typed once        
 ```text
 live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
-chat        talk to your own launched session, message states    GET, POST /api/launches/:id/messages
+chat        talk to your own session, message states, the log    GET, POST /api/launches/:id/messages, GET /api/launches/:id/log
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout; POST, DELETE /api/traffic/dismissals
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id

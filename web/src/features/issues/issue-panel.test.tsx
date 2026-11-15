@@ -169,13 +169,13 @@ describe("opening an issue", () => {
 });
 
 describe("messages for launched sessions (plan 122, ADR 0051)", () => {
-  it("a session Rubato launched gets a Messages section; one it did not launch does not", () => {
+  it("a session Rubato launched gets a Conversation section; one it did not launch does not", () => {
     const fetch = vi.spyOn(globalThis, "fetch");
     const now = new Date().toISOString();
     const base = { companion_id: "c1", user: "alice", cwd: "/w/9", source: "hook" as const, status: "idle" as const, last_seen: now };
     const launched = issue(9, "web", { sessions: [{ ...base, session_id: "s1", launch_id: "6f1c0c1e-0000-4000-8000-000000000009", spend_usd: 1.25 }, { ...base, session_id: "s2" }] });
     renderPanel(overview({ issues: [launched] }), launched);
-    const toggles = screen.getAllByRole("button", { name: /Messages/ });
+    const toggles = screen.getAllByRole("button", { name: /Conversation/ });
     expect(toggles).toHaveLength(1);
     // The session row itself is unchanged: its spend still reads in dollars.
     expect(screen.getByText("$1.25")).toBeInTheDocument();

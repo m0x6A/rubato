@@ -4,7 +4,7 @@
 use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
-use crate::{launch, pairing, queue, session_messages, spend_history};
+use crate::{launch, pairing, queue, session_log, session_messages, spend_history};
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
@@ -249,6 +249,7 @@ async fn on_envelope(
             CompanionMessage::Hook(h) => {
                 tracing::info!(rubato.session_id = %h.session_id, rubato.hook_event = ?h.hook_event_name, "hook");
                 session_messages::on_hook(app, companion_id, &h).await;
+                session_log::on_hook(app, companion_id, &h).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {

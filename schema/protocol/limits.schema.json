@@ -31,6 +31,13 @@
       "default": 60,
       "minimum": 0
     },
+    "session_log_max_chars": {
+      "description": "The longest prompt or reply the companion forwards for the session log (ADR 0052); longer\ntext is cut and marked truncated.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 16000,
+      "minimum": 0
+    },
     "session_message_max_chars": {
       "description": "The longest session message the companion types (ADR 0051); longer ones are refused.",
       "type": "integer",

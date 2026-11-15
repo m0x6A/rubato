@@ -403,7 +403,13 @@ impl RubatoWorld {
     /// Run the launched session's own hook command for `event`, exactly as Claude Code does:
     /// the command from the `--settings` file the stand-in got, through `sh`, with the payload
     /// on stdin and `RUBATO_LAUNCH_ID` exported as `launch.sh` does.
-    pub async fn fire_launched_hook(&self, event: &str, session_id: &str) {
+    /// `extra` adds payload keys, such as `prompt` or `last_assistant_message`.
+    pub async fn fire_launched_hook(
+        &self,
+        event: &str,
+        session_id: &str,
+        extra: serde_json::Value,
+    ) {
         let log = standin_log(self).await;
         let args = log.lines().find(|l| l.starts_with("ARGS:")).unwrap();
         let settings = args
@@ -419,12 +425,15 @@ impl RubatoWorld {
             .to_owned();
         let cmd = self.last_launch.as_ref().unwrap();
         let worktree = worktree_of(self, &cmd.issue.repo, &cmd.branch);
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "session_id": session_id,
             "hook_event_name": event,
             "cwd": worktree.to_string_lossy(),
             "permission_mode": "acceptEdits",
         });
+        if let (Some(p), serde_json::Value::Object(more)) = (payload.as_object_mut(), extra) {
+            p.extend(more);
+        }
         let mut sh = Command::new("sh");
         sh.arg("-c")
             .arg(&command)

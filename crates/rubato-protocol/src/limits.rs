@@ -20,6 +20,9 @@ pub struct Limits {
     pub github_poll_interval_secs: u64,
     /// The longest session message the companion types (ADR 0051); longer ones are refused.
     pub session_message_max_chars: u64,
+    /// The longest prompt or reply the companion forwards for the session log (ADR 0052); longer
+    /// text is cut and marked truncated.
+    pub session_log_max_chars: u64,
 }
 
 impl Default for Limits {
@@ -32,6 +35,7 @@ impl Default for Limits {
             plan_poll_interval_secs: 60,
             github_poll_interval_secs: 60,
             session_message_max_chars: 8000,
+            session_log_max_chars: 16000,
         }
     }
 }

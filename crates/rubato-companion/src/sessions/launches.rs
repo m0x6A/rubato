@@ -157,6 +157,7 @@ impl Registry {
                 last_hook_at: None,
                 input_sent_at: None,
                 hooks_lost,
+                pasted: Vec::new(),
             });
             restored += 1;
         }

@@ -5,6 +5,22 @@
 use crate::sessions::{Entry, Registry, identify};
 use rubato_protocol::{HookEvent, HookEventKind, IssueRef, SessionStatus, StateSource};
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
+
+/// Which pasted message a prompt carries: the newest whose text the prompt ends with, and
+/// whether other text comes before it. A paste is appended to whatever a person had half-typed
+/// (plan 122 §Spike), so that prompt is `mixed`; one that is the message alone is not.
+pub fn carried(pasted: &[(Uuid, String)], prompt: &str) -> Option<(usize, bool)> {
+    let prompt = prompt.trim_end();
+    pasted.iter().enumerate().rev().find_map(|(i, (_, text))| {
+        let text = text.trim_end();
+        if text.is_empty() {
+            return None;
+        }
+        let before = prompt.strip_suffix(text)?;
+        Some((i, !before.trim().is_empty()))
+    })
+}
 
 /// The hook says the turn ended and the prompt waits: `Stop`, or `Notification(idle_prompt)`.
 pub fn waits_for_input(ev: &HookEvent) -> bool {
@@ -16,6 +32,15 @@ pub fn waits_for_input(ev: &HookEvent) -> bool {
 }
 
 impl Registry {
+    /// The session message a launched session's prompt carried, and whether it was mixed.
+    /// Taken off the entry, so it tags one prompt only.
+    pub fn take_carried(&mut self, session_id: &str, prompt: &str) -> Option<(Uuid, bool)> {
+        let e = self.find_by_session(session_id)?;
+        let (i, mixed) = carried(&e.pasted, prompt)?;
+        let (id, _) = e.pasted.remove(i);
+        Some((id, mixed))
+    }
+
     /// A hook event. Returns the entry's issue so the caller can report per issue.
     pub fn apply_hook(&mut self, ev: &HookEvent) -> Option<IssueRef> {
         let implied = ev.implied_status();
@@ -86,6 +111,7 @@ impl Registry {
             last_hook_at: implied.map(|_| now),
             input_sent_at: None,
             hooks_lost: false,
+            pasted: Vec::new(),
         };
         self.entries.push(entry);
         id.issue
@@ -128,6 +154,49 @@ mod tests {
             false,
             now(),
         );
+    }
+
+    /// Plan 122 PR 4: the prompt that carried a pasted message names it once; text typed before
+    /// it makes it mixed; a prompt that does not end with any pasted text names none.
+    #[test]
+    fn a_prompt_ending_with_a_pasted_message_carries_it_once() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let pasted = vec![
+            (a, "line one\nline two".to_owned()),
+            (b, "second".to_owned()),
+        ];
+        assert_eq!(carried(&pasted, "line one\nline two"), Some((0, false)));
+        assert_eq!(carried(&pasted, "line one\nline two\n"), Some((0, false)));
+        assert_eq!(
+            carried(&pasted, "half-typed line one\nline two"),
+            Some((0, true))
+        );
+        assert_eq!(
+            carried(&pasted, "  second"),
+            Some((1, false)),
+            "only blanks before"
+        );
+        assert_eq!(carried(&pasted, "something else"), None);
+        assert_eq!(
+            carried(&pasted, "line one"),
+            None,
+            "a prefix is not the message"
+        );
+
+        let launch = Uuid::from_u128(7);
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        launched(&mut r, launch, "s7");
+        r.mark_input_sent(launch, now(), a, "line one\nline two");
+        assert_eq!(
+            r.take_carried("s7", "half-typed line one\nline two"),
+            Some((a, true))
+        );
+        assert_eq!(
+            r.take_carried("s7", "line one\nline two"),
+            None,
+            "tagged once"
+        );
+        assert_eq!(r.take_carried("unknown", "x"), None);
     }
 
     /// Only a status-implying hook moves the idle check; `Stop` and `idle_prompt` wait for

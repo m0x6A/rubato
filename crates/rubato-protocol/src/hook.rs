@@ -81,6 +81,16 @@ pub struct HookEvent {
     /// session id. Absent for a session not launched from Rubato and from an older companion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_id: Option<uuid::Uuid>,
+    /// On `UserPromptSubmit`: the session message this prompt carried, matched by the companion
+    /// because the prompt ends with the message it pasted (ADR 0051, plan 122 PR 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<uuid::Uuid>,
+    /// With `message_id`: the prompt holds text before the message (someone was typing).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mixed: bool,
+    /// The prompt or reply text in `payload` was cut to `Limits.session_log_max_chars`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
     /// The raw hook payload, for traces and for fields this version does not lift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
@@ -105,6 +115,9 @@ impl HookEvent {
             tool_name: s("tool_name"),
             received_at,
             launch_id: None,
+            message_id: None,
+            mixed: false,
+            truncated: false,
             payload: Some(payload),
         })
     }
