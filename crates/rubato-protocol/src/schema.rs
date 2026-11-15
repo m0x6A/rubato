@@ -67,7 +67,8 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::room::CallInRequest>("call_in_request"),
         one::<crate::room::CallInResponse>("call_in_response"),
         one::<crate::room::RequestAnswerBody>("request_answer_body"),
-        one::<crate::room::DismissRequest>("dismiss_request"),
+        one::<crate::room::DismissAgentRequest>("dismiss_agent_request"),
         one::<crate::traffic::TrafficReport>("traffic_report"),
+        one::<crate::traffic::DismissRequest>("dismiss_request"),
     ]
 }

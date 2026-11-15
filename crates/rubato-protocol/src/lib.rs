@@ -65,7 +65,7 @@ pub use layout::{MapLayout, Position};
 pub use limits::Limits;
 pub use map::{
     Flow, FlowKind, MapNode, MapResponse, NodeKind, RepoRef, Scenario, ScenarioStep, Seam,
-    SystemMap,
+    ServiceId, SystemMap,
 };
 pub use map_draft::{DraftOp, DraftOpRequest, MapDraft, MapOp, Proposal, ProposalState};
 pub use message::{
@@ -97,9 +97,9 @@ pub use progress::{
 pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use room::{
-    CallInRequest, CallInResponse, DismissRequest, LeftReason, RequestAnswer, RequestAnswerBody,
-    RequestState, RoomAgent, RoomAuthorKind, RoomKey, RoomMessage, RoomPostRequest, RoomReply,
-    RoomRequest, RoomView, SeamNotice, addressed_handles, agent_handle,
+    CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer,
+    RequestAnswerBody, RequestState, RoomAgent, RoomAuthorKind, RoomKey, RoomMessage,
+    RoomPostRequest, RoomReply, RoomRequest, RoomView, SeamNotice, addressed_handles, agent_handle,
 };
 pub use session::{
     BlockCause, ClientKind, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource,
@@ -112,7 +112,8 @@ pub use session_message::{
     SessionMessageState, SessionMessageView, room_turn_text,
 };
 pub use traffic::{
-    ObservedTraffic, SeamTraffic, SourceStatus, TrafficEdge, TrafficReport, TrafficState,
+    DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, ObservedTraffic, SeamTraffic,
+    SourceStatus, TrafficDismissal, TrafficEdge, TrafficEnd, TrafficReport, TrafficState,
     UndeclaredEdge, derive_traffic,
 };
 pub use web_link::{WebEvent, WebResource};

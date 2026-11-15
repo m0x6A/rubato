@@ -359,7 +359,7 @@ mod call_in_tests {
     use crate::session_messages::{self, RoomTurnRef};
     use axum::extract::Path;
     use rubato_protocol::{
-        CallInRequest, CallInResponse, DismissRequest, HookEvent, LaunchCommand, LeftReason,
+        CallInRequest, CallInResponse, DismissAgentRequest, HookEvent, LaunchCommand, LeftReason,
         ROOM_TURN_PREAMBLE, RequestAnswer, RequestAnswerBody, RequestState, RoomAgent, RoomReply,
         RoomRequest, RoomTurnMode, capability,
     };
@@ -468,7 +468,7 @@ mod call_in_tests {
         dismiss(
             State(h.app.clone()),
             CurrentUser(user.into()),
-            Json(DismissRequest {
+            Json(DismissAgentRequest {
                 repo: REPO.into(),
                 number: n,
                 branch: BRANCH.into(),

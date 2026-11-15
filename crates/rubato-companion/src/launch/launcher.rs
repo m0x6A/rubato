@@ -4,7 +4,7 @@
 
 use super::apply::LiveSession;
 use super::restore::{Restored, restore};
-use super::script::launcher_script;
+use super::script::{check_ref, launcher_script, sh_quote};
 use crate::hooks::{HOOKS_TEMPLATE, render_hooks};
 use crate::kernel::config::{HookEndpoint, Workspace, write_private};
 use crate::kernel::tmux::{Tmux, session_name};
@@ -157,6 +157,8 @@ impl Launcher {
     }
 
     fn start(&self, cmd: &LaunchCommand) -> Result<Started> {
+        check_ref("branch", &cmd.branch)?;
+        check_ref("base ref", &cmd.base_ref)?;
         let repo = self
             .workspace
             .repo(&cmd.issue.repo)
@@ -237,7 +239,11 @@ impl Launcher {
         }
         let pane_id = self
             .tmux
-            .new_session(&name, &worktree, &format!("sh '{}'", script_path.display()))
+            .new_session(
+                &name,
+                &worktree,
+                &format!("sh {}", sh_quote(&script_path.display().to_string())),
+            )
             .context("tmux new-session")?;
         if let Err(e) = self.tmux_ide.adopt(&name) {
             tracing::warn!(session = %name, error = %e, "tmux-ide adopt failed; status bar absent");

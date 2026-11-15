@@ -1,28 +1,134 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "DismissRequest",
-  "description": "Dismiss an agent (`DELETE` `routes::ROOM_AGENTS`): its owner, or whoever called it in.",
+  "description": "`POST /api/traffic/dismissals`: dismiss one discrepancy as yourself.",
   "type": "object",
   "properties": {
-    "branch": {
-      "type": "string"
-    },
-    "handle": {
-      "type": "string"
-    },
-    "number": {
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "repo": {
-      "type": "string"
+    "target": {
+      "$ref": "#/$defs/DiscrepancyKey"
     }
   },
   "required": [
-    "repo",
-    "number",
-    "branch",
-    "handle"
-  ]
+    "target"
+  ],
+  "$defs": {
+    "DiscrepancyKey": {
+      "description": "What a person can dismiss on the overlay (ADR 0060).",
+      "oneOf": [
+        {
+          "description": "A ghost part, and with it every edge to or from it.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ghost"
+            },
+            "service": {
+              "$ref": "#/$defs/ServiceId"
+            }
+          },
+          "required": [
+            "kind",
+            "service"
+          ]
+        },
+        {
+          "description": "An observed edge no seam declares, between parts or with a ghost end.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/TrafficEnd"
+            },
+            "kind": {
+              "type": "string",
+              "const": "edge"
+            },
+            "to": {
+              "$ref": "#/$defs/TrafficEnd"
+            }
+          },
+          "required": [
+            "kind",
+            "from",
+            "to"
+          ]
+        },
+        {
+          "description": "A declared seam that carried no calls.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "quiet_seam"
+            },
+            "seam": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "seam"
+          ]
+        }
+      ]
+    },
+    "ServiceId": {
+      "description": "A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`\n(ADR 0059). The namespace is absent only where the emitter has none, as for a servicegraph\nvirtual node built from a caller's `peer.service`. Rubato never sets or derives it.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "`service.name`.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "`service.namespace`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "TrafficEnd": {
+      "description": "One end of an observed edge on the overlay: a declared part, or a ghost (ADR 0059).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "part"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ghost"
+            },
+            "service": {
+              "$ref": "#/$defs/ServiceId"
+            }
+          },
+          "required": [
+            "kind",
+            "service"
+          ]
+        }
+      ]
+    }
+  }
 }
