@@ -1,6 +1,6 @@
 ---
 name: rubato
-description: Plan work on a GitHub issue from the team's shared system map. Use when starting on an issue in a repo connected to Rubato, when asked to "plan this", "where does this fit" or "how big is this", or when a session was launched by Rubato (the prompt says so). Loads the map and accepted ADRs, sizes the track, writes the plan at the agreed path in the agreed form, runs the design review and posts it as a Review: comment, asks a person for approval, and records decisions as Decision: comments.
+description: Plan work on a GitHub issue from the team's shared system map. Use when starting on an issue in a repo connected to Rubato, when asked to "plan this", "where does this fit" or "how big is this", or when a session was launched by Rubato (the prompt says so). Loads the map and accepted ADRs, sizes the track, writes the plan at the agreed path in the agreed form, runs the design review and posts it as a Review: comment, asks a person for approval, and records decisions as Decision: comments. In Rubato mode (RUBATO_PLANNING=rubato) the draft stays in the worktree, the review and summary are replies, and approval in Rubato ends in plan.ts handoff.
 ---
 
 # rubato: plan from the map
@@ -13,6 +13,10 @@ approval are issue comments that Rubato reads and shows; they are never written 
 Scripts run with `node --experimental-strip-types <skill dir>/scripts/<name>.ts`. The skill
 dir is where this file lives. If `node_modules` is missing there, run `npm install --omit=dev`
 in it once.
+
+**Which mode.** Read `RUBATO_PLANNING` first. Unset or `git`: the git mode, every section below
+as written. `rubato`: the Rubato mode (§9), used only when a launch says so (ADR 0053). It keeps
+§1–§4 and replaces the commit, the comments and the approval of §5–§7.
 
 ## 1. Read the map and the decisions
 
@@ -89,6 +93,9 @@ Fill it:
 - **Assumed, not yet approved**: every decision nothing settled. Scope `node` means assume and
   proceed, labelled. Scope `seam` blocks until a human answers; raise it as a numbered question
   with 2–4 options, not prose.
+- **Decisions**: a table `# | Decision | Chosen | Why | Decided by`, one row per decision made
+  while the plan is drafted in Rubato (ADR 0056), so the approval covers it and the handoff
+  commits it. Until then, write "None." and record decisions as `Decision:` comments (§7).
 - **O-rows**: one per seam in Affected parts. If this breaks at 3 am, which span, metric or
   log line leads back to it, on which dashboard panel, and which side of the seam is woken.
   Name `rubato.*` attributes. "We'll see it in the logs" is not an answer.
@@ -184,11 +191,58 @@ The launch carried a spend cap and an attempt limit (frontmatter `spend_cap_usd`
 `attempt_limit`). When the companion stops the session for either, the issue is *Blocked*;
 write what you learned to the issue before you run out.
 
+## 9. Rubato mode (`RUBATO_PLANNING=rubato`)
+
+The plan is drafted in Rubato (ADR 0053): the team reads every settled version there, and a team
+member approves it there. Read the map and the ADRs, read the issue, size the track, write the
+plan and check it as in §1–§4. Then:
+
+- **The draft stays uncommitted** in this worktree: the plan, its design note and the ADRs it
+  proposes. Do not commit or push them. The companion sends the files to Rubato each time you
+  stop, as a revision.
+- **No `Review:`, `Approved:` or `Decision:` comments**, and no `plan.ts wait` or
+  `adrs.ts accept`. Rubato reads your replies instead (ADR 0056); the first non-empty line of a
+  reply is what it goes by.
+- **The review is a reply.** Review the plan as in §5, then reply with the review in the form of
+  `review-template.md`, first line `Review: <track> — <outcome>`.
+- **Decisions are rows** of the plan's `## Decisions` table (`# | Decision | Chosen | Why |
+  Decided by`), written as each one is made, so the approval covers them.
+- **The summary is a reply.** When the discussion has settled, first fill the Blob column of
+  `## ADRs proposed`:
+
+  ```
+  node --experimental-strip-types scripts/plan.ts adrs-pin docs/plans/<n>.md
+  ```
+
+  then reply with a summary of the discussion, first line `Summary:`. The approver starts from
+  it.
+- **Approval arrives as a prompt** that starts `Rubato: the plan for … was approved by …` and
+  gives a `plan.ts handoff` command. Run it exactly as given, then reply with the
+  `rubato.plan.handoff` line it prints. Never write the approval record yourself.
+
+`plan.ts handoff` writes `approved_by`, `approved_at` and `approved_sha` into the front matter,
+accepts each pinned ADR still at its blob (in the map repo only; elsewhere it lists them as
+`adrs_left`), makes one commit `Plan #<n> approved` with `Approved-by:` and
+`Rubato-Approval:` trailers, pushes it, and reports the line to the companion. Its exit codes:
+
+| Exit | Outcome | Do |
+| --- | --- | --- |
+| 0 | `committed` | Go on to the tasks. |
+| 7 | `plan_changed` | The plan changed after the approval; nothing was written. Say so and ask for a new approval in Rubato. |
+| 8 | `bundle_changed` | A design note or ADR changed after the approval; nothing was written. Say so and ask again. |
+| 9 | `adr_changed` | An ADR changed after it was pinned; nothing was written. Run `plan.ts adrs-pin`, say so, ask again. |
+| 10 | `push_failed` | Committed, not pushed. Fix the push (`gh auth status`, the network) and run the same command again; it pushes the same commit. |
+| 2 | `error` | Read the line's `error`. |
+
+After the handoff git owns the plan. A later change to it is an ordinary commit, which makes the
+approval stale; Rubato shows that, and a new approval sends the handoff again.
+
 ## Don't
 
 - Don't invent node ids; read the map.
 - Don't write the plan anywhere but the agreed path.
-- Don't write track, review, approval or status into the plan's front matter.
+- Don't write track, review, approval or status into the plan's front matter. In Rubato mode
+  `plan.ts handoff` writes the approval record, and nothing else does.
 - Don't post an approval; ask a person for it.
 - Don't steer another developer's agent; coordinate through the issue.
 - Don't install the hooks yourself; the companion injects `hooks.json` at launch. To opt a

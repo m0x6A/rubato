@@ -1,19 +1,21 @@
 //! `POST /api/launch`: start a session on an issue through one of the caller's own companions.
 
-use super::prompt::{PROMPT_TEMPLATE, is_slug, render_prompt, slugify};
+use super::prompt::{PROMPT_TEMPLATE, RUBATO_PROMPT_TEMPLATE, is_slug, render_prompt, slugify};
 use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
-use crate::{github_poll, pairing, pins, plans};
+use crate::{github_poll, pairing, pins, plan_drafts, plans};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::Utc;
+use rubato_protocol::launch::reason as launch_reason;
 use rubato_protocol::launch::routes;
 use rubato_protocol::otel::{attr, event, span};
 use rubato_protocol::{
-    CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, ServerMessage,
+    CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, PlanningMode,
+    ServerMessage, capability, skill_has_handoff,
 };
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;
@@ -54,17 +56,29 @@ pub async fn launch(
     CurrentUser(user): CurrentUser,
     Json(req): Json<LaunchRequest>,
 ) -> Result<Json<LaunchResponse>, (StatusCode, String)> {
+    start(&app, ws.as_str(), &user, req, None).await.map(Json)
+}
+
+/// A launch for `user` in workspace `ws`, as the route makes it; `note` is added to the
+/// rendered prompt (Import's rewrite, ADR 0058).
+pub async fn start(
+    app: &App,
+    ws: &str,
+    user: &str,
+    req: LaunchRequest,
+    note: Option<&str>,
+) -> Result<LaunchResponse, (StatusCode, String)> {
     let map = app
-        .map_of(ws.as_str())
+        .map_of(ws)
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     // A pin row from before the repo check, or of a repo the map has since dropped, does not
     // start a session that reads it (issue #163).
     if let Err((reason, msg)) = pins::check_repo(&map.map, &map.version, &req.issue.repo) {
-        app.reject(routes::LAUNCH, reason, &user);
+        app.reject(routes::LAUNCH, reason, user);
         return Err((StatusCode::UNPROCESSABLE_ENTITY, msg));
     }
-    let mine: Vec<pairing::PairingRow> = pairing::list_pairings(&app.db, Some(&user))
+    let mine: Vec<pairing::PairingRow> = pairing::list_pairings(&app.db, Some(user))
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
@@ -100,40 +114,80 @@ pub async fn launch(
             }
         },
     };
-    let pins: Vec<String> = pins::list(&app.db, ws.as_str())
+    let pins: Vec<String> = pins::list(&app.db, ws)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
         .filter(|p| p.issue == req.issue)
         .map(|p| p.target.id().to_owned())
         .collect();
-    if pins.is_empty() {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "pin the issue to the map first".into(),
-        ));
-    }
     let meta = github_poll::issue_meta(&app.db, &req.issue)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .unwrap_or_default();
-    let plan = plans::all(&app.db)
+    let plan_row = plans::all(&app.db)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
-        .find(|p| p.issue == req.issue)
-        .and_then(|p| p.plan);
-    if req.slug.as_deref().is_some_and(|s| !is_slug(s)) {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "slug: letters, digits and single hyphens only".into(),
-        ));
-    }
-    let slug = req
-        .slug
-        .clone()
-        .unwrap_or_else(|| slugify(meta.title.as_deref().unwrap_or("")));
-    let branch = format!("issue/{}-{}", req.issue.number, slug);
+        .find(|p| p.issue == req.issue);
+    // A draft of the caller's on this issue decides the branch (ADR 0053, plan 122 §D5), so
+    // editing the title never orphans it. A teammate's draft stays theirs: taking it over is Import.
+    let mine: Vec<plan_drafts::LatestDraft> = plan_drafts::latest_drafts(app)
+        .await
+        .map_err(|e| (internal(SLICE, e), String::new()))?
+        .into_iter()
+        .filter(|d| d.issue == req.issue && d.summary.owner.eq_ignore_ascii_case(user))
+        .collect();
+    let branch = choose_branch(
+        &req,
+        meta.title.as_deref().unwrap_or(""),
+        &mine
+            .iter()
+            .map(|d| d.summary.branch.as_str())
+            .collect::<Vec<_>>(),
+    )?;
+    let slug = branch[branch_prefix(&req.issue).len()..].to_owned();
+    let draft = mine.into_iter().find(|d| d.summary.branch == branch);
+    // The plan on this branch, when there is one. With none, the draft's newest revision sets
+    // the caps (A14); with no draft either, the issue's plan as before.
+    let branch_plan = plan_row
+        .as_ref()
+        .filter(|p| p.branch == branch)
+        .and_then(|p| p.plan.clone());
+    let plan = match &draft {
+        Some(d) if branch_plan.is_none() => d.plan.clone(),
+        _ => plan_row.and_then(|p| p.plan),
+    };
+    // The draft comes back only into a worktree this launch creates; the companion decides that.
+    let restore = match &draft {
+        Some(d)
+            if branch_plan.is_none()
+                && app.announced(companion.companion_id, capability::DRAFT_RESTORE) =>
+        {
+            plan_drafts::restore_of(app, d.summary.draft_id)
+                .await
+                .map_err(|e| (internal(SLICE, e), String::new()))?
+        }
+        _ => None,
+    };
+    // Pinned, or with a plan that fits this workspace (ADR 0058): an imported plan places the
+    // issue by its own affected parts.
+    let pins = if pins.is_empty() {
+        match plan
+            .as_ref()
+            .filter(|p| rubato_protocol::plan_fit(Some(p), None, &map.map).is_some_and(|f| f.fits))
+        {
+            Some(p) => p.affected_parts.iter().map(|a| a.node.clone()).collect(),
+            None => {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "pin the issue to the map first".into(),
+                ));
+            }
+        }
+    } else {
+        pins
+    };
     let attempt = store::launch_count(&app.db, &req.issue)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
@@ -166,16 +220,24 @@ pub async fn launch(
         ("branch", branch.clone()),
         ("nodes", pins.join(", ")),
         ("map_version", map.version.clone()),
-        ("plan_path", plan_path),
+        ("plan_path", plan_path.clone()),
         ("spend_cap_usd", format!("{spend_cap}")),
         ("attempt", attempt.to_string()),
         ("attempt_limit", attempt_limit.to_string()),
     ]
     .into_iter()
     .collect();
+    let planning = planning_mode(
+        app.config.comment_approvals_until.is_some(),
+        &app.capabilities(companion.companion_id),
+    );
+    let template = match planning {
+        PlanningMode::Rubato => RUBATO_PROMPT_TEMPLATE,
+        PlanningMode::Git => PROMPT_TEMPLATE,
+    };
     let command = LaunchCommand {
         id: Uuid::new_v4(),
-        user: user.clone(),
+        user: user.to_owned(),
         issue: req.issue.clone(),
         repo_url: format!("https://github.com/{}.git", req.issue.repo),
         branch,
@@ -185,14 +247,23 @@ pub async fn launch(
         attempt_limit,
         attempt,
         session_id: Uuid::new_v4(),
-        prompt: req
-            .prompt
-            .clone()
-            .unwrap_or_else(|| render_prompt(PROMPT_TEMPLATE, &vars)),
+        prompt: {
+            let base = req
+                .prompt
+                .clone()
+                .unwrap_or_else(|| render_prompt(template, &vars));
+            match note {
+                Some(n) => format!("{base}\n\n{n}"),
+                None => base,
+            }
+        },
         otel_resource: otel,
         map_version: Some(map.version.clone()),
+        plan_path: Some(plan_path),
+        draft: restore,
+        planning,
     };
-    store::store_launch(&app.db, ws.as_str(), companion.companion_id, &command)
+    store::store_launch(&app.db, ws, companion.companion_id, &command)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?;
     if !app.send_to_companion(
@@ -204,12 +275,12 @@ pub async fn launch(
             "companion disconnected while launching".into(),
         ));
     }
-    tracing::info!(launch_id = %command.id, rubato.issue = %command.issue, rubato.user = %user, companion = %companion.companion_id, "{}", span::LAUNCH);
+    tracing::info!(launch_id = %command.id, rubato.issue = %command.issue, rubato.user = %user, companion = %companion.companion_id, planning = command.planning.name(), "{}", span::LAUNCH);
     app.notify("launch");
-    Ok(Json(LaunchResponse {
+    Ok(LaunchResponse {
         command,
         companion_id: companion.companion_id,
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -255,5 +326,190 @@ mod tests {
             Some("m0x6A/rubato#30")
         );
         assert!(e.fields.contains_key("error"));
+    }
+}
+
+fn branch_prefix(issue: &IssueRef) -> String {
+    format!("issue/{}-", issue.number)
+}
+
+/// The branch a launch goes on: the one named, else one from the slug named, else the caller's
+/// only draft of the issue, else a slug of the title. Several drafts and none named is 409
+/// `pass_branch` (ADR 0053): guessing would resume the wrong one.
+fn choose_branch(
+    req: &LaunchRequest,
+    title: &str,
+    drafts: &[&str],
+) -> Result<String, (StatusCode, String)> {
+    let prefix = branch_prefix(&req.issue);
+    match (&req.branch, &req.slug, drafts) {
+        (Some(b), _, _) => match b.strip_prefix(&prefix) {
+            Some(s) if is_branch_rest(s) => Ok(b.clone()),
+            _ => Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("branch must be {prefix}<slug>"),
+            )),
+        },
+        (None, Some(slug), _) if !is_slug(slug) => Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "slug: letters, digits and single hyphens only".into(),
+        )),
+        (None, Some(slug), _) => Ok(format!("{prefix}{slug}")),
+        (None, None, [one]) => Ok((*one).to_owned()),
+        (None, None, []) => Ok(format!("{prefix}{}", slugify(title))),
+        (None, None, several) => Err((
+            StatusCode::CONFLICT,
+            format!(
+                "{}: you own drafts of {} on {}; pass branch",
+                launch_reason::PASS_BRANCH,
+                req.issue,
+                several.join(", ")
+            ),
+        )),
+    }
+}
+
+/// What may follow `issue/<n>-` in a branch a launch names: what the companion's `check_ref`
+/// accepts, so the refusal is a 422 here and not a failed launch on the developer's machine.
+fn is_branch_rest(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        && !s.starts_with(['-', '/'])
+        && !s.ends_with('/')
+        && !s.ends_with(".lock")
+        && !s.contains("..")
+        && !s.contains("//")
+}
+
+/// What a session needs from its companion to plan in Rubato (ADR 0053, plan 122 §D7): typed
+/// messages, mirrored drafts, the handoff typed and reported, and a skill with `plan.ts handoff`.
+const PLANNING_NEEDS: [&str; 3] = [
+    capability::SESSION_INPUT,
+    capability::DRAFT_MIRROR,
+    capability::PLAN_HANDOFF,
+];
+
+/// How a launched session plans: `rubato` only once the cutover is set (until then plans are
+/// approved by comment, so a draft in Rubato could never be approved) and only when the
+/// companion carries every part of it. Anything less plans in Git as before: a session half in
+/// Rubato would draft a plan nobody can hand off.
+pub fn planning_mode(cutover_set: bool, caps: &[String]) -> PlanningMode {
+    let has = |c: &str| caps.iter().any(|x| x == c);
+    let skill = caps
+        .iter()
+        .filter_map(|c| c.strip_prefix(capability::SKILL_PREFIX))
+        .any(skill_has_handoff);
+    if cutover_set && PLANNING_NEEDS.iter().all(|c| has(c)) && skill {
+        PlanningMode::Rubato
+    } else {
+        PlanningMode::Git
+    }
+}
+
+#[cfg(test)]
+mod planning_tests {
+    use super::*;
+
+    fn caps(list: &[&str]) -> Vec<String> {
+        list.iter().map(|c| (*c).to_owned()).collect()
+    }
+
+    const ALL: [&str; 4] = [
+        "session_input",
+        "draft_mirror",
+        "plan_handoff",
+        "skill:0.2.0",
+    ];
+
+    #[test]
+    fn rubato_only_after_the_cutover_and_with_every_capability() {
+        assert_eq!(planning_mode(true, &caps(&ALL)), PlanningMode::Rubato);
+        assert_eq!(
+            planning_mode(false, &caps(&ALL)),
+            PlanningMode::Git,
+            "no cutover: approval by comment"
+        );
+        for missing in ALL {
+            let fewer: Vec<&str> = ALL.iter().copied().filter(|c| *c != missing).collect();
+            assert_eq!(
+                planning_mode(true, &caps(&fewer)),
+                PlanningMode::Git,
+                "without {missing}"
+            );
+        }
+        assert_eq!(
+            planning_mode(true, &[]),
+            PlanningMode::Git,
+            "an older companion announces nothing"
+        );
+    }
+
+    #[test]
+    fn a_skill_older_than_the_handoff_plans_in_git() {
+        let old = [
+            "session_input",
+            "draft_mirror",
+            "plan_handoff",
+            "skill:0.1.0",
+        ];
+        assert_eq!(planning_mode(true, &caps(&old)), PlanningMode::Git);
+        let newer = [
+            "session_input",
+            "draft_mirror",
+            "plan_handoff",
+            "skill:0.3.1",
+        ];
+        assert_eq!(planning_mode(true, &caps(&newer)), PlanningMode::Rubato);
+    }
+}
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+
+    fn req(branch: Option<&str>, slug: Option<&str>) -> LaunchRequest {
+        serde_json::from_value(serde_json::json!({
+            "issue": { "repo": "m0x6A/rubato", "number": 122 },
+            "branch": branch,
+            "slug": slug,
+        }))
+        .unwrap()
+    }
+
+    /// A slug or branch from the request reaches `launch.sh` on the developer's machine: only
+    /// what the companion's `check_ref` accepts gets past this, as a 422 (#156).
+    #[test]
+    fn a_launch_names_only_a_slug_or_branch_the_companion_accepts() {
+        let ok = |b: Option<&str>, s: Option<&str>| choose_branch(&req(b, s), "Title", &[]);
+        assert_eq!(
+            ok(None, Some("plan-in-rubato")).unwrap(),
+            "issue/122-plan-in-rubato"
+        );
+        assert_eq!(
+            ok(Some("issue/122-plan_in.rubato"), None).unwrap(),
+            "issue/122-plan_in.rubato"
+        );
+        for bad in ["it's", "a b", "x;y", "-x", ""] {
+            assert_eq!(
+                ok(None, Some(bad)).unwrap_err().0,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{bad:?}"
+            );
+        }
+        for bad in [
+            "issue/122-it's",
+            "issue/122-a b",
+            "issue/122-a..b",
+            "issue/122-",
+            "issue/9-x",
+            "issue/122-x.lock",
+        ] {
+            assert_eq!(
+                ok(Some(bad), None).unwrap_err().0,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{bad:?}"
+            );
+        }
     }
 }

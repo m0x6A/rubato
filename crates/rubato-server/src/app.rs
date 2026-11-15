@@ -6,8 +6,8 @@
 
 use crate::kernel::state::App;
 use crate::{
-    approve, auth, companion_link, launch, layout, map, map_draft, new_issue, overview, pairing,
-    pins, queue, web_link,
+    approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
+    pairing, pins, plan_drafts, queue, rooms, session_log, session_messages, traffic, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -22,8 +22,10 @@ use rubato_protocol::map::routes as map_routes;
 use rubato_protocol::map_draft::routes as draft_routes;
 use rubato_protocol::pairing::routes as pr;
 use rubato_protocol::pins::routes as pin_routes;
+use rubato_protocol::plan_draft::routes as plan_draft_routes;
 use rubato_protocol::progress::routes as overview_routes;
 use rubato_protocol::queue::routes as queue_routes;
+use rubato_protocol::traffic::routes as traffic_routes;
 use rubato_protocol::web_link::routes as web_routes;
 use rubato_protocol::workspace::routes as workspace_routes;
 use tower_http::services::{ServeDir, ServeFile};
@@ -54,11 +56,24 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
             post(pins::add_pin).delete(pins::remove_pin),
         )
         .route(&at(launch_routes::LAUNCH), post(launch::launch))
+        .route(&at(plan_draft_routes::PLAN_IMPORT), post(import::import))
         .route(&at(issue_routes::ISSUES), post(new_issue::create))
         .route(&at(approve_routes::PLAN_APPROVE), post(approve::approve))
         .route(
+            &at(approve_routes::PLAN_DRAFT_APPROVE),
+            post(approve::approve_draft),
+        )
+        .route(
             &at(layout_routes::LAYOUT),
             put(layout::put_layout).delete(layout::clear_layout),
+        )
+        .route(
+            &at(traffic_routes::TRAFFIC_DISMISSALS),
+            post(traffic::dismiss),
+        )
+        .route(
+            &at(&format!("{}/{{id}}", traffic_routes::TRAFFIC_DISMISSALS)),
+            delete(traffic::undismiss),
         )
 }
 
@@ -84,6 +99,39 @@ pub fn router(app: App) -> Router {
             delete(pairing::revoke),
         )
         .route(pr::PAIR_APPROVE, post(pairing::approve))
+        .route(
+            rubato_protocol::session_message::routes::LAUNCH_MESSAGES,
+            get(session_messages::list).post(session_messages::send),
+        )
+        .route(
+            rubato_protocol::session_message::routes::LAUNCH_STOP,
+            post(session_messages::stop),
+        )
+        .route(
+            rubato_protocol::session_log::routes::LAUNCH_LOG,
+            get(session_log::log),
+        )
+        .route(
+            rubato_protocol::plan_draft::routes::DRAFT,
+            get(plan_drafts::draft),
+        )
+        .route(rubato_protocol::room::routes::ROOM, get(rooms::room))
+        .route(
+            rubato_protocol::room::routes::ROOM_AGENTS,
+            post(rooms::call_in).delete(rooms::dismiss),
+        )
+        .route(
+            rubato_protocol::room::routes::ROOM_REQUEST,
+            post(rooms::answer),
+        )
+        .route(
+            rubato_protocol::room::routes::ROOM_MESSAGES,
+            post(rooms::post),
+        )
+        .route(
+            rubato_protocol::plan_draft::routes::DRAFT_REVISION,
+            get(plan_drafts::revision),
+        )
         .route(pr::PAIR_START, post(pairing::start))
         .route(pr::PAIR_POLL, post(pairing::poll))
         .route(pr::COMPANION_WS, get(companion_link::upgrade))
@@ -158,10 +206,17 @@ mod tests {
             (Method::POST, pin_routes::PINS.into()),
             (Method::DELETE, pin_routes::PINS.into()),
             (Method::POST, launch_routes::LAUNCH.into()),
+            (Method::POST, plan_draft_routes::PLAN_IMPORT.into()),
             (Method::POST, issue_routes::ISSUES.into()),
             (Method::POST, approve_routes::PLAN_APPROVE.into()),
+            (Method::POST, approve_routes::PLAN_DRAFT_APPROVE.into()),
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
+            (Method::POST, traffic_routes::TRAFFIC_DISMISSALS.into()),
+            (
+                Method::DELETE,
+                format!("{}/1", traffic_routes::TRAFFIC_DISMISSALS),
+            ),
             (Method::POST, queue_routes::QUEUE.into()),
             (Method::PUT, queue_routes::QUEUE.into()),
             (Method::DELETE, queue_routes::QUEUE.into()),
@@ -176,6 +231,30 @@ mod tests {
             (Method::GET, auth_routes::CALLBACK.into()),
             (Method::POST, auth_routes::LOGOUT.into()),
             (Method::GET, workspace_routes::WORKSPACES.into()),
+            (
+                Method::GET,
+                format!(
+                    "{}?repo=m0x6A/rubato&number=1&branch=issue/1-x",
+                    rubato_protocol::room::routes::ROOM
+                ),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_MESSAGES.into(),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_AGENTS.into(),
+            ),
+            (
+                Method::DELETE,
+                rubato_protocol::room::routes::ROOM_AGENTS.into(),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_REQUEST
+                    .replace("{request_id}", &uuid::Uuid::new_v4().to_string()),
+            ),
         ];
         // Every map-scoped route again under `/api/w/{ws}` for a configured workspace (ADR 0049).
         let scoped: Vec<(Method, String)> = routes
@@ -183,13 +262,14 @@ mod tests {
             .filter(|(_, p)| MAP_SCOPED.iter().any(|m| p.starts_with(m)))
             .map(|(m, p)| (m.clone(), workspace_routes::scoped("default", p)))
             .collect();
-        assert!(scoped.len() >= 17, "{scoped:?}");
+        assert!(scoped.len() >= 18, "{scoped:?}");
         routes.extend(scoped);
         routes
     }
 
     /// The paths served per workspace: map-scoped, never team-scoped.
-    const MAP_SCOPED: [&str; 7] = [
+    const MAP_SCOPED: [&str; 10] = [
+        "/api/traffic",
         "/api/overview",
         "/api/map",
         "/api/pins",
@@ -197,6 +277,8 @@ mod tests {
         "/api/layout",
         "/api/issues",
         "/api/plans/approve",
+        "/api/plans/drafts/approve",
+        "/api/plans/import",
     ];
 
     /// Refusals are counted by route and reason, and logged with who (design O3, O12).
@@ -533,6 +615,7 @@ mod tests {
             "/api/w/default/pair/start",
             "/api/w/default/me",
             "/api/w/default/workspaces",
+            "/api/w/default/room/messages",
         ] {
             let r = http.post(format!("{url}{path}")).send().await.unwrap();
             assert_eq!(r.status(), 404, "{path}");

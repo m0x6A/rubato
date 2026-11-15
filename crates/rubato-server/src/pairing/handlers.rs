@@ -86,6 +86,7 @@ pub fn to_info(app: &App, r: PairingRow) -> PairingInfo {
         last_seen: r.last_seen,
         revoked_at: r.revoked_at,
         connected,
+        client: r.client,
     }
 }
 

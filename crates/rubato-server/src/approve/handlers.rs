@@ -1,7 +1,8 @@
 //! `POST /api/plans/approve`: post `Approved: plan <sha> on <branch>` as the person (ADR 0030).
-//! Refused, with nothing posted, when the plan changed, does not fit (ADR 0029) or Rubato
-//! holds no token for the person. Once per (person, issue, sha): a double click, a retry or a
-//! second tab finds the first request's row (design 80 §4).
+//! Refused, with nothing posted, after the cutover (`approve_in_rubato`: the comment would not
+//! count, ADR 0054), when the plan changed, does not fit (ADR 0029) or Rubato holds no token for
+//! the person. Once per (person, issue, sha): a double click, a retry or a second tab finds the
+//! first request's row (design 80 §4).
 
 use super::store::{self, Intent};
 use crate::auth::{self, CurrentUser, TokenError};
@@ -59,6 +60,15 @@ pub async fn approve(
             Json(json!({ "reason": "internal" })),
         )
     };
+    if let Some(cutover) = app.config.comment_approvals_until
+        && app.clock.now() >= cutover
+    {
+        return Err(refuse(
+            StatusCode::CONFLICT,
+            reason::APPROVE_IN_RUBATO,
+            json!({ "cutover": cutover }),
+        ));
+    }
     let Some(map) = app.map_of(ws.as_str()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
@@ -82,9 +92,15 @@ pub async fn approve(
     // Not fitting here: it may fit another workspace that holds the issue, where the approval
     // counts (ADR 0045). Refused only when it fits none of them.
     let fits_elsewhere = match fit.as_ref().filter(|f| !f.fits) {
-        Some(_) => fits_another(&app, ws.as_str(), &issue, &row)
-            .await
-            .map_err(internal)?,
+        Some(_) => fits_another(
+            &app,
+            ws.as_str(),
+            &issue,
+            row.plan.as_ref(),
+            row.parse_error.as_deref(),
+        )
+        .await
+        .map_err(internal)?,
         None => false,
     };
     if let Some(f) = fit.filter(|f| !f.fits && !fits_elsewhere) {
@@ -177,11 +193,12 @@ pub async fn approve(
 
 /// Whether the plan fits the map of a workspace other than `here` that holds the issue: its map
 /// names the issue's repo, or the issue is pinned or launched there (ADR 0045).
-async fn fits_another(
+pub(super) async fn fits_another(
     app: &App,
     here: &str,
     issue: &rubato_protocol::IssueRef,
-    row: &plans::PlanRow,
+    plan: Option<&rubato_protocol::Plan>,
+    parse_error: Option<&str>,
 ) -> anyhow::Result<bool> {
     let (entries, _) = app.config.workspace_entries();
     for w in entries.iter().filter(|w| w.id != here) {
@@ -200,10 +217,7 @@ async fn fits_another(
             || crate::launch::launched_issues_in(&app.db, &w.id)
                 .await?
                 .contains(issue);
-        if holds
-            && plan_fit(row.plan.as_ref(), row.parse_error.as_deref(), &m.map)
-                .is_some_and(|f| f.fits)
-        {
+        if holds && plan_fit(plan, parse_error, &m.map).is_some_and(|f| f.fits) {
             return Ok(true);
         }
     }

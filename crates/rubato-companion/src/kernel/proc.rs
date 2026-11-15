@@ -25,7 +25,23 @@ pub struct TimedOut {
 }
 
 /// `cmd.output()` with a deadline. `label` names the command in errors and logs.
-pub fn output(mut cmd: Command, label: &str, timeout: Duration) -> Result<Output> {
+pub fn output(cmd: Command, label: &str, timeout: Duration) -> Result<Output> {
+    run(cmd, label, timeout, None)
+}
+
+/// As [`output`], with `input` written to the command's stdin and then closed (plan 122 §D1:
+/// `tmux load-buffer -`). A thread writes it, so a command that never reads still meets the
+/// deadline, and is killed with its group like any other.
+pub fn output_with_stdin(
+    cmd: Command,
+    label: &str,
+    timeout: Duration,
+    input: Vec<u8>,
+) -> Result<Output> {
+    run(cmd, label, timeout, Some(input))
+}
+
+fn run(mut cmd: Command, label: &str, timeout: Duration, input: Option<Vec<u8>>) -> Result<Output> {
     let deadline = Instant::now() + timeout;
     let cwd = cmd
         .get_current_dir()
@@ -33,12 +49,23 @@ pub fn output(mut cmd: Command, label: &str, timeout: Duration) -> Result<Output
         .or_else(|| std::env::current_dir().ok())
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
+    cmd.stdin(if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .process_group(0);
     let mut child = cmd.spawn().with_context(|| format!("running {label}"))?;
     let pid = child.id();
+    if let (Some(bytes), Some(mut stdin)) = (input, child.stdin.take()) {
+        // Dropped at the end of the thread: the command sees end of input.
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&bytes);
+        });
+    }
     let stdout = read_all(child.stdout.take());
     let stderr = read_all(child.stderr.take());
     let (status_tx, status_rx) = mpsc::channel();
@@ -112,7 +139,7 @@ fn read_all(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>>
 const KILL_GRACE: Duration = Duration::from_secs(2);
 
 /// `kill -<sig> -- -<pgid>`: the group the child leads. No `libc` dependency.
-fn signal_group(sig: &str, pgid: u32) {
+pub fn signal_group(sig: &str, pgid: u32) {
     let _ = Command::new("kill")
         .args([sig, "--", &format!("-{pgid}")])
         .stdout(Stdio::null())
@@ -133,6 +160,29 @@ mod tests {
         assert_eq!(o.status.code(), Some(3));
         assert_eq!(String::from_utf8_lossy(&o.stdout), "out\n");
         assert_eq!(String::from_utf8_lossy(&o.stderr), "err\n");
+    }
+
+    #[test]
+    fn stdin_reaches_the_command_byte_for_byte_and_is_closed() {
+        let mut c = Command::new("sh");
+        // `cat` returns only when its input is closed.
+        c.args(["-c", "cat"]);
+        let text = "line one\nline two\n  three, with 'quotes' and \"more\"";
+        let o = output_with_stdin(c, "sh cat", Duration::from_secs(5), text.into()).unwrap();
+        assert!(o.status.success());
+        assert_eq!(String::from_utf8_lossy(&o.stdout), text);
+    }
+
+    #[test]
+    fn a_command_that_never_reads_its_stdin_still_times_out() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "sleep 30"]);
+        // More than a pipe holds, so the writer blocks until the group is killed.
+        let input = vec![b'x'; 1 << 20];
+        let started = Instant::now();
+        let e = output_with_stdin(c, "sh sleep", Duration::from_millis(300), input).unwrap_err();
+        assert!(is_timeout(&e), "{e:#}");
+        assert!(started.elapsed() < Duration::from_secs(3), "returned late");
     }
 
     #[test]

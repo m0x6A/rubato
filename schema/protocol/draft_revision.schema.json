@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DraftRevision",
+  "description": "One revision with its files (`GET /api/drafts/{draft_id}/revisions/{rev}`).",
+  "type": "object",
+  "properties": {
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "bundle_hash": {
+      "type": "string"
+    },
+    "draft_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DraftFile"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "parse_error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "plan_sha": {
+      "type": "string"
+    },
+    "rev": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "draft_id",
+    "rev",
+    "at",
+    "plan_sha",
+    "bundle_hash",
+    "files"
+  ],
+  "$defs": {
+    "DraftFile": {
+      "description": "One file of a bundle, as it is in the worktree.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Repository path, as `bundle_paths` gives it.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "text"
+      ]
+    }
+  }
+}

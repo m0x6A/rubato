@@ -166,6 +166,16 @@ pub trait GitHubApi: Send + Sync {
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>>;
     /// Commit sha a branch points at.
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>>;
+    /// The login of whoever made the last commit to `path` reachable from `sha` (ADR 0058):
+    /// one `GET /repos/{o}/{r}/commits?path=&sha=&per_page=1`. None when unknown.
+    async fn last_commit_author(
+        &self,
+        _repo: &str,
+        _path: &str,
+        _sha: &str,
+    ) -> Result<Option<String>> {
+        Ok(None)
+    }
     /// Branches starting with `prefix`, with their head commits.
     async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>>;
     /// The repo's open pull requests from its own branches (issue #49).
@@ -472,6 +482,30 @@ impl GitHubApi for Octo {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "commits"))]
+    async fn last_commit_author(
+        &self,
+        repo: &str,
+        path: &str,
+        sha: &str,
+    ) -> Result<Option<String>> {
+        count_call("commits", 1);
+        let (o, r) = split_repo(repo)?;
+        let route = format!("/repos/{o}/{r}/commits");
+        let v = self
+            .client
+            .get::<serde_json::Value, _, _>(
+                route,
+                Some(&[("path", path), ("sha", sha), ("per_page", "1")]),
+            )
+            .await?;
+        // The GitHub login when the commit's author is a GitHub user, else the git author's name.
+        Ok(v.pointer("/0/author/login")
+            .or_else(|| v.pointer("/0/commit/author/name"))
+            .and_then(|x| x.as_str())
+            .map(str::to_owned))
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "branch"))]
