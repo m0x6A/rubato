@@ -50,7 +50,7 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "plan_status",
-        description: "Where this session's plan stands as Rubato last sent it: the draft revision and whether it fits the map, the newest review, the counted approval with its version (it covers the plan only at version current), and the plan on the branch. Answers unknown until Rubato has sent one.",
+        description: "Where this session's plan stands as Rubato last sent it: the draft revision and whether it fits the map, the newest review, the counted approval with its version (it covers the plan only at version current), and the plan on the branch, with link_up: whether the companion is connected to Rubato now. Answers unknown until Rubato has sent one; unknown, or link_up false, means not known, not not approved.",
         read_only: true,
         schema: || json!({"type": "object", "properties": {"issue": issue_arg()}, "additionalProperties": false}),
     },
@@ -149,10 +149,14 @@ pub(super) fn call(
                 reason: "",
             }
         }
-        "plan_status" => match st.cache.get(view.launch_id) {
-            Some(s) => ok(json!({"status": "known", "plan_status": s})),
-            None => ok(json!({"status": "unknown"})),
-        },
+        "plan_status" => {
+            // `link_up: false` means "not known", whatever the cache holds (#197 design §2).
+            let link_up = *st.link.borrow();
+            match st.cache.get(view.launch_id) {
+                Some(s) => ok(json!({"status": "known", "plan_status": s, "link_up": link_up})),
+                None => ok(json!({"status": "unknown", "link_up": link_up})),
+            }
+        }
         _ => return None,
     })
 }

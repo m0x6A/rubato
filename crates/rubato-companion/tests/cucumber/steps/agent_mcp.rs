@@ -81,3 +81,109 @@ async fn then_refused(w: &mut RubatoWorld) {
     let result = get_assignment(w, false).await;
     assert_eq!(result["isError"], true, "{result}");
 }
+
+/// One `tools/call` through the launch's `mcp.json`, with every header it names.
+async fn call(w: &RubatoWorld, tool: &str, args: Value) -> Value {
+    let config: Value =
+        serde_json::from_str(&std::fs::read_to_string(mcp_config_path(w).await).unwrap()).unwrap();
+    let server = &config["mcpServers"]["rubato-companion"];
+    let mut req = reqwest::Client::new().post(server["url"].as_str().unwrap());
+    for (k, v) in server["headers"].as_object().unwrap() {
+        req = req.header(k, v.as_str().unwrap());
+    }
+    let res = req
+        .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let result = res.json::<Value>().await.unwrap()["result"].clone();
+    assert_eq!(result["isError"], false, "{result}");
+    serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
+}
+
+#[cucumber::given(expr = "the test server also announces {string}")]
+async fn given_announces(w: &mut RubatoWorld, cap: String) {
+    w.server
+        .as_ref()
+        .unwrap()
+        .capabilities
+        .lock()
+        .unwrap()
+        .push(cap);
+}
+
+#[cucumber::when(expr = "the launched session reports {string} on {string} through its MCP config")]
+async fn when_reports(w: &mut RubatoWorld, doing: String, part: String) {
+    let a = call(w, "report_status", json!({"doing": doing, "parts": [part]})).await;
+    assert_eq!(a["accepted"], true, "{a}");
+}
+
+#[then(expr = "the server receives an agent report {string} for that launch")]
+async fn then_report(w: &mut RubatoWorld, doing: String) {
+    let launch = w.last_launch.as_ref().unwrap().id;
+    let got = w
+        .server
+        .as_ref()
+        .unwrap()
+        .wait_for(std::time::Duration::from_secs(15), |m| match m {
+            rubato_protocol::CompanionMessage::AgentReport(r) if r.launch_id == launch => {
+                Some(r.clone())
+            }
+            _ => None,
+        })
+        .await
+        .expect("an agent report within the drain interval");
+    assert_eq!(got.doing, doing);
+    assert_eq!(got.parts, vec!["rubato-companion".to_owned()]);
+}
+
+#[then("the server has received no agent report")]
+async fn then_no_report(w: &mut RubatoWorld) {
+    let n = w
+        .server
+        .as_ref()
+        .unwrap()
+        .count(|m| matches!(m, rubato_protocol::CompanionMessage::AgentReport(_)))
+        .await;
+    assert_eq!(n, 0);
+}
+
+#[cucumber::when(
+    expr = "the server sends a plan status for that launch whose branch plan is {string}"
+)]
+async fn when_plan_status(w: &mut RubatoWorld, sha: String) {
+    let launch = w.last_launch.as_ref().unwrap().id;
+    w.server
+        .as_ref()
+        .unwrap()
+        .push(rubato_protocol::ServerMessage::PlanStatus(Box::new(
+            rubato_protocol::PlanStatus {
+                launch_id: launch,
+                as_of: chrono::Utc::now(),
+                draft: None,
+                review: None,
+                approval: None,
+                branch: Some(rubato_protocol::BranchStatus {
+                    sha,
+                    carries_approval: false,
+                }),
+            },
+        )));
+}
+
+#[then(
+    expr = "asked through that config, plan_status answers the branch plan {string} with the link up"
+)]
+async fn then_plan_status(w: &mut RubatoWorld, sha: String) {
+    for _ in 0..50 {
+        let a = call(w, "plan_status", json!({})).await;
+        if a["status"] == "known" {
+            assert_eq!(a["plan_status"]["branch"]["sha"], sha.as_str(), "{a}");
+            assert_eq!(a["link_up"], true, "{a}");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("plan_status never became known");
+}

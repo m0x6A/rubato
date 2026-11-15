@@ -48,6 +48,8 @@ pub struct AgentMcp {
     initialized: watch::Initialized,
     server_capabilities: Arc<std::sync::Mutex<Vec<String>>>,
     out: mpsc::UnboundedSender<CompanionMessage>,
+    /// Whether the companion's websocket is up: `plan_status` says so with its answer.
+    link: tokio_watch::Receiver<bool>,
 }
 
 impl AgentMcp {
@@ -58,6 +60,7 @@ impl AgentMcp {
         metrics: Arc<Metrics>,
         server_capabilities: Arc<std::sync::Mutex<Vec<String>>>,
         out: mpsc::UnboundedSender<CompanionMessage>,
+        link: tokio_watch::Receiver<bool>,
     ) -> Arc<Self> {
         let (companion_id, restored) = {
             let reg = registry.lock().await;
@@ -73,6 +76,7 @@ impl AgentMcp {
             initialized: watch::Initialized::new(restored),
             server_capabilities,
             out,
+            link,
         })
     }
 
