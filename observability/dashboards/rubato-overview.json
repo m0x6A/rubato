@@ -900,7 +900,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, not_on_team, team_record_stale, installation_lookup_failed. Each has an info log line 'web write rejected' with the user.",
+      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, unknown_repo (an issue of a repo no map names, on pins, launch and queue), not_on_team, team_record_stale, installation_lookup_failed, session_expired, companion_taken (on /api/pair/approve: a code for a companion paired to another person, #160), field_too_long and pending_cap (on /api/pair/start: a hostname or version over 255 characters, or too many codes waiting for approval, #168; logged as user anonymous). Each has an info log line 'web write rejected' with the user.",
       "targets": [
         {
           "refId": "A",
@@ -1156,7 +1156,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Map: lines read from the open-issues listing (ADR 0026), by outcome: pinned (a member's line placed its issue), already_pinned, unknown_id and kind_mismatch (the line names no part or seam of that kind in the map; the issue stays in Not pinned), counted once per line; untrusted_author (someone outside the team wrote the line, so it is only a suggestion), counted per listing. Each tick logs 'backlog placement' with listed, map_lines, untrusted, suggested and none. Lines stop being read if the listing fails: see Backlog age.",
+      "description": "Map: lines read from the open-issues listing (ADR 0026), by outcome: pinned (a member's line placed its issue), already_pinned, unknown_id and kind_mismatch (the line names no part or seam of that kind in the map; the issue stays in Not pinned), unknown_repo (the issue's repo is not named by that workspace's map), counted once per line; untrusted_author (someone outside the team wrote the line, so it is only a suggestion), counted per listing. Each tick logs 'backlog placement' with listed, map_lines, untrusted, suggested and none. Lines stop being read if the listing fails: see Backlog age.",
       "targets": [
         {
           "refId": "A",
@@ -1186,7 +1186,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Issues created from Rubato's 'New issue here…' (ADR 0025), by outcome: created (GitHub answered), found (GitHub did not answer, and the listing found the issue by its Rubato-Request line), failed (refused with a 403, or unseen for ten minutes). 'opening' is how many creations wait for a confirmation now. A failure logs 'issue creation failed' with step (create, unseen), rubato.repo and request_id: a 403 means the installation lacks Issues: write (an admin approves it; Rubato reads the permission every full poll pass). Refusals before sending are in 'Web writes rejected' under route /api/issues.",
+      "description": "Issues created from Rubato's 'New issue here…' (ADR 0025), by outcome: created (GitHub answered), found (GitHub did not answer, and the listing found the issue by its Rubato-Request line), failed (refused with a 403, or unseen for ten minutes), ignored (a Rubato-Request line on an issue the App did not write, per listing; logs 'request line ignored' with the author and reason, issue #165). 'opening' is how many creations wait for a confirmation now. A failure logs 'issue creation failed' with step (create, unseen), rubato.repo and request_id: a 403 means the installation lacks Issues: write (an admin approves it; Rubato reads the permission every full poll pass). Refusals before sending are in 'Web writes rejected' under route /api/issues.",
       "targets": [
         {
           "refId": "A",
@@ -1234,7 +1234,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Issues whose newest approval names an earlier version of the plan (finding 'ApprovalStale', ADR 0027): the plan changed after a team member commented 'Approved: plan <sha>'. Ticking task checkboxes does not count as a change. The overview names each issue with both shas; ask its owner to re-approve or revert. Reviews and approvals are read from comments by OWNER, MEMBER or COLLABORATOR authors on the full poll lane (every 300 s); one that is ignored logs 'approval ignored' or 'review ignored' with the reason (a Bot, or the author's association). Not 0 for longer than a review takes is a question for a person, not a fault.",
+      "description": "Issues whose newest approval names an earlier version of the plan (finding 'ApprovalStale', ADR 0027): the plan changed after a team member commented 'Approved: plan <sha>'. Ticking task checkboxes does not count as a change. The overview names each issue with both shas; ask its owner to re-approve or revert. Reviews and approvals are read from comments by OWNER, MEMBER or COLLABORATOR authors on the full poll lane (every 300 s); one that is ignored logs 'approval ignored' or 'review ignored' with the reason (a Bot, or the author's association). Decision: comments follow the same rule (ADR 0065) and log 'decision ignored'. Not 0 for longer than a review takes is a question for a person, not a fault.",
       "targets": [
         {
           "refId": "A",

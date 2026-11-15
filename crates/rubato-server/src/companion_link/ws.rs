@@ -30,8 +30,9 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim)
-        .unwrap_or("");
-    let pairing = match pairing::authenticate(&app.db, token).await {
+        .unwrap_or("")
+        .to_owned();
+    let pairing = match pairing::authenticate(&app.db, &token).await {
         Ok(Some(p)) if p.revoked_at.is_none() => p,
         Ok(_) => {
             app.metrics
@@ -44,7 +45,35 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    ws.on_upgrade(move |socket| handle(app, pairing, socket))
+    ws.on_upgrade(move |socket| handle(app, pairing, token, socket))
+}
+
+/// The pairing again, read by the socket's token before an envelope is recorded (#161). `None`
+/// when it was revoked, re-paired with another token, or cannot be read: the envelope is
+/// refused and the socket closed. Counted as `rubato.events.dropped{rubato.reason="revoked"}`.
+async fn still_paired(
+    app: &App,
+    token: &str,
+    companion_id: Uuid,
+    seq: u64,
+) -> Option<pairing::PairingRow> {
+    let row = match pairing::authenticate(&app.db, token).await {
+        Ok(Some(p)) if p.revoked_at.is_none() && p.companion_id == companion_id => return Some(p),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::error!(rubato.companion_id = %companion_id, error = %e, "pairing re-check failed");
+            None
+        }
+    };
+    refuse_revoked(&app.metrics, companion_id, seq);
+    row
+}
+
+fn refuse_revoked(metrics: &Metrics, companion_id: Uuid, seq: u64) {
+    tracing::warn!(rubato.companion_id = %companion_id, seq, "envelope from a revoked pairing dropped");
+    metrics
+        .events_dropped
+        .add(1, &[KeyValue::new(attr::DROP_REASON, "revoked")]);
 }
 
 /// A bookkeeping write on the companion socket that failed. The envelope is still answered,
@@ -75,15 +104,16 @@ async fn send_env(
     }
 }
 
-async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
+async fn handle(app: App, mut pairing: pairing::PairingRow, token: String, socket: WebSocket) {
     let companion_id = pairing.companion_id;
     let user = pairing.user.clone();
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
-    app.companions
-        .lock()
-        .unwrap()
-        .insert(companion_id, CompanionConn::new(tx, app.clock.now()));
+    let entry = CompanionConn::new(tx, app.clock.now());
+    let conn = entry.conn;
+    // A newer socket for the same companion replaces the entry; dropping the older sender
+    // closes the older socket below.
+    app.companions.lock().unwrap().insert(companion_id, entry);
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
@@ -91,23 +121,22 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
     tracing::info!(%companion_id, %user, "companion connected");
     app.notify("companion connected");
 
-    loop {
+    let reason = loop {
         tokio::select! {
             msg = rx.recv() => {
                 // The sender is gone: the pairing was revoked (`pairing::revoke` drops it after
-                // its `Error { auth }`). Close, so nothing more from this companion is applied
-                // (ADR 0062). Before, the arm was only disabled and the socket stayed open.
+                // its `Error { auth }`), or a newer socket replaced this one. Close, so nothing
+                // more from this companion is applied (ADR 0062, #161).
                 let Some(msg) = msg else {
-                    tracing::warn!(%companion_id, "companion socket closed: pairing revoked");
                     let _ = sink.close().await;
-                    break;
+                    break "sender_dropped";
                 };
                 if !send_env(&app, companion_id, &mut sink, msg).await {
-                    break;
+                    break "closed";
                 }
             }
             inbound = stream.next() => {
-                let Some(Ok(frame)) = inbound else { break };
+                let Some(Ok(frame)) = inbound else { break "closed" };
                 match frame {
                     Message::Text(text) => {
                         let env: CompanionEnvelope = match serde_json::from_str(&text) {
@@ -118,26 +147,43 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
                                 continue;
                             }
                         };
+                        let Some(fresh) = still_paired(&app, &token, companion_id, env.seq).await else {
+                            let _ = send_env(&app, companion_id, &mut sink, ServerMessage::Error {
+                                code: "auth".into(),
+                                message: "pairing revoked".into(),
+                            }).await;
+                            let _ = sink.send(Message::Close(None)).await;
+                            break "revoked";
+                        };
+                        pairing = fresh;
                         if let Some(reply) = on_envelope(&app, &pairing, env).await
                             && !send_env(&app, companion_id, &mut sink, reply).await {
-                            break;
+                            break "closed";
                         }
                     }
                     Message::Ping(p) => {
                         let _ = sink.send(Message::Pong(p)).await;
                     }
-                    Message::Close(_) => break,
+                    Message::Close(_) => break "closed",
                     _ => {}
                 }
             }
         }
+    };
+    {
+        let mut companions = app.companions.lock().unwrap();
+        if companions
+            .get(&companion_id)
+            .is_some_and(|c| c.conn == conn)
+        {
+            companions.remove(&companion_id);
+        }
     }
-    app.companions.lock().unwrap().remove(&companion_id);
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
     );
-    tracing::info!(%companion_id, "companion disconnected");
+    tracing::info!(%companion_id, reason, "companion disconnected");
     app.notify("companion disconnected");
 }
 
@@ -281,6 +327,11 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {
+                // The pairing is the only source of a session's companion and user (#162).
+                let overwritten = own_sessions(&mut sessions, companion_id, &pairing.user);
+                if overwritten > 0 {
+                    tracing::warn!(rubato.companion_id = %companion_id, overwritten, "session identity overwritten");
+                }
                 // Against every workspace's repos (ADR 0048): a session's repo is named by some map.
                 let union = app.union_repos().await;
                 if !union.is_empty() {
@@ -305,7 +356,7 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Launch(result) => {
-                match launch::record_result(&app.db, &result).await {
+                match launch::record_result(&app.db, companion_id, &result).await {
                     Ok(Some(issue)) => {
                         tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result");
                         settle_queue(app, companion_id, &issue, &result).await;
@@ -326,13 +377,25 @@ async fn on_envelope(
                             approve::on_launch_started(app, *command_id).await;
                         }
                     }
-                    Ok(None) => tracing::warn!("launch result for an unknown command"),
+                    // Unknown, or sent to another companion (#162): nothing was written.
+                    Ok(None) => {
+                        refuse_identity(&app.metrics);
+                        let (rubato_protocol::LaunchResult::Started { command_id, .. }
+                        | rubato_protocol::LaunchResult::Refused { command_id, .. }
+                        | rubato_protocol::LaunchResult::Failed { command_id, .. }) = &result;
+                        tracing::warn!(rubato.companion_id = %companion_id, rubato.launch_id = %command_id, "launch result for a command not sent to this companion");
+                    }
                     Err(e) => tracing::error!(error = %e, "storing launch result"),
                 }
                 app.notify("launch");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::CapHit(hit) => {
+                if !runs_issue(app, companion_id, &hit.issue).await {
+                    refuse_identity(&app.metrics);
+                    tracing::warn!(rubato.companion_id = %companion_id, rubato.issue = %hit.issue, "cap hit for an issue this companion does not run dropped");
+                    return Some(ServerMessage::Ack { seq: env.seq });
+                }
                 tracing::warn!(rubato.issue = %hit.issue, rubato.session_id = ?hit.session_id, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
                 if let Err(e) = launch::record_cap_hit(&app.db, &hit, now).await {
                     tracing::error!(error = %e, "storing cap hit");
@@ -340,7 +403,9 @@ async fn on_envelope(
                 app.notify("cap hit");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
-            CompanionMessage::Stale(s) => {
+            CompanionMessage::Stale(mut s) => {
+                // Recorded under the pairing, never the companion the event names (#162).
+                s.companion_id = companion_id;
                 tracing::warn!(rubato.session_id = ?s.session_id, silent_for_secs = s.silent_for_secs, "{}", rubato_protocol::otel::event::SESSION_STALE);
                 observe(
                     "store_stale",
@@ -412,6 +477,43 @@ pub fn canonicalise_repos(sessions: &mut [SessionState], named: &[&str]) {
             issue.repo = (*canonical).to_owned();
         }
     }
+}
+
+/// Set every session's companion and user to the pairing's. Returns how many claimed otherwise.
+fn own_sessions(sessions: &mut [SessionState], companion_id: Uuid, user: &str) -> usize {
+    let mut changed = 0;
+    for s in sessions {
+        if s.companion_id != companion_id || s.user != user {
+            changed += 1;
+            s.companion_id = companion_id;
+            s.user = user.to_owned();
+        }
+    }
+    changed
+}
+
+/// A cap hit counts only from a companion that was sent a launch for the issue or reports a
+/// session on it (#162). A failed read refuses: the hit would otherwise block on a guess.
+async fn runs_issue(app: &App, companion_id: Uuid, issue: &rubato_protocol::IssueRef) -> bool {
+    match launch::companion_launched(&app.db, companion_id, issue).await {
+        Ok(true) => return true,
+        Ok(false) => {}
+        Err(e) => tracing::error!(error = %e, "reading launches for a cap hit"),
+    }
+    match store::companion_has_session_on(&app.db, companion_id, issue).await {
+        Ok(yes) => yes,
+        Err(e) => {
+            tracing::error!(error = %e, "reading the snapshot for a cap hit");
+            false
+        }
+    }
+}
+
+/// An envelope that names another companion's issue or command: acknowledged, not applied.
+fn refuse_identity(metrics: &Metrics) {
+    metrics
+        .events_dropped
+        .add(1, &[KeyValue::new(attr::DROP_REASON, "identity")]);
 }
 
 fn record_sessions_by_state(metrics: &Metrics, companion_id: Uuid, sessions: &[SessionState]) {
@@ -528,6 +630,45 @@ mod tests {
             Some("someone/else"),
             "not in the map: unchanged"
         );
+    }
+
+    #[test]
+    fn a_foreign_identity_envelope_is_counted_as_dropped_identity() {
+        let (reader, metrics) = metric_reader::start();
+        refuse_identity(&metrics);
+        let points = reader.points(metric::EVENTS_DROPPED);
+        let identity = points
+            .iter()
+            .find(|p| p.attrs[attr::DROP_REASON] == "identity")
+            .map(|p| p.value);
+        assert_eq!(identity, Some(1), "{points:?}");
+    }
+
+    #[test]
+    fn own_sessions_counts_only_the_claims_it_changed() {
+        let me = Uuid::new_v4();
+        let mut all = vec![
+            session(me, SessionStatus::Working),
+            session(Uuid::new_v4(), SessionStatus::Working),
+        ];
+        all[0].user = "alice".into();
+        assert_eq!(own_sessions(&mut all, me, "alice"), 1);
+        assert!(
+            all.iter()
+                .all(|s| s.companion_id == me && s.user == "alice")
+        );
+    }
+
+    #[test]
+    fn a_revoked_envelope_is_counted_as_dropped_revoked() {
+        let (reader, metrics) = metric_reader::start();
+        refuse_revoked(&metrics, Uuid::new_v4(), 4);
+        let points = reader.points(metric::EVENTS_DROPPED);
+        let revoked = points
+            .iter()
+            .find(|p| p.attrs[attr::DROP_REASON] == "revoked")
+            .map(|p| p.value);
+        assert_eq!(revoked, Some(1), "{points:?}");
     }
 
     fn session(companion_id: Uuid, status: SessionStatus) -> SessionState {

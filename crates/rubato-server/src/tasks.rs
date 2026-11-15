@@ -8,10 +8,11 @@
 
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
-    approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins,
-    plans, queue, rooms, session_messages, traffic,
+    approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview,
+    pairing, pins, plans, queue, rooms, session_messages, traffic,
 };
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 use rubato_protocol::otel::event;
 use rubato_protocol::{IssueRef, SessionStatus};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -148,10 +149,12 @@ impl Poller {
         let found: Vec<new_issue::Found> = listed
             .requests()
             .into_iter()
-            .map(|(issue, url, request_id)| new_issue::Found {
-                issue,
-                url,
-                request_id,
+            .map(|r| new_issue::Found {
+                issue: r.issue,
+                url: r.url,
+                request_id: r.request_id,
+                author: r.author,
+                author_is_bot: r.author_is_bot,
             })
             .collect();
         new_issue::reconcile(app, &found, listed.fresh_repos()).await;
@@ -438,6 +441,12 @@ pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) {
         }
         if let Err(e) = poller.tick(&app, lanes.next_lane()).await {
             tracing::error!(error = %e, "poll failed");
+        }
+        // Outside the tick, so a missing map or a failing GitHub call does not stop it (#168).
+        match pairing::sweep_codes(&app.db, Utc::now()).await {
+            Ok(0) => {}
+            Ok(gone) => tracing::info!(gone, "pairing codes swept"),
+            Err(e) => tracing::error!(error = %format!("{e:#}"), "sweeping pairing codes failed"),
         }
         app.metrics.record_poll_tick(&app.config.limits);
         let secs = app.config.limits.github_poll_interval_secs.max(5);

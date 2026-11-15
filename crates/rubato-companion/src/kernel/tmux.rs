@@ -215,7 +215,7 @@ mod tests {
     use std::time::Duration;
 
     /// A stand-in `tmux` running `body`, written by a child `sh` (see `launch::arm::tests`).
-    fn standin(dir: &Path, body: &str) -> Tmux {
+    fn standin(dir: &Path, body: &str, timeout: Duration) -> Tmux {
         let script = dir.join("tmux");
         let ok = Command::new("sh")
             .arg("-c")
@@ -228,7 +228,7 @@ mod tests {
             .success();
         assert!(ok);
         Tmux {
-            timeout: Duration::from_millis(300),
+            timeout,
             ..Tmux::new(script.to_string_lossy(), None)
         }
     }
@@ -237,13 +237,14 @@ mod tests {
     #[test]
     fn a_hung_tmux_is_an_error_not_an_empty_server() {
         let dir = tempfile::tempdir().unwrap();
-        let hung = standin(dir.path(), "sleep 5");
+        let hung = standin(dir.path(), "sleep 5", Duration::from_millis(300));
         let e = hung.panes().unwrap_err();
         assert!(proc::is_timeout(&e), "{e:#}");
         assert!(hung.has_session("x").is_err());
 
         let dir = tempfile::tempdir().unwrap();
-        let none = standin(dir.path(), "exit 1");
+        // The normal deadline: under load, forking `sh` alone can take longer than 300 ms.
+        let none = standin(dir.path(), "exit 1", proc::LOCAL_TIMEOUT);
         assert_eq!(none.panes().unwrap(), vec![]);
         assert!(!none.has_session("x").unwrap());
     }
@@ -305,6 +306,7 @@ mod tests {
                 calls.display(),
                 stdin.display()
             ),
+            proc::LOCAL_TIMEOUT,
         );
         let e = tmux.paste("%9", "k2", "hello\nworld").unwrap_err();
         assert!(format!("{e:#}").contains("tmux paste-buffer"), "{e:#}");

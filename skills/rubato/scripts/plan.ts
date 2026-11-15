@@ -422,7 +422,10 @@ async function main(argv: string[]): Promise<number> {
     if (cmd === "adrs-pin") {
       const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd");
       const { pinAdrs } = await import("./adrs.ts");
-      const rows = await pinAdrs(cwd, positional[0] ?? (await planPathFromBranch(ws, cwd)));
+      // The decisions folder of the map whose repo this checkout is, the same one `adrs.ts accept` uses.
+      const here = (originRepo(cwd) ?? "").toLowerCase();
+      const decisions = ws.maps.find((m) => m.repo.toLowerCase() === here)?.decisions ?? "docs/decisions";
+      const rows = await pinAdrs(cwd, positional[0] ?? (await planPathFromBranch(ws, cwd)), decisions);
       console.log(JSON.stringify({ pinned: rows }));
       return 0;
     }

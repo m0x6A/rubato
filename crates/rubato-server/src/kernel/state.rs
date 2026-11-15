@@ -19,14 +19,21 @@ use uuid::Uuid;
 
 pub struct CompanionConn {
     pub tx: mpsc::UnboundedSender<ServerMessage>,
+    /// New per socket: only the socket that inserted the entry removes it (#161).
+    pub conn: Uuid,
     /// When this connection last sent an envelope: a socket left open by a laptop that went to
     /// sleep looks connected, so "live" also needs a recent envelope (ADR 0051).
     pub last_seen: DateTime<Utc>,
 }
 
 impl CompanionConn {
+    /// A connection entry with a fresh per-socket id (#161).
     pub fn new(tx: mpsc::UnboundedSender<ServerMessage>, now: DateTime<Utc>) -> Self {
-        Self { tx, last_seen: now }
+        Self {
+            tx,
+            conn: Uuid::new_v4(),
+            last_seen: now,
+        }
     }
 }
 

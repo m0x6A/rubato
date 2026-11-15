@@ -86,7 +86,10 @@ async fn harness_with(configure: impl FnOnce(&mut Config)) -> Harness {
 
 impl Harness {
     async fn pair(&self, as_user: &str) -> (Uuid, String) {
-        let companion_id = Uuid::new_v4();
+        self.pair_as(as_user, Uuid::new_v4()).await
+    }
+
+    async fn pair_as(&self, as_user: &str, companion_id: Uuid) -> (Uuid, String) {
         let start: PairStartResponse = self
             .http
             .post(format!("{}{}", self.url, pr::PAIR_START))
@@ -432,6 +435,20 @@ async fn protocol_fixtures_replay_derives_progress() {
         .send()
         .await
         .unwrap();
+    // The companion reports a session on #2 first: a cap hit counts only from a companion
+    // that runs the issue (#162).
+    let mut on_two = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    on_two.seq = 8;
+    if let CompanionMessage::Sessions { sessions } = &mut on_two.message {
+        let mut s = sessions[0].clone();
+        s.session_id = Some("s-two".into());
+        s.issue = Some(two.clone());
+        sessions.push(s);
+    }
+    assert!(matches!(
+        send(&mut ws, &on_two).await,
+        ServerMessage::Ack { seq: 8 }
+    ));
     let mut cap = Harness::fixture("companion_cap_hit.json");
     if let CompanionMessage::CapHit(c) = &mut cap.message {
         c.issue = two.clone();
@@ -604,6 +621,65 @@ async fn reviews_and_approvals_count_only_from_members() {
     assert_eq!(approval.record.author, "teammate");
     assert_eq!(approval.version, rubato_protocol::ApprovalVersion::Current);
     assert_eq!(approval.current_sha.as_deref(), Some(sha.as_str()));
+}
+
+/// Issue #164, ADR 0065: `Decision:` counts only from members, like `Review:` and `Approved:`.
+/// The repo is public, so a stranger's, a contributor's and a Bot's decision must not show, and
+/// a row an older server stored for an outsider's comment goes.
+#[tokio::test]
+async fn decisions_count_only_from_members() {
+    let decision = |t: &str| format!("Decision: {t}\n\n## Chosen\nyes");
+    let (_h, one) = issue_71_with(vec![
+        comment(1, "stranger", "NONE", false, &decision("From a stranger")),
+        comment(
+            2,
+            "drive-by",
+            "CONTRIBUTOR",
+            false,
+            &decision("From a contributor"),
+        ),
+        comment(3, "helper[bot]", "MEMBER", true, &decision("From a Bot")),
+        comment(4, "teammate", "MEMBER", false, &decision("From the team")),
+    ])
+    .await;
+    let titles: Vec<&str> = one.decisions.iter().map(|d| d.title.as_str()).collect();
+    assert_eq!(titles, ["From the team"], "{:?}", one.decisions);
+
+    // A row an older server stored for comment 1, before the author was checked.
+    let (h, _) = issue_71_with(vec![comment(
+        1,
+        "stranger",
+        "NONE",
+        false,
+        &decision("From a stranger"),
+    )])
+    .await;
+    let stored = rubato_protocol::DecisionRecord {
+        issue: IssueRef::new("m0x6A/rubato", 71),
+        comment_id: 1,
+        author: "stranger".into(),
+        title: "From a stranger".into(),
+        context: None,
+        options: None,
+        chosen: Some("yes".into()),
+        why: None,
+        created_at: chrono::Utc::now(),
+        url: "c1".into(),
+    };
+    sqlx::query(
+        "INSERT OR REPLACE INTO decisions (repo, number, comment_id, record) VALUES (?, ?, ?, ?)",
+    )
+    .bind("m0x6A/rubato")
+    .bind(71_i64)
+    .bind(1_i64)
+    .bind(serde_json::to_string(&stored).unwrap())
+    .execute(&h.app.db)
+    .await
+    .unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    assert!(one.decisions.is_empty(), "{:?}", one.decisions);
 }
 
 /// Ticking a task keeps the approval current; editing the spec makes it stale, a finding.
@@ -863,6 +939,434 @@ async fn bad_and_revoked_tokens_are_refused() {
         .headers_mut()
         .insert("authorization", format!("Bearer {token}").parse().unwrap());
     assert!(tokio_tungstenite::connect_async(revoked).await.is_err());
+}
+
+impl Harness {
+    async fn start_pairing(&self, hostname: &str, version: &str) -> reqwest::Response {
+        self.http
+            .post(format!("{}{}", self.url, pr::PAIR_START))
+            .json(&PairStartRequest {
+                companion_id: Uuid::new_v4(),
+                hostname: hostname.into(),
+                companion_version: version.into(),
+            })
+            .send()
+            .await
+            .unwrap()
+    }
+
+    async fn code_rows(&self) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM pairing_codes")
+            .fetch_one(&self.app.db)
+            .await
+            .unwrap()
+    }
+}
+
+/// #168: the anonymous start refuses strings longer than the protocol allows, storing nothing.
+#[tokio::test]
+async fn pair_start_refuses_long_fields() {
+    use rubato_protocol::pairing::PAIR_FIELD_MAX_CHARS;
+    let h = harness().await;
+    let long = "é".repeat(PAIR_FIELD_MAX_CHARS + 1);
+    let fits = "é".repeat(PAIR_FIELD_MAX_CHARS);
+    let r = h.start_pairing(&long, "t").await;
+    assert_eq!(r.status(), 422, "hostname too long");
+    assert!(r.text().await.unwrap().contains("hostname"));
+    let r = h.start_pairing("h", &long).await;
+    assert_eq!(r.status(), 422, "companion_version too long");
+    assert!(r.text().await.unwrap().contains("companion_version"));
+    assert_eq!(h.code_rows().await, 0, "nothing stored for a refused start");
+    assert_eq!(h.start_pairing(&fits, &fits).await.status(), 200);
+    assert_eq!(h.code_rows().await, 1);
+    println!("checked 3 starts: 2 too long refused, 1 at the limit stored");
+}
+
+/// #168: at most `pairing_max_pending` codes wait at once; approving one frees a place.
+#[tokio::test]
+async fn pair_start_caps_pending_codes() {
+    let h = harness_with(|c| c.pairing_max_pending = 3).await;
+    let mut codes = Vec::new();
+    for _ in 0..3 {
+        let r = h.start_pairing("h", "t").await;
+        assert_eq!(r.status(), 200);
+        codes.push(r.json::<PairStartResponse>().await.unwrap());
+    }
+    let r = h.start_pairing("h", "t").await;
+    assert_eq!(r.status(), 429, "the fourth pending code is refused");
+    assert!(r.text().await.unwrap().contains("try again"));
+    assert_eq!(h.code_rows().await, 3);
+    let approve = h
+        .http
+        .post(format!("{}{}", h.url, pr::PAIR_APPROVE))
+        .header("x-rubato-dev-user", "bob")
+        .json(&PairApproveRequest {
+            user_code: codes[0].user_code.clone(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approve.status(), 200);
+    assert_eq!(
+        h.start_pairing("h", "t").await.status(),
+        200,
+        "a place freed"
+    );
+    println!("checked 5 starts against a cap of 3: 4 stored, 1 refused");
+}
+
+/// #168: ten people approving one code at once pair it once. A race test can pass by luck;
+/// `claim_refuses_a_code_already_claimed` in the store is the one that fails on purpose.
+#[tokio::test]
+async fn concurrent_approvals_of_one_code_pair_once() {
+    let h = harness().await;
+    let start: PairStartResponse = h.start_pairing("h", "t").await.json().await.unwrap();
+    let approvals = (0..10).map(|i| {
+        h.http
+            .post(format!("{}{}", h.url, pr::PAIR_APPROVE))
+            .header("x-rubato-dev-user", format!("user{i}"))
+            .json(&PairApproveRequest {
+                user_code: start.user_code.clone(),
+            })
+            .send()
+    });
+    let statuses: Vec<u16> = futures_util::future::join_all(approvals)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap().status().as_u16())
+        .collect();
+    assert_eq!(
+        statuses.iter().filter(|s| **s == 200).count(),
+        1,
+        "{statuses:?}"
+    );
+    assert_eq!(
+        statuses.iter().filter(|s| **s == 404).count(),
+        9,
+        "{statuses:?}"
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pairings")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+    println!("checked 10 concurrent approvals of one code: 1 paired, 9 refused");
+}
+
+impl Harness {
+    /// Starts a pairing for `companion_id` and approves it as `as_user`, without asserting the
+    /// outcome. Returns the approve response and the device code.
+    async fn start_and_approve(
+        &self,
+        as_user: &str,
+        companion_id: Uuid,
+    ) -> (reqwest::Response, String) {
+        let start: PairStartResponse = self
+            .http
+            .post(format!("{}{}", self.url, pr::PAIR_START))
+            .json(&PairStartRequest {
+                companion_id,
+                hostname: format!("{as_user}-host"),
+                companion_version: "t".into(),
+            })
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let approve = self
+            .http
+            .post(format!("{}{}", self.url, pr::PAIR_APPROVE))
+            .header("x-rubato-dev-user", as_user)
+            .json(&PairApproveRequest {
+                user_code: start.user_code,
+            })
+            .send()
+            .await
+            .unwrap();
+        (approve, start.device_code)
+    }
+
+    async fn poll_code(&self, device_code: &str) -> PairPollResponse {
+        self.http
+            .post(format!("{}{}", self.url, pr::PAIR_POLL))
+            .json(&PairPollRequest {
+                device_code: device_code.to_owned(),
+            })
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    async fn pairings_of(&self, as_user: &str) -> Vec<PairingInfo> {
+        self.http
+            .get(format!("{}{}", self.url, pr::PAIRINGS))
+            .header("x-rubato-dev-user", as_user)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    async fn ws_status(&self, token: &str) -> Result<(), String> {
+        let mut req = format!(
+            "ws://{}{}",
+            self.url.trim_start_matches("http://"),
+            pr::COMPANION_WS
+        )
+        .into_client_request()
+        .unwrap();
+        req.headers_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+            .await
+            .map(drop)
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Issue #160: a teammate who knows another person's companion id (the overview lists it) must
+/// not take that pairing over by approving a code they started with that id.
+#[tokio::test]
+async fn a_teammate_cannot_take_over_another_persons_companion() {
+    let h = harness().await;
+    let (x, bob_token) = h.pair_as("bob", Uuid::new_v4()).await;
+    let before = h.pairings_of("bob").await;
+
+    let (approve, device_code) = h.start_and_approve("alice", x).await;
+    assert_eq!(approve.status(), 409, "alice cannot take bob's companion");
+    let text = approve.text().await.unwrap();
+    assert!(text.contains("another person"), "{text}");
+    assert_eq!(
+        h.poll_code(&device_code).await,
+        PairPollResponse::Denied,
+        "the refused code is denied, so its companion stops polling"
+    );
+
+    assert_eq!(
+        h.pairings_of("bob").await,
+        before,
+        "bob's pairing unchanged"
+    );
+    assert!(h.pairings_of("alice").await.is_empty(), "alice got nothing");
+    h.ws_status(&bob_token)
+        .await
+        .expect("bob's companion still connects");
+    println!("checked 1 takeover: 409, denied, owner unchanged, owner still connects");
+}
+
+/// Issue #160: a revoked pairing still carries its owner's identity and history; only the owner
+/// may pair that companion id again.
+#[tokio::test]
+async fn a_revoked_companion_stays_with_its_owner() {
+    let h = harness().await;
+    let (x, _) = h.pair_as("bob", Uuid::new_v4()).await;
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, x))
+        .header("x-rubato-dev-user", "bob")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+
+    let (approve, device_code) = h.start_and_approve("alice", x).await;
+    assert_eq!(
+        approve.status(),
+        409,
+        "alice cannot take bob's revoked companion"
+    );
+    assert_eq!(h.poll_code(&device_code).await, PairPollResponse::Denied);
+    let bobs = h.pairings_of("bob").await;
+    assert_eq!(bobs.len(), 1);
+    assert!(bobs[0].revoked_at.is_some(), "still bob's, still revoked");
+
+    let (again, _) = h.pair_as("bob", x).await;
+    assert_eq!(again, x);
+    let bobs = h.pairings_of("bob").await;
+    assert_eq!(bobs[0].revoked_at, None, "bob paired it again");
+    println!("checked 2 approvals of a revoked companion: other person 409, owner 200");
+}
+
+/// The path #160 must keep: pairing your own companion again replaces its token.
+#[tokio::test]
+async fn pairing_your_own_companion_again_replaces_the_token() {
+    let h = harness().await;
+    let (x, first) = h.pair_as("bob", Uuid::new_v4()).await;
+    let (_, second) = h.pair_as("bob", x).await;
+    let refused = h
+        .ws_status(&first)
+        .await
+        .expect_err("the old token is gone");
+    assert!(refused.contains("401"), "{refused}");
+    h.ws_status(&second).await.expect("the new token connects");
+    assert_eq!(h.pairings_of("bob").await.len(), 1);
+    println!("checked 2 tokens for one companion: old 401, new connects");
+}
+
+type CompanionWs =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// The next server message, or `None` once the socket has closed. Panics if the socket stays
+/// open and silent: that is the bug in #161.
+async fn next_or_closed(ws: &mut CompanionWs) -> Option<ServerMessage> {
+    let next = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+        .await
+        .expect("the socket stayed open");
+    match next {
+        Some(Ok(Message::Text(t))) => {
+            Some(serde_json::from_str::<ServerEnvelope>(&t).unwrap().message)
+        }
+        _ => None,
+    }
+}
+
+async fn snapshots_of(h: &Harness, companion_id: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM session_snapshots WHERE companion_id = ?")
+        .bind(companion_id.to_string())
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap()
+}
+
+/// #161: revoking a connected companion ends its socket, and what it sends after is not stored.
+#[tokio::test]
+async fn a_revoked_companion_is_disconnected_and_stores_nothing() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+
+    let Some(ServerMessage::Error { code, .. }) = next_or_closed(&mut ws).await else {
+        panic!("no auth error after revoke")
+    };
+    assert_eq!(code, "auth");
+    assert!(
+        next_or_closed(&mut ws).await.is_none(),
+        "the socket closes after the error"
+    );
+    let sessions = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    let _ = ws
+        .send(Message::Text(
+            serde_json::to_string(&sessions).unwrap().into(),
+        ))
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(snapshots_of(&h, companion_id).await, 0, "nothing stored");
+    println!("checked 1 revoked socket: error, close, 0 snapshots");
+}
+
+/// #161: an envelope on a socket whose pairing was revoked behind its back is refused before
+/// anything is recorded, whatever the in-memory table says.
+#[tokio::test]
+async fn an_envelope_after_revocation_is_dropped() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    sqlx::query("UPDATE pairings SET revoked_at = '2026-11-15T00:00:00Z' WHERE companion_id = ?")
+        .bind(companion_id.to_string())
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let sessions = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    ws.send(Message::Text(
+        serde_json::to_string(&sessions).unwrap().into(),
+    ))
+    .await
+    .unwrap();
+    let reply = next_or_closed(&mut ws).await;
+    assert!(
+        matches!(&reply, Some(ServerMessage::Error { code, .. }) if code == "auth"),
+        "{reply:?}"
+    );
+    assert!(
+        next_or_closed(&mut ws).await.is_none(),
+        "then the socket closes"
+    );
+    assert_eq!(snapshots_of(&h, companion_id).await, 0, "nothing stored");
+    let events: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM companion_events WHERE companion_id = ?")
+            .bind(companion_id.to_string())
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap();
+    assert_eq!(events, 1, "only the hello was recorded");
+    println!("checked 1 envelope after revocation: refused, 0 snapshots, 1 event");
+}
+
+/// #161: a second connection for one companion closes the first, and the first's exit does not
+/// take the second out of the table.
+#[tokio::test]
+async fn a_second_connection_replaces_the_first() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: issue.clone(),
+            target: MapRef::node("skill-rubato"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut first = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut first, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    let mut second = h.connect(&token).await;
+    let mut hello2 = hello;
+    hello2.seq = 2;
+    assert!(matches!(
+        send(&mut second, &hello2).await,
+        ServerMessage::Welcome { .. }
+    ));
+    assert!(
+        next_or_closed(&mut first).await.is_none(),
+        "the older socket is closed"
+    );
+    // Let the older socket's handler finish its exit before launching.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": issue, "slug": "skill", "companion_id": companion_id }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let Some(ServerMessage::Launch(_)) = next_or_closed(&mut second).await else {
+        panic!("the launch reaches the newer socket")
+    };
+    println!("checked 2 connections for 1 companion: older closed, newer launched");
 }
 
 /// ADR 0062: a headless companion says so in its Hello; its lane keeps the badge offline, and an
@@ -1615,6 +2119,156 @@ async fn a_companion_attempts_hit_blocks_whatever_the_companion_clock_says() {
     assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
 }
 
+/// A second companion, paired to alice, that will claim things that are not its own (#162).
+async fn intruder(h: &Harness) -> (Uuid, Ws) {
+    let (companion_id, token) = h.pair("alice").await;
+    let mut ws = h.connect(&token).await;
+    let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    if let CompanionMessage::Hello { user, .. } = &mut hello.message {
+        *user = "alice".into();
+    }
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    (companion_id, ws)
+}
+
+/// #162 S1: a snapshot's sessions take the pairing's companion id and user.
+#[tokio::test]
+async fn a_snapshot_cannot_claim_another_companion_or_user() {
+    let h = harness().await;
+    let (victim, token) = h.pair("m0x6A").await;
+    let _victim_ws = h.connect(&token).await;
+    let (alice, mut ws) = intruder(&h).await;
+    let mut forged = with_companion(Harness::fixture("companion_sessions.json"), victim);
+    forged.seq = 2;
+    let CompanionMessage::Sessions { sessions } = &mut forged.message else {
+        panic!("fixture")
+    };
+    let n = sessions.len();
+    sessions.iter_mut().for_each(|s| s.user = "bob".into());
+    assert!(matches!(
+        send(&mut ws, &forged).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let stored: String =
+        sqlx::query_scalar("SELECT sessions FROM session_snapshots WHERE companion_id = ?")
+            .bind(alice.to_string())
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap();
+    let stored: Vec<rubato_protocol::SessionState> = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored.len(), n);
+    assert!(
+        stored
+            .iter()
+            .all(|s| s.companion_id == alice && s.user == "alice"),
+        "{stored:?}"
+    );
+    let ov = h.overview("m0x6A").await;
+    let shown: Vec<_> = ov
+        .issues
+        .iter()
+        .flat_map(|i| i.sessions.iter())
+        .chain(ov.unpinned_sessions.iter())
+        .collect();
+    assert!(!shown.is_empty());
+    assert!(
+        shown.iter().all(|s| s.companion_id != victim),
+        "nothing shows in the victim's lane: {shown:?}"
+    );
+    println!("checked {n} forged sessions: all under the pairing");
+}
+
+/// #162 S2: a cap hit counts only from a companion that runs the issue.
+#[tokio::test]
+async fn a_cap_hit_for_an_issue_this_companion_does_not_run_is_dropped() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_victim, mut victim_ws) = ready_to_launch(&h, &issue).await;
+    let r = start(&h, &issue, 3).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let (_alice, mut ws) = intruder(&h).await;
+
+    let hit = spend_hit(&issue, 2, "s-forged", chrono::Utc::now());
+    assert!(matches!(
+        send(&mut ws, &hit).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cap_hits")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "the forged hit is not stored");
+    assert_ne!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+
+    // The launch command is on the victim's socket; read it off, then the victim's own hit counts.
+    let Some(Ok(Message::Text(_))) = victim_ws.next().await else {
+        panic!("no launch on the victim's socket")
+    };
+    let hit = spend_hit(&issue, 50, "s-real", chrono::Utc::now());
+    assert!(matches!(
+        send(&mut victim_ws, &hit).await,
+        ServerMessage::Ack { seq: 50 }
+    ));
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+    println!("checked 2 cap hits: 1 dropped, 1 stored");
+}
+
+/// #162 S3: a launch result updates only a launch sent to this companion.
+#[tokio::test]
+async fn a_launch_result_for_another_companions_command_changes_nothing() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_victim, _victim_ws) = ready_to_launch(&h, &issue).await;
+    let launched: rubato_protocol::LaunchResponse =
+        start(&h, &issue, 3).await.json().await.unwrap();
+    let (_alice, mut ws) = intruder(&h).await;
+    assert!(matches!(
+        send(&mut ws, &started(2, &launched)).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let result: Option<String> = sqlx::query_scalar("SELECT result FROM launches WHERE id = ?")
+        .bind(launched.command.id.to_string())
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(result, None, "the victim's launch keeps no result");
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Planned);
+    println!("checked 1 foreign launch result: 0 rows changed");
+}
+
+/// #162 S4: a stale event is recorded under the pairing.
+#[tokio::test]
+async fn a_stale_event_is_recorded_under_the_pairing() {
+    let h = harness().await;
+    let victim = Uuid::new_v4();
+    let (alice, mut ws) = intruder(&h).await;
+    let stale = CompanionEnvelope {
+        seq: 2,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Stale(rubato_protocol::StaleSession {
+            companion_id: victim,
+            session_id: Some("s".into()),
+            issue: None,
+            last_seen: chrono::Utc::now(),
+            silent_for_secs: 900,
+            at: chrono::Utc::now(),
+        }),
+    };
+    assert!(matches!(
+        send(&mut ws, &stale).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let ids: Vec<String> = sqlx::query_scalar("SELECT companion_id FROM stale_events")
+        .fetch_all(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(ids, vec![alice.to_string()]);
+    println!("checked 1 stale event: under the pairing");
+}
+
 #[tokio::test]
 async fn welcome_carries_last_seen_seq_after_reconnect() {
     let h = harness().await;
@@ -2172,6 +2826,66 @@ async fn pin_kind_must_match_id() {
     println!("checked {} pin requests", cases.len());
 }
 
+/// Issue #163: a pin for an issue of a repo the map does not name is refused and writes no
+/// row, so the poll never reads it with the App's token; the map's repo in other case pins.
+/// A pin row for such a repo (written before the check) cannot start a session either.
+#[tokio::test]
+async fn issues_of_repos_the_map_does_not_name_are_not_pinned_or_launched() {
+    let h = harness().await;
+    let pin = |repo: &str, number: u64| {
+        h.http
+            .post(format!("{}{}", h.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: IssueRef::new(repo, number),
+                target: MapRef::node("web"),
+            })
+            .send()
+    };
+    let cases = [
+        ("elsewhere/secret", 1, 422),
+        ("m0x6A/rubato/../../elsewhere/secret", 2, 422),
+        ("M0X6A/Rubato", 3, 201),
+    ];
+    for (repo, number, status) in cases {
+        let r = pin(repo, number).await.unwrap();
+        assert_eq!(r.status(), status, "{repo}: {}", r.text().await.unwrap());
+    }
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(
+        ov.issues.iter().map(|i| i.issue.number).collect::<Vec<_>>(),
+        [3],
+        "only the map's repo is tracked"
+    );
+
+    // An old pin row for a repo the map does not name, and a connected companion.
+    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'elsewhere/secret', 9, 'node', 'web', 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let _ = send(
+        &mut ws,
+        &with_companion(Harness::fixture("companion_hello.json"), companion_id),
+    )
+    .await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": IssueRef::new("elsewhere/secret", 9), "slug": "x" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+    assert!(
+        r.text().await.unwrap().contains("not a repo the map names"),
+        "the refusal names why"
+    );
+    let next = tokio::time::timeout(std::time::Duration::from_millis(300), ws.next()).await;
+    assert!(next.is_err(), "no LaunchCommand was sent: {next:?}");
+    println!("checked {} pins and 1 launch", cases.len());
+}
+
 #[tokio::test]
 async fn old_mismatched_pin_still_listed() {
     let h = harness().await;
@@ -2311,6 +3025,31 @@ async fn without_the_app_login_stays_open() {
         !app.github.can_write(),
         "and such a server cannot propose map changes"
     );
+}
+
+/// #169 (ADR 0064): without the App a session still ends on the server, after the cookie's 30 days.
+#[tokio::test]
+async fn a_session_ends_after_thirty_days() {
+    let (url, app, _tmp) = app_harness(false).await;
+    let cookie_created = |days_ago: i64| {
+        let app = app.clone();
+        async move {
+            let id = Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO web_sessions (id, login, created_at) VALUES (?, ?, ?)")
+                .bind(&id)
+                .bind("anyone")
+                .bind((chrono::Utc::now() - chrono::Duration::days(days_ago)).to_rfc3339())
+                .execute(&app.db)
+                .await
+                .unwrap();
+            format!("rubato_session={}", app.signer.sign(&id))
+        }
+    };
+    let expired = cookie_created(31).await;
+    let current = cookie_created(29).await;
+    assert_eq!(statuses(&url, &expired).await, [401, 401, 401]);
+    assert_eq!(statuses(&url, &current).await, [200, 201, 101]);
+    println!("checked 2 sessions on 3 entry points");
 }
 
 fn layout_of(pairs: &[(&str, f64, f64)]) -> MapLayout {
@@ -4247,6 +4986,66 @@ async fn a_create_that_timed_out_is_found_by_its_request_line() {
         "found and pinned"
     );
     assert_eq!(h.creates(), 1);
+}
+
+/// Issue #165: only the App's own issue finishes a create that timed out. Two later issues copy
+/// its `Rubato-Request:` line, one from a stranger and one from another Bot, both numbered above
+/// the App's; neither is pinned, with the App's login known or not yet read.
+#[tokio::test]
+async fn a_request_line_counts_only_on_the_apps_issue() {
+    use rubato_protocol::CreationState;
+    for app_login in [Some("rubato[bot]"), None] {
+        let h = harness().await;
+        h.can_create(true);
+        h.github.with(|g| {
+            g.issue_times_out = true;
+            g.app_login = app_login.map(str::to_owned);
+        });
+        let req = new_issue("r-1", MapRef::seam("web-server"));
+        let (status, _) = h.create_issue(&req).await;
+        assert_eq!(status, 202);
+        let apps = h.github.inner.lock().unwrap().open["m0x6A/rubato"][0].clone();
+        assert!(apps.author_is_bot && apps.body.contains("Rubato-Request: r-1"));
+        h.github.with(|g| {
+            let copy = |n: u64, author: &str, bot: bool, association: &str| {
+                rubato_server::kernel::github::OpenIssueInfo {
+                    number: n,
+                    url: format!("https://github.com/m0x6A/rubato/issues/{n}"),
+                    author: author.into(),
+                    author_is_bot: bot,
+                    author_association: association.into(),
+                    ..apps.clone()
+                }
+            };
+            let open = g.open.get_mut("m0x6A/rubato").unwrap();
+            open.push(copy(apps.number + 1, "stranger", false, "NONE"));
+            if app_login.is_some() {
+                open.push(copy(apps.number + 2, "other-app[bot]", true, "NONE"));
+            }
+        });
+
+        tasks::poll_once(&h.app).await.unwrap();
+        let (status, r) = h.create_issue(&req).await;
+        assert_eq!(
+            (status, r.state),
+            (200, CreationState::Created),
+            "{app_login:?}"
+        );
+        assert_eq!(
+            r.issue.as_ref().map(|i| i.number),
+            Some(apps.number),
+            "{app_login:?}: the App's issue, not a copy"
+        );
+        let ov = h.overview("m0x6A").await;
+        let pinned: Vec<u64> = ov
+            .issues
+            .iter()
+            .filter(|i| i.issue.repo == "m0x6A/rubato")
+            .map(|i| i.issue.number)
+            .filter(|n| *n >= apps.number)
+            .collect();
+        assert_eq!(pinned, [apps.number], "{app_login:?}");
+    }
 }
 
 #[tokio::test]
