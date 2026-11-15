@@ -27,6 +27,16 @@ test("the committed rules, rule tests and dashboard pass", () => {
   console.log(`checked ${r.rules} alert rules, ${r.tests} rule tests, ${r.panels} dashboard panels`);
 });
 
+test("two panels with one id are rejected", () => {
+  const r = check(
+    rules,
+    tests,
+    changed((panels) => panels.map((p) => (p.title === "Skills" ? { ...p, id: (panels.find((q) => q.title === "Map age") as { id: number }).id } : p))),
+  );
+  assert.equal(r.problems.length, 1, r.problems.join("\n"));
+  assert.match(r.problems[0] as string, /^panel id \d+ is used by 2 panels: "Map age", "Skills"$/);
+});
+
 test("a dashboard without the Map age panel is rejected", () => {
   const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Map age")));
   assert.deepEqual(r.problems, ['the dashboard has no "Map age" panel that queries rubato_map_loaded_at']);

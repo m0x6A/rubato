@@ -13,6 +13,8 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct FakeInner {
     pub files: HashMap<(String, String, String), String>,
+    /// (repo, path, sha) → the login of the last commit to that file (ADR 0058).
+    pub commit_authors: HashMap<(String, String, String), String>,
     pub branches: HashMap<String, Vec<(String, String)>>,
     pub issues: HashMap<(String, u64), IssueInfo>,
     pub comments: HashMap<(String, u64), Vec<Comment>>,
@@ -50,6 +52,9 @@ pub struct FakeInner {
     /// that timed out does.
     pub issue_times_out: bool,
     next_issue: u64,
+    /// What `app_login` answers: the login the App's own issues carry (issue #165). `None`
+    /// stands for an installation not read yet.
+    pub app_login: Option<String>,
     /// `comment_as` answers with this status and posts nothing (ADR 0030).
     pub comment_refused: Option<u16>,
     /// `comment_as` posts the comment and then fails, as a call that timed out does.
@@ -86,8 +91,31 @@ impl GitHubApi for FakeGitHub {
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("file", format!("{repo} {path} {git_ref}")));
-        Ok(g.files
-            .get(&(repo.to_owned(), path.to_owned(), git_ref.to_owned()))
+        let at = |r: &str| {
+            g.files
+                .get(&(repo.to_owned(), path.to_owned(), r.to_owned()))
+        };
+        // A ref that is a branch's head sha reads that branch's file: tests keep files by branch
+        // and move a head by changing its sha (ADR 0055 reads the plan at the head sha).
+        let by_head = g
+            .branches
+            .get(repo)
+            .and_then(|b| b.iter().find(|(_, sha)| sha == git_ref))
+            .and_then(|(name, _)| at(name));
+        Ok(at(git_ref).or(by_head).cloned())
+    }
+
+    async fn last_commit_author(
+        &self,
+        repo: &str,
+        path: &str,
+        sha: &str,
+    ) -> Result<Option<String>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls
+            .push(("last_commit_author", format!("{repo} {path} {sha}")));
+        Ok(g.commit_authors
+            .get(&(repo.to_owned(), path.to_owned(), sha.to_owned()))
             .cloned())
     }
 
@@ -290,6 +318,10 @@ impl GitHubApi for FakeGitHub {
         g.writes && g.issues_write
     }
 
+    fn app_login(&self) -> Option<String> {
+        self.inner.lock().unwrap().app_login.clone()
+    }
+
     async fn refresh_issue_permission(&self) -> Result<bool> {
         let mut g = self.inner.lock().unwrap();
         // Only an installation reads its permissions, as the port does.
@@ -368,6 +400,7 @@ impl GitHubApi for FakeGitHub {
                 body: body.to_owned(),
                 author: "rubato[bot]".into(),
                 author_association: "NONE".into(),
+                author_is_bot: true,
             });
         if g.issue_times_out {
             g.issue_times_out = false;

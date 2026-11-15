@@ -900,7 +900,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, not_on_team, team_record_stale, installation_lookup_failed. Each has an info log line 'web write rejected' with the user.",
+      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, unknown_repo (an issue of a repo no map names, on pins, launch and queue), not_on_team, team_record_stale, installation_lookup_failed, session_expired, companion_taken (on /api/pair/approve: a code for a companion paired to another person, #160), field_too_long and pending_cap (on /api/pair/start: a hostname or version over 255 characters, or too many codes waiting for approval, #168; logged as user anonymous). Each has an info log line 'web write rejected' with the user.",
       "targets": [
         {
           "refId": "A",
@@ -1156,7 +1156,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Map: lines read from the open-issues listing (ADR 0026), by outcome: pinned (a member's line placed its issue), already_pinned, unknown_id and kind_mismatch (the line names no part or seam of that kind in the map; the issue stays in Not pinned), counted once per line; untrusted_author (someone outside the team wrote the line, so it is only a suggestion), counted per listing. Each tick logs 'backlog placement' with listed, map_lines, untrusted, suggested and none. Lines stop being read if the listing fails: see Backlog age.",
+      "description": "Map: lines read from the open-issues listing (ADR 0026), by outcome: pinned (a member's line placed its issue), already_pinned, unknown_id and kind_mismatch (the line names no part or seam of that kind in the map; the issue stays in Not pinned), unknown_repo (the issue's repo is not named by that workspace's map), counted once per line; untrusted_author (someone outside the team wrote the line, so it is only a suggestion), counted per listing. Each tick logs 'backlog placement' with listed, map_lines, untrusted, suggested and none. Lines stop being read if the listing fails: see Backlog age.",
       "targets": [
         {
           "refId": "A",
@@ -1186,7 +1186,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Issues created from Rubato's 'New issue here…' (ADR 0025), by outcome: created (GitHub answered), found (GitHub did not answer, and the listing found the issue by its Rubato-Request line), failed (refused with a 403, or unseen for ten minutes). 'opening' is how many creations wait for a confirmation now. A failure logs 'issue creation failed' with step (create, unseen), rubato.repo and request_id: a 403 means the installation lacks Issues: write (an admin approves it; Rubato reads the permission every full poll pass). Refusals before sending are in 'Web writes rejected' under route /api/issues.",
+      "description": "Issues created from Rubato's 'New issue here…' (ADR 0025), by outcome: created (GitHub answered), found (GitHub did not answer, and the listing found the issue by its Rubato-Request line), failed (refused with a 403, or unseen for ten minutes), ignored (a Rubato-Request line on an issue the App did not write, per listing; logs 'request line ignored' with the author and reason, issue #165). 'opening' is how many creations wait for a confirmation now. A failure logs 'issue creation failed' with step (create, unseen), rubato.repo and request_id: a 403 means the installation lacks Issues: write (an admin approves it; Rubato reads the permission every full poll pass). Refusals before sending are in 'Web writes rejected' under route /api/issues.",
       "targets": [
         {
           "refId": "A",
@@ -1234,7 +1234,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Issues whose newest approval names an earlier version of the plan (finding 'ApprovalStale', ADR 0027): the plan changed after a team member commented 'Approved: plan <sha>'. Ticking task checkboxes does not count as a change. The overview names each issue with both shas; ask its owner to re-approve or revert. Reviews and approvals are read from comments by OWNER, MEMBER or COLLABORATOR authors on the full poll lane (every 300 s); one that is ignored logs 'approval ignored' or 'review ignored' with the reason (a Bot, or the author's association). Not 0 for longer than a review takes is a question for a person, not a fault.",
+      "description": "Issues whose newest approval names an earlier version of the plan (finding 'ApprovalStale', ADR 0027): the plan changed after a team member commented 'Approved: plan <sha>'. Ticking task checkboxes does not count as a change. The overview names each issue with both shas; ask its owner to re-approve or revert. Reviews and approvals are read from comments by OWNER, MEMBER or COLLABORATOR authors on the full poll lane (every 300 s); one that is ignored logs 'approval ignored' or 'review ignored' with the reason (a Bot, or the author's association). Decision: comments follow the same rule (ADR 0065) and log 'decision ignored'. Not 0 for longer than a review takes is a question for a person, not a fault.",
       "targets": [
         {
           "refId": "A",
@@ -1534,7 +1534,7 @@
       "options": {}
     },
     {
-      "id": 84,
+      "id": 86,
       "type": "row",
       "title": "Skills",
       "gridPos": {
@@ -1585,6 +1585,292 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Planning in Rubato",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 104
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 101,
+      "title": "Session messages by outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 105
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Messages people sent from Rubato to their own launched sessions, as they settle (ADR 0051): delivered, not_idle (the session was working; queued again), refused (the reason is in the log line), failed, interrupted and delivery_unknown (pushed, no answer while the companion stayed live, never pushed again). A rise in delivery_unknown is a companion that receives but does not answer: look for 'session message delivery unknown' with rubato.session_message.id, and the companion's rubato.session_input.deliver span.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_session_messages_total[15m]))",
+          "legendFormat": "{{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 102,
+      "title": "Oldest message waiting for an idle session",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 105
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Seconds the oldest queued message has waited while its launched session waits for input (last hook Stop or idle_prompt). It should drain within a dispatch; a climbing line is a queue that does not move: the companion is not live, lacks session_input, or keeps answering not_idle. Alert SessionMessageStuck (plan 122 PR 7).",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_session_messages_oldest_idle_queued_seconds)",
+          "legendFormat": "oldest"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 103,
+      "title": "Companions by capability",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 105
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Connected companions per capability they announced in Hello (ADR 0051). Planning in Rubato is switched on (the cutover) only once every companion shows session_input; one that does not is an older companion its owner must upgrade.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (rubato_capability) (rubato_companions_by_capability)",
+          "legendFormat": "{{rubato_capability}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 104,
+      "title": "Approvals waiting for handoff",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 111
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Approvals in Rubato delivered to their session more than 30 minutes ago, still current, with no matching commit on the branch and no committed handoff report (ADR 0055). Above 0 for 30 minutes pages ApprovalNoHandoff. Look at the session's log for the rubato.plan.handoff line: plan_changed or bundle_changed means ask for a new approval; push_failed means a rerun pushes the same commit.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_plans_handoff_overdue)",
+          "legendFormat": "overdue"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 105,
+      "title": "Link comments missing",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 111
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Handoff commits on a branch whose link comment is not on the issue yet (ADR 0055): the approver's token is missing (finding LinkWaitingForApprover) or a post's outcome is unknown (LinkCommentWaiting). Above 0 for 30 minutes pages HandoffNoLinkComment; the rubato.plan.link_comment span says which.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_plans_link_comment_missing)",
+          "legendFormat": "missing"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 106,
+      "title": "Approval records that differ",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 111
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Plans read at the branch head whose approved_by, approved_at or approved_sha differ from Rubato's approval, or that carry keys Rubato never wrote (finding ApprovalRecordMismatch, ADR 0054). No link comment is posted for them. Above 0 for 5 minutes fires ApprovalRecordMismatch.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(rubato_plans_approval_record_mismatch)",
+          "legendFormat": "mismatched"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 107,
+      "title": "Draft revisions",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 117
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Draft revisions stored from launched sessions' settle points, and bundles refused by reason (too_large, no_plan, owner_conflict, unknown_launch; ADR 0053). Revisions at zero while sessions plan means the companion's mirror stopped or lacks the drafts capability.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rubato_drafts_revisions_total[15m]))",
+          "legendFormat": "revisions"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_reason) (increase(rubato_drafts_refused_total[15m]))",
+          "legendFormat": "refused {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 108,
+      "title": "Session log",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 117
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Prompts and replies stored in the session log from hook payloads (ADR 0052), and entries dropped by reason. Entries at zero while sessions work means hooks stopped carrying the text.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rubato_session_log_entries_total[15m]))",
+          "legendFormat": "entries"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_reason) (increase(rubato_session_log_dropped_total[15m]))",
+          "legendFormat": "dropped {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 109,
+      "title": "Headless turns",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 123
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Headless companions (agent-only clients, ADR 0062): turns ended per minute by outcome (ok, failed, no_result, timeout, killed) and turns the companion killed by reason (stop, cap, revoke, timeout, quiet, companion_restarted). A kill by timeout, quiet or companion_restarted fires HeadlessTurnsKilled; no_result rising means turns end without a stream-json result.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (rate(rubato_headless_turns_total[5m]) * 60)",
+          "legendFormat": "ended {{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_reason) (increase(rubato_headless_killed_total[30m]))",
+          "legendFormat": "killed {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

@@ -253,7 +253,7 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
     if let Some(v) = cookie_value(&headers, COOKIE)
         && let Some(id) = app.signer.verify(&v)
     {
-        if let Ok(Some((login, _))) = store::web_session(&app.db, &id).await {
+        if let Ok(Some(store::WebSession { login, .. })) = store::web_session(&app.db, &id).await {
             let _ = store::delete_web_session(&app.db, &id).await;
             if let Err(e) = super::tokens::after_logout(&app.db, &login).await {
                 tracing::error!(login, error = %format!("{e:#}"), "dropping the user token at logout failed");

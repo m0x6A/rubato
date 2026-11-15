@@ -1,0 +1,19 @@
+{
+  "seq": 3,
+  "sent_at": "2026-11-14T12:00:00Z",
+  "message": {
+    "type": "session_message",
+    "id": "5d3b1f0e-2c4a-4b8e-9f1d-7a6c5e4b3a21",
+    "user": "m0x6A",
+    "launch_id": "9b2e4d1a-3c5f-4e6a-9b7c-8d9e0f1a2b3c",
+    "session_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "issue": {
+      "repo": "m0x6A/rubato",
+      "number": 122
+    },
+    "kind": "chat",
+    "text": "Please split D7 into two sections.\nKeep the table.",
+    "author": "m0x6A",
+    "created_at": "2026-11-14T11:59:58Z"
+  }
+}

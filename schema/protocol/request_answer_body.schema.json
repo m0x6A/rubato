@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RequestAnswerBody",
+  "type": "object",
+  "properties": {
+    "answer": {
+      "$ref": "#/$defs/RequestAnswer"
+    }
+  },
+  "required": [
+    "answer"
+  ],
+  "$defs": {
+    "RequestAnswer": {
+      "description": "The owner answers a request (`POST` `routes::ROOM_REQUEST`), or its asker withdraws it.",
+      "type": "string",
+      "enum": [
+        "accept",
+        "decline",
+        "withdraw"
+      ]
+    }
+  }
+}

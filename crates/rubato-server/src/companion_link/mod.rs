@@ -5,5 +5,5 @@
 mod store;
 mod ws;
 
-pub use store::all_sessions;
+pub use store::{all_sessions, session_snapshots};
 pub use ws::upgrade;

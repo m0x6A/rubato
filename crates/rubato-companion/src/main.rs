@@ -41,7 +41,12 @@ enum Cmd {
     /// Stay in the foreground doing nothing. The Gherkin suite copies this binary under the name
     /// `claude` as a stand-in pane process; it must not depend on coreutils.
     #[command(hide = true)]
-    Idle,
+    Idle {
+        /// Append every line typed into the pane to this file, as it arrives, so a scenario can
+        /// read what a session message typed (plan 122 §D1).
+        #[arg(long)]
+        record: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -76,6 +81,7 @@ async fn main() -> Result<()> {
                 "paired as {} (companion {})",
                 state.user, state.companion_id
             );
+            eprintln!("{}", pairing::WHAT_LEAVES);
             Ok(())
         }
         Cmd::Run => {
@@ -120,20 +126,57 @@ async fn main() -> Result<()> {
             }
             let ep = HookEndpoint::path(&state_dir);
             match std::fs::read_to_string(&ep) {
-                Ok(t) => println!("hook endpoint: {}", t.trim()),
+                Ok(t) => {
+                    println!("hook endpoint: {}", t.trim());
+                    println!(
+                        "hook header file: {}",
+                        HookEndpoint::header_path(&state_dir).display()
+                    );
+                }
                 Err(_) => println!("hook endpoint: daemon not running"),
             }
             Ok(())
         }
-        Cmd::Idle => loop {
-            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-        },
+        Cmd::Idle { record } => {
+            if let Some(path) = record {
+                std::thread::spawn(move || record_stdin(&path));
+            }
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        }
         Cmd::RenderHooks => {
             let text = std::fs::read_to_string(HookEndpoint::path(&state_dir))
                 .context("daemon not running (no hook endpoint file)")?;
             let ep: HookEndpoint = serde_json::from_str(&text)?;
-            print!("{}", render_hooks(HOOKS_TEMPLATE, &ep)?);
+            print!(
+                "{}",
+                render_hooks(
+                    HOOKS_TEMPLATE,
+                    ep.port,
+                    &HookEndpoint::header_path(&state_dir)
+                )?
+            );
             Ok(())
         }
+    }
+}
+
+/// `idle --record`: each line read from stdin, appended to `path` with its newline and flushed.
+/// Ends at end of input; the process stays in the foreground either way.
+fn record_stdin(path: &std::path::Path) {
+    use std::io::{BufRead, Write};
+    let mut stdin = std::io::stdin().lock();
+    let mut line = Vec::new();
+    while matches!(stdin.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = f.write_all(&line);
+            let _ = f.flush();
+        }
+        line.clear();
     }
 }

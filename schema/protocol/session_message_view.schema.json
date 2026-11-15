@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionMessageView",
+  "description": "One message as the web shows it.",
+  "type": "object",
+  "properties": {
+    "author": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "detail": {
+      "description": "The refusal reason or the error, when there is one.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "description": "`chat` for now.",
+      "type": "string"
+    },
+    "launch_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "outcome_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "pushed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "state": {
+      "$ref": "#/$defs/SessionMessageState"
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "launch_id",
+    "kind",
+    "text",
+    "author",
+    "state",
+    "created_at"
+  ],
+  "$defs": {
+    "SessionMessageState": {
+      "description": "Where a message is, as the server holds it. Derived from what happened; a row is never\npushed again once it is `delivery_unknown`.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "delivered",
+            "refused",
+            "failed"
+          ]
+        },
+        {
+          "description": "Waiting on the server: the session is working, or its companion is away.",
+          "type": "string",
+          "const": "queued"
+        },
+        {
+          "description": "Pushed to the companion; no answer yet.",
+          "type": "string",
+          "const": "sent"
+        },
+        {
+          "description": "Pushed, but no answer while the companion stayed live, or it stopped while pasting.",
+          "type": "string",
+          "const": "delivery_unknown"
+        }
+      ]
+    }
+  }
+}
