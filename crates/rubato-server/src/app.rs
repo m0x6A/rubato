@@ -8,7 +8,7 @@ use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
     pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic,
-    web_link,
+    web_link, webhooks,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -151,6 +151,19 @@ pub fn router(app: App) -> Router {
             app.clone(),
             crate::kernel::http::same_origin,
         ));
+    // After the same-origin layer on purpose (ADR 0074): GitHub is not a browser, and the
+    // signature is this route's authentication. Without the secret the path is unknown.
+    let api = if app.config.webhooks_on() {
+        api.route(
+            webhooks::PATH,
+            post(webhooks::receive).layer(axum::extract::DefaultBodyLimit::max(
+                webhooks::MAX_BODY_BYTES,
+            )),
+        )
+    } else {
+        api.route(webhooks::PATH, any(unknown_api_path))
+    }
+    .route("/webhooks/{*rest}", any(unknown_api_path));
     let csp = axum::http::HeaderValue::from_str(&crate::kernel::http::content_security_policy(
         &app.config.public_url,
     ))
@@ -748,6 +761,10 @@ mod tests {
             (Method::POST, "/api/nope"),
             (Method::GET, "/ws/nope"),
             (Method::GET, "/auth/nope"),
+            // ADR 0074: without RUBATO_GITHUB_WEBHOOK_SECRET the webhook path is unknown.
+            (Method::POST, "/webhooks/github"),
+            (Method::GET, "/webhooks/github"),
+            (Method::POST, "/webhooks/nope"),
         ] {
             let r = http
                 .request(method.clone(), format!("{url}{path}"))
@@ -951,6 +968,62 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn a_signed_delivery_passes_the_same_origin_check() {
+        let secret = "s3cret";
+        let (base, _app, _reader, _tmp) = hardened(|c| {
+            c.github_webhook_secret =
+                crate::kernel::config::WebhookSecret::from_env_value(Some(secret.into()));
+        })
+        .await;
+        let http = reqwest::Client::new();
+        let body = r#"{"action":"closed","pull_request":{"head":{"ref":"issue/5-x"}},"repository":{"full_name":"m0x6A/rubato"}}"#;
+        let evil = [
+            ("sec-fetch-site", "cross-site"),
+            ("origin", "https://evil.example"),
+        ];
+        let send = |id: &'static str, sig: String| {
+            let mut r = http
+                .post(format!("{base}{}", webhooks::PATH))
+                .header("x-github-delivery", id)
+                .header("x-github-event", "pull_request")
+                .header("x-hub-signature-256", sig)
+                .body(body);
+            for (k, v) in evil {
+                r = r.header(k, v);
+            }
+            r.send()
+        };
+        let good = send("d-1", webhooks::sign(secret.as_bytes(), body.as_bytes()))
+            .await
+            .unwrap();
+        assert_eq!(
+            good.status(),
+            202,
+            "signed: accepted whatever the browser headers say"
+        );
+        let bad = send("d-2", webhooks::sign(b"wrong", body.as_bytes()))
+            .await
+            .unwrap();
+        assert_eq!(
+            bad.status(),
+            401,
+            "refused by the signature, not by the origin check"
+        );
+        // The same headers on an ordinary write are still refused (ADR 0066).
+        let mut w = http.post(format!("{base}{}", map_routes::MAP_RELOAD));
+        for (k, v) in evil {
+            w = w.header(k, v);
+        }
+        assert_eq!(w.send().await.unwrap().status(), 403);
+        let get = http
+            .get(format!("{base}{}", webhooks::PATH))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get.status(), 405, "only POST is routed");
+    }
+
+    #[tokio::test]
     async fn cross_origin_writes_are_refused_and_counted() {
         use rubato_protocol::otel::{attr, metric};
         let (base, _app, reader, _tmp) = hardened(|_| {}).await;

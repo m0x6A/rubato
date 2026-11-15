@@ -64,6 +64,9 @@ pub struct FakeInner {
     /// `comment_as` posts the comment and then fails, as a call that timed out does.
     pub comment_times_out: bool,
     next_comment: u64,
+    /// Every read but `rate_limit` fails with `API rate limit exceeded`, as GitHub answers once
+    /// the hour's budget is gone (issue #208).
+    pub exhausted: bool,
     /// A pull request's own read (`pull`), by (repo, number). Without one, `pull` answers from
     /// `pulls`: same repo, mergeable, base sha `base-<base>`.
     pub pull_details: HashMap<(String, u64), PullFull>,
@@ -118,6 +121,9 @@ impl GitHubApi for FakeGitHub {
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("file", format!("{repo} {path} {git_ref}")));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         if let Some(e) = &g.file_error {
             return Err(anyhow!("{e}"));
         }
@@ -152,6 +158,9 @@ impl GitHubApi for FakeGitHub {
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("branch_sha", format!("{repo} {branch}")));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         Ok(g.branches
             .get(repo)
             .and_then(|b| b.iter().find(|(n, _)| n == branch))
@@ -177,12 +186,18 @@ impl GitHubApi for FakeGitHub {
         for _ in 0..heads.len().div_ceil(100).max(1) {
             g.calls.push(("branches", format!("{repo} {prefix}")));
         }
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         Ok(heads)
     }
 
     async fn open_pulls(&self, repo: &str) -> Result<OpenPulls> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("open_pulls", repo.to_owned()));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         if let Some(e) = &g.open_pulls_error {
             return Err(anyhow!("{e}"));
         }
@@ -202,12 +217,18 @@ impl GitHubApi for FakeGitHub {
     async fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueInfo>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("issue", format!("{repo}#{number}")));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         Ok(g.issues.get(&(repo.to_owned(), number)).cloned())
     }
 
     async fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<Comment>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("issue_comments", format!("{repo}#{number}")));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         if let Some(e) = &g.comments_error {
             return Err(anyhow!("{e}"));
         }
@@ -221,12 +242,18 @@ impl GitHubApi for FakeGitHub {
         let mut g = self.inner.lock().unwrap();
         g.calls
             .push(("pull_for_branch", format!("{repo} {branch}")));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         Ok(g.pulls.get(&(repo.to_owned(), branch.to_owned())).cloned())
     }
 
     async fn checks(&self, repo: &str, sha: &str) -> Result<ChecksStatus> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("checks", format!("{repo} {sha}")));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         Ok(g.checks.get(sha).copied().unwrap_or(ChecksStatus::None))
     }
 
@@ -385,6 +412,9 @@ impl GitHubApi for FakeGitHub {
     async fn open_issues(&self, repo: &str, max: usize) -> Result<OpenIssues> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("open_issues", repo.to_owned()));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         if let Some(e) = g.open_errors.get(repo) {
             return Err(anyhow!("{e}"));
         }
@@ -403,6 +433,9 @@ impl GitHubApi for FakeGitHub {
     async fn installation_repos(&self) -> Result<Vec<String>> {
         let mut g = self.inner.lock().unwrap();
         g.calls.push(("installation_repos", String::new()));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
         Ok(g.installation.clone().unwrap_or_default())
     }
 

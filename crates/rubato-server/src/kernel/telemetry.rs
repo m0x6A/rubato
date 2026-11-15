@@ -101,6 +101,12 @@ pub struct Metrics {
     pub workspace_shared_repos: Gauge<u64>,
     /// Tracked plans that fit none of their issue's workspaces (ADR 0045), per workspace.
     pub plans_fit_none: Gauge<u64>,
+    /// ADR 0074: deliveries by event and outcome, and the webhook and catch-up gauges, no unit.
+    pub webhook_deliveries: Counter<u64>,
+    pub webhook_last_accepted_at: Gauge<u64>,
+    pub webhook_pending_oldest: Gauge<u64>,
+    pub catchup_changes: Counter<u64>,
+    pub catchup_last_change_at: Gauge<u64>,
     /// Ids naming two parts across workspaces sharing a repo (finding `IdCollision`), per workspace.
     pub workspace_id_collisions: Gauge<u64>,
     pub ws_clients: Gauge<u64>,
@@ -188,6 +194,19 @@ impl Metrics {
             workspace_orphan_rows: m.u64_gauge(otel::metric::WORKSPACE_ORPHAN_ROWS).build(),
             workspace_shared_repos: m.u64_gauge(otel::metric::WORKSPACE_SHARED_REPOS).build(),
             plans_fit_none: m.u64_gauge(otel::metric::PLANS_FIT_NONE).build(),
+            webhook_deliveries: m
+                .u64_counter(otel::metric::GITHUB_WEBHOOK_DELIVERIES)
+                .build(),
+            webhook_last_accepted_at: m
+                .u64_gauge(otel::metric::GITHUB_WEBHOOK_LAST_ACCEPTED_AT)
+                .build(),
+            webhook_pending_oldest: m
+                .u64_gauge(otel::metric::GITHUB_WEBHOOK_PENDING_OLDEST)
+                .build(),
+            catchup_changes: m.u64_counter(otel::metric::GITHUB_CATCHUP_CHANGES).build(),
+            catchup_last_change_at: m
+                .u64_gauge(otel::metric::GITHUB_CATCHUP_LAST_CHANGE_AT)
+                .build(),
             workspace_id_collisions: m.u64_gauge(otel::metric::WORKSPACE_ID_COLLISIONS).build(),
             ws_clients: m.u64_gauge(otel::metric::WS_CLIENTS).build(),
             companion_heartbeat: m.u64_gauge(otel::metric::COMPANION_HEARTBEAT).build(),

@@ -1876,6 +1876,49 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 110,
+      "title": "Webhooks",
+      "type": "timeseries",
+      "description": "GitHub App webhook deliveries by outcome (ADR 0074), seconds since the last accepted one, the oldest unapplied one, and changes the catch-up poll found that no delivery brought. Absent while RUBATO_GITHUB_WEBHOOK_SECRET is unset. Healthy: accepted deliveries whenever the team works, catch-up changes at zero, pending under 60 s.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 129
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_github_webhook_deliveries_total[15m]))",
+          "legendFormat": "deliveries {{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "time() - max(rubato_github_webhook_last_accepted_at)",
+          "legendFormat": "seconds since the last accepted delivery"
+        },
+        {
+          "refId": "C",
+          "expr": "max(rubato_github_webhook_pending_oldest_seconds)",
+          "legendFormat": "oldest pending, seconds"
+        },
+        {
+          "refId": "D",
+          "expr": "sum by (rubato_change_kind) (increase(rubato_github_catchup_changes_total[1h]))",
+          "legendFormat": "catch-up changes {{rubato_change_kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

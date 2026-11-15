@@ -476,6 +476,8 @@ pub async fn record_rate_limit(app: &App) {
                 tracing::warn!(remaining, limit, "GitHub rate limit under 10%");
             }
         }
-        Err(e) => tracing::debug!(error = %e, "rate limit read failed"),
+        // Not debug: a gauge that stops updating keeps its last value, and GitHubRateLimitLow
+        // would stay quiet on it (issue #208).
+        Err(e) => tracing::warn!(error = %format!("{e:#}"), "rate limit read failed"),
     }
 }

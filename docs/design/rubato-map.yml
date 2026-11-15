@@ -91,7 +91,7 @@ seams:
     to: github
     carries: OAuth login, REST (issues, comments, PRs, checks, contents), Projects v2 GraphQL later
     owner: rubato-server
-    guard: one GitHubApi trait with recorded-response tests; rubato.github.rate_limit.remaining alert
+    guard: one GitHubApi trait with recorded-response tests; rubato.github.rate_limit.remaining alert; GitHubWebhooksSilent alert
     description: "The server reads what GitHub already knows about an issue and, as a GitHub App, proposes map changes as pull requests."
     flows:
       - { kind: data, from: github, to: rubato-server, carries: "open issues, issue state, Decision: comments, pull requests, check runs, plan files and the map from branches" }
@@ -99,6 +99,7 @@ seams:
       - { kind: data, from: github, to: rubato-server, carries: "a pull request's detail when someone opens it: body, reviews, check runs, changed files, mergeable; the person's permission and allowed merge methods" }
       - { kind: control, from: rubato-server, to: github, carries: "OAuth login redirect; a branch, a commit and a pull request for a map draft; as the person, an Approved: comment (until the cutover), one link comment per approved plan commit as its approver, and a pull request merge at the head they saw" }
       - { kind: data, from: github, to: rubato-server, carries: "the last commit to a plan file, for Import" }
+      - { kind: data, from: github, to: rubato-server, carries: "App webhook deliveries, signed with X-Hub-Signature-256: which issue, pull request, check or branch changed" }
 
   - id: companion-tmux-ide
     from: rubato-companion

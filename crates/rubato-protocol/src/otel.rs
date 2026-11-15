@@ -70,6 +70,11 @@ pub mod attr {
     pub const EXIT_CODE: &str = "rubato.exit_code";
     /// Which traffic source answered a fetch (ADR 0040): `dev_file` or `prometheus`.
     pub const TRAFFIC_SOURCE: &str = "rubato.traffic.source";
+    /// The GitHub webhook event a delivery carried (ADR 0074): `issues`, `issue_comment`,
+    /// `pull_request`, `check_suite`, `check_run`, `push`, `ping` or `other`.
+    pub const GITHUB_EVENT: &str = "rubato.github.event";
+    /// What a catch-up change was (ADR 0074): `issue`, `pull` or `plan`.
+    pub const CHANGE_KIND: &str = "rubato.change.kind";
 }
 
 /// Metric instrument names.
@@ -222,6 +227,21 @@ pub mod metric {
     pub const WORKSPACE_ID_COLLISIONS: &str = "rubato.workspace.id_collisions";
     /// Tracked plans that fit none of their issue's workspaces (ADR 0045), every poll tick.
     pub const PLANS_FIT_NONE: &str = "rubato.plans.fit_none";
+    /// GitHub webhook deliveries (ADR 0074), by `rubato.github.event` and `rubato.outcome`:
+    /// `accepted`, `duplicate`, `ignored`, `rejected` (bad signature), `malformed`,
+    /// `too_large`, `error` (not stored).
+    pub const GITHUB_WEBHOOK_DELIVERIES: &str = "rubato.github.webhook.deliveries";
+    /// Unix seconds of the newest accepted delivery, 0 before any; recorded every poll tick while
+    /// webhooks are on, absent otherwise. No unit, like `rubato.map.loaded_at`.
+    pub const GITHUB_WEBHOOK_LAST_ACCEPTED_AT: &str = "rubato.github.webhook.last_accepted_at";
+    /// Age in seconds of the oldest accepted delivery not yet refreshed, 0 when none; recorded
+    /// every poll tick while webhooks are on. `GitHubWebhooksStuck` fires above 300.
+    pub const GITHUB_WEBHOOK_PENDING_OLDEST: &str = "rubato.github.webhook.pending_oldest_seconds";
+    /// Changes a catch-up poll found that no delivery brought, by `rubato.change.kind`.
+    pub const GITHUB_CATCHUP_CHANGES: &str = "rubato.github.catchup.changes";
+    /// Unix seconds of the newest such change, 0 before any; recorded every poll tick while
+    /// webhooks are on. `GitHubWebhooksSilent` compares it with the last accepted delivery.
+    pub const GITHUB_CATCHUP_LAST_CHANGE_AT: &str = "rubato.github.catchup.last_change_at";
     /// Pull request views by outcome (`cached`, `fetched`, `failed`), issue #82, ADR 0034.
     pub const PULLS_VIEW_FETCHES: &str = "rubato.pulls.view_fetches";
     /// Merges sent and not confirmed for more than 120 s (ADR 0033), every poll tick.
@@ -341,6 +361,8 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SKILL_NAME,
         attr::SKILL_SUBCOMMAND,
         attr::TRAFFIC_SOURCE,
+        attr::GITHUB_EVENT,
+        attr::CHANGE_KIND,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -389,6 +411,11 @@ pub fn all_names() -> Vec<&'static str> {
         metric::WORKSPACE_ORPHAN_ROWS,
         metric::WORKSPACE_ID_COLLISIONS,
         metric::PLANS_FIT_NONE,
+        metric::GITHUB_WEBHOOK_DELIVERIES,
+        metric::GITHUB_WEBHOOK_LAST_ACCEPTED_AT,
+        metric::GITHUB_WEBHOOK_PENDING_OLDEST,
+        metric::GITHUB_CATCHUP_CHANGES,
+        metric::GITHUB_CATCHUP_LAST_CHANGE_AT,
         metric::PULLS_VIEW_FETCHES,
         metric::PULLS_MERGES_OPENING,
         metric::SESSION_MESSAGES,
