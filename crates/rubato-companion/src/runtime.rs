@@ -3,7 +3,8 @@
 //! tasks (design D6, D12):
 //!
 //! - essential (server link, hook server, heartbeat, reconcile, stale sweep, dropped counter,
-//!   launch task, which handles launch commands one at a time off the dispatch loop, plan 40):
+//!   launch task, which handles launch commands one at a time off the dispatch loop, plan 40;
+//!   spend task, which sums transcripts and enforces the spend cap off the loop, #172):
 //!   ending while shutdown is not requested logs `rubato.task.exited` and makes `run` return
 //!   `Err`, which `main` turns into a non-zero exit;
 //! - best-effort (tmux-ide events watcher): ending is normal on a machine with no adopted
@@ -18,17 +19,21 @@ use crate::kernel::tmux_ide::TmuxIde;
 use crate::launch::Launcher;
 use crate::server_link::{Client, Identity, Reservation};
 use crate::sessions::Registry;
+use crate::spend::SpendJob;
 use crate::{hooks, launch, server_link, sessions, spend, stale};
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use rubato_protocol::otel::event;
-use rubato_protocol::{CompanionMessage, HookEvent, LaunchCommand, ServerMessage, SessionStatus};
+use rubato_protocol::{
+    CompanionMessage, HookEvent, LaunchCommand, Limits, ServerMessage, SessionStatus,
+};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::{Id, JoinSet};
+use uuid::Uuid;
 
 pub struct DaemonConfig {
     pub workspace: Workspace,
@@ -112,7 +117,8 @@ async fn run(
         tmux.clone(),
     )
     .with_timeout(cfg.workspace.companion.command_timeout());
-    let limits = Arc::new(std::sync::Mutex::new(cfg.workspace.companion.limits));
+    // The live limits; a `Welcome` replaces them and wakes every reader.
+    let (limits, _) = watch::channel(cfg.workspace.companion.limits);
 
     let (out_tx, out_rx) = mpsc::unbounded_channel::<CompanionMessage>();
     let (in_tx, in_rx) = mpsc::unbounded_channel::<ServerMessage>();
@@ -145,7 +151,7 @@ async fn run(
             cfg.state.user.clone(),
             metrics.clone(),
             tmux_ide.clone(),
-            limits.clone(),
+            limits.subscribe(),
             shutdown.clone(),
         ),
     );
@@ -163,7 +169,7 @@ async fn run(
             metrics.clone(),
             tmux.clone(),
             tmux_ide.clone(),
-            limits.clone(),
+            limits.subscribe(),
             poll_rx,
             shutdown.clone(),
         ),
@@ -174,7 +180,7 @@ async fn run(
         stale::sweep(
             out_tx.clone(),
             registry.clone(),
-            limits.clone(),
+            limits.subscribe(),
             shutdown.clone(),
         ),
     );
@@ -204,14 +210,28 @@ async fn run(
             poll_tx.clone(),
         ),
     );
+    // Spend off the dispatch loop (#172): the step owns its Arcs, so nothing borrows the loop.
+    let (spend_tx, spend_rx) = mpsc::unbounded_channel::<SpendJob>();
+    let pricing = Arc::new(cfg.workspace.companion.pricing.clone());
+    let step = {
+        let (registry, out, tmux) = (registry.clone(), out_tx.clone(), tmux.clone());
+        move |job: SpendJob| {
+            let (registry, out, pricing, tmux) =
+                (registry.clone(), out.clone(), pricing.clone(), tmux.clone());
+            async move {
+                spend::after_hook(&job.ev, job.outcome, &registry, &out, &pricing, &tmux).await;
+            }
+        }
+    };
+    tasks.spawn("spend", Kind::Essential, spend::run(spend_rx, step));
     let dispatch = Dispatch {
-        cfg: &cfg,
-        registry: &registry,
-        out: &out_tx,
-        metrics: &metrics,
-        tmux: &tmux,
-        limits: &limits,
-        launch: &launch_tx,
+        companion_id: cfg.state.companion_id,
+        registry,
+        out: out_tx,
+        metrics,
+        limits,
+        launch: launch_tx,
+        spend: spend_tx,
     };
     let supervised = supervise(tasks, shutdown.clone());
     tokio::pin!(supervised);
@@ -222,19 +242,22 @@ async fn run(
     supervised.await
 }
 
-/// The select arms, each one call into a slice (design §9.1 keeps their order).
-struct Dispatch<'a> {
-    cfg: &'a DaemonConfig,
-    registry: &'a Mutex<Registry>,
-    out: &'a mpsc::UnboundedSender<CompanionMessage>,
-    metrics: &'a Metrics,
-    tmux: &'a Tmux,
-    limits: &'a std::sync::Mutex<rubato_protocol::Limits>,
+/// The select arms, each one call into a slice (design §9.1 keeps their order). Owns what it
+/// holds, and awaits nothing slow: launches and spend go to their own tasks' queues.
+struct Dispatch {
+    companion_id: Uuid,
+    registry: Arc<Mutex<Registry>>,
+    out: mpsc::UnboundedSender<CompanionMessage>,
+    metrics: Arc<Metrics>,
+    /// The live limits; readers wake when a `Welcome` changes them.
+    limits: watch::Sender<Limits>,
     /// The launch task's queue (plan 40 S1).
-    launch: &'a mpsc::UnboundedSender<LaunchCommand>,
+    launch: mpsc::UnboundedSender<LaunchCommand>,
+    /// The spend task's queue (#172).
+    spend: mpsc::UnboundedSender<SpendJob>,
 }
 
-impl Dispatch<'_> {
+impl Dispatch {
     async fn run(
         &self,
         mut hook_rx: mpsc::UnboundedReceiver<HookEvent>,
@@ -245,11 +268,12 @@ impl Dispatch<'_> {
             tokio::select! {
                 _ = shutdown.changed() => break,
                 Some(ev) = hook_rx.recv() => {
-                    let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id).await;
-                    spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
+                    let outcome = hooks::on_event(&ev, &self.registry, &self.out, &self.metrics, self.companion_id).await;
+                    // Queued, not awaited: the transcript is summed in the spend task.
+                    let _ = self.spend.send(SpendJob { ev, outcome });
                 }
                 Some(msg) = in_rx.recv() => match msg {
-                    ServerMessage::Welcome { limits, .. } => server_link::on_welcome(limits, self.limits),
+                    ServerMessage::Welcome { limits, .. } => server_link::on_welcome(limits, &self.limits),
                     // Queued, not awaited: hooks keep flowing while it runs.
                     ServerMessage::Launch(cmd) => {
                         let _ = self.launch.send(cmd);
@@ -434,6 +458,112 @@ mod tests {
         let r = tokio::time::timeout(Duration::from_secs(1), sup).await;
         assert!(r.expect("Ok within 1 s").unwrap().is_ok());
         assert_eq!(exited(&events), 0);
+    }
+
+    async fn next_out(rx: &mut mpsc::UnboundedReceiver<CompanionMessage>) -> CompanionMessage {
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("the dispatch loop answered within 2 s")
+            .expect("out channel open")
+    }
+
+    fn hook(session: &str, name: &str) -> HookEvent {
+        HookEvent::from_payload(
+            serde_json::json!({"session_id": session, "hook_event_name": name, "cwd": "/x"}),
+            Utc::now(),
+        )
+        .unwrap()
+    }
+
+    /// The loop stays live while a spend sum is slow (#172). Fails on purpose when the hook arm
+    /// awaits the spend step inline: the second hook and the `Welcome` then wait for the release.
+    #[tokio::test]
+    async fn hooks_and_server_messages_flow_while_spend_is_slow() {
+        let (hook_tx, hook_rx) = mpsc::unbounded_channel();
+        let (in_tx, in_rx) = mpsc::unbounded_channel();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        let (launch_tx, _launch_rx) = mpsc::unbounded_channel();
+        let (spend_tx, spend_rx) = mpsc::unbounded_channel();
+        let (limits_tx, mut limits_rx) = watch::channel(Limits::default());
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        // A spend step that reports each job and then blocks until released.
+        let (started_tx, mut started) = mpsc::unbounded_channel::<String>();
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let r = release.clone();
+        let step = move |job: SpendJob| {
+            let (started_tx, r) = (started_tx.clone(), r.clone());
+            async move {
+                let _ = started_tx.send(format!("{:?}", job.ev.hook_event_name));
+                r.acquire().await.unwrap().forget();
+            }
+        };
+        let spend = tokio::spawn(spend::run(spend_rx, step));
+        let dispatch = Dispatch {
+            companion_id: Uuid::nil(),
+            registry: Arc::new(Mutex::new(Registry::new(Uuid::nil(), "m0x6A"))),
+            out: out_tx,
+            metrics: Arc::new(Metrics::new()),
+            limits: limits_tx,
+            launch: launch_tx,
+            spend: spend_tx,
+        };
+        let looped = tokio::spawn(async move { dispatch.run(hook_rx, in_rx, shutdown_rx).await });
+
+        hook_tx.send(hook("s1", "PreToolUse")).unwrap();
+        assert!(matches!(
+            next_out(&mut out_rx).await,
+            CompanionMessage::Hook(_)
+        ));
+        assert!(matches!(
+            next_out(&mut out_rx).await,
+            CompanionMessage::Sessions { .. }
+        ));
+        let first = tokio::time::timeout(Duration::from_secs(2), started.recv()).await;
+        assert_eq!(first.unwrap().as_deref(), Some("PreToolUse"));
+
+        // The spend step is now blocked. Two more hooks and a Welcome are still handled.
+        hook_tx.send(hook("s1", "PostToolUse")).unwrap();
+        hook_tx.send(hook("s1", "Stop")).unwrap();
+        for _ in 0..2 {
+            assert!(matches!(
+                next_out(&mut out_rx).await,
+                CompanionMessage::Hook(_)
+            ));
+            assert!(matches!(
+                next_out(&mut out_rx).await,
+                CompanionMessage::Sessions { .. }
+            ));
+        }
+        in_tx
+            .send(ServerMessage::Welcome {
+                server_version: "test".into(),
+                protocol_version: 1,
+                last_seen_companion_seq: 0,
+                limits: Limits {
+                    heartbeat_interval_secs: 7,
+                    ..Limits::default()
+                },
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), limits_rx.changed())
+            .await
+            .expect("the Welcome reached the limits while spend was blocked")
+            .unwrap();
+        assert_eq!(limits_rx.borrow().heartbeat_interval_secs, 7);
+
+        // Released: the two hooks queued behind the slow sum coalesce into one step, the newest.
+        release.add_permits(10);
+        let second = tokio::time::timeout(Duration::from_secs(2), started.recv()).await;
+        assert_eq!(second.unwrap().as_deref(), Some("Stop"));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), started.recv())
+                .await
+                .is_err(),
+            "one step per session per wake"
+        );
+        looped.abort();
+        spend.abort();
     }
 
     #[tokio::test(flavor = "current_thread")]

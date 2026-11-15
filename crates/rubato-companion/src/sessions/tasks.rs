@@ -9,7 +9,7 @@ use anyhow::Result;
 use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
-use rubato_protocol::{CompanionMessage, Limits};
+use rubato_protocol::{CompanionMessage, Limits, SessionState};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, watch};
@@ -55,11 +55,11 @@ pub async fn reconcile(
     metrics: Arc<Metrics>,
     tmux: Tmux,
     tmux_ide: TmuxIde,
-    limits: Arc<std::sync::Mutex<Limits>>,
+    mut limits: watch::Receiver<Limits>,
     mut poll_rx: mpsc::UnboundedReceiver<()>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut last_snapshot: Option<String> = None;
+    let mut last_snapshot: Option<Vec<SessionState>> = None;
     let mut team_poll = TeamPoll::default();
     loop {
         let t = tmux.clone();
@@ -84,20 +84,22 @@ pub async fn reconcile(
         // Identity again where a checkout changed it: git off the lock (design 80 §5).
         let checks = registry.lock().await.identity_checks();
         let found = tokio::task::spawn_blocking(move || crate::sessions::recheck(checks)).await?;
-        {
+        let snap = {
             let mut reg = registry.lock().await;
             reg.apply_identities(found);
-            let snap = reg.snapshot();
             record_gauges(&reg, &metrics);
-            let key = serde_json::to_string(&snap).unwrap_or_default();
-            if last_snapshot.as_deref() != Some(key.as_str()) {
-                last_snapshot = Some(key);
-                let _ = out.send(CompanionMessage::Sessions { sessions: snap });
-            }
+            reg.snapshot()
+        };
+        // Compared as structs, off the lock.
+        if last_snapshot.as_ref() != Some(&snap) {
+            last_snapshot = Some(snap.clone());
+            let _ = out.send(CompanionMessage::Sessions { sessions: snap });
         }
-        let secs = limits.lock().unwrap().team_poll_interval_secs.max(1);
+        let secs = limits.borrow_and_update().team_poll_interval_secs.max(1);
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(secs)) => {}
+            // A `Welcome` with new limits: poll now and wait the new interval from here.
+            Ok(()) = limits.changed() => {}
             _ = poll_rx.recv() => {}
             _ = shutdown.changed() => return Ok(()),
         }

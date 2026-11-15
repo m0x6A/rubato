@@ -15,7 +15,7 @@ pub async fn after_hook(
     (issue, transcript, cap): (Option<IssueRef>, Option<PathBuf>, Option<f64>),
     registry: &Mutex<Registry>,
     out: &mpsc::UnboundedSender<CompanionMessage>,
-    pricing: &BTreeMap<String, ModelPrice>,
+    pricing: &std::sync::Arc<BTreeMap<String, ModelPrice>>,
     tmux: &Tmux,
 ) {
     let Some(path) = transcript else { return };
@@ -31,7 +31,9 @@ pub async fn after_hook(
         if let (Some(limit), Some(issue)) = (cap, issue)
             && s.usd > limit
         {
-            let entry = reg.by_session(&ev.session_id).cloned();
+            let tmux_session = reg
+                .by_session(&ev.session_id)
+                .and_then(|e| e.tmux_session.clone());
             drop(reg);
             tracing::warn!(issue = %issue, spend = s.usd, limit, "{}", rubato_protocol::otel::event::CAP_HIT);
             let _ = out.send(CompanionMessage::CapHit(CapHit {
@@ -42,7 +44,7 @@ pub async fn after_hook(
                 limit,
                 at: Utc::now(),
             }));
-            if let Some(name) = entry.and_then(|e| e.tmux_session) {
+            if let Some(name) = tmux_session {
                 let t = tmux.clone();
                 let _ = tokio::task::spawn_blocking(move || t.kill_session(&name)).await;
             }

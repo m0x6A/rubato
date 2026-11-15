@@ -1,6 +1,6 @@
 //! The hook arm of the runtime and the dropped-request counter. Order (design §9.1): count →
 //! under the lock apply, read transcript and cap, snapshot → send `Hook` → send `Sessions`. The
-//! runtime then hands the result to `spend::after_hook`. The arm runs inside a
+//! runtime then queues the result for the spend task (`spend::run`). The arm runs inside a
 //! `rubato.hook.forward` span.
 
 use crate::kernel::telemetry::Metrics;
@@ -66,13 +66,10 @@ async fn forward(
     let (issue, transcript, cap, snapshot) = {
         let mut reg = registry.lock().await;
         let issue = reg.apply_hook(ev);
-        let e = reg.by_session(&ev.session_id).cloned();
-        (
-            issue,
-            e.as_ref().and_then(|e| e.transcript_path.clone()),
-            e.as_ref().and_then(|e| e.spend_cap_usd),
-            reg.snapshot(),
-        )
+        let (transcript, cap) = reg.by_session(&ev.session_id).map_or((None, None), |e| {
+            (e.transcript_path.clone(), e.spend_cap_usd)
+        });
+        (issue, transcript, cap, reg.snapshot())
     };
     let _ = out.send(CompanionMessage::Hook(ev.clone()));
     let _ = out.send(CompanionMessage::Sessions { sessions: snapshot });
