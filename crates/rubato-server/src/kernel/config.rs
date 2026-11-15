@@ -180,6 +180,8 @@ pub struct Config {
     pub default_spend_cap_usd: f64,
     pub default_attempt_limit: u32,
     pub pairing_ttl_secs: i64,
+    /// Pairing codes that may be pending and unexpired at once; a start above it is 429 (#168).
+    pub pairing_max_pending: i64,
     /// The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, RFC 3339, ADR 0054): `Approved:` comments
     /// count only when posted before it, *Accept plan* refuses after it, and approval in Rubato
     /// is on once it is set. Unset: comments count as before and approval in Rubato is refused.
@@ -304,6 +306,7 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3),
             pairing_ttl_secs: 900,
+            pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,
             comment_approvals_until: comment_approvals_until(
                 env("RUBATO_COMMENT_APPROVALS_UNTIL").as_deref(),
             )?,
@@ -405,6 +408,7 @@ impl Config {
             default_spend_cap_usd: 25.0,
             default_attempt_limit: 3,
             pairing_ttl_secs: 900,
+            pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,
             comment_approvals_until: None,
             warnings: Vec::new(),
         }

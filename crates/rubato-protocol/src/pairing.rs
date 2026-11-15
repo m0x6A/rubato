@@ -18,6 +18,14 @@ pub mod routes {
     pub const PAIR_APPROVE: &str = "/api/pair/approve";
 }
 
+/// Longest `hostname` or `companion_version` a pairing start may carry, in characters. The
+/// server answers 422 above it (#168). A DNS name is at most 253.
+pub const PAIR_FIELD_MAX_CHARS: usize = 255;
+
+/// Default cap on pairing codes pending and unexpired at once, across the server. The server
+/// answers 429 to a start above it (#168).
+pub const PAIRING_CODES_MAX_PENDING: i64 = 50;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PairStartRequest {
     pub companion_id: Uuid,
