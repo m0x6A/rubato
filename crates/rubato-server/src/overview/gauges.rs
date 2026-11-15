@@ -2,60 +2,48 @@
 //! from, open plans per seam, unknown plan ids, approvals of an earlier plan version.
 
 use super::build;
-use super::inputs::build_overview_inputs;
+use super::inputs::{Maps, build_overview_inputs};
 use crate::kernel::state::{App, LoadedMap};
 use anyhow::Result;
 use chrono::Utc;
 use opentelemetry::KeyValue;
+use rubato_protocol::WorkspaceInfo;
 use rubato_protocol::otel::attr;
 
 /// Every gauge for every workspace with a loaded map, each point with `rubato.workspace`
 /// (ADR 0044). An issue two workspaces hold counts once in each, so panels take `max by
 /// (rubato_workspace)` and never sum across workspaces.
 pub async fn refresh_gauges(app: &App) -> Result<()> {
-    let maps: Vec<(String, LoadedMap)> = app
-        .maps
-        .read()
-        .await
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    let named: Vec<(String, rubato_protocol::SystemMap)> = {
-        let mut v = Vec::new();
-        for w in crate::map::list_workspaces(app).await {
-            if let Some(m) = maps.iter().find(|(id, _)| *id == w.id) {
-                v.push((w.name.clone(), m.1.map.clone()));
-            }
-        }
-        v
-    };
-    for (ws, map) in &maps {
-        refresh_one(app, ws, map).await?;
-        let name = crate::map::list_workspaces(app)
-            .await
-            .into_iter()
-            .find(|w| &w.id == ws)
-            .map(|w| w.name)
+    // The workspace list and the maps once per tick, not once per workspace (#171).
+    let all = crate::map::list_workspaces(app).await;
+    let maps = Maps::read(app).await;
+    let named = maps.named(&all);
+    for (ws, map) in maps.iter() {
+        refresh_one(app, ws, map, &all, &maps).await?;
+        let name = all
+            .iter()
+            .find(|w| w.id == ws)
+            .map(|w| w.name.as_str())
             .unwrap_or_default();
-        let collisions = build::cross_workspace_findings(&name, &named)
+        let collisions = build::cross_workspace_findings(name, &named)
             .iter()
             .filter(|f| matches!(f, rubato_protocol::Finding::IdCollision { .. }))
             .count();
         app.metrics.workspace_id_collisions.record(
             collisions as u64,
-            &[KeyValue::new(attr::WORKSPACE, ws.clone())],
+            &[KeyValue::new(attr::WORKSPACE, ws.to_owned())],
         );
     }
     app.metrics
         .workspace_shared_repos
-        .record(shared_repos(&maps) as u64, &[]);
+        .record(shared_repos(maps.iter().map(|(_, m)| &**m)) as u64, &[]);
     Ok(())
 }
 
 /// Repos named by more than one workspace's map (ADR 0048).
-fn shared_repos(maps: &[(String, LoadedMap)]) -> usize {
+fn shared_repos<'a>(maps: impl Iterator<Item = &'a LoadedMap>) -> usize {
     let mut seen: std::collections::BTreeMap<String, usize> = Default::default();
-    for (_, m) in maps {
+    for m in maps {
         for r in m.map.repos_named() {
             *seen.entry(r.to_ascii_lowercase()).or_default() += 1;
         }
@@ -63,10 +51,16 @@ fn shared_repos(maps: &[(String, LoadedMap)]) -> usize {
     seen.values().filter(|n| **n > 1).count()
 }
 
-async fn refresh_one(app: &App, ws: &str, map: &LoadedMap) -> Result<()> {
+async fn refresh_one(
+    app: &App,
+    ws: &str,
+    map: &LoadedMap,
+    all: &[WorkspaceInfo],
+    maps: &Maps,
+) -> Result<()> {
     let w = || KeyValue::new(attr::WORKSPACE, ws.to_owned());
-    let built = build_overview_inputs(app, ws).await?;
-    let built = build::build(&built, Some(map), &app.config.limits, Utc::now());
+    let built = build_overview_inputs(app, ws, all, maps).await?;
+    let built = build::build(built, Some(map), &app.config.limits, Utc::now());
     let (by_state, by_seam) = build::counts(&built);
     for (state, n) in by_state {
         app.metrics.issues_by_state.record(
