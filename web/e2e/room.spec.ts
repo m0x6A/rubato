@@ -40,7 +40,7 @@ async function post(page: Page, text: string) {
  * Issue #122 (ADR 0057), with two people: what one posts in a plan's room the other reads, and a
  * teammate's request to call the owner's agent in waits until the owner accepts it.
  */
-test("two people talk in a plan's room, and a teammate asks the owner to call their agent in", async ({ page, browser }) => {
+test("two people talk in a plan's room, and a teammate asks the owner to call their agent in", { tag: ["@room.team-talks", "@room.ask-owner-to-call-agent", "@room.owner-calls-agent-in", "@live.changes-reach-every-browser"] }, async ({ page, browser }) => {
   // The issue is pinned; the poll reads its plan on issue/916-room, so it has a room.
   const pinned = await fetch(`${base}/api/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, target: { kind: "node", id: "skill-rubato" } }) });
   expect(pinned.ok).toBe(true);

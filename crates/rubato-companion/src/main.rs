@@ -26,6 +26,11 @@ enum Cmd {
     Pair {
         #[arg(long)]
         server: String,
+        /// Allow an http:// or ws:// server URL that is not loopback. The pairing token and
+        /// launch commands then travel unencrypted on the network. Stored in companion.json, so
+        /// `run` accepts the same URL without the flag; pair again without it to undo.
+        #[arg(long)]
+        insecure: bool,
     },
     /// Run the daemon.
     Run,
@@ -50,17 +55,24 @@ async fn main() -> Result<()> {
     let state_dir = cli.state_dir.clone().unwrap_or_else(state_dir);
     let (ws_path, old_name) = Workspace::resolve(cli.workspace.clone());
     match cli.cmd {
-        Cmd::Pair { server } => {
+        Cmd::Pair { server, insecure } => {
             let _g = telemetry::init("rubato-companion", None)?;
             let hostname = std::fs::read_to_string("/etc/hostname")
                 .map(|s| s.trim().to_owned())
                 .unwrap_or_else(|_| "unknown".into());
-            let state = pairing::pair_and_save(&state_dir, &server, &hostname, VERSION, |start| {
-                eprintln!(
-                    "Open {} while logged in with GitHub and enter the code: {}",
-                    start.verification_url, start.user_code
-                );
-            })
+            let state = pairing::pair_and_save(
+                &state_dir,
+                &server,
+                insecure,
+                &hostname,
+                VERSION,
+                |start| {
+                    eprintln!(
+                        "Open {} while logged in with GitHub and enter the code: {}",
+                        start.verification_url, start.user_code
+                    );
+                },
+            )
             .await?;
             eprintln!(
                 "paired as {} (companion {})",

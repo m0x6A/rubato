@@ -195,6 +195,7 @@ mod tests {
             pairing_token: "t".into(),
             last_seq: 0,
             last_server_seq: 0,
+            allow_plain_http: false,
         }
         .save(dir.path())
         .unwrap();

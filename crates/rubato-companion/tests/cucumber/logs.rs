@@ -41,3 +41,12 @@ pub fn clear() {
 pub fn contains(text: &str) -> bool {
     LINES.lock().unwrap().iter().any(|l| l.contains(text))
 }
+
+pub fn count(text: &str) -> usize {
+    LINES
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|l| l.contains(text))
+        .count()
+}

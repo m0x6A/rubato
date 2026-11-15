@@ -255,6 +255,10 @@ pub struct State {
     /// Last server sequence acknowledged.
     #[serde(default)]
     pub last_server_seq: u64,
+    /// Set by `pair --insecure`: `server_url` may be http/ws off loopback (ADR 0067). Files
+    /// written before the field existed read as false.
+    #[serde(default)]
+    pub allow_plain_http: bool,
 }
 
 impl State {
@@ -297,6 +301,50 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     // In case the file existed with wider permissions.
     std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     Ok(())
+}
+
+/// How a server URL that passed [`check_server_url`] carries the pairing token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// `https`/`wss`, or `http`/`ws` on loopback.
+    Protected,
+    /// `http`/`ws` off loopback, allowed only because the developer paired with `--insecure`.
+    PlainOffLoopback,
+}
+
+/// Refuse a server URL that would carry the pairing token or launch commands in clear text off
+/// this machine (ADR 0067): `https` and `wss` anywhere, `http` and `ws` on loopback
+/// (`localhost`, `127.0.0.0/8`, `::1`), and `http` and `ws` elsewhere only when the developer
+/// opted in with `pair --insecure` (`allow_plain_http` in `companion.json`). Checked before
+/// pairing and before connecting; the caller warns on [`Transport::PlainOffLoopback`].
+pub fn check_server_url(server_url: &str, allow_plain_http: bool) -> Result<Transport> {
+    let url = url::Url::parse(server_url)
+        .with_context(|| format!("server URL {server_url:?} does not parse"))?;
+    let loopback = match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    match url.scheme() {
+        "https" | "wss" => Ok(Transport::Protected),
+        "http" | "ws" if loopback => Ok(Transport::Protected),
+        "http" | "ws" if allow_plain_http => Ok(Transport::PlainOffLoopback),
+        "http" | "ws" => anyhow::bail!(
+            "server URL {server_url} is plain text off loopback; use https://, a tunnel to \
+             127.0.0.1, or accept an unencrypted pairing token with \
+             `rubato-companion pair --insecure --server {server_url}`"
+        ),
+        other => anyhow::bail!("server URL {server_url} has scheme {other}; use https://"),
+    }
+}
+
+/// Logged at pair time and at every start while the `--insecure` opt-in is in use (ADR 0067).
+pub fn warn_plain_http(server_url: &str) {
+    tracing::warn!(
+        server = %server_url,
+        "server URL {server_url} is plain http off loopback (paired with --insecure): the pairing token and launch commands travel unencrypted"
+    );
 }
 
 /// Write a state file readable only by the owner, atomically: a temp file with mode 0600,
@@ -425,6 +473,81 @@ mod tests {
     }
 
     #[test]
+    fn server_urls() {
+        let ok = [
+            "https://rubato.example",
+            "wss://rubato.example",
+            "http://127.0.0.1:8080",
+            "http://127.1.2.3",
+            "http://localhost:8080",
+            "http://LOCALHOST:8080/",
+            "http://[::1]:8080",
+            "ws://127.0.0.1",
+        ];
+        let refused = [
+            "http://rubato.example",
+            "ws://10.0.0.5:8080",
+            "http://localhost.evil.example",
+            "http://127.0.0.1.evil.example",
+            "http://[::ffff:10.0.0.5]",
+            "ftp://127.0.0.1",
+            "not a url",
+        ];
+        // The opt-in (`pair --insecure`) lets plain http/ws off loopback through, flagged.
+        let opt_in_plain = [
+            "http://rubato.example",
+            "ws://10.0.0.5:8080",
+            "http://192.168.1.20:8080",
+        ];
+        // ...and changes nothing else: other schemes and bad URLs stay refused.
+        let opt_in_refused = ["ftp://127.0.0.1", "not a url"];
+        for u in ok {
+            assert_eq!(
+                check_server_url(u, false).unwrap(),
+                Transport::Protected,
+                "{u}"
+            );
+            assert_eq!(
+                check_server_url(u, true).unwrap(),
+                Transport::Protected,
+                "{u}"
+            );
+        }
+        for u in refused {
+            assert!(check_server_url(u, false).is_err(), "{u} should be refused");
+        }
+        let e = format!(
+            "{:#}",
+            check_server_url("http://rubato.example", false).unwrap_err()
+        );
+        assert!(e.contains("--insecure"), "{e}");
+        for u in opt_in_plain {
+            assert_eq!(
+                check_server_url(u, true).unwrap(),
+                Transport::PlainOffLoopback,
+                "{u}"
+            );
+        }
+        for u in opt_in_refused {
+            assert!(check_server_url(u, true).is_err(), "{u} should be refused");
+        }
+        eprintln!(
+            "server_urls: {} accepted, {} refused, {} plain with opt-in, {} refused with opt-in",
+            ok.len(),
+            refused.len(),
+            opt_in_plain.len(),
+            opt_in_refused.len()
+        );
+    }
+
+    #[test]
+    fn an_older_state_file_does_not_allow_plain_http() {
+        let old = r#"{"companion_id":"00000000-0000-0000-0000-000000000001","server_url":"http://x","user":"u","pairing_token":"t"}"#;
+        let s: State = serde_json::from_str(old).unwrap();
+        assert!(!s.allow_plain_http);
+    }
+
+    #[test]
     fn an_atomic_write_is_private_and_leaves_no_temp_file() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
@@ -506,6 +629,7 @@ mod tests {
             pairing_token: "t".into(),
             last_seq: 3,
             last_server_seq: 1,
+            allow_plain_http: false,
         };
         s.save(dir.path()).unwrap();
         let mode = std::fs::metadata(State::path(dir.path()))
