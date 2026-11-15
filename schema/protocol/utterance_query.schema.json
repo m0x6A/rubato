@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UtteranceQuery",
+  "description": "The query of an utterance (`POST` `routes::VOICE_UTTERANCE`); the audio is the body.",
+  "type": "object",
+  "properties": {
+    "branch": {
+      "type": "string"
+    },
+    "id": {
+      "description": "Chosen by the browser; it becomes the room message's id, so a repeat posts once.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "number": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "repo": {
+      "type": "string"
+    },
+    "to": {
+      "description": "An agent's handle in the room: the transcript is posted as `@<to> <transcript>`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "repo",
+    "number",
+    "branch",
+    "id"
+  ]
+}
