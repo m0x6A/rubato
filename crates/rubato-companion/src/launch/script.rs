@@ -5,8 +5,12 @@
 //! hooks), so the script also exports each one as `RUBATO_OTEL_*` for the skill's
 //! `otel-emit.ts` (ADR 0061). The mirror is expanded when the script runs, so a header from the
 //! developer's environment is never written into this file.
+//!
+//! Every value that reaches the script is single-quoted with [`sh_quote`]: some come from the
+//! server (branch, repo, node ids), and the script runs on the developer's machine.
 
 use crate::kernel::config::Workspace;
+use anyhow::{Result, bail};
 use rubato_protocol::LaunchCommand;
 use std::path::Path;
 
@@ -19,9 +23,27 @@ pub const MIRRORED: [&str; 5] = [
     "OTEL_RESOURCE_ATTRIBUTES",
 ];
 
-/// `s` as one single-quoted shell word.
-fn sq(s: &str) -> String {
+/// `s` as one sh word: single-quoted, each `'` written as `'\''`.
+pub fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Refuse a branch or base ref the companion would not create itself: only letters, digits and `._/-`,
+/// no `..` (the worktree path is built from the branch), no leading `-` (read as an option)
+/// or `/`, no empty path part, no `.lock` ending.
+pub fn check_ref(what: &str, r: &str) -> Result<()> {
+    let ok = !r.is_empty()
+        && r.chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        && !r.starts_with(['-', '/'])
+        && !r.ends_with('/')
+        && !r.ends_with(".lock")
+        && !r.contains("..")
+        && !r.contains("//");
+    if !ok {
+        bail!("{what} {r:?} is not a branch name the companion accepts");
+    }
+    Ok(())
 }
 
 pub fn launcher_script(
@@ -31,33 +53,40 @@ pub fn launcher_script(
     hooks: &Path,
     prompt: &Path,
 ) -> String {
+    let q = |s: &str| sh_quote(s);
     let mut s = String::from("#!/bin/sh\n# rubato launch; generated, do not edit\n");
     s.push_str(&format!(
         "export RUBATO_LAUNCH_ID={}\n",
-        sq(&cmd.id.to_string())
+        q(&cmd.id.to_string())
     ));
     if let Some(otel) = &workspace.otel {
         s.push_str("export CLAUDE_CODE_ENABLE_TELEMETRY=1\nexport OTEL_METRICS_EXPORTER=otlp\nexport OTEL_LOGS_EXPORTER=otlp\n");
         s.push_str(&format!(
             "export OTEL_EXPORTER_OTLP_ENDPOINT={}\n",
-            sq(&otel.endpoint)
+            q(&otel.endpoint)
         ));
         s.push_str(&format!(
             "export OTEL_EXPORTER_OTLP_PROTOCOL={}\n",
-            sq(otel.protocol.as_deref().unwrap_or("http/protobuf"))
+            q(otel.protocol.as_deref().unwrap_or("http/protobuf"))
         ));
     }
     let attrs: Vec<String> = cmd
         .otel_resource
         .iter()
-        .map(|(k, v)| format!("{k}={}", v.replace([',', ' '], "_")))
+        .map(|(k, v)| {
+            format!(
+                "{}={}",
+                k.replace([',', ' ', '='], "_"),
+                v.replace([',', ' '], "_")
+            )
+        })
         .collect();
     if !attrs.is_empty() {
         // Merged, not replaced: a `service.namespace` the developer's environment sets is kept.
         // Rubato itself never sets one (#140).
         s.push_str(&format!(
             "export OTEL_RESOURCE_ATTRIBUTES=\"${{OTEL_RESOURCE_ATTRIBUTES:+$OTEL_RESOURCE_ATTRIBUTES,}}\"{}\n",
-            sq(&attrs.join(","))
+            q(&attrs.join(","))
         ));
     }
     for name in MIRRORED {
@@ -65,15 +94,16 @@ pub fn launcher_script(
     }
     s.push_str(&format!(
         "cd {} || exit 1\n",
-        sq(&worktree.display().to_string())
+        q(&worktree.display().to_string())
     ));
+    // `claude_command` is the developer's own config and may carry arguments: left as written.
     s.push_str(&format!(
         "exec {} --session-id {} --settings {} --permission-mode {} \"$(cat {})\"\n",
         workspace.companion.claude_command,
-        sq(&cmd.session_id.to_string()),
-        sq(&hooks.display().to_string()),
-        sq(&workspace.companion.permission_mode),
-        sq(&prompt.display().to_string())
+        q(&cmd.session_id.to_string()),
+        q(&hooks.display().to_string()),
+        q(&workspace.companion.permission_mode),
+        q(&prompt.display().to_string())
     ));
     s
 }
@@ -212,5 +242,44 @@ mod tests {
         assert_eq!(env["RUBATO_OTEL_EXPORTER_OTLP_ENDPOINT"], "http://own:4318");
         assert!(!env.contains_key("CLAUDE_CODE_ENABLE_TELEMETRY"));
         assert_eq!(env["RUBATO_OTEL_EXPORTER_OTLP_HEADERS"], "");
+    }
+
+    #[test]
+    fn quoting_survives_sh() {
+        let nasty = ["plain", "it's", "a'b'c", "'", "$(touch /tmp/x)", "a\nb", ""];
+        for v in nasty {
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("printf '%s' {}", sh_quote(v)))
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), v, "value {v:?}");
+        }
+    }
+
+    #[test]
+    fn refs_the_companion_accepts() {
+        for ok in [
+            "issue/27-launch-without-lock",
+            "origin/main",
+            "issue/3-v0.2",
+            "issue/9-sök-räkna",
+        ] {
+            assert!(check_ref("branch", ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "issue/1-x';touch /tmp/p;'",
+            "issue/1-../../etc",
+            "-b",
+            "/abs",
+            "issue/",
+            "a//b",
+            "x.lock",
+            "issue/1-$(id)",
+            "issue/1 two",
+        ] {
+            assert!(check_ref("branch", bad).is_err(), "{bad:?}");
+        }
     }
 }

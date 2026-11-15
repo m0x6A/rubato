@@ -811,6 +811,8 @@ mod tests {
             server: server.into(),
             calls,
             errors: 0,
+            client_namespace: None,
+            server_namespace: None,
         };
         inputs.traffic = TrafficLatest {
             report: Some(TrafficReport {

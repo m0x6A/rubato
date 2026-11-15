@@ -1,0 +1,36 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": { "client": "web", "server": "rubato-server", "client_service_namespace": "rubato", "server_service_namespace": "rubato" },
+        "value": [1794657600, "1200.4"]
+      },
+      {
+        "metric": { "client": "rubato-server", "server": "github", "client_service_namespace": "rubato" },
+        "value": [1794657600, "300"]
+      },
+      {
+        "metric": { "client": "rubato", "server": "plan-file", "client_service_namespace": "rubato", "server_service_namespace": "" },
+        "value": [1794657600, "12"]
+      },
+      {
+        "metric": { "client": "checkout", "server": "payments", "client_service_namespace": "shop", "server_service_namespace": "shop" },
+        "value": [1794657600, "5"]
+      },
+      {
+        "metric": { "client": "checkout", "server": "payments", "client_service_namespace": "shop-test", "server_service_namespace": "shop-test" },
+        "value": [1794657600, "2"]
+      },
+      {
+        "metric": { "client": "idle", "server": "nobody", "client_service_namespace": "x", "server_service_namespace": "x" },
+        "value": [1794657600, "0"]
+      },
+      {
+        "metric": { "client": "broken", "server": "counter", "client_service_namespace": "x", "server_service_namespace": "x" },
+        "value": [1794657600, "NaN"]
+      }
+    ]
+  }
+}

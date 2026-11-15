@@ -33,6 +33,13 @@ pub struct TrafficEdge {
     pub client: String,
     /// OpenTelemetry `service.name` of the callee.
     pub server: String,
+    /// OpenTelemetry `service.namespace` of the caller, as it emits it; absent when it emits
+    /// none, as a servicegraph virtual node from `peer.service` does (ADR 0059).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_namespace: Option<String>,
+    /// OpenTelemetry `service.namespace` of the callee, as it emits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_namespace: Option<String>,
     /// Requests in the window.
     pub calls: u64,
     /// Of which failed.
@@ -81,11 +88,17 @@ impl TrafficReport {
         if !(MIN_WINDOW_SECS..=MAX_WINDOW_SECS).contains(&self.window_secs) {
             return Err(Rejection::BadWindow);
         }
-        if self
-            .edges
-            .iter()
-            .any(|e| e.client.len() > MAX_NAME_BYTES || e.server.len() > MAX_NAME_BYTES)
-        {
+        if self.edges.iter().any(|e| {
+            [
+                Some(&e.client),
+                Some(&e.server),
+                e.client_namespace.as_ref(),
+                e.server_namespace.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|s| s.len() > MAX_NAME_BYTES)
+        }) {
             return Err(Rejection::NameTooLong);
         }
         Ok(())
@@ -357,12 +370,16 @@ mod tests {
                     server: "b".into(),
                     calls: 10,
                     errors: 1,
+                    client_namespace: None,
+                    server_namespace: None,
                 },
                 TrafficEdge {
                     client: "c".into(),
                     server: "a".into(),
                     calls: 4,
                     errors: 0,
+                    client_namespace: None,
+                    server_namespace: None,
                 },
             ],
             truncated: false,
@@ -445,6 +462,9 @@ mod tests {
         assert_eq!(r.validate(), Err(Rejection::BadWindow));
         let mut r = report(0);
         r.edges[0].client = "x".repeat(MAX_NAME_BYTES + 100);
+        assert_eq!(r.validate(), Err(Rejection::NameTooLong));
+        let mut r = report(0);
+        r.edges[1].server_namespace = Some("n".repeat(MAX_NAME_BYTES + 1));
         assert_eq!(r.validate(), Err(Rejection::NameTooLong));
         let mut r = report(0);
         r.edges = vec![r.edges[0].clone(); MAX_EDGES + 1];

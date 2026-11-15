@@ -48,6 +48,8 @@ pub mod attr {
     pub const SKILL_SUBCOMMAND: &str = "rubato.skill.subcommand";
     /// The exit code of a skill command or a command wrapped by `otel-emit.ts span`.
     pub const EXIT_CODE: &str = "rubato.exit_code";
+    /// Which traffic source answered a fetch (ADR 0040): `dev_file` or `prometheus`.
+    pub const TRAFFIC_SOURCE: &str = "rubato.traffic.source";
 }
 
 /// Metric instrument names.
@@ -231,6 +233,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SKILL_NAME,
         attr::SKILL_SUBCOMMAND,
         attr::EXIT_CODE,
+        attr::TRAFFIC_SOURCE,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::SESSIONS_DISCOVERED,

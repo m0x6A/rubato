@@ -1675,6 +1675,11 @@ calls: number
  */
 client: string
 /**
+ * OpenTelemetry `service.namespace` of the caller, as it emits it; absent when it emits
+ * none, as a servicegraph virtual node from `peer.service` does (ADR 0059).
+ */
+client_namespace?: (string | null)
+/**
  * Of which failed.
  */
 errors?: number
@@ -1682,4 +1687,8 @@ errors?: number
  * OpenTelemetry `service.name` of the callee.
  */
 server: string
+/**
+ * OpenTelemetry `service.namespace` of the callee, as it emits it.
+ */
+server_namespace?: (string | null)
 }
