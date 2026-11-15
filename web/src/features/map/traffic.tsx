@@ -61,7 +61,7 @@ export function unknownSentence(t: Pick<ObservedTraffic, "state" | "observed_at"
 export function trafficLegend(t: ObservedTraffic): { text: string; unmapped: string[]; unmappedCount: number } {
   const window = windowText(t.window_secs ?? 3600);
   return {
-    text: `Observed calls move as chevrons, more of them for more calls. A hollow seam declares a connection nobody used in the last ${window}. A dotted amber line is traffic the map does not declare.`,
+    text: `Observed calls move as chevrons, more of them for more calls. A hollow seam declares a connection nobody used in the last ${window}. A dotted amber line is traffic the map does not declare, and a dashed card at the right is a service that runs but is not on the map.`,
     unmapped: t.unmapped_sample ?? [],
     unmappedCount: t.unmapped_services ?? 0,
   };

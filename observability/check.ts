@@ -39,11 +39,16 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Quiet seams and undeclared edges", "rubato_traffic_seams_quiet"],
   ["Quiet seams and undeclared edges", "rubato_traffic_undeclared_edges"],
   ["Quiet seams and undeclared edges", "rubato_traffic_unmapped_services"],
+  // Issue #140 (ADRs 0059, 0060): the O-row of seam web-server names these.
+  ["Quiet seams and undeclared edges", "rubato_traffic_ghost_parts"],
+  ["Quiet seams and undeclared edges", "rubato_traffic_dismissals"],
   ["Traffic fetches", "rubato_traffic_fetches_total"],
   // Issue #106 (ADR 0043): both O-rows name this panel.
   ["Blocked, by station left from", "rubato_issues_blocked_from"],
   // Issue #105: the Companions panel shows the N that CompanionSilent compares against.
   ["Companions", "rubato_companion_silent_secs"],
+  // Issue #142 (ADR 0061): the O-rows of the skill seams and companion-claude-code name this panel.
+  ["Skills emitting", "traces_service_graph_request_total"],
 ];
 
 type Panel = { title: string; type?: string; targets?: { expr?: string }[] };

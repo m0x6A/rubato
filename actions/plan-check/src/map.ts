@@ -12,6 +12,14 @@ export interface MapNode {
   repo?: string;
   path?: string;
   description?: string;
+  /** The service this part is, as it emits itself (ADR 0059). */
+  service?: ServiceId;
+}
+
+/** OpenTelemetry `service.namespace` and `service.name`; no namespace only where none is emitted. */
+export interface ServiceId {
+  namespace?: string;
+  name: string;
 }
 
 export interface Seam {
@@ -96,6 +104,21 @@ export function structuralProblems(map: SystemMap): string[] {
       problems.push(`duplicate id ${JSON.stringify(id)}`);
     }
     seen.add(id);
+  }
+  // A service is one part (ADR 0059), as `SystemMap::validate` checks.
+  const services = new Map<string, string>();
+  for (const n of map.nodes) {
+    if (!n.service) {
+      continue;
+    }
+    const key = JSON.stringify([n.service.namespace ?? null, n.service.name]);
+    const first = services.get(key);
+    if (first !== undefined) {
+      const shown = n.service.namespace ? `${n.service.namespace}/${n.service.name}` : n.service.name;
+      problems.push(`parts ${JSON.stringify(first)} and ${JSON.stringify(n.id)} both name service ${JSON.stringify(shown)}; a service is one part`);
+    } else {
+      services.set(key, n.id);
+    }
   }
   const nodeIds = new Set(map.nodes.map((n) => n.id));
   for (const s of map.seams ?? []) {
