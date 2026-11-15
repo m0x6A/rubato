@@ -76,7 +76,7 @@ parallel:
 | `GET /repos/{o}/{r}` | the person | `permissions.push`, `allow_merge_commit`, `allow_squash_merge`, `allow_rebase_merge` |
 
 - **Reviews from the team only.** Reviews are shown as the latest state per author among those that
-  pass `trusted_author` (ADR 0027; `github.rs:112`, as the comments pass does at `poll.rs:310`).
+  pass `trusted_author` (ADR 0027; `github.rs:113`, as the comments pass does at `poll.rs:329`).
   The rest are counted as "n reviews from outside the team", without their state.
 - **Cache.** In memory, 30 s per (repo, number); the person's part is keyed with the login. One fetch
   in flight per (repo, number): a second viewer waits on the first. The merge POST's fresh read
@@ -110,21 +110,31 @@ Order, first match wins, each a `rubato_protocol::pulls::reason` constant:
    gate is the only one before CI has registered.)
 6. `not_mergeable` — `mergeable` is false, or still null (A5; the view says "GitHub is still
    checking").
-7. `plan_not_approved` — the issue named by the branch has a plan, and its derived approval does
-   not name the plan **at the head being merged**: the plan file is read at `head_sha` and its
-   `approval_hash` computed (ADR 0027, the approval record left out, ADR 0054); the summary's
-   `approval` must be `Current` (counted, of the plan Rubato holds, fitting the map, ADR 0029) and
-   its record's sha must name that hash. The issue "has a plan" when the file is at the head, **or**
-   its summary has a plan row (`plan_sha`), a draft (ADR 0053), a review or an approval; only when
-   none of these holds is the gate `NoPlan` and passes. A plan deleted from the branch, edited
-   after approval, approved only by a comment after the cutover, or not fitting, is refused.
+7. `plan_not_approved` — the issue named by the branch has a plan, and no counted approval names
+   the plan **at the head being merged**. The plan file is read at `head_sha` (at the plan row's
+   path when there is one, else at the head branch's slug), parsed, and its `approval_hash`
+   computed (ADR 0027, the approval record left out, ADR 0054). The gate opens only when the
+   summary's newest counted approval record (`IssueSummary.approval.record`) names that hash, the
+   head plan fits this workspace's map (ADR 0029), and, for an approval given in Rubato, the head's
+   `approved_by`, `approved_at` (to the second) and `approved_sha` equal Rubato's record (ADR 0054
+   "the merge gate"). The summary's `ApprovalVersion` is not used: it compares with the branch the
+   overview reads, which for a stacked head is another branch. The issue "has a plan" when the
+   file is at the head, **or** its summary has a plan row (`plan_sha`), a draft (ADR 0053), a
+   review or an approval; only when none of these holds is the gate `NoPlan` and passes. A plan
+   deleted from the branch, edited after approval, approved only by a comment after the cutover,
+   not fitting, or carrying a record that is not Rubato's, is refused. **A failed read closes the
+   gate**: a contents error is `unreadable`, never "no file", and a failed summary refuses the POST
+   with 502 `github_failed` (or 500) and the view with `pull view failed`. A Rubato approval covers
+   the bundle; the gate checks the plan only, as ADR 0033 and 0054 ask.
 8. `needs_github_authorization` — no person facts (no token).
 9. `no_push_permission` — `permissions.push` is false.
 10. `method_not_allowed` — the requested method is not among the allowed ones (POST only).
 
 The view returns `MergeOffer{methods, default_method, can_merge, why_not, plan_gate, stacked_above}` (`stacked_above`: open pull requests in the stored listing whose base is this head branch); the button is
 disabled with the reason text. The POST answers 409 with `{reason}` (502 for `github_refused`) and
-counts `rubato.web.rejected{rubato.route=/api/pulls/merge, rubato.reason}`.
+counts `rubato.web.rejected{rubato.route=/api/pulls/merge, rubato.reason}`, and logs `merge refused`
+(info: repo, pr, login, reason, gate why, approved sha, head hash) so one wrong refusal can be
+traced to its record.
 
 ## 4. Merge, at most once (ADR 0033)
 
@@ -139,7 +149,7 @@ counts `rubato.web.rejected{rubato.route=/api/pulls/merge, rubato.reason}`.
 4. **Fresh** facts (bypass the cache; the result replaces the cache entry), including the person's
    repo read with the token, then `merge_refusal`. Any refusal: nothing sent.
 5. `INSERT OR IGNORE` the `opening` row (migration 0025: key `(repo, number, head_sha)`, `login`,
-   `method`, `state` `opening` | `merged`, `merge_sha`, `opened_at`, `updated_at`); losing the race
+   `method`, `state` `opening` | `merged`, `merge_sha`, `listings_open`, `opened_at`, `updated_at`); losing the race
    answers with the winner's row. Two people or two tabs on the same head make one call.
 6. `merge_as(token, repo, number, head_sha, method)` inside span `rubato.pr.merge` (`rubato.repo`,
    `rubato.pr` — a new attribute in `otel.rs` — and `rubato.outcome` recorded on the span).
@@ -149,10 +159,13 @@ counts `rubato.web.rejected{rubato.route=/api/pulls/merge, rubato.reason}`.
      (405 not mergeable or a merge queue, 409 head moved, 403 no permission, 422 validation; also a
      merge that changes `.github/workflows/` when the App lacks the Workflows permission).
    - `Unknown` → row stays `opening`, 202.
-7. **Reconcile**, on every tick, only after a fresh and untruncated listing of that repo: an
+7. **Reconcile**, called by `tasks.rs` right after `github_poll::list_repo_pulls` with the repos
+   listed completely this tick (`pulls` names `github_poll`, so `github_poll` cannot call it),
+   only after a fresh and untruncated listing of that repo: an
    `opening` row whose pull request is no longer listed is checked with `pull` (1 call); `merged_at`
-   set → `merged`, log `merge confirmed by poll` (repo, pr, login). A row whose pull request is still
-   listed open at the same head after two such listings is deleted (GitHub did not merge; a second
+   set → `merged`, log `merge confirmed by poll` (repo, pr, login); closed without `merged_at` →
+   deleted, log `merge not confirmed`. A row whose pull request is still listed open at the same
+   head bumps `listings_open`; at two it is deleted (GitHub did not merge; a second
    PUT is harmless anyway, since `sha` guards it). **Every** `opening` row is deleted at 600 s
    whatever the listing says, log `merge not confirmed` (repo, pr, login). A failed `pull` call logs
    `merge reconcile failed` (repo, pr, error) and leaves the row for the next tick. Gauge
@@ -173,7 +186,7 @@ the POST's fresh reads (the same), 1 PUT as the person, and at most 1 reconcile 
   row shows what Rubato stores — title, labels, last updated, a link to GitHub — and offers *Pin
   to…* (backlog) or opens the existing issue detail (tracked). No issue body is shown: ADR 0026 keeps
   the body excerpt on the server, and the issue's own page is one click away.
-- Issue detail: the existing pull request line (`features/issues/IssuePanel.tsx:135-145`) opens
+- Issue detail: the existing pull request line (`features/issues/IssuePanel.tsx:170-177`) opens
   `PullView` for any state; merged and closed pull requests show their state and no Merge.
 - `PullView` fetches on open and on `WebEvent::Changed` with reason `merge` or `poll`; shows body
   (text), check runs with links, team reviews (latest per reviewer) and the outside-team count, the
@@ -190,7 +203,7 @@ the POST's fresh reads (the same), 1 PUT as the person, and at most 1 reconcile 
   files per ref (existing `file`), repo permissions per login, a listing that can truncate,
   `merge_as` that records `(login, repo, number, sha, method)` and supports `merge_refused`,
   `merge_times_out` (posted or not). Every method pushes onto `calls`.
-- `local.rs` (dev e2e, bare repos, `web/e2e/run.sh:44`): `RUBATO_DEV_PULLS` JSON seeds open pull
+- `local.rs` (dev e2e, bare repos, `web/e2e/run.sh:66`): `RUBATO_DEV_PULLS` JSON seeds open pull
   requests; `merge_as` merges with `git merge-tree --write-tree`, `git commit-tree -p <base> -p
   <head>` and `git update-ref refs/heads/<base> <new> <old>` (the old value mimics GitHub's head
   guard); a conflicting tree is refused as 405.
