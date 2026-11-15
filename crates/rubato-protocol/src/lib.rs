@@ -4,6 +4,7 @@
 //! frontend consumes the JSON Schema exported from it (`schema/protocol/`). A breaking
 //! change here is a seam change (`companion-server`, `web-server`) and blocks.
 
+pub mod agent;
 pub mod approve;
 pub mod auth;
 pub mod github;
@@ -36,6 +37,7 @@ pub mod traffic;
 pub mod web_link;
 pub mod workspace;
 
+pub use agent::{AgentReport, BranchStatus, DraftStatus, PlanStatus};
 pub use approve::{
     ApproveRequest, ApproveResponse, ApproveState, DraftApproveRequest, DraftApproveResponse,
 };

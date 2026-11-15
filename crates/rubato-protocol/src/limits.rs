@@ -56,3 +56,8 @@ impl Default for Limits {
         }
     }
 }
+
+/// The longest `doing` line of an `AgentReport` (ADR 0071); the companion cuts longer ones.
+pub const AGENT_DOING_MAX_CHARS: usize = 200;
+/// The most map ids an `AgentReport` names (ADR 0071); the companion keeps the first ones.
+pub const AGENT_PARTS_MAX: usize = 8;

@@ -1,0 +1,11 @@
+{
+  "seq": 12,
+  "sent_at": "2026-11-15T12:00:05Z",
+  "message": {
+    "type": "agent_report",
+    "launch_id": "9b2e4d1a-3c5f-4e6a-9b7c-8d9e0f1a2b3c",
+    "doing": "designing the auth seam",
+    "parts": ["rubato-companion", "companion-mcp"],
+    "at": "2026-11-15T12:00:00Z"
+  }
+}

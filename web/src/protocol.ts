@@ -45,7 +45,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | AgentReport1 | {
 seq: number
 type: "ack"
 })
@@ -489,7 +489,7 @@ limits: Limits
 protocol_version: number
 server_version: string
 type: "welcome"
-} | LaunchCommand1 | SessionMessage | {
+} | LaunchCommand1 | SessionMessage | PlanStatus1 | {
 seq: number
 type: "ack"
 } | {
@@ -586,6 +586,7 @@ repo: string
 })
 
 export interface RubatoProtocol {
+AgentReport?: AgentReport
 ApproveRequest?: ApproveRequest
 ApproveResponse?: ApproveResponse
 CallInRequest?: CallInRequest
@@ -632,6 +633,7 @@ PairStartResponse?: PairStartResponse
 PairingInfo?: PairingInfo
 PinRequest?: PinRequest
 Plan?: Plan
+PlanStatus?: PlanStatus
 Progress?: Progress
 ProposeResponse?: ProposeResponse
 PullDetail?: PullDetail
@@ -650,6 +652,32 @@ StaleSession?: StaleSession1
 SystemMap?: SystemMap
 TrafficReport?: TrafficReport
 WebEvent?: WebEvent
+}
+/**
+ * What a launched session's agent said it is doing, through `report_status` (ADR 0071). A
+ * signal with its own time, never a progress state: the server shows the newest per launch and
+ * never derives progress from it.
+ */
+export interface AgentReport {
+/**
+ * When the agent called `report_status`.
+ */
+at: string
+/**
+ * One line, at most 200 characters (`limits::AGENT_DOING_MAX_CHARS`).
+ */
+doing: string
+/**
+ * The launch the companion resolved from the call's `X-Rubato-Launch`, never from what the
+ * agent said.
+ */
+launch_id: string
+/**
+ * Map ids the agent says it is on, at most 8 (`limits::AGENT_PARTS_MAX`).
+ * 
+ * @maxItems 8
+ */
+parts?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]
 }
 /**
  * Approve the plan of `issue` as it is now. `sha` is the plan's approval hash the person saw
@@ -844,6 +872,32 @@ type: "handoff_report"
  */
 export interface RoomReply {
 type: "room_reply"
+}
+/**
+ * What a launched session's agent said it is doing, through `report_status` (ADR 0071). A
+ * signal with its own time, never a progress state: the server shows the newest per launch and
+ * never derives progress from it.
+ */
+export interface AgentReport1 {
+/**
+ * When the agent called `report_status`.
+ */
+at: string
+/**
+ * One line, at most 200 characters (`limits::AGENT_DOING_MAX_CHARS`).
+ */
+doing: string
+/**
+ * The launch the companion resolved from the call's `X-Rubato-Launch`, never from what the
+ * agent said.
+ */
+launch_id: string
+/**
+ * Map ids the agent says it is on, at most 8 (`limits::AGENT_PARTS_MAX`).
+ * 
+ * @maxItems 8
+ */
+parts?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]
 }
 /**
  * A decision recorded as an issue comment with the `Decision:` template (ADR 0014).
@@ -2409,6 +2463,62 @@ issue: IssueRef
 target: MapRef
 }
 /**
+ * Where the plan of one launched session stands, as the server derives it (ADR 0071). The
+ * companion keeps the newest per launch and answers `plan_status` from it.
+ */
+export interface PlanStatus {
+/**
+ * The newest counted approval and whether it is of the current version; an approval whose
+ * version is not `current` does not cover the plan as it is.
+ */
+approval?: (ApprovalState | null)
+/**
+ * When the server derived it.
+ */
+as_of: string
+/**
+ * The plan on the issue branch, when there is one.
+ */
+branch?: (BranchStatus | null)
+/**
+ * The newest settled revision of the launch's draft (ADR 0053).
+ */
+draft?: (DraftStatus | null)
+launch_id: string
+/**
+ * The issue's newest counted design review.
+ */
+review?: (ReviewRecord | null)
+}
+export interface BranchStatus {
+/**
+ * Whether the plan on the branch carries the approval record (ADR 0054).
+ */
+carries_approval: boolean
+/**
+ * The plan's hash at the branch head.
+ */
+sha: string
+}
+export interface DraftStatus {
+/**
+ * When the revision settled.
+ */
+at: string
+/**
+ * Whether the revision's plan fits the map.
+ */
+fits: boolean
+/**
+ * The revision's plan hash, as an approval names it.
+ */
+plan_sha: string
+/**
+ * Revision number, 1-based.
+ */
+rev: number
+}
+/**
  * Answer of `POST /api/map/draft/propose`.
  */
 export interface ProposeResponse {
@@ -2702,6 +2812,34 @@ export interface RoomKey {
 branch: string
 number: number
 repo: string
+}
+/**
+ * Where the plan of one launched session stands, as the server derives it (ADR 0071). The
+ * companion keeps the newest per launch and answers `plan_status` from it.
+ */
+export interface PlanStatus1 {
+/**
+ * The newest counted approval and whether it is of the current version; an approval whose
+ * version is not `current` does not cover the plan as it is.
+ */
+approval?: (ApprovalState | null)
+/**
+ * When the server derived it.
+ */
+as_of: string
+/**
+ * The plan on the issue branch, when there is one.
+ */
+branch?: (BranchStatus | null)
+/**
+ * The newest settled revision of the launch's draft (ADR 0053).
+ */
+draft?: (DraftStatus | null)
+launch_id: string
+/**
+ * The issue's newest counted design review.
+ */
+review?: (ReviewRecord | null)
 }
 /**
  * Web → server: send this text to the launch's session.
