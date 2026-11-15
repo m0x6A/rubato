@@ -57,6 +57,10 @@ impl HookEventKind {
     }
 }
 
+/// Payload keys kept in `HookEvent::payload`; every other key stays on the developer's machine
+/// (#166). Tool input and output, prompts and messages are never forwarded.
+pub const PAYLOAD_ALLOWLIST: [&str; 3] = ["hook_event_name", "notification_type", "tool_name"];
+
 /// One hook invocation. Common stdin fields are lifted; the full payload travels in `payload`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct HookEvent {
@@ -76,13 +80,16 @@ pub struct HookEvent {
     pub tool_name: Option<String>,
     /// When the companion received it.
     pub received_at: DateTime<Utc>,
+    // Only the keys in `PAYLOAD_ALLOWLIST` (#166). The doc comment below is the schema
+    // description on the companion-server seam; it is left as it was (plan 166, Q1).
     /// The raw hook payload, for traces and for fields this version does not lift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
 }
 
 impl HookEvent {
-    /// Lift the common fields out of a raw Claude Code hook payload.
+    /// Lift the common fields out of a raw Claude Code hook payload, and keep only the
+    /// `PAYLOAD_ALLOWLIST` keys of it in `payload`. A payload that is not an object keeps none.
     pub fn from_payload(payload: serde_json::Value, received_at: DateTime<Utc>) -> Option<Self> {
         let s = |k: &str| payload.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         let hook_event_name = payload
@@ -99,7 +106,7 @@ impl HookEvent {
             notification_type: s("notification_type"),
             tool_name: s("tool_name"),
             received_at,
-            payload: Some(payload),
+            payload: allowlisted(&payload),
         })
     }
 
@@ -114,6 +121,16 @@ impl HookEvent {
     }
 }
 
+/// The `PAYLOAD_ALLOWLIST` keys of a hook payload, or `None` when it is not an object.
+fn allowlisted(payload: &serde_json::Value) -> Option<serde_json::Value> {
+    let obj = payload.as_object()?;
+    let kept: serde_json::Map<String, serde_json::Value> = PAYLOAD_ALLOWLIST
+        .iter()
+        .filter_map(|k| obj.get(*k).map(|v| ((*k).to_owned(), v.clone())))
+        .collect();
+    Some(serde_json::Value::Object(kept))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,12 +142,49 @@ mod tests {
     }
 
     #[test]
-    fn lifts_common_fields_and_keeps_payload() {
-        let p = json!({"session_id":"abc","hook_event_name":"Notification","cwd":"/w","notification_type":"permission_prompt","transcript_path":"/t.jsonl"});
-        let e = HookEvent::from_payload(p.clone(), fixed_now()).unwrap();
+    fn lifts_common_fields_and_keeps_the_allowlisted_payload() {
+        let p = json!({"session_id":"abc","hook_event_name":"Notification","cwd":"/w","notification_type":"permission_prompt","transcript_path":"/t.jsonl","message":"Claude needs your permission"});
+        let e = HookEvent::from_payload(p, fixed_now()).unwrap();
         assert_eq!(e.hook_event_name, HookEventKind::Notification);
         assert_eq!(e.implied_status(), Some(SessionStatus::Blocked));
-        assert_eq!(e.payload, Some(p));
+        assert_eq!(e.transcript_path.as_deref(), Some("/t.jsonl"));
+        assert_eq!(
+            e.payload,
+            Some(json!({"hook_event_name":"Notification","notification_type":"permission_prompt"}))
+        );
+    }
+
+    /// Every key of a payload is kept exactly when it is on the allowlist.
+    #[test]
+    fn payload_keeps_only_the_allowlist() {
+        let p = json!({
+            "session_id": "abc",
+            "hook_event_name": "PreToolUse",
+            "cwd": "/w",
+            "transcript_path": "/t.jsonl",
+            "permission_mode": "default",
+            "notification_type": "idle_prompt",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/w/.env"},
+            "tool_response": {"content": "TOKEN=x"},
+            "prompt": "p",
+            "message": "m",
+            "something_new_2027": "?",
+        });
+        let e = HookEvent::from_payload(p.clone(), fixed_now()).unwrap();
+        let kept = e.payload.unwrap();
+        let kept = kept.as_object().unwrap();
+        let mut checked = 0;
+        for (k, v) in p.as_object().unwrap() {
+            if PAYLOAD_ALLOWLIST.contains(&k.as_str()) {
+                assert_eq!(kept.get(k), Some(v), "{k} dropped");
+            } else {
+                assert!(!kept.contains_key(k), "{k} kept");
+            }
+            checked += 1;
+        }
+        assert_eq!(kept.len(), PAYLOAD_ALLOWLIST.len());
+        println!("checked {checked} payload keys");
     }
 
     #[test]
@@ -194,6 +248,33 @@ mod tests {
         assert_eq!(Notification.implied_status(Some("auth_success")), None);
         assert_eq!(Notification.implied_block_cause(Some("auth_success")), None);
         println!("checked {checked} hook kinds and notification types");
+    }
+
+    /// #166: tool input, tool output and prompts never leave the companion.
+    #[test]
+    fn post_tool_use_secret_does_not_leave_the_companion() {
+        let p = json!({
+            "session_id": "abc",
+            "hook_event_name": "PostToolUse",
+            "cwd": "/w",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cat .env"},
+            "tool_response": {"stdout": "SECRET", "stderr": ""},
+            "prompt": "my private prompt",
+        });
+        let e = HookEvent::from_payload(p, fixed_now()).unwrap();
+        let msg = crate::CompanionMessage::Hook(e);
+        let s = serde_json::to_string(&msg).unwrap();
+        for leaked in [
+            "SECRET",
+            "cat .env",
+            "my private prompt",
+            "tool_input",
+            "tool_response",
+        ] {
+            assert!(!s.contains(leaked), "{leaked} in {s}");
+        }
+        assert!(s.contains("\"Bash\""), "{s}");
     }
 
     #[test]

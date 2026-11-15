@@ -187,4 +187,29 @@ mod tests {
             Some(CompanionMessage::Sessions { .. })
         ));
     }
+
+    /// #166: what the arm sends to the server carries no tool input, tool output or prompt.
+    #[tokio::test]
+    async fn forwarded_hook_carries_no_tool_output() {
+        let id = Uuid::new_v4();
+        let (_reader, metrics) = metric_reader::start();
+        let registry = Mutex::new(Registry::new(id, "m0x6A"));
+        let (out, mut sent) = mpsc::unbounded_channel();
+        let ev = HookEvent::from_payload(
+            serde_json::json!({"session_id": "s1", "hook_event_name": "PostToolUse", "cwd": "/x",
+                "tool_name": "Bash", "tool_input": {"command": "cat .env"},
+                "tool_response": {"stdout": "SECRET"}, "prompt": "private"}),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        on_event(&ev, &registry, &out, &metrics, id).await;
+        let Some(msg @ CompanionMessage::Hook(_)) = sent.recv().await else {
+            panic!("first message is the hook");
+        };
+        let wire = serde_json::to_string(&msg).unwrap();
+        for leaked in ["SECRET", "cat .env", "private"] {
+            assert!(!wire.contains(leaked), "{leaked} in {wire}");
+        }
+        assert!(wire.contains("\"Bash\""), "{wire}");
+    }
 }
