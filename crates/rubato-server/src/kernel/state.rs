@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 pub struct CompanionConn {
     pub tx: mpsc::UnboundedSender<ServerMessage>,
+    /// New per socket: only the socket that inserted the entry removes it (#161).
+    pub conn: Uuid,
 }
 
 #[derive(Debug, Clone)]
