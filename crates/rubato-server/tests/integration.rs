@@ -865,6 +865,163 @@ async fn bad_and_revoked_tokens_are_refused() {
     assert!(tokio_tungstenite::connect_async(revoked).await.is_err());
 }
 
+type CompanionWs =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// The next server message, or `None` once the socket has closed. Panics if the socket stays
+/// open and silent: that is the bug in #161.
+async fn next_or_closed(ws: &mut CompanionWs) -> Option<ServerMessage> {
+    let next = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+        .await
+        .expect("the socket stayed open");
+    match next {
+        Some(Ok(Message::Text(t))) => {
+            Some(serde_json::from_str::<ServerEnvelope>(&t).unwrap().message)
+        }
+        _ => None,
+    }
+}
+
+async fn snapshots_of(h: &Harness, companion_id: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM session_snapshots WHERE companion_id = ?")
+        .bind(companion_id.to_string())
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap()
+}
+
+/// #161: revoking a connected companion ends its socket, and what it sends after is not stored.
+#[tokio::test]
+async fn a_revoked_companion_is_disconnected_and_stores_nothing() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+
+    let Some(ServerMessage::Error { code, .. }) = next_or_closed(&mut ws).await else {
+        panic!("no auth error after revoke")
+    };
+    assert_eq!(code, "auth");
+    assert!(
+        next_or_closed(&mut ws).await.is_none(),
+        "the socket closes after the error"
+    );
+    let sessions = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    let _ = ws
+        .send(Message::Text(
+            serde_json::to_string(&sessions).unwrap().into(),
+        ))
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(snapshots_of(&h, companion_id).await, 0, "nothing stored");
+    println!("checked 1 revoked socket: error, close, 0 snapshots");
+}
+
+/// #161: an envelope on a socket whose pairing was revoked behind its back is refused before
+/// anything is recorded, whatever the in-memory table says.
+#[tokio::test]
+async fn an_envelope_after_revocation_is_dropped() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    sqlx::query("UPDATE pairings SET revoked_at = '2026-11-15T00:00:00Z' WHERE companion_id = ?")
+        .bind(companion_id.to_string())
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let sessions = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    ws.send(Message::Text(
+        serde_json::to_string(&sessions).unwrap().into(),
+    ))
+    .await
+    .unwrap();
+    let reply = next_or_closed(&mut ws).await;
+    assert!(
+        matches!(&reply, Some(ServerMessage::Error { code, .. }) if code == "auth"),
+        "{reply:?}"
+    );
+    assert!(
+        next_or_closed(&mut ws).await.is_none(),
+        "then the socket closes"
+    );
+    assert_eq!(snapshots_of(&h, companion_id).await, 0, "nothing stored");
+    let events: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM companion_events WHERE companion_id = ?")
+            .bind(companion_id.to_string())
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap();
+    assert_eq!(events, 1, "only the hello was recorded");
+    println!("checked 1 envelope after revocation: refused, 0 snapshots, 1 event");
+}
+
+/// #161: a second connection for one companion closes the first, and the first's exit does not
+/// take the second out of the table.
+#[tokio::test]
+async fn a_second_connection_replaces_the_first() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: issue.clone(),
+            target: MapRef::node("skill-rubato"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut first = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut first, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    let mut second = h.connect(&token).await;
+    let mut hello2 = hello;
+    hello2.seq = 2;
+    assert!(matches!(
+        send(&mut second, &hello2).await,
+        ServerMessage::Welcome { .. }
+    ));
+    assert!(
+        next_or_closed(&mut first).await.is_none(),
+        "the older socket is closed"
+    );
+    // Let the older socket's handler finish its exit before launching.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": issue, "slug": "skill", "companion_id": companion_id }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let Some(ServerMessage::Launch(_)) = next_or_closed(&mut second).await else {
+        panic!("the launch reaches the newer socket")
+    };
+    println!("checked 2 connections for 1 companion: older closed, newer launched");
+}
+
 /// ADR 0062: a headless companion says so in its Hello; its lane keeps the badge offline, and an
 /// older Hello without `client` reads as interactive.
 #[tokio::test]

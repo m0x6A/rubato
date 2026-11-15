@@ -30,8 +30,9 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim)
-        .unwrap_or("");
-    let pairing = match pairing::authenticate(&app.db, token).await {
+        .unwrap_or("")
+        .to_owned();
+    let pairing = match pairing::authenticate(&app.db, &token).await {
         Ok(Some(p)) if p.revoked_at.is_none() => p,
         Ok(_) => {
             app.metrics
@@ -44,7 +45,35 @@ pub async fn upgrade(State(app): State<App>, headers: HeaderMap, ws: WebSocketUp
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    ws.on_upgrade(move |socket| handle(app, pairing, socket))
+    ws.on_upgrade(move |socket| handle(app, pairing, token, socket))
+}
+
+/// The pairing again, read by the socket's token before an envelope is recorded (#161). `None`
+/// when it was revoked, re-paired with another token, or cannot be read: the envelope is
+/// refused and the socket closed. Counted as `rubato.events.dropped{rubato.reason="revoked"}`.
+async fn still_paired(
+    app: &App,
+    token: &str,
+    companion_id: Uuid,
+    seq: u64,
+) -> Option<pairing::PairingRow> {
+    let row = match pairing::authenticate(&app.db, token).await {
+        Ok(Some(p)) if p.revoked_at.is_none() && p.companion_id == companion_id => return Some(p),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::error!(rubato.companion_id = %companion_id, error = %e, "pairing re-check failed");
+            None
+        }
+    };
+    refuse_revoked(&app.metrics, companion_id, seq);
+    row
+}
+
+fn refuse_revoked(metrics: &Metrics, companion_id: Uuid, seq: u64) {
+    tracing::warn!(rubato.companion_id = %companion_id, seq, "envelope from a revoked pairing dropped");
+    metrics
+        .events_dropped
+        .add(1, &[KeyValue::new(attr::DROP_REASON, "revoked")]);
 }
 
 /// A bookkeeping write on the companion socket that failed. The envelope is still answered,
@@ -75,15 +104,16 @@ async fn send_env(
     }
 }
 
-async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
+async fn handle(app: App, mut pairing: pairing::PairingRow, token: String, socket: WebSocket) {
     let companion_id = pairing.companion_id;
     let user = pairing.user.clone();
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
-    app.companions
-        .lock()
-        .unwrap()
-        .insert(companion_id, CompanionConn::new(tx, app.clock.now()));
+    let entry = CompanionConn::new(tx, app.clock.now());
+    let conn = entry.conn;
+    // A newer socket for the same companion replaces the entry; dropping the older sender
+    // closes the older socket below.
+    app.companions.lock().unwrap().insert(companion_id, entry);
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
@@ -91,23 +121,22 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
     tracing::info!(%companion_id, %user, "companion connected");
     app.notify("companion connected");
 
-    loop {
+    let reason = loop {
         tokio::select! {
             msg = rx.recv() => {
                 // The sender is gone: the pairing was revoked (`pairing::revoke` drops it after
-                // its `Error { auth }`). Close, so nothing more from this companion is applied
-                // (ADR 0062). Before, the arm was only disabled and the socket stayed open.
+                // its `Error { auth }`), or a newer socket replaced this one. Close, so nothing
+                // more from this companion is applied (ADR 0062, #161).
                 let Some(msg) = msg else {
-                    tracing::warn!(%companion_id, "companion socket closed: pairing revoked");
                     let _ = sink.close().await;
-                    break;
+                    break "sender_dropped";
                 };
                 if !send_env(&app, companion_id, &mut sink, msg).await {
-                    break;
+                    break "closed";
                 }
             }
             inbound = stream.next() => {
-                let Some(Ok(frame)) = inbound else { break };
+                let Some(Ok(frame)) = inbound else { break "closed" };
                 match frame {
                     Message::Text(text) => {
                         let env: CompanionEnvelope = match serde_json::from_str(&text) {
@@ -118,26 +147,43 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
                                 continue;
                             }
                         };
+                        let Some(fresh) = still_paired(&app, &token, companion_id, env.seq).await else {
+                            let _ = send_env(&app, companion_id, &mut sink, ServerMessage::Error {
+                                code: "auth".into(),
+                                message: "pairing revoked".into(),
+                            }).await;
+                            let _ = sink.send(Message::Close(None)).await;
+                            break "revoked";
+                        };
+                        pairing = fresh;
                         if let Some(reply) = on_envelope(&app, &pairing, env).await
                             && !send_env(&app, companion_id, &mut sink, reply).await {
-                            break;
+                            break "closed";
                         }
                     }
                     Message::Ping(p) => {
                         let _ = sink.send(Message::Pong(p)).await;
                     }
-                    Message::Close(_) => break,
+                    Message::Close(_) => break "closed",
                     _ => {}
                 }
             }
         }
+    };
+    {
+        let mut companions = app.companions.lock().unwrap();
+        if companions
+            .get(&companion_id)
+            .is_some_and(|c| c.conn == conn)
+        {
+            companions.remove(&companion_id);
+        }
     }
-    app.companions.lock().unwrap().remove(&companion_id);
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
     );
-    tracing::info!(%companion_id, "companion disconnected");
+    tracing::info!(%companion_id, reason, "companion disconnected");
     app.notify("companion disconnected");
 }
 
@@ -528,6 +574,18 @@ mod tests {
             Some("someone/else"),
             "not in the map: unchanged"
         );
+    }
+
+    #[test]
+    fn a_revoked_envelope_is_counted_as_dropped_revoked() {
+        let (reader, metrics) = metric_reader::start();
+        refuse_revoked(&metrics, Uuid::new_v4(), 4);
+        let points = reader.points(metric::EVENTS_DROPPED);
+        let revoked = points
+            .iter()
+            .find(|p| p.attrs[attr::DROP_REASON] == "revoked")
+            .map(|p| p.value);
+        assert_eq!(revoked, Some(1), "{points:?}");
     }
 
     fn session(companion_id: Uuid, status: SessionStatus) -> SessionState {
