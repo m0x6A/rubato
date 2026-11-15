@@ -60,7 +60,7 @@ pub enum RefusalReason {
     AttemptLimitReached,
     /// A session for this issue is already running on this machine.
     AlreadyRunning,
-    /// tmux-ide or claude missing or below the pinned version.
+    /// tmux or claude missing or below the pinned version.
     MissingDependency,
 }
 

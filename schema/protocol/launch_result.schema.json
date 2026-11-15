@@ -130,7 +130,7 @@
           "const": "already_running"
         },
         {
-          "description": "tmux-ide or claude missing or below the pinned version.",
+          "description": "tmux or claude missing or below the pinned version.",
           "type": "string",
           "const": "missing_dependency"
         }

@@ -32,7 +32,10 @@ pub mod attr {
     pub const PLAN_UNKNOWN_IDS: &str = "rubato.plan.unknown_ids";
     pub const PLAN_O_ROWS_MISSING: &str = "rubato.plan.o_rows_missing";
     pub const GITHUB_ENDPOINT: &str = "rubato.github.endpoint";
+    /// Deprecated (ADR 0070): never emitted; removed with the map change of plan 147.
     pub const TMUX_IDE_VERSION: &str = "rubato.tmux_ide.version";
+    /// The tmux version a companion found at start (`tmux -V`, ADR 0070).
+    pub const TMUX_VERSION: &str = "rubato.tmux.version";
     pub const DROP_REASON: &str = "rubato.reason";
     pub const SUBSCRIBERS: &str = "rubato.subscribers";
     pub const CAP_KIND: &str = "rubato.cap.kind";
@@ -193,6 +196,9 @@ pub mod metric {
     /// Headless turns the companion killed, by `rubato.reason`: `stop`, `cap`, `revoke`,
     /// `timeout`, `quiet`, `companion_restarted`. `HeadlessTurnsKilled` fires on the last three.
     pub const HEADLESS_KILLED: &str = "rubato.headless.killed";
+    /// Companion: launch results, by `rubato.outcome` (`started`, `refused`, `failed`) and, for a
+    /// refusal, `rubato.reason` (the refusal reason); with `rubato.companion_id` (ADR 0070).
+    pub const LAUNCHES: &str = "rubato.launches";
     /// Session log entries stored, by role and kind (ADR 0052).
     pub const SESSION_LOG_ENTRIES: &str = "rubato.session_log.entries";
     /// Hooks that should have made a log entry and did not, by reason (`no_text`, `no_prompt_id`).
@@ -254,7 +260,11 @@ pub mod metric {
 pub mod span {
     pub const LAUNCH: &str = "rubato.launch";
     pub const HOOK_FORWARD: &str = "rubato.hook.forward";
+    /// Deprecated (ADR 0070): the `tmux-ide team --json` poll, replaced by `RECONCILE`.
     pub const TEAM_POLL: &str = "rubato.team_poll";
+    /// Companion: one reconcile cycle (`tmux list-panes`, identity, snapshot), with
+    /// `rubato.companion_id` and an error status when `tmux list-panes` fails (ADR 0070).
+    pub const RECONCILE: &str = "rubato.reconcile";
     pub const INBOUND_EVENT: &str = "rubato.inbound_event";
     pub const GITHUB_CALL: &str = "rubato.github.call";
     pub const WS_FANOUT: &str = "rubato.ws.fanout";
@@ -343,6 +353,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::PLAN_O_ROWS_MISSING,
         attr::GITHUB_ENDPOINT,
         attr::TMUX_IDE_VERSION,
+        attr::TMUX_VERSION,
         attr::DROP_REASON,
         attr::SUBSCRIBERS,
         attr::CAP_KIND,
@@ -427,6 +438,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_INPUT_FAILED,
         metric::HEADLESS_TURNS,
         metric::HEADLESS_KILLED,
+        metric::LAUNCHES,
         metric::SESSION_LOG_ENTRIES,
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
@@ -441,6 +453,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
+        span::RECONCILE,
         span::INBOUND_EVENT,
         span::GITHUB_CALL,
         span::WS_FANOUT,
