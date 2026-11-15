@@ -82,6 +82,8 @@ pub struct Metrics {
     /// Blocked issues by the station they left from (ADR 0043).
     pub issues_blocked_from: Gauge<u64>,
     pub events_dropped: Counter<u64>,
+    /// Hook payload keys removed before storing (#190).
+    pub events_scrubbed: Counter<u64>,
     pub rate_limit_remaining: Gauge<u64>,
     pub rate_limit_limit: Gauge<u64>,
     pub plan_parse_failures: Counter<u64>,
@@ -146,6 +148,7 @@ impl Metrics {
             issues_by_state: m.u64_gauge(otel::metric::ISSUES_BY_STATE).build(),
             issues_blocked_from: m.u64_gauge(otel::metric::ISSUES_BLOCKED_FROM).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
+            events_scrubbed: m.u64_counter(otel::metric::EVENTS_SCRUBBED).build(),
             rate_limit_remaining: m
                 .u64_gauge(otel::metric::GITHUB_RATE_LIMIT_REMAINING)
                 .build(),

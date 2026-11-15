@@ -119,6 +119,33 @@ impl HookEvent {
         self.hook_event_name
             .implied_block_cause(self.notification_type.as_deref())
     }
+
+    /// Keep only the `PAYLOAD_ALLOWLIST` keys of `payload`, as a companion from before #166
+    /// did not (#190). Returns how many it removed.
+    pub fn scrub(&mut self) -> usize {
+        scrub_payload(&mut self.payload)
+    }
+}
+
+/// Cut a received or stored hook payload down to the `PAYLOAD_ALLOWLIST` keys, in place, with
+/// the same rule as `HookEvent::from_payload`. Returns how many keys it removed; a payload that
+/// is not an object becomes `None` and counts as one.
+pub fn scrub_payload(payload: &mut Option<serde_json::Value>) -> usize {
+    let Some(p) = payload.as_ref() else {
+        return 0;
+    };
+    let Some(obj) = p.as_object() else {
+        *payload = None;
+        return 1;
+    };
+    let removed = obj
+        .keys()
+        .filter(|k| !PAYLOAD_ALLOWLIST.contains(&k.as_str()))
+        .count();
+    if removed > 0 {
+        *payload = allowlisted(p);
+    }
+    removed
 }
 
 /// The `PAYLOAD_ALLOWLIST` keys of a hook payload, or `None` when it is not an object.
@@ -275,6 +302,46 @@ mod tests {
             assert!(!s.contains(leaked), "{leaked} in {s}");
         }
         assert!(s.contains("\"Bash\""), "{s}");
+    }
+
+    /// #190: the server applies the same allowlist to an old companion's payload, and counts.
+    #[test]
+    fn scrub_payload_counts_what_it_removes() {
+        let full = json!({
+            "session_id": "abc",
+            "hook_event_name": "PostToolUse",
+            "cwd": "/w",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cat .env"},
+            "tool_response": {"stdout": "SECRET"},
+            "prompt": "p",
+        });
+        let mut p = Some(full);
+        assert_eq!(
+            scrub_payload(&mut p),
+            5,
+            "session_id, cwd, tool_input, tool_response, prompt"
+        );
+        assert_eq!(
+            p,
+            Some(json!({"hook_event_name":"PostToolUse","tool_name":"Bash"}))
+        );
+        assert_eq!(
+            scrub_payload(&mut p),
+            0,
+            "an allowlisted payload is left as it is"
+        );
+
+        let mut not_object = Some(json!("SECRET"));
+        assert_eq!(scrub_payload(&mut not_object), 1);
+        assert_eq!(not_object, None);
+        let mut none = None;
+        assert_eq!(scrub_payload(&mut none), 0);
+
+        let mut e = HookEvent::from_payload(json!({"session_id":"abc"}), fixed_now()).unwrap();
+        e.payload = Some(json!({"hook_event_name":"Stop","message":"m"}));
+        assert_eq!(e.scrub(), 1);
+        assert_eq!(e.payload, Some(json!({"hook_event_name":"Stop"})));
     }
 
     #[test]

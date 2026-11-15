@@ -36,7 +36,7 @@ pub use github::{
     ApprovalBody, ApprovalRecord, ApprovalState, ApprovalVersion, ChecksStatus, DecisionBody,
     DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, trusted_author,
 };
-pub use hook::{HookEvent, HookEventKind};
+pub use hook::{HookEvent, HookEventKind, PAYLOAD_ALLOWLIST, scrub_payload};
 pub use ids::{IssueRef, MapRef, ParseIssueRefError};
 pub use issue_body::{
     MapPlacement, PinSuggestion, map_line, map_line_in, parse_map_line, parse_map_placement,

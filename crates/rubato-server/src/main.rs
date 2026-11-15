@@ -5,7 +5,7 @@ use rubato_server::kernel::github::{
 };
 use rubato_server::kernel::state::AppState;
 use rubato_server::kernel::{db, telemetry};
-use rubato_server::{app, map, tasks};
+use rubato_server::{app, companion_link, map, tasks};
 use std::future::IntoFuture;
 use std::sync::Arc;
 
@@ -83,6 +83,10 @@ async fn main() -> Result<()> {
     };
     let bind = config.bind;
     let state = AppState::new(pool, config, github);
+    // Hook payloads older companions left behind (#190). A failure is logged, not fatal.
+    if let Err(e) = companion_link::sweep_stored(&state.db, &state.metrics).await {
+        tracing::error!(error = %e, "scrubbing stored hook payloads failed");
+    }
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

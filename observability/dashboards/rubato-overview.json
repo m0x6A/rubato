@@ -165,6 +165,11 @@
           "refId": "A",
           "expr": "sum by (rubato_reason) (rate(rubato_events_dropped_total[5m]))",
           "legendFormat": "__auto"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_reason) (rate(rubato_events_scrubbed_total[5m]))",
+          "legendFormat": "scrubbed {{rubato_reason}}"
         }
       ],
       "fieldConfig": {

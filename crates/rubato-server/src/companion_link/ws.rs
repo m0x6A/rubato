@@ -154,9 +154,12 @@ fn on_replay(metrics: &Metrics, companion_id: Uuid, env: &CompanionEnvelope) {
 async fn on_envelope(
     app: &App,
     pairing: &pairing::PairingRow,
-    env: CompanionEnvelope,
+    mut env: CompanionEnvelope,
 ) -> Option<ServerMessage> {
     let companion_id = pairing.companion_id;
+    if let CompanionMessage::Hook(h) = &mut env.message {
+        super::scrub::on_receipt(&app.metrics, h); // before it is recorded (#190)
+    }
     let kind = match &env.message {
         CompanionMessage::Hello { .. } => "hello",
         CompanionMessage::Heartbeat(_) => "heartbeat",
@@ -643,5 +646,60 @@ mod tests {
         );
         assert_eq!(failed[0].fields.get("seq").map(String::as_str), Some("3"));
         assert_eq!(spend_count(&reader, "failed"), 1);
+    }
+
+    /// #190: a companion from before #166 sends the whole hook stdin; the server keeps only the
+    /// allowlist and counts what it removed.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_old_companions_hook_is_stored_without_its_tool_output() {
+        use sqlx::Row;
+        let (app, reader, pairing, _tmp) = spend_app().await;
+        let hook: rubato_protocol::HookEvent = serde_json::from_value(serde_json::json!({
+            "session_id": "s1",
+            "hook_event_name": "PostToolUse",
+            "cwd": "/w",
+            "tool_name": "Bash",
+            "received_at": "2026-11-15T08:00:00Z",
+            "payload": {
+                "session_id": "s1",
+                "hook_event_name": "PostToolUse",
+                "cwd": "/w",
+                "tool_name": "Bash",
+                "tool_input": {"command": "cat .env"},
+                "tool_response": {"stdout": "SECRET"},
+            },
+        }))
+        .unwrap();
+        let env = CompanionEnvelope {
+            seq: 1,
+            sent_at: Utc::now(),
+            message: CompanionMessage::Hook(hook),
+        };
+        let reply = on_envelope(&app, &pairing, env).await;
+        assert!(
+            matches!(reply, Some(ServerMessage::Ack { seq: 1 })),
+            "{reply:?}"
+        );
+        let stored: String =
+            sqlx::query("SELECT payload FROM companion_events WHERE kind = 'hook'")
+                .fetch_one(&app.db)
+                .await
+                .unwrap()
+                .get("payload");
+        for leaked in ["SECRET", "cat .env", "tool_input", "tool_response"] {
+            assert!(!stored.contains(leaked), "{leaked} in {stored}");
+        }
+        let v: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            v["payload"],
+            serde_json::json!({"hook_event_name": "PostToolUse", "tool_name": "Bash"})
+        );
+        let points = reader.points(metric::EVENTS_SCRUBBED);
+        assert_eq!(points.len(), 1, "{points:?}");
+        assert_eq!(
+            points[0].value, 4,
+            "session_id, cwd, tool_input, tool_response"
+        );
+        assert_eq!(points[0].attrs[attr::DROP_REASON], "receipt");
     }
 }

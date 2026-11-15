@@ -61,6 +61,10 @@ pub mod metric {
     /// `rubato.issues.by_state`.
     pub const ISSUES_BLOCKED_FROM: &str = "rubato.issues.blocked_from";
     pub const EVENTS_DROPPED: &str = "rubato.events.dropped";
+    /// Server counter: hook payload keys outside `PAYLOAD_ALLOWLIST` removed before storing, by
+    /// `rubato.reason`: `receipt` (an envelope from a companion older than #166) or `stored`
+    /// (the startup sweep of `companion_events`, #190).
+    pub const EVENTS_SCRUBBED: &str = "rubato.events.scrubbed";
     pub const GITHUB_RATE_LIMIT_REMAINING: &str = "rubato.github.rate_limit.remaining";
     pub const GITHUB_RATE_LIMIT_LIMIT: &str = "rubato.github.rate_limit.limit";
     pub const PLAN_PARSE_FAILURES: &str = "rubato.plan.parse_failures";
@@ -213,6 +217,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::ISSUES_BY_STATE,
         metric::ISSUES_BLOCKED_FROM,
         metric::EVENTS_DROPPED,
+        metric::EVENTS_SCRUBBED,
         metric::GITHUB_RATE_LIMIT_REMAINING,
         metric::GITHUB_RATE_LIMIT_LIMIT,
         metric::PLAN_PARSE_FAILURES,
