@@ -1,8 +1,8 @@
 # 0069. Write the app's user scenarios in Gherkin as the spec, and have every e2e test cite the scenarios it covers
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #198) — an agent may propose; a human accepts
+- **Decided by:** Mattias Jonsson (m0x6A), accepted in the Claude Code session 2026-11-15; drafted by agent (Claude Code, claude-opus-5-5, issue #198)
 - **Seam:** none (a data format and a way of working: the scenario files, the scenario ids and the results files the coverage report reads)
 - **Issue:** m0x6A/rubato#198
 
