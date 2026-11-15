@@ -32,8 +32,6 @@ pub mod attr {
     pub const PLAN_UNKNOWN_IDS: &str = "rubato.plan.unknown_ids";
     pub const PLAN_O_ROWS_MISSING: &str = "rubato.plan.o_rows_missing";
     pub const GITHUB_ENDPOINT: &str = "rubato.github.endpoint";
-    /// Deprecated (ADR 0070): never emitted; removed with the map change of plan 147.
-    pub const TMUX_IDE_VERSION: &str = "rubato.tmux_ide.version";
     /// The tmux version a companion found at start (`tmux -V`, ADR 0070).
     pub const TMUX_VERSION: &str = "rubato.tmux.version";
     pub const DROP_REASON: &str = "rubato.reason";
@@ -292,8 +290,6 @@ pub mod metric {
 pub mod span {
     pub const LAUNCH: &str = "rubato.launch";
     pub const HOOK_FORWARD: &str = "rubato.hook.forward";
-    /// Deprecated (ADR 0070): the `tmux-ide team --json` poll, replaced by `RECONCILE`.
-    pub const TEAM_POLL: &str = "rubato.team_poll";
     /// Companion: one reconcile cycle (`tmux list-panes`, identity, snapshot), with
     /// `rubato.companion_id` and an error status when `tmux list-panes` fails (ADR 0070).
     pub const RECONCILE: &str = "rubato.reconcile";
@@ -393,7 +389,6 @@ pub fn all_names() -> Vec<&'static str> {
         attr::PLAN_UNKNOWN_IDS,
         attr::PLAN_O_ROWS_MISSING,
         attr::GITHUB_ENDPOINT,
-        attr::TMUX_IDE_VERSION,
         attr::TMUX_VERSION,
         attr::RECONCILE_PANES,
         attr::DROP_REASON,
@@ -506,7 +501,6 @@ pub fn all_names() -> Vec<&'static str> {
         metric::VOICE_JOIN_FAILED,
         span::LAUNCH,
         span::HOOK_FORWARD,
-        span::TEAM_POLL,
         span::RECONCILE,
         span::INBOUND_EVENT,
         span::GITHUB_CALL,
