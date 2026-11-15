@@ -374,6 +374,7 @@ impl RubatoWorld {
             otel_resource: otel,
             map_version: Some("test".into()),
             plan_path: Some(format!("docs/plans/{issue}.md")),
+            draft: None,
             planning: Default::default(),
         }
     }

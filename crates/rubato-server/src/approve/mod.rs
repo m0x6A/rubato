@@ -34,7 +34,7 @@ mod tests;
 #[cfg(test)]
 mod handoff_tests;
 
-pub use deliver::{approval_url, deliver_to_launch, plan_approved};
+pub use deliver::{approval_url, deliver_to_launch, on_launch_started, plan_approved};
 pub use draft::approve_draft;
 pub use handlers::approve;
 pub use handoff::on_handoff_report;

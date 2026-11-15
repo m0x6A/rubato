@@ -163,6 +163,7 @@ impl Registry {
                 hooks_lost,
                 pasted: Vec::new(),
                 plan_path: r.plan_path,
+                restored_hash: None,
             });
             restored += 1;
         }

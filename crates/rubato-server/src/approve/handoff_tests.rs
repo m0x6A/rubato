@@ -106,6 +106,7 @@ async fn insert_launch(app: &App, launch: Uuid, companion: Uuid, issue: &IssueRe
         otel_resource: Default::default(),
         map_version: None,
         plan_path: Some(PLAN.into()),
+        draft: None,
         planning: Default::default(),
     };
     sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)")
@@ -736,6 +737,68 @@ async fn the_reconcile_records_the_handoff_gauges() {
         gauge(&h, metric::PLANS_HANDOFF_OVERDUE),
         [0],
         "a plan_changed is not current"
+    );
+}
+
+async fn messages_of(h: &H, launch: Uuid) -> Vec<rubato_protocol::SessionMessageView> {
+    session_messages::list(
+        State(h.app.clone()),
+        CurrentUser(OWNER.into()),
+        Path(launch),
+    )
+    .await
+    .unwrap()
+    .0
+    .messages
+}
+
+/// ADR 0053, plan 122 §D5: an approval given while no session of the draft was live waits; the
+/// next launch of the draft gets it first when it reports Started, and a later launch gets no
+/// second one while that one is open. A handed-off approval waits for nothing.
+#[tokio::test]
+async fn a_waiting_approval_goes_to_the_next_launch_of_the_draft() {
+    let h = harness().await;
+    let text = plan_text("one");
+    mirror(&h, &text).await;
+    let a = approve_as(&h, "teammate", &text).await;
+    assert!(
+        messages_of(&h, h.launch).await.is_empty(),
+        "no live session: it waits"
+    );
+
+    let next = Uuid::from_u128(9);
+    insert_launch(&h.app, next, h.companion, &issue()).await;
+    super::on_launch_started(&h.app, next).await;
+    let bound = messages_of(&h, next).await;
+    assert_eq!(bound.len(), 1, "{bound:?}");
+    assert_eq!(bound[0].kind, "plan_approved");
+    assert_eq!(bound[0].author, "teammate");
+
+    let third = Uuid::from_u128(10);
+    insert_launch(&h.app, third, h.companion, &issue()).await;
+    super::on_launch_started(&h.app, third).await;
+    assert!(
+        messages_of(&h, third).await.is_empty(),
+        "one plan_approved per approval while it is open"
+    );
+
+    // Handed off: a later launch has nothing waiting, even with the first message gone.
+    sqlx::query("UPDATE session_messages SET state = 'failed'")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    on_handoff_report(
+        &h.app,
+        h.companion,
+        &report(next, a.approval_id, HandoffOutcome::Committed, &[]),
+    )
+    .await;
+    let fourth = Uuid::from_u128(11);
+    insert_launch(&h.app, fourth, h.companion, &issue()).await;
+    super::on_launch_started(&h.app, fourth).await;
+    assert!(
+        messages_of(&h, fourth).await.is_empty(),
+        "committed: nothing to hand off"
     );
 }
 

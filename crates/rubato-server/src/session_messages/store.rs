@@ -69,6 +69,19 @@ fn row(r: &SqliteRow) -> Result<MessageRow> {
 
 const COLUMNS: &str = "id, launch_id, session_id, companion_id, owner, repo, number, kind, body, author, priority, state, created_at, pushed_at, outcome_at, detail";
 
+/// Whether a `plan_approved` for this approval is queued, in flight, typed, or of unknown
+/// outcome (ADR 0055): a later launch must not get a second one. A refused or failed one is not.
+pub async fn plan_approved_open(db: &SqlitePool, approval_id: Uuid) -> Result<bool> {
+    Ok(sqlx::query(
+        "SELECT 1 FROM session_messages WHERE kind = 'plan_approved' AND json_extract(body, '$.approval_id') = ? \
+         AND state IN ('queued', 'sent', 'delivered', 'delivery_unknown') LIMIT 1",
+    )
+    .bind(approval_id.to_string())
+    .fetch_optional(db)
+    .await?
+    .is_some())
+}
+
 pub async fn insert(db: &SqlitePool, m: &MessageRow) -> Result<()> {
     sqlx::query(&format!(
         "INSERT INTO session_messages ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"

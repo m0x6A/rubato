@@ -42,6 +42,11 @@ pub struct LaunchCommand {
     /// mirrors, with the bundle it names (ADR 0053). Absent from an older server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_path: Option<String>,
+    /// The newest settled revision of the launcher's parked draft on this branch, for the
+    /// companion to write into a worktree this launch creates (ADR 0053, plan 122 §D5). Sent
+    /// only to a companion that announced `draft_restore`, and only while no plan is on the branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<crate::plan_draft::DraftRestore>,
     /// How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.
     #[serde(default, skip_serializing_if = "crate::handoff::PlanningMode::is_git")]
     pub planning: crate::handoff::PlanningMode,
@@ -69,6 +74,12 @@ pub enum LaunchResult {
         worktree: String,
         tmux_session: String,
         at: DateTime<Utc>,
+        /// The command's `draft` was written into the new worktree (ADR 0053).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        draft_restored: bool,
+        /// Why the command's `draft` was not written, when it was not.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        restore_skipped: Option<crate::plan_draft::RestoreSkipped>,
     },
     Refused {
         command_id: Uuid,
@@ -112,6 +123,10 @@ pub struct LaunchRequest {
     /// Branch slug; derived from the issue title when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slug: Option<String>,
+    /// The branch to launch on, `issue/<n>-<slug>`: one of the caller's drafts of the issue
+    /// when they own several (ADR 0053); otherwise the only one, or a slug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_cap_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,4 +144,10 @@ pub struct LaunchResponse {
 /// Route path for launches.
 pub mod routes {
     pub const LAUNCH: &str = "/api/launch";
+}
+
+/// Why a launch was refused before it reached a companion, in the body's first word.
+pub mod reason {
+    /// The caller owns several drafts of the issue: `LaunchRequest.branch` names which.
+    pub const PASS_BRANCH: &str = "pass_branch";
 }

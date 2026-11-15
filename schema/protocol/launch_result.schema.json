@@ -14,9 +14,24 @@
           "type": "string",
           "format": "uuid"
         },
+        "draft_restored": {
+          "description": "The command's `draft` was written into the new worktree (ADR 0053).",
+          "type": "boolean"
+        },
         "outcome": {
           "type": "string",
           "const": "started"
+        },
+        "restore_skipped": {
+          "description": "Why the command's `draft` was not written, when it was not.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RestoreSkipped"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "session_id": {
           "type": "string",
@@ -118,6 +133,21 @@
           "description": "tmux-ide or claude missing or below the pinned version.",
           "type": "string",
           "const": "missing_dependency"
+        }
+      ]
+    },
+    "RestoreSkipped": {
+      "description": "Why a companion did not write a launch's draft (ADR 0053, plan 122 §D5).",
+      "oneOf": [
+        {
+          "description": "The launch reused a worktree whose files differ from the draft: they are left alone.",
+          "type": "string",
+          "const": "worktree_differs"
+        },
+        {
+          "description": "A path is absolute or leaves the worktree: nothing was written.",
+          "type": "string",
+          "const": "path_outside"
         }
       ]
     }

@@ -228,3 +228,31 @@ describe("kept current over /ws/web", () => {
     expect(readSeen(DRAFT)).toBe(3);
   });
 });
+
+describe("resuming a parked draft (ADR 0053, plan 122 §D5)", () => {
+  const owner: Me = { login: "Alice" };
+
+  it("offers its owner a resume on the draft's branch when it is parked", async () => {
+    serve();
+    const resume = vi.fn();
+    render(<DraftSection issue={drafted({ live: false })} me={owner} onResume={resume} />);
+    fireEvent.click(await screen.findByRole("button", { name: `Resume on ${BRANCH}` }));
+    expect(resume).toHaveBeenCalledWith(BRANCH);
+    expect(screen.getByTestId("draft")).toHaveTextContent("revision 3 is written into a new worktree");
+  });
+
+  it("offers nothing while it is being worked on, to a teammate, or with no companion of yours", async () => {
+    serve();
+    const { unmount } = render(<DraftSection issue={drafted({ live: true })} me={owner} onResume={vi.fn()} />);
+    await screen.findAllByRole("button", { name: /^Revision \d+/ });
+    expect(screen.queryByTestId("resume-draft")).not.toBeInTheDocument();
+    unmount();
+    const again = render(<DraftSection issue={drafted({ live: false })} me={colleague} onResume={vi.fn()} />);
+    await screen.findAllByRole("button", { name: /^Revision \d+/ });
+    expect(screen.queryByTestId("resume-draft")).not.toBeInTheDocument();
+    again.unmount();
+    render(<DraftSection issue={drafted({ live: false })} me={owner} />);
+    await screen.findAllByRole("button", { name: /^Revision \d+/ });
+    expect(screen.queryByTestId("resume-draft")).not.toBeInTheDocument();
+  });
+});

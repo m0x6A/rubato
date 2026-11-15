@@ -3,6 +3,7 @@
 //! `--settings` (hooks) and the OTel resource attributes.
 
 use super::apply::LiveSession;
+use super::restore::{Restored, restore};
 use super::script::{check_ref, launcher_script, sh_quote};
 use crate::hooks::{HOOKS_TEMPLATE, render_hooks};
 use crate::kernel::config::{HookEndpoint, Workspace, write_private};
@@ -29,6 +30,8 @@ pub struct Started {
     pub pane_id: String,
     pub tmux_session: String,
     pub worktree: PathBuf,
+    /// What happened to the command's draft (plan 122 §D5); default when it carried none.
+    pub draft: Restored,
 }
 
 fn refused(cmd: &LaunchCommand, reason: RefusalReason, detail: impl Into<String>) -> LaunchResult {
@@ -131,6 +134,8 @@ impl Launcher {
                     worktree: started.worktree.to_string_lossy().into_owned(),
                     tmux_session: started.tmux_session.clone(),
                     at: Utc::now(),
+                    draft_restored: started.draft.restored,
+                    restore_skipped: started.draft.skipped,
                 },
                 Some(started),
             ),
@@ -154,15 +159,23 @@ impl Launcher {
             .with_context(|| format!("{} is not in workspace.yml repos", cmd.issue.repo))?;
         gitx::fetch(&repo.local, self.workspace.companion.command_timeout())
             .context("git fetch")?;
-        let worktree = match gitx::worktrees(&repo.local)?
+        let (worktree, created) = match gitx::worktrees(&repo.local)?
             .into_iter()
             .find(|(_, b)| b.as_deref() == Some(cmd.branch.as_str()))
         {
-            Some((path, _)) => path,
-            None => self
-                .tmux_ide
-                .worktree_create(&repo.local, &cmd.branch, &cmd.base_ref)
-                .context("tmux-ide worktree create")?,
+            Some((path, _)) => (path, false),
+            None => (
+                self.tmux_ide
+                    .worktree_create(&repo.local, &cmd.branch, &cmd.base_ref)
+                    .context("tmux-ide worktree create")?,
+                true,
+            ),
+        };
+        // Before the session starts, so the agent finds the draft on its first turn. Only a
+        // worktree this launch created is written (ADR 0053).
+        let draft = match &cmd.draft {
+            Some(d) => restore(&worktree, d, created).context("restoring the draft")?,
+            None => Restored::default(),
         };
         let launch_dir = self.state_dir.join("launches").join(cmd.id.to_string());
         std::fs::create_dir_all(&launch_dir)?;
@@ -206,6 +219,7 @@ impl Launcher {
             pane_id,
             tmux_session: name,
             worktree,
+            draft,
         })
     }
 }

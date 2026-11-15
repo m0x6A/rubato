@@ -171,6 +171,7 @@ mod tests {
             ]),
             map_version: None,
             plan_path: None,
+            draft: None,
             planning: PlanningMode::Git,
         }
     }

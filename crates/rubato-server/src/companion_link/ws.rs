@@ -289,6 +289,22 @@ async fn on_envelope(
                     Ok(Some(issue)) => {
                         tracing::info!(rubato.issue = %issue, outcome = ?std::mem::discriminant(&result), "launch result");
                         settle_queue(app, companion_id, &issue, &result).await;
+                        if let rubato_protocol::LaunchResult::Started {
+                            command_id,
+                            draft_restored,
+                            restore_skipped,
+                            ..
+                        } = &result
+                        {
+                            // ADR 0053, plan 122 §D5: what became of the draft, and an approval
+                            // that waited for this launch.
+                            if *draft_restored {
+                                tracing::info!(rubato.issue = %issue, launch_id = %command_id, "draft restored into the new worktree");
+                            } else if let Some(why) = restore_skipped {
+                                tracing::warn!(rubato.issue = %issue, launch_id = %command_id, reason = why.name(), "draft not restored");
+                            }
+                            approve::on_launch_started(app, *command_id).await;
+                        }
                     }
                     Ok(None) => tracing::warn!("launch result for an unknown command"),
                     Err(e) => tracing::error!(error = %e, "storing launch result"),

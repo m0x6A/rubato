@@ -18,7 +18,8 @@ interface Props {
   selection: MapRef | null;
   onSelect: (issue: IssueRef | null) => void;
   onClearSelection: () => void;
-  onLaunch: (issue: IssueRef) => void;
+  /** `branch` resumes one of the caller's drafts on it (ADR 0053). */
+  onLaunch: (issue: IssueRef, branch?: string) => void;
   /** Adds a pin; an issue may have several. The keyboard twin of dropping a row on the map. */
   onPin: (issue: IssueRef, target: MapRef) => void;
   onUnpin: (req: PinRequest) => void;
@@ -142,7 +143,9 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             </table>
           </>
         )}
-        {selected.draft && <DraftSection issue={selected} me={me} approvalsInRubato={Boolean(overview.comment_approvals_until)} />}
+        {selected.draft && (
+          <DraftSection issue={selected} me={me} approvalsInRubato={Boolean(overview.comment_approvals_until)} onResume={own.length > 0 ? (branch) => onLaunch(selected.issue, branch) : undefined} />
+        )}
         {(selected.plan || selected.fit) && (
           <>
             <h3 style={{ marginTop: 12 }}>Plan · {selected.plan?.path ?? "does not parse"}</h3>

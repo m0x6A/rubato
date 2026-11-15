@@ -60,6 +60,7 @@ pub async fn on_command(
         reg.end_launch();
         if let Some(s) = started {
             reg.apply_launch(cmd, &s.pane_id, &s.tmux_session, &s.worktree, Utc::now());
+            reg.set_restored_hash(cmd.id, s.draft.bundle_hash.clone());
             // Kept across a companion restart (plan 122 §D1).
             save_launches_if_changed(&mut reg, &launcher.state_dir);
         }
@@ -181,6 +182,7 @@ mod tests {
             otel_resource: BTreeMap::new(),
             map_version: None,
             plan_path: None,
+            draft: None,
             planning: Default::default(),
         }
     }

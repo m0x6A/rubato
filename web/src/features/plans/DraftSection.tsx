@@ -16,10 +16,21 @@ const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
  * the owner's session is working on it, what changed since you last looked (on this device), and
  * every revision's files. Everyone reads drafts; nothing here writes one.
  */
-export function DraftSection({ issue, me, approvalsInRubato = false }: { issue: IssueSummary; me: Me | null; approvalsInRubato?: boolean }) {
+export function DraftSection({
+  issue,
+  me,
+  approvalsInRubato = false,
+  onResume,
+}: {
+  issue: IssueSummary;
+  me: Me | null;
+  approvalsInRubato?: boolean;
+  /** Start a session of yours on the draft's branch; absent with no companion of yours connected. */
+  onResume?: ((branch: string) => void) | undefined;
+}) {
   const d = issue.draft;
   // Keyed by the draft, so another issue's draft starts with its own "last looked at".
-  return d ? <Draft key={d.draft_id} issue={issue} d={d} me={me} approvalsInRubato={approvalsInRubato} /> : null;
+  return d ? <Draft key={d.draft_id} issue={issue} d={d} me={me} approvalsInRubato={approvalsInRubato} onResume={onResume} /> : null;
 }
 
 interface RevisionState {
@@ -51,7 +62,19 @@ function useRevision(read: (rev: number) => Promise<DraftRevision>, rev: number 
   return rev !== null && state?.rev === rev ? state : null;
 }
 
-function Draft({ issue, d, me, approvalsInRubato }: { issue: IssueSummary; d: DraftSummary; me: Me | null; approvalsInRubato: boolean }) {
+function Draft({
+  issue,
+  d,
+  me,
+  approvalsInRubato,
+  onResume,
+}: {
+  issue: IssueSummary;
+  d: DraftSummary;
+  me: Me | null;
+  approvalsInRubato: boolean;
+  onResume: ((branch: string) => void) | undefined;
+}) {
   const heading = useId();
   const id = d.draft_id;
   // The server says `updated` for this draft when a revision is stored.
@@ -108,6 +131,14 @@ function Draft({ issue, d, me, approvalsInRubato }: { issue: IssueSummary; d: Dr
         </span>
       </p>
       {!d.live && <p className="muted">No session of {d.owner}'s is working on it; the draft waits in Rubato.</p>}
+      {!d.live && onResume && me && sameLogin(me.login, d.owner) && (
+        <p>
+          <button type="button" data-testid="resume-draft" onClick={() => onResume(d.branch)}>
+            Resume on {d.branch}
+          </button>{" "}
+          <span className="muted">starts a session on your companion; revision {d.rev} is written into a new worktree</span>
+        </p>
+      )}
       {d.parse_error && <p className="warn">The plan does not parse: {d.parse_error}</p>}
       {missing.length > 0 && (
         <div className="warn">

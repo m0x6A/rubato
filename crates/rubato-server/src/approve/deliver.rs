@@ -79,6 +79,60 @@ pub async fn deliver_to_launch(
     .await
 }
 
+/// A launch reported Started (ADR 0053, plan 122 §D5): the newest approval of the draft on its
+/// branch that still waits (current, owned by the launcher, not handed off, with no
+/// `plan_approved` open) goes to this launch first. A parked draft's approval reaches the next
+/// session of it this way.
+pub async fn on_launch_started(app: &App, launch_id: Uuid) {
+    if let Err(e) = bind_waiting(app, launch_id).await {
+        tracing::error!(rubato.launch_id = %launch_id, error = %format!("{e:#}"), "binding a waiting plan approval failed");
+    }
+}
+
+async fn bind_waiting(app: &App, launch_id: Uuid) -> Result<()> {
+    let Some(t) = crate::launch::launch_target(&app.db, launch_id).await? else {
+        return Ok(());
+    };
+    let Some(branch) = t.branch.as_deref() else {
+        return Ok(());
+    };
+    let drafts = crate::plan_drafts::latest_drafts(app).await?;
+    let mut waiting: Vec<RubatoApproval> = Vec::new();
+    for a in super::records::all(&app.db).await? {
+        let current_owned = drafts.iter().any(|d| {
+            d.summary.draft_id == a.draft_id
+                && d.summary.plan_sha == a.plan_sha
+                && d.summary.owner.eq_ignore_ascii_case(&t.user)
+        });
+        let handed_off = a.handoff.as_ref().is_some_and(|h| h.outcome == "committed");
+        if a.issue == t.issue
+            && a.branch == branch
+            && current_owned
+            && !handed_off
+            && !session_messages::plan_approved_open(&app.db, a.id).await?
+        {
+            waiting.push(a);
+        }
+    }
+    let Some(a) = waiting.into_iter().max_by_key(|a| a.approved_at) else {
+        return Ok(());
+    };
+    let plan_path = t
+        .plan_path
+        .clone()
+        .unwrap_or_else(|| format!("docs/plans/{}.md", a.issue.number));
+    if let Some(id) = deliver_to_launch(app, &a, &plan_path, launch_id).await? {
+        tracing::info!(
+            rubato.issue = %a.issue,
+            rubato.approval_id = %a.id,
+            rubato.launch_id = %launch_id,
+            rubato.session_message.id = %id,
+            "plan approval bound to the new launch"
+        );
+    }
+    Ok(())
+}
+
 /// A new approval: to the owner's live launched session, or waiting for one.
 pub(super) async fn on_recorded(app: &App, a: &RubatoApproval, owner: &str, plan_path: &str) {
     let now = app.clock.now();

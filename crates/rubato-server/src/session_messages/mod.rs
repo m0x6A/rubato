@@ -16,6 +16,7 @@ pub use dispatch::{
 };
 pub use enqueue::{PLAN_APPROVED_PRIORITY, enqueue};
 pub use handlers::{list, send};
+pub use store::plan_approved_open;
 
 /// When each approval's `plan_approved` was typed into its session, by approval id.
 pub async fn plan_approved_delivered(

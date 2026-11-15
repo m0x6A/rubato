@@ -46,7 +46,15 @@ export type SessionStatus = (("working" | "idle" | "blocked" | "ended") | "unkno
 export type LaunchResult = ({
 at: string
 command_id: string
+/**
+ * The command's `draft` was written into the new worktree (ADR 0053).
+ */
+draft_restored?: boolean
 outcome: "started"
+/**
+ * Why the command's `draft` was not written, when it was not.
+ */
+restore_skipped?: (RestoreSkipped | null)
 session_id: string
 tmux_session: string
 worktree: string
@@ -62,6 +70,10 @@ command_id: string
 error: string
 outcome: "failed"
 })
+/**
+ * Why a companion did not write a launch's draft (ADR 0053, plan 122 §D5).
+ */
+export type RestoreSkipped = ("worktree_differs" | "path_outside")
 export type RefusalReason = ("attempt_limit_reached" | "not_paired_user" | "already_running" | "missing_dependency")
 /**
  * The answer to one `SessionMessage` (ADR 0051).
@@ -300,7 +312,15 @@ export type SessionMessageState = (("delivered" | "refused" | "failed") | "queue
 export type LaunchResult1 = ({
 at: string
 command_id: string
+/**
+ * The command's `draft` was written into the new worktree (ADR 0053).
+ */
+draft_restored?: boolean
 outcome: "started"
+/**
+ * Why the command's `draft` was not written, when it was not.
+ */
+restore_skipped?: (RestoreSkipped | null)
 session_id: string
 tmux_session: string
 worktree: string
@@ -1287,6 +1307,12 @@ base_ref: string
  * `issue/<n>-<slug>`.
  */
 branch: string
+/**
+ * The newest settled revision of the launcher's parked draft on this branch, for the
+ * companion to write into a worktree this launch creates (ADR 0053, plan 122 §D5). Sent
+ * only to a companion that announced `draft_restore`, and only while no plan is on the branch.
+ */
+draft?: (DraftRestore | null)
 id: string
 issue: IssueRef
 /**
@@ -1329,6 +1355,17 @@ spend_cap_usd: number
  * GitHub login the command is addressed to.
  */
 user: string
+}
+/**
+ * Server → companion, in `LaunchCommand.draft`: a parked draft's newest settled revision.
+ */
+export interface DraftRestore {
+draft_id: string
+/**
+ * Repository paths, relative, as `bundle_paths` gives them; the plan first.
+ */
+files: DraftFile[]
+rev: number
 }
 /**
  * A launch's log, oldest first.
@@ -1410,6 +1447,11 @@ text: string
  */
 export interface LaunchRequest {
 attempt_limit?: (number | null)
+/**
+ * The branch to launch on, `issue/<n>-<slug>`: one of the caller's drafts of the issue
+ * when they own several (ADR 0053); otherwise the only one, or a slug.
+ */
+branch?: (string | null)
 /**
  * One of the caller's companions; the only connected one when omitted.
  */
@@ -2145,6 +2187,12 @@ base_ref: string
  * `issue/<n>-<slug>`.
  */
 branch: string
+/**
+ * The newest settled revision of the launcher's parked draft on this branch, for the
+ * companion to write into a worktree this launch creates (ADR 0053, plan 122 §D5). Sent
+ * only to a companion that announced `draft_restore`, and only while no plan is on the branch.
+ */
+draft?: (DraftRestore | null)
 id: string
 issue: IssueRef
 /**

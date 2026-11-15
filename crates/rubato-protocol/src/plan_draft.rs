@@ -46,6 +46,34 @@ pub struct DraftBundle {
     pub at: DateTime<Utc>,
 }
 
+/// Server → companion, in `LaunchCommand.draft`: a parked draft's newest settled revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DraftRestore {
+    pub draft_id: Uuid,
+    pub rev: u32,
+    /// Repository paths, relative, as `bundle_paths` gives them; the plan first.
+    pub files: Vec<DraftFile>,
+}
+
+/// Why a companion did not write a launch's draft (ADR 0053, plan 122 §D5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreSkipped {
+    /// The launch reused a worktree whose files differ from the draft: they are left alone.
+    WorktreeDiffers,
+    /// A path is absolute or leaves the worktree: nothing was written.
+    PathOutside,
+}
+
+impl RestoreSkipped {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::WorktreeDiffers => "worktree_differs",
+            Self::PathOutside => "path_outside",
+        }
+    }
+}
+
 /// A draft as the overview carries it, per issue: its newest settled revision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DraftSummary {
