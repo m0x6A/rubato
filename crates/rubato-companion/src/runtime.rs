@@ -220,7 +220,8 @@ async fn run(
         },
         seq,
         cfg.state.last_server_seq,
-    );
+    )
+    .allow_plain_http(cfg.state.allow_plain_http);
 
     let mut tasks = Tasks::default();
     tasks.spawn(

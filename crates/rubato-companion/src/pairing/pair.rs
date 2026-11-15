@@ -2,7 +2,7 @@
 //! it in the web view while logged in with GitHub, the companion polls until approved and
 //! stores the token with mode 0600.
 
-use crate::kernel::config::State;
+use crate::kernel::config::{State, Transport, check_server_url, warn_plain_http};
 use anyhow::{Context, Result, bail};
 use rubato_protocol::pairing::{
     PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse, routes,
@@ -19,9 +19,11 @@ pub struct Paired {
 /// The whole `pair` command: keep the companion id this machine already has, pair, and write
 /// `companion.json`. It writes nothing else: the sequence reservation in `seq.json` belongs to
 /// the running companion, so pairing again never makes it reuse sequence numbers (plan 29 S3).
+/// `allow_plain_http` is `pair --insecure`; it is stored, so the daemon accepts the same URL.
 pub async fn pair_and_save(
     state_dir: &Path,
     server_url: &str,
+    allow_plain_http: bool,
     hostname: &str,
     version: &str,
     show: impl Fn(&PairStartResponse),
@@ -29,7 +31,15 @@ pub async fn pair_and_save(
     let companion_id = State::load(state_dir)?
         .map(|s| s.companion_id)
         .unwrap_or_else(Uuid::new_v4);
-    let paired = pair(server_url, companion_id, hostname, version, show).await?;
+    let paired = pair(
+        server_url,
+        allow_plain_http,
+        companion_id,
+        hostname,
+        version,
+        show,
+    )
+    .await?;
     let state = State {
         companion_id,
         server_url: server_url.to_owned(),
@@ -37,6 +47,7 @@ pub async fn pair_and_save(
         pairing_token: paired.token,
         last_seq: 0,
         last_server_seq: 0,
+        allow_plain_http,
     };
     state.save(state_dir)?;
     Ok(state)
@@ -45,11 +56,17 @@ pub async fn pair_and_save(
 /// `show` is called once with the code to display. Returns when approved, denied or expired.
 pub async fn pair(
     server_url: &str,
+    allow_plain_http: bool,
     companion_id: Uuid,
     hostname: &str,
     version: &str,
     show: impl Fn(&PairStartResponse),
 ) -> Result<Paired> {
+    // Before any request: the device code and the token must not cross the network in clear
+    // text unless the developer said so with `--insecure` (ADR 0067).
+    if check_server_url(server_url, allow_plain_http)? == Transport::PlainOffLoopback {
+        warn_plain_http(server_url);
+    }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
@@ -144,7 +161,7 @@ mod tests {
     async fn pairing_again_keeps_the_companion_id_and_leaves_the_reservation() {
         let url = approving_server().await;
         let dir = tempfile::tempdir().unwrap();
-        let first = pair_and_save(dir.path(), &url, "host", "test", |_| {})
+        let first = pair_and_save(dir.path(), &url, false, "host", "test", |_| {})
             .await
             .unwrap();
         assert_eq!(State::load(dir.path()).unwrap(), Some(first.clone()));
@@ -156,7 +173,7 @@ mod tests {
         // The companion has run since: its reservation is on disk.
         let seq = dir.path().join("seq.json");
         std::fs::write(&seq, br#"{"reserved_to":5000}"#).unwrap();
-        let second = pair_and_save(dir.path(), &url, "host", "test", |_| {})
+        let second = pair_and_save(dir.path(), &url, false, "host", "test", |_| {})
             .await
             .unwrap();
         assert_eq!(second.companion_id, first.companion_id);
