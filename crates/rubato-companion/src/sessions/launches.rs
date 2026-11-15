@@ -30,6 +30,10 @@ pub struct LaunchRecord {
     /// Absent from a file an older companion wrote.
     #[serde(default)]
     pub plan_path: Option<String>,
+    /// What the launch was for (plan 220 §2). Absent from a file an older companion wrote: such a
+    /// launch has no assignment to answer `get_assignment` with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment: Option<super::Assignment>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -94,6 +98,7 @@ impl Registry {
                     branch: e.branch.clone(),
                     spend_cap_usd: e.spend_cap_usd,
                     plan_path: e.plan_path.clone(),
+                    assignment: e.assignment.clone(),
                 })
             })
             .collect()
@@ -164,6 +169,7 @@ impl Registry {
                 pasted: Vec::new(),
                 plan_path: r.plan_path,
                 restored_hash: None,
+                assignment: r.assignment,
             });
             restored += 1;
         }
@@ -191,6 +197,14 @@ mod tests {
             branch: Some(format!("issue/{n}-x")),
             spend_cap_usd: Some(20.0),
             plan_path: Some(format!("docs/plans/{n}.md")),
+            assignment: Some(crate::sessions::Assignment {
+                node_ids: vec!["rubato-companion".into()],
+                map_version: Some("abc1234".into()),
+                planning: rubato_protocol::PlanningMode::Git,
+                attempt: 1,
+                attempt_limit: 3,
+                launched_at: now(),
+            }),
         }
     }
 
@@ -261,6 +275,36 @@ mod tests {
             r.restore_launches(vec![record(7, "%7")], None, false, now()),
             0
         );
+    }
+
+    /// Plan 220 §2: a restored launch answers `get_assignment` as before the restart.
+    #[test]
+    fn a_restored_launch_keeps_its_assignment() {
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        r.restore_launches(vec![record(7, "%7")], None, false, now());
+        let a = r.assignment_of(Uuid::from_u128(7)).expect("restored");
+        assert_eq!(a.assignment.node_ids, vec!["rubato-companion".to_owned()]);
+        assert_eq!(a.issue, IssueRef::new("acme/pantry", 7));
+        assert!(!a.pending);
+    }
+
+    /// A file today's companion wrote (no `assignment`) still loads; its launches come back
+    /// without one, and `get_assignment` has nothing to answer for them.
+    #[test]
+    fn a_file_without_assignments_loads_and_restores_without_them() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            launches_path(dir.path()),
+            r#"{"launches":[{"launch_id":"00000000-0000-0000-0000-000000000007","session_id":"s7","worktree":"/w/7","pane_id":"%7","tmux_session":"pantry@issue-7","issue":{"repo":"acme/pantry","number":7},"branch":"issue/7-x","spend_cap_usd":20.0,"plan_path":"docs/plans/7.md"}]}"#,
+        )
+        .unwrap();
+        let loaded = load_launches(dir.path());
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].assignment, None);
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        r.restore_launches(loaded, None, false, now());
+        assert!(r.by_launch(Uuid::from_u128(7)).is_some());
+        assert!(r.assignment_of(Uuid::from_u128(7)).is_none());
     }
 
     #[test]
