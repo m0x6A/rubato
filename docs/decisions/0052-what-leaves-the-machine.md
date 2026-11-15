@@ -32,7 +32,7 @@ allowlist, and only for launched sessions.
 **Storage and the purge.**
 - The server stores hook events without their payload, whatever the companion sends, and new
   envelope kinds with an empty one.
-- Migration 0014 removes the payload from hook events already stored, and the server runs VACUUM
+- Migration 0015 removes the payload from hook events already stored, and the server runs VACUUM
   right after it, so the bytes do not stay in free pages.
 
 `rubato-companion pair` says what leaves the machine.
