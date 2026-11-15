@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 // Issue #80: plans of voice-note issues nobody pinned are found by their `issue/` branch
 // (ADR 0032), listed under Plans with where they fit, and a plan that does not fit cannot be
 // accepted (ADR 0029). The dev server keeps no tokens, so Accept says why it cannot post.
-test("plans from voice-note issues show where they fit", async ({ page }) => {
+test("plans from voice-note issues show where they fit", { tag: ["@plans.found-by-branch", "@plans.unfit-cannot-be-accepted"] }, async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("tab-plans").click();
   const fits = page.getByTestId("plan-row-914");
@@ -25,7 +25,7 @@ test("plans from voice-note issues show where they fit", async ({ page }) => {
   await expect(page.getByTestId("node-rubato-companion")).toContainText("planned here");
 });
 
-test("connected repos list the map's repo", async ({ page }) => {
+test("connected repos list the map's repo", { tag: "@repos.lists-map-repo" }, async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("tab-repos").click();
   const row = page.getByTestId("repo-m0x6A/rubato");

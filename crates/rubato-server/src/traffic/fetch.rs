@@ -148,7 +148,7 @@ impl<S: Source> Fetcher<S> {
         // Judged against each workspace's map and its dismissals (ADR 0039, 0060); the browsers
         // are told once, from `default`'s, which unprefixed overviews show. A dismissal changed
         // in another workspace notifies that workspace itself (`dismiss.rs`).
-        let maps: Vec<(String, crate::kernel::state::LoadedMap)> = app
+        let maps: Vec<(String, std::sync::Arc<crate::kernel::state::LoadedMap>)> = app
             .maps
             .read()
             .await

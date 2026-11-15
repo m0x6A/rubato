@@ -1,0 +1,1214 @@
+{
+  "issues": [
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 1
+      },
+      "title": "one",
+      "url": "u/one",
+      "pins": [
+        {
+          "kind": "node",
+          "id": "app-api"
+        },
+        {
+          "kind": "seam",
+          "id": "web-api"
+        }
+      ],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 1
+        },
+        "state": "in_review",
+        "last_seen": "2026-11-08T11:59:00Z",
+        "pinned_to": [
+          {
+            "kind": "node",
+            "id": "app-api"
+          },
+          {
+            "kind": "seam",
+            "id": "web-api"
+          }
+        ],
+        "session_ids": [
+          "s1",
+          "s1b"
+        ]
+      },
+      "sessions": [
+        {
+          "session_id": "s1",
+          "companion_id": "00000000-0000-0000-0000-000000000001",
+          "user": "m0x6A",
+          "cwd": "/w/s1",
+          "branch": "issue/1-x",
+          "repo": "acme/app",
+          "issue": {
+            "repo": "acme/app",
+            "number": 1
+          },
+          "status": "working",
+          "source": "hook",
+          "last_seen": "2026-11-08T11:59:00Z",
+          "spend_usd": 2.0
+        },
+        {
+          "session_id": "s1b",
+          "companion_id": "00000000-0000-0000-0000-000000000001",
+          "user": "m0x6A",
+          "cwd": "/w/s1b",
+          "branch": "issue/1-x",
+          "repo": "acme/app",
+          "issue": {
+            "repo": "acme/app",
+            "number": 1
+          },
+          "status": "ended",
+          "source": "hook",
+          "last_seen": "2026-11-08T10:30:00Z",
+          "spend_usd": 0.5
+        }
+      ],
+      "plan": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 1
+        },
+        "title": "plan 1",
+        "path": "docs/plans/1.md",
+        "affected_parts": [
+          {
+            "node": "app-api",
+            "status": "affected",
+            "change": "x",
+            "seams": [
+              "web-api"
+            ]
+          }
+        ],
+        "o_rows": [
+          {
+            "seam": "web-api",
+            "signal": "s",
+            "panel": "p",
+            "owner": "app-api"
+          }
+        ],
+        "flows": [
+          {
+            "from": "app-api",
+            "to": "app-web",
+            "seam": "web-api",
+            "kind": "data",
+            "carries": "c"
+          }
+        ]
+      },
+      "pull_request": {
+        "repo": "acme/app",
+        "number": 11,
+        "branch": "issue/1-x",
+        "open": true,
+        "draft": false,
+        "checks": "green",
+        "updated_at": "2026-11-08T11:57:00Z",
+        "url": "u/p11"
+      },
+      "decisions": [
+        {
+          "issue": {
+            "repo": "acme/app",
+            "number": 1
+          },
+          "comment_id": 1,
+          "author": "m0x6A",
+          "title": "d1",
+          "chosen": "a",
+          "created_at": "2026-11-08T10:21:00Z",
+          "url": "u/d1"
+        },
+        {
+          "issue": {
+            "repo": "acme/app",
+            "number": 1
+          },
+          "comment_id": 3,
+          "author": "m0x6A",
+          "title": "d3",
+          "chosen": "a",
+          "created_at": "2026-11-08T10:23:00Z",
+          "url": "u/d3"
+        }
+      ],
+      "review": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 1
+        },
+        "comment_id": 12,
+        "author": "m0x6A",
+        "track": "small",
+        "outcome": "passed after fixes",
+        "plan_sha": "sha1",
+        "created_at": "2026-11-08T10:32:00Z",
+        "url": "u/r12"
+      },
+      "approval": {
+        "record": {
+          "issue": {
+            "repo": "acme/app",
+            "number": 1
+          },
+          "comment_id": 20,
+          "author": "m0x6A",
+          "sha": "sha1",
+          "created_at": "2026-11-08T10:40:00Z",
+          "url": "u/a20"
+        },
+        "version": "earlier",
+        "current_sha": "sha1"
+      },
+      "fit": {
+        "fits": true
+      },
+      "plan_sha": "sha1",
+      "spend_usd": 2.5,
+      "spend_history": [
+        {
+          "at": "2026-11-08T11:30:00Z",
+          "usd": 0.5
+        },
+        {
+          "at": "2026-11-08T11:50:00Z",
+          "usd": 2.0
+        }
+      ],
+      "fits_in": [
+        "app"
+      ],
+      "draft": {
+        "draft_id": "00000000-0000-0000-0000-000000000001",
+        "branch": "issue/1-x",
+        "owner": "m0x6A",
+        "rev": 2,
+        "at": "2026-11-08T11:59:00Z",
+        "plan_sha": "sha1",
+        "bundle_hash": "h",
+        "live": true
+      }
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 2
+      },
+      "title": "two",
+      "url": "u/two",
+      "pins": [
+        {
+          "kind": "seam",
+          "id": "web-api"
+        }
+      ],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 2
+        },
+        "state": "blocked",
+        "last_seen": "2026-11-08T11:58:00Z",
+        "pinned_to": [
+          {
+            "kind": "seam",
+            "id": "web-api"
+          }
+        ],
+        "session_ids": [
+          "s2"
+        ],
+        "reason": "cap hit",
+        "blocked_from": "building"
+      },
+      "sessions": [
+        {
+          "session_id": "s2",
+          "companion_id": "00000000-0000-0000-0000-000000000001",
+          "user": "m0x6A",
+          "cwd": "/w/s2",
+          "branch": "issue/2-x",
+          "repo": "acme/app",
+          "issue": {
+            "repo": "acme/app",
+            "number": 2
+          },
+          "status": "blocked",
+          "source": "hook",
+          "last_seen": "2026-11-08T11:58:00Z",
+          "spend_usd": 4.25
+        }
+      ],
+      "plan": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 2
+        },
+        "title": "plan 2",
+        "path": "docs/plans/2.md",
+        "affected_parts": [
+          {
+            "node": "app-api",
+            "status": "affected",
+            "change": "x",
+            "seams": [
+              "web-api",
+              "api-auth"
+            ]
+          },
+          {
+            "node": "ghost-node",
+            "status": "affected",
+            "change": "x",
+            "seams": [
+              "web-api",
+              "api-auth"
+            ]
+          }
+        ],
+        "o_rows": [
+          {
+            "seam": "web-api",
+            "signal": "s",
+            "panel": "p",
+            "owner": "app-api"
+          },
+          {
+            "seam": "api-auth",
+            "signal": "s",
+            "panel": "p",
+            "owner": "app-api"
+          }
+        ],
+        "flows": [
+          {
+            "from": "app-web",
+            "to": "auth-svc",
+            "seam": "web-api",
+            "kind": "data",
+            "carries": "c"
+          }
+        ]
+      },
+      "decisions": [
+        {
+          "issue": {
+            "repo": "acme/app",
+            "number": 2
+          },
+          "comment_id": 2,
+          "author": "m0x6A",
+          "title": "d2",
+          "chosen": "a",
+          "created_at": "2026-11-08T10:22:00Z",
+          "url": "u/d2"
+        }
+      ],
+      "review": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 2
+        },
+        "comment_id": 11,
+        "author": "m0x6A",
+        "track": "small",
+        "outcome": "blocked",
+        "plan_sha": "sha2",
+        "created_at": "2026-11-08T10:31:00Z",
+        "url": "u/r11"
+      },
+      "approval": {
+        "record": {
+          "issue": {
+            "repo": "acme/app",
+            "number": 2
+          },
+          "comment_id": 21,
+          "author": "m0x6A",
+          "sha": "sha2-old",
+          "created_at": "2026-11-08T10:41:00Z",
+          "url": "u/a21"
+        },
+        "version": "earlier",
+        "current_sha": "sha2"
+      },
+      "fit": {
+        "fits": false,
+        "reasons": [
+          {
+            "kind": "unknown_ids",
+            "ids": [
+              "ghost-node"
+            ]
+          },
+          {
+            "kind": "flow_off_seam",
+            "from": "app-web",
+            "to": "auth-svc",
+            "seam": "web-api"
+          }
+        ]
+      },
+      "plan_sha": "sha2",
+      "spend_usd": 4.25,
+      "spend_history": [
+        {
+          "at": "2026-11-08T12:00:00Z",
+          "usd": 4.25
+        }
+      ]
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 3
+      },
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 3
+        },
+        "state": "blocked",
+        "last_seen": "2026-11-08T11:30:00Z",
+        "session_ids": [
+          "s3"
+        ],
+        "reason": "cap hit",
+        "blocked_from": "started"
+      },
+      "sessions": [
+        {
+          "session_id": "s3",
+          "companion_id": "00000000-0000-0000-0000-000000000001",
+          "user": "m0x6A",
+          "cwd": "/w/s3",
+          "branch": "issue/3-x",
+          "repo": "acme/app",
+          "issue": {
+            "repo": "acme/app",
+            "number": 3
+          },
+          "status": "ended",
+          "source": "hook",
+          "last_seen": "2026-11-08T11:30:00Z"
+        }
+      ],
+      "approval": {
+        "record": {
+          "issue": {
+            "repo": "acme/app",
+            "number": 3
+          },
+          "comment_id": 24,
+          "author": "m0x6A",
+          "created_at": "2026-11-08T10:44:00Z",
+          "url": "u/a24"
+        },
+        "version": "not_named"
+      }
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 4
+      },
+      "title": "four",
+      "url": "u/four",
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 4
+        },
+        "state": "started",
+        "last_seen": "2026-11-08T12:00:00Z"
+      },
+      "fit": {
+        "fits": false,
+        "reasons": [
+          {
+            "kind": "parse_error",
+            "message": "no Affected parts table"
+          }
+        ]
+      },
+      "plan_sha": "sha4",
+      "outside_rubato": true
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 7
+      },
+      "pins": [
+        {
+          "kind": "node",
+          "id": "app-web"
+        }
+      ],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 7
+        },
+        "state": "designed",
+        "last_seen": "2026-11-08T11:59:00Z",
+        "pinned_to": [
+          {
+            "kind": "node",
+            "id": "app-web"
+          }
+        ],
+        "session_ids": [
+          "s7",
+          "s7b"
+        ]
+      },
+      "sessions": [
+        {
+          "session_id": "s7",
+          "companion_id": "00000000-0000-0000-0000-000000000001",
+          "user": "m0x6A",
+          "cwd": "/w/s7",
+          "branch": "issue/7-x",
+          "repo": "acme/app",
+          "issue": {
+            "repo": "acme/app",
+            "number": 7
+          },
+          "status": "idle",
+          "source": "hook",
+          "last_seen": "2026-11-08T11:59:00Z",
+          "spend_usd": 1.0
+        },
+        {
+          "session_id": "s7b",
+          "companion_id": "00000000-0000-0000-0000-000000000001",
+          "user": "m0x6A",
+          "cwd": "/w/s7b",
+          "branch": "issue/7-x",
+          "repo": "acme/app",
+          "issue": {
+            "repo": "acme/app",
+            "number": 7
+          },
+          "status": "working",
+          "source": "hook",
+          "last_seen": "2026-11-08T11:15:00Z"
+        }
+      ],
+      "plan": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 7
+        },
+        "title": "plan 7",
+        "path": "docs/plans/7.md",
+        "affected_parts": [
+          {
+            "node": "app-web",
+            "status": "affected",
+            "change": "x",
+            "seams": [
+              "web-api"
+            ]
+          }
+        ],
+        "o_rows": [
+          {
+            "seam": "web-api",
+            "signal": "s",
+            "panel": "p",
+            "owner": "app-api"
+          }
+        ]
+      },
+      "pull_request": {
+        "repo": "acme/app",
+        "number": 17,
+        "branch": "issue/7-x",
+        "open": true,
+        "draft": false,
+        "checks": "red",
+        "updated_at": "2026-11-08T11:57:00Z",
+        "url": "u/p17"
+      },
+      "approval": {
+        "record": {
+          "issue": {
+            "repo": "acme/app",
+            "number": 7
+          },
+          "comment_id": 22,
+          "author": "m0x6A",
+          "sha": "sha7-there",
+          "branch": "issue/7-other",
+          "created_at": "2026-11-08T10:42:00Z",
+          "url": "u/a22"
+        },
+        "version": "current",
+        "current_sha": "sha7-there"
+      },
+      "fit": {
+        "fits": true
+      },
+      "plan_sha": "sha7-here",
+      "spend_usd": 1.0,
+      "fits_in": [
+        "app"
+      ]
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 8
+      },
+      "pins": [
+        {
+          "kind": "node",
+          "id": "app-api"
+        }
+      ],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 8
+        },
+        "state": "done",
+        "last_seen": "2026-11-08T11:57:00Z",
+        "pinned_to": [
+          {
+            "kind": "node",
+            "id": "app-api"
+          }
+        ]
+      },
+      "plan": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 8
+        },
+        "title": "plan 8",
+        "path": "docs/plans/8.md",
+        "affected_parts": [
+          {
+            "node": "app-api",
+            "status": "affected",
+            "change": "x",
+            "seams": [
+              "web-api"
+            ]
+          }
+        ],
+        "o_rows": [
+          {
+            "seam": "web-api",
+            "signal": "s",
+            "panel": "p",
+            "owner": "app-api"
+          }
+        ]
+      },
+      "pull_request": {
+        "repo": "acme/app",
+        "number": 18,
+        "branch": "issue/8-x",
+        "open": false,
+        "draft": false,
+        "checks": "green",
+        "merged_at": "2026-11-08T11:55:00Z",
+        "updated_at": "2026-11-08T11:57:00Z",
+        "url": "u/p18"
+      },
+      "fit": {
+        "fits": true
+      },
+      "plan_sha": "sha8",
+      "fits_in": [
+        "app"
+      ],
+      "outside_rubato": true
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 10
+      },
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 10
+        },
+        "state": "designed",
+        "last_seen": "2026-11-08T12:00:00Z"
+      },
+      "approval": {
+        "record": {
+          "issue": {
+            "repo": "acme/app",
+            "number": 10
+          },
+          "source": "rubato",
+          "approval_id": "00000000-0000-0000-0000-000000000110",
+          "bundle_hash": "h",
+          "author": "teammate",
+          "sha": "sha10",
+          "branch": "issue/10-x",
+          "created_at": "2026-11-08T11:54:00Z",
+          "url": "u/rubato"
+        },
+        "version": "earlier",
+        "current_sha": "sha10"
+      },
+      "draft": {
+        "draft_id": "00000000-0000-0000-0000-000000000010",
+        "branch": "issue/10-x",
+        "owner": "m0x6A",
+        "rev": 2,
+        "at": "2026-11-08T11:50:00Z",
+        "plan_sha": "sha10",
+        "bundle_hash": "h",
+        "live": false
+      }
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 11
+      },
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 11
+        },
+        "state": "unknown",
+        "last_seen": "2026-11-08T12:00:00Z",
+        "reason": "issue is not pinned to the map"
+      },
+      "draft": {
+        "draft_id": "00000000-0000-0000-0000-000000000011",
+        "branch": "issue/11-x",
+        "owner": "m0x6A",
+        "rev": 2,
+        "at": "2026-11-08T11:49:00Z",
+        "plan_sha": "sha11",
+        "bundle_hash": "h",
+        "live": false
+      }
+    },
+    {
+      "issue": {
+        "repo": "acme/auth",
+        "number": 5
+      },
+      "title": "five",
+      "url": "u/five",
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/auth",
+          "number": 5
+        },
+        "state": "designed",
+        "last_seen": "2026-11-08T12:00:00Z"
+      },
+      "plan": {
+        "issue": {
+          "repo": "acme/auth",
+          "number": 5
+        },
+        "title": "plan 5",
+        "path": "docs/plans/5.md",
+        "affected_parts": [
+          {
+            "node": "token",
+            "status": "affected",
+            "change": "x"
+          }
+        ]
+      },
+      "approval": {
+        "record": {
+          "issue": {
+            "repo": "acme/auth",
+            "number": 5
+          },
+          "comment_id": 23,
+          "author": "m0x6A",
+          "sha": "sha5",
+          "created_at": "2026-11-08T10:43:00Z",
+          "url": "u/a23"
+        },
+        "version": "earlier",
+        "current_sha": "sha5"
+      },
+      "fit": {
+        "fits": true
+      },
+      "plan_sha": "sha5",
+      "fits_in": [
+        "auth"
+      ],
+      "pinned_in": [
+        "auth"
+      ]
+    },
+    {
+      "issue": {
+        "repo": "acme/auth",
+        "number": 22
+      },
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/auth",
+          "number": 22
+        },
+        "state": "unknown",
+        "last_seen": "2026-11-08T12:00:00Z",
+        "reason": "issue is not pinned to the map"
+      },
+      "pinned_in": [
+        "auth"
+      ]
+    },
+    {
+      "issue": {
+        "repo": "acme/zzz",
+        "number": 9
+      },
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/zzz",
+          "number": 9
+        },
+        "state": "designing",
+        "last_seen": "2026-11-08T11:59:00Z",
+        "session_ids": [
+          "s9"
+        ]
+      },
+      "sessions": [
+        {
+          "session_id": "s9",
+          "companion_id": "00000000-0000-0000-0000-000000000001",
+          "user": "m0x6A",
+          "cwd": "/w/s9",
+          "branch": "issue/9-x",
+          "repo": "acme/zzz",
+          "issue": {
+            "repo": "acme/zzz",
+            "number": 9
+          },
+          "status": "working",
+          "source": "hook",
+          "last_seen": "2026-11-08T11:59:00Z"
+        }
+      ],
+      "decisions": [
+        {
+          "issue": {
+            "repo": "acme/zzz",
+            "number": 9
+          },
+          "comment_id": 4,
+          "author": "m0x6A",
+          "title": "d4",
+          "chosen": "a",
+          "created_at": "2026-11-08T10:24:00Z",
+          "url": "u/d4"
+        }
+      ],
+      "spend_history": [
+        {
+          "at": "2026-11-08T12:00:00Z",
+          "usd": 9.0
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "kind": "approval_stale",
+      "issue": {
+        "repo": "acme/app",
+        "number": 1
+      },
+      "approved_sha": "sha1",
+      "current_sha": "sha1"
+    },
+    {
+      "kind": "unknown_ids",
+      "issue": {
+        "repo": "acme/app",
+        "number": 2
+      },
+      "ids": [
+        "ghost-node"
+      ]
+    },
+    {
+      "kind": "flow_off_seam",
+      "issue": {
+        "repo": "acme/app",
+        "number": 2
+      },
+      "seam": "web-api",
+      "from": "app-web",
+      "to": "auth-svc"
+    },
+    {
+      "kind": "comment_approval_ignored",
+      "issue": {
+        "repo": "acme/app",
+        "number": 2
+      },
+      "author": "m0x6A",
+      "created_at": "2026-11-08T10:50:00Z"
+    },
+    {
+      "kind": "approval_stale",
+      "issue": {
+        "repo": "acme/app",
+        "number": 2
+      },
+      "approved_sha": "sha2-old",
+      "current_sha": "sha2"
+    },
+    {
+      "kind": "map_version_mismatch",
+      "issue": {
+        "repo": "acme/app",
+        "number": 3
+      },
+      "launched_with": "v1",
+      "current": "v2"
+    },
+    {
+      "kind": "plan_parse_error",
+      "issue": {
+        "repo": "acme/app",
+        "number": 4
+      },
+      "path": "docs/plans/4.md",
+      "error": "no Affected parts table"
+    },
+    {
+      "kind": "approval_stale",
+      "issue": {
+        "repo": "acme/app",
+        "number": 10
+      },
+      "approved_sha": "sha10",
+      "current_sha": "sha10"
+    },
+    {
+      "kind": "draft_owner_conflict",
+      "issue": {
+        "repo": "acme/app",
+        "number": 11
+      },
+      "branch": "issue/11-x",
+      "owner": "m0x6A",
+      "other": "alice"
+    },
+    {
+      "kind": "approval_stale",
+      "issue": {
+        "repo": "acme/auth",
+        "number": 5
+      },
+      "approved_sha": "sha5",
+      "current_sha": "sha5"
+    },
+    {
+      "kind": "link_comment_waiting",
+      "issue": {
+        "repo": "acme/app",
+        "number": 1
+      },
+      "approval_id": "00000000-0000-0000-0000-000000000007"
+    },
+    {
+      "kind": "seam_collision",
+      "seam": "web-api",
+      "issues": [
+        {
+          "repo": "acme/app",
+          "number": 1
+        },
+        {
+          "repo": "acme/app",
+          "number": 2
+        },
+        {
+          "repo": "acme/app",
+          "number": 7
+        },
+        {
+          "repo": "acme/app",
+          "number": 10
+        }
+      ]
+    },
+    {
+      "kind": "unattributed_session",
+      "companion": "00000000-0000-0000-0000-000000000001",
+      "repo": "acme/app"
+    },
+    {
+      "kind": "repo_not_covered",
+      "repo": "acme/auth"
+    },
+    {
+      "kind": "observed_only_part",
+      "service": {
+        "namespace": "acme",
+        "name": "ledger"
+      },
+      "calls": 7
+    }
+  ],
+  "cross": [
+    {
+      "kind": "plan_path_conflict",
+      "repo": "acme/auth",
+      "workspaces": [
+        "app",
+        "auth"
+      ]
+    },
+    {
+      "kind": "id_collision",
+      "id": "auth-svc",
+      "workspaces": [
+        "app",
+        "auth"
+      ]
+    }
+  ],
+  "unpinned_sessions": [
+    {
+      "session_id": "u1",
+      "companion_id": "00000000-0000-0000-0000-000000000001",
+      "user": "m0x6A",
+      "cwd": "/w/u1",
+      "repo": "acme/app",
+      "status": "working",
+      "source": "hook",
+      "last_seen": "2026-11-08T11:59:00Z"
+    },
+    {
+      "session_id": "u2",
+      "companion_id": "00000000-0000-0000-0000-000000000001",
+      "user": "m0x6A",
+      "cwd": "/w/u2",
+      "repo": "acme/app",
+      "status": "ended",
+      "source": "hook",
+      "last_seen": "2026-11-08T11:50:00Z",
+      "spend_usd": 0.1
+    }
+  ],
+  "backlog": {
+    "issues": [
+      {
+        "issue": {
+          "repo": "acme/app",
+          "number": 20
+        },
+        "title": "twenty",
+        "url": "u/20",
+        "updated_at": "2026-11-08T11:52:00Z"
+      },
+      {
+        "issue": {
+          "repo": "acme/auth",
+          "number": 21
+        },
+        "title": "auth",
+        "url": "u/21",
+        "labels": [
+          "bug"
+        ],
+        "updated_at": "2026-11-08T11:53:00Z"
+      }
+    ],
+    "repos": [
+      {
+        "repo": "acme/app",
+        "listed_at": "2026-11-08T11:59:00Z",
+        "truncated": false
+      },
+      {
+        "repo": "acme/auth",
+        "truncated": false
+      }
+    ]
+  },
+  "layout": {
+    "positions": {
+      "app-api": {
+        "x": 1.0,
+        "y": 2.0
+      },
+      "app-web": {
+        "x": -5.5,
+        "y": 0.0
+      }
+    }
+  },
+  "repos": [
+    {
+      "repo": "acme/app",
+      "in_map": true,
+      "covered": true,
+      "open_issues": 2,
+      "plans": 4,
+      "sessions": 4,
+      "unattributed": 1,
+      "open_pulls": 2
+    },
+    {
+      "repo": "acme/auth",
+      "in_map": true,
+      "covered": false,
+      "open_issues": 1,
+      "plans": 1,
+      "sessions": 0,
+      "unattributed": 0,
+      "open_pulls": 0
+    },
+    {
+      "repo": "acme/zzz",
+      "in_map": false,
+      "covered": true,
+      "open_issues": 0,
+      "plans": 0,
+      "sessions": 1,
+      "unattributed": 0,
+      "open_pulls": 0
+    }
+  ],
+  "pulls": [
+    {
+      "repo": "acme/app",
+      "pulls": [
+        {
+          "repo": "acme/app",
+          "number": 11,
+          "title": "t11",
+          "author": "a",
+          "branch": "issue/1-x",
+          "base": "main",
+          "draft": false,
+          "head_sha": "h11",
+          "checks": "green",
+          "updated_at": "2026-11-08T11:57:00Z",
+          "url": "u/11",
+          "issue": {
+            "repo": "acme/app",
+            "number": 1
+          }
+        },
+        {
+          "repo": "acme/app",
+          "number": 30,
+          "title": "t30",
+          "author": "b",
+          "branch": "feature",
+          "base": "main",
+          "draft": true,
+          "head_sha": "h30",
+          "updated_at": "2026-11-08T11:56:00Z",
+          "url": "u/30"
+        }
+      ],
+      "listed_at": "2026-11-08T11:58:00Z",
+      "truncated": false
+    },
+    {
+      "repo": "acme/auth",
+      "truncated": false,
+      "error": "403"
+    }
+  ],
+  "traffic": {
+    "state": "fresh",
+    "observed_at": "2026-11-08T11:59:00Z",
+    "window_secs": 3600,
+    "seams": [
+      {
+        "seam": "web-api",
+        "forward_calls": 100,
+        "reverse_calls": 0,
+        "errors": 2
+      }
+    ],
+    "observed_parts": [
+      "app-api",
+      "app-web"
+    ],
+    "ghosts": [
+      {
+        "service": {
+          "namespace": "acme",
+          "name": "ledger"
+        },
+        "calls_in": 7,
+        "calls_out": 0,
+        "errors": 0
+      }
+    ],
+    "ghost_edges": [
+      {
+        "from": {
+          "kind": "part",
+          "id": "app-api"
+        },
+        "to": {
+          "kind": "ghost",
+          "service": {
+            "namespace": "acme",
+            "name": "ledger"
+          }
+        },
+        "calls": 7,
+        "errors": 0
+      }
+    ],
+    "ghosts_truncated": false,
+    "dismissed": [
+      {
+        "id": 1,
+        "target": {
+          "kind": "ghost",
+          "service": {
+            "namespace": "ops",
+            "name": "cron"
+          }
+        },
+        "author": "m0x6A",
+        "at": "2026-11-08T11:30:00Z"
+      }
+    ],
+    "unmapped_services": 0,
+    "truncated": false
+  }
+}

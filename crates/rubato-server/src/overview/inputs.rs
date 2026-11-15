@@ -1,14 +1,49 @@
 //! Read every signal the overview derives from, through each owning slice.
 
 use super::build::{OtherWorkspace, OverviewInputs, WorkspaceInputs};
-use crate::kernel::state::App;
+use crate::kernel::state::{App, LoadedMap};
 use crate::{
     approve, companion_link, github_poll, launch, layout, pins, plan_drafts, plans, queue,
     spend_history, traffic,
 };
 use anyhow::Result;
+use rubato_protocol::{SystemMap, WorkspaceInfo};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
-pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs> {
+/// Every loaded map by workspace id, read under one guard: pointer copies, not map copies
+/// (#171). What one request or one tick reads from, so its workspaces agree with each other.
+pub struct Maps(BTreeMap<String, Arc<LoadedMap>>);
+
+impl Maps {
+    pub async fn read(app: &App) -> Self {
+        Self(app.maps.read().await.clone())
+    }
+
+    pub fn get(&self, ws: &str) -> Option<&Arc<LoadedMap>> {
+        self.0.get(ws)
+    }
+
+    /// Every loaded map by workspace id, in id order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Arc<LoadedMap>)> {
+        self.0.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Each loaded map by its workspace's name, in the order of `all` (config order).
+    pub fn named<'a>(&'a self, all: &'a [WorkspaceInfo]) -> Vec<(&'a str, &'a SystemMap)> {
+        all.iter()
+            .filter_map(|w| self.get(&w.id).map(|m| (w.name.as_str(), &m.map)))
+            .collect()
+    }
+}
+
+/// `all` is the workspace list and `maps` the loaded maps, each read once by the caller.
+pub async fn build_overview_inputs(
+    app: &App,
+    ws: &str,
+    all: &[WorkspaceInfo],
+    maps: &Maps,
+) -> Result<OverviewInputs> {
     // Comments under the cutover and approvals given in Rubato, as one list (ADR 0054).
     let approvals = approve::approvals(app).await?;
     Ok(OverviewInputs {
@@ -35,13 +70,17 @@ pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs
         traffic: app.traffic.read().await.clone(),
         dismissals: traffic::dismissals(&app.db, ws).await?,
         spend: spend_history::series(&app.db).await?,
-        workspaces: workspace_inputs(app, ws).await?,
+        workspaces: workspace_inputs(app, ws, all, maps).await?,
     })
 }
 
 /// The other workspaces, with their maps, pins and launches. Empty with one workspace.
-async fn workspace_inputs(app: &App, ws: &str) -> Result<WorkspaceInputs> {
-    let all = crate::map::list_workspaces(app).await;
+async fn workspace_inputs(
+    app: &App,
+    ws: &str,
+    all: &[WorkspaceInfo],
+    maps: &Maps,
+) -> Result<WorkspaceInputs> {
     if all.len() < 2 {
         return Ok(WorkspaceInputs::default());
     }
@@ -51,19 +90,19 @@ async fn workspace_inputs(app: &App, ws: &str) -> Result<WorkspaceInputs> {
     };
     for w in all {
         if w.id == ws {
-            out.here = Some((w.id, w.name));
+            out.here = Some((w.id.clone(), w.name.clone()));
             continue;
         }
         out.others.push(OtherWorkspace {
-            map: app.map_of(&w.id).await.map(|m| m.map),
+            map: maps.get(&w.id).cloned(),
             pinned: pins::list(&app.db, &w.id)
                 .await?
                 .into_iter()
                 .map(|p| p.issue)
                 .collect(),
             launched: launch::launched_issues_in(&app.db, &w.id).await?,
-            id: w.id,
-            name: w.name,
+            id: w.id.clone(),
+            name: w.name.clone(),
         });
     }
     Ok(out)

@@ -14,7 +14,7 @@ async function logInAs(page: Page, account: "member" | "outsider" | "broken") {
   return Promise.all([page.waitForResponse((r) => r.url().includes("/auth/github/callback")), page.getByRole("link", { name: `Continue as ${account}` }).click()]).then(([callback]) => callback);
 }
 
-test("without a session the app shows the login page and the API answers 401", async ({ page }) => {
+test("without a session the app shows the login page and the API answers 401", { tag: "@auth.login-page" }, async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("link", { name: "Log in with GitHub" })).toBeVisible();
   for (const path of ["/api/me", "/api/overview", "/api/map"]) {
@@ -22,7 +22,7 @@ test("without a session the app shows the login page and the API answers 401", a
   }
 });
 
-test("a team member logs in through the App and sees what the installation lists", async ({ page }) => {
+test("a team member logs in through the App and sees what the installation lists", { tag: "@auth.member-logs-in" }, async ({ page }) => {
   const callback = await logInAs(page, "member");
   expect(callback.status()).toBe(303);
   await expect(page.getByTestId("node-rubato-server")).toBeVisible();
@@ -48,7 +48,7 @@ test("a team member logs in through the App and sees what the installation lists
   await expect(page.getByTestId("node-rubato-server")).toBeVisible();
 });
 
-test("a member creates an issue from a part, as the App, and it is pinned there (ADR 0025)", async ({ page }) => {
+test("a member creates an issue from a part, as the App, and it is pinned there (ADR 0025)", { tag: ["@new-issue.pinned-where-begun", "@new-issue.created-as-the-app"] }, async ({ page }) => {
   await logInAs(page, "member");
   // The server read the installation's permissions as the App on its first full pass.
   await expect.poll(async () => (await (await page.request.get("/api/overview")).json()).can_create_issues, { timeout: 15_000 }).toBe(true);
@@ -70,7 +70,7 @@ test("a member creates an issue from a part, as the App, and it is pinned there 
   expect(calls["/app/installations/34"]).toBeGreaterThan(0);
 });
 
-test("an account with no access to the installation is refused and gets no session", async ({ page }) => {
+test("an account with no access to the installation is refused and gets no session", { tag: "@auth.no-access-refused" }, async ({ page }) => {
   const callback = await logInAs(page, "outsider");
   expect(callback.status()).toBe(403);
   await expect(page.getByText("has no access to the repositories this Rubato is installed on")).toBeVisible();
@@ -79,7 +79,7 @@ test("an account with no access to the installation is refused and gets no sessi
   await expect(page.getByRole("link", { name: "Log in with GitHub" })).toBeVisible();
 });
 
-test("a failed installation lookup is reported as a fault, not as no access", async ({ page }) => {
+test("a failed installation lookup is reported as a fault, not as no access", { tag: "@auth.lookup-fault" }, async ({ page }) => {
   const callback = await logInAs(page, "broken");
   expect(callback.status()).toBe(502);
   await expect(page.getByText("Could not check your access with GitHub")).toBeVisible();
@@ -87,7 +87,7 @@ test("a failed installation lookup is reported as a fault, not as no access", as
   expect((await page.request.get("/api/me")).status()).toBe(401);
 });
 
-test("when the session ends mid-work the next write leads back to login, and nothing was written", async ({ page }) => {
+test("when the session ends mid-work the next write leads back to login, and nothing was written", { tag: "@auth.session-ends-mid-work" }, async ({ page }) => {
   await logInAs(page, "member");
   await expect(page.getByTestId("backlog-row-911")).toBeVisible();
   // The app can also find out by itself: a poll event makes it read the overview, which now

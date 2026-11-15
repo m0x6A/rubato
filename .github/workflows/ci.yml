@@ -63,6 +63,8 @@ jobs:
       - run: pnpm test
       - name: Plan check on this repo's own plans
         run: pnpm plan-check --map docs/design/rubato-map.yml --plans "docs/plans/*.md"
+      - name: Every e2e test cites a scenario of features/ (ADR 0069)
+        run: pnpm scenarios check
 
   web:
     name: Web (types in step, build, e2e against the server)
@@ -87,6 +89,14 @@ jobs:
       - run: cd web && pnpm exec playwright install --with-deps chromium
       - name: End to end against the real server
         run: cd web && ./e2e/run.sh
+      - name: Keep the results for the scenario coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-results-web
+          path: e2e/results/playwright.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Keep the Playwright traces of a failed run
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -134,3 +144,39 @@ jobs:
           # Each rule mutant must fail the rule test case written for it (#41).
           PROMTOOL="$PROMTOOL" pnpm observability:rules
       - run: pnpm e2e
+      - name: Keep the results for the scenario coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-results-run
+          path: e2e/results/run.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Issue #198: which of the app's scenarios (features/) the two e2e suites cover, in this job's
+  # summary. A suite whose job stopped before writing results shows as not run.
+  scenarios:
+    name: Scenario coverage report
+    needs: [web, e2e]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      # No browsers: a suite without results is listed with `playwright test --list`.
+      - run: pnpm install --frozen-lockfile
+      - name: Fetch the suites' results (none is not an error)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: e2e-results-*
+          path: e2e/results
+          merge-multiple: true
+      - run: ls -l e2e/results || true
+      - name: Scenario coverage into the job summary
+        run: pnpm scenarios report
