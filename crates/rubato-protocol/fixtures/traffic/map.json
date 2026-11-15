@@ -2,15 +2,90 @@
   "version": 1,
   "name": "traffic fixtures",
   "nodes": [
-    { "id": "a", "kind": "context" },
-    { "id": "b", "kind": "context" },
-    { "id": "c", "kind": "context" },
-    { "id": "d", "kind": "contract" }
+    {
+      "id": "a",
+      "kind": "context",
+      "service": {
+        "name": "a"
+      }
+    },
+    {
+      "id": "b",
+      "kind": "context",
+      "service": {
+        "name": "b"
+      }
+    },
+    {
+      "id": "c",
+      "kind": "context",
+      "service": {
+        "name": "c"
+      }
+    },
+    {
+      "id": "d",
+      "kind": "contract",
+      "service": {
+        "name": "d"
+      }
+    },
+    {
+      "id": "e",
+      "kind": "context",
+      "service": {
+        "namespace": "shop",
+        "name": "payments"
+      }
+    },
+    {
+      "id": "f",
+      "kind": "context"
+    },
+    {
+      "id": "gh",
+      "kind": "external",
+      "service": {
+        "name": "github"
+      }
+    }
   ],
   "seams": [
-    { "id": "a-b", "from": "a", "to": "b", "owner": "a" },
-    { "id": "a-b-events", "from": "b", "to": "a", "owner": "b" },
-    { "id": "b-c", "from": "b", "to": "c", "owner": "b" },
-    { "id": "c-d", "from": "c", "to": "d", "owner": "c" }
+    {
+      "id": "a-b",
+      "from": "a",
+      "to": "b",
+      "owner": "a"
+    },
+    {
+      "id": "a-b-events",
+      "from": "b",
+      "to": "a",
+      "owner": "b"
+    },
+    {
+      "id": "b-c",
+      "from": "b",
+      "to": "c",
+      "owner": "b"
+    },
+    {
+      "id": "c-d",
+      "from": "c",
+      "to": "d",
+      "owner": "c"
+    },
+    {
+      "id": "b-e",
+      "from": "b",
+      "to": "e",
+      "owner": "e"
+    },
+    {
+      "id": "e-f",
+      "from": "e",
+      "to": "f",
+      "owner": "e"
+    }
   ]
 }

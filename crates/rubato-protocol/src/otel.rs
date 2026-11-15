@@ -56,10 +56,18 @@ pub mod attr {
     pub const APPROVAL_ID: &str = "rubato.approval_id";
     /// A plan's room, `repo#number@branch` (ADR 0057).
     pub const ROOM: &str = "rubato.room";
-    /// A command's exit code (`rubato.room.fork_turn`).
-    pub const EXIT_CODE: &str = "rubato.exit_code";
     /// What a model call cost in USD (`rubato.room.fork_turn`).
     pub const COST_USD: &str = "rubato.cost_usd";
+    /// The skill a span came from (ADR 0061): `rubato`, `plan-check`, or any other skill that
+    /// uses `otel-emit.ts`. Also its `service.name`.
+    pub const SKILL_NAME: &str = "rubato.skill.name";
+    /// The skill script and subcommand a `rubato.skill.command` span ran, e.g. `plan check`.
+    pub const SKILL_SUBCOMMAND: &str = "rubato.skill.subcommand";
+    /// The exit code of a skill command, a command wrapped by `otel-emit.ts span`, or a
+    /// room fork turn (`rubato.room.fork_turn`).
+    pub const EXIT_CODE: &str = "rubato.exit_code";
+    /// Which traffic source answered a fetch (ADR 0040): `dev_file` or `prometheus`.
+    pub const TRAFFIC_SOURCE: &str = "rubato.traffic.source";
 }
 
 /// Metric instrument names.
@@ -146,6 +154,11 @@ pub mod metric {
     pub const TRAFFIC_UNDECLARED_EDGES: &str = "rubato.traffic.undeclared_edges";
     /// Services in the report that name no map part.
     pub const TRAFFIC_UNMAPPED_SERVICES: &str = "rubato.traffic.unmapped_services";
+    /// Ghost parts on the overlay: services seen that no part names (ADR 0059), dismissed ones
+    /// left out; recorded each fetch, per workspace.
+    pub const TRAFFIC_GHOST_PARTS: &str = "rubato.traffic.ghost_parts";
+    /// Dismissed discrepancies per workspace (ADR 0060), recorded each fetch.
+    pub const TRAFFIC_DISMISSALS: &str = "rubato.traffic.dismissals";
     /// Writes of an issue's spend history (ADR 0037), by `rubato.outcome`: `stored` (a session's
     /// spend changed and the issue's point was written), `unchanged` (same or older value),
     /// `rejected` (not finite, or negative), `failed` (the write returned an error).
@@ -225,6 +238,12 @@ pub mod span {
     pub const PLAN_LINK_COMMENT: &str = "rubato.plan.link_comment";
     /// Companion: one read-only fork turn for a room (exit, cost).
     pub const ROOM_FORK_TURN: &str = "rubato.room.fork_turn";
+    /// One skill command, from `otel-emit.ts` (ADR 0061), with `rubato.skill.name`,
+    /// `rubato.skill.subcommand` and `rubato.exit_code`.
+    pub const SKILL_COMMAND: &str = "rubato.skill.command";
+    /// A call from a skill to another part, a client span with `peer.service` naming the map id
+    /// of the other side (`github`, `system-map`, `plan-file`).
+    pub const SKILL_CALL: &str = "rubato.skill.call";
 }
 
 /// Event (log record) names.
@@ -240,6 +259,18 @@ pub mod event {
     pub const PLAN_HANDOFF: &str = "rubato.plan.handoff";
     /// An essential background task returned while shutdown was not requested.
     pub const TASK_EXITED: &str = "rubato.task.exited";
+    /// Which local maps the skill matched for the session repo (`map.ts`, ADR 0044).
+    pub const MAP_SELECT: &str = "rubato.map.select";
+    /// A plan skeleton written by `plan.ts init`.
+    pub const PLAN_INIT: &str = "rubato.plan.init";
+}
+
+/// Standard OpenTelemetry semantic-convention keys that Rubato code may write next to its own
+/// names. Outside the `rubato.*` namespace, so not in [`all_names`].
+pub mod semconv {
+    pub const SERVICE_NAME: &str = "service.name";
+    pub const SERVICE_NAMESPACE: &str = "service.namespace";
+    pub const PEER_SERVICE: &str = "peer.service";
 }
 
 /// Every name, for the test that checks the namespace and for documentation.
@@ -283,6 +314,9 @@ pub fn all_names() -> Vec<&'static str> {
         attr::ROOM,
         attr::EXIT_CODE,
         attr::COST_USD,
+        attr::SKILL_NAME,
+        attr::SKILL_SUBCOMMAND,
+        attr::TRAFFIC_SOURCE,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -322,6 +356,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::TRAFFIC_SEAMS_QUIET,
         metric::TRAFFIC_UNDECLARED_EDGES,
         metric::TRAFFIC_UNMAPPED_SERVICES,
+        metric::TRAFFIC_GHOST_PARTS,
+        metric::TRAFFIC_DISMISSALS,
         metric::COMPANION_SILENT_SECS,
         metric::SPEND_POINTS,
         metric::WORKSPACES_CONFIGURED,
@@ -358,6 +394,8 @@ pub fn all_names() -> Vec<&'static str> {
         span::PLAN_DRAFT,
         span::PLAN_LINK_COMMENT,
         span::ROOM_FORK_TURN,
+        span::SKILL_COMMAND,
+        span::SKILL_CALL,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,
@@ -365,6 +403,8 @@ pub fn all_names() -> Vec<&'static str> {
         event::ADRS_ACCEPT,
         event::PLAN_HANDOFF,
         event::TASK_EXITED,
+        event::MAP_SELECT,
+        event::PLAN_INIT,
     ]
 }
 

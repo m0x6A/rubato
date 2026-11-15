@@ -394,6 +394,16 @@ tr.chat-row > td { padding-top: 0; }
 /* Traffic the map does not declare (finding UndeclaredTraffic): static amber dots, round caps. */
 .react-flow__edge.territory .react-flow__edge-path { stroke: var(--warn); stroke-width: 2.5; stroke-dasharray: 1 5; stroke-linecap: round; }
 .territory-label { font-family: var(--font-mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px; color: var(--warn-ink); background: var(--warn-wash); border: 1px dotted var(--warn); white-space: nowrap; }
+/* A ghost part (issue #140): a service that runs but no part names. Dashed amber, static, never a part. */
+.ghost-card { width: 220px; min-height: 72px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 2px dashed var(--warn); border-radius: 8px; background: var(--warn-wash); color: var(--warn-ink); }
+.ghost-card strong { font-size: 14px; overflow-wrap: anywhere; }
+.ghost-tag { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+/* What the map and the observed system disagree about, under the Traffic lens's legend. */
+.discrepancies { padding: 8px 12px; border-top: 1px solid var(--warn); background: var(--warn-wash); max-height: 22vh; overflow: auto; }
+.discrepancies > summary { cursor: pointer; font-size: 13px; color: var(--warn-ink); }
+.discrepancies li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 0; }
+.discrepancy-actions { display: inline-flex; gap: 6px; }
+.service-fields { border: 1px solid var(--line, currentColor); border-radius: 6px; padding: 6px 8px; }
 .legend details.unmapped { display: inline-block; margin-left: 8px; }
 .lens button.active { background: var(--accent-strong); color: var(--on-accent); font-weight: 600; }
 .lens button:disabled { opacity: 0.6; cursor: default; }

@@ -1,0 +1,21 @@
+# Parts that say which service they are (ADR 0059). Read by rubato_protocol::map::tests and
+# actions/plan-check/test: the same result on both sides.
+version: 1
+name: services
+nodes:
+  - id: checkout
+    kind: context
+    service: { namespace: shop, name: checkout }
+  - id: checkout-test
+    kind: context
+    service: { namespace: shop-test, name: checkout }
+  - id: github
+    kind: external
+    service: { name: github }
+  - id: notes
+    kind: context
+seams:
+  - id: checkout-github
+    from: checkout
+    to: github
+    owner: checkout

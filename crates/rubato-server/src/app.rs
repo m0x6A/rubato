@@ -7,7 +7,7 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
-    pairing, pins, plan_drafts, queue, rooms, session_log, session_messages, web_link,
+    pairing, pins, plan_drafts, queue, rooms, session_log, session_messages, traffic, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -25,6 +25,7 @@ use rubato_protocol::pins::routes as pin_routes;
 use rubato_protocol::plan_draft::routes as plan_draft_routes;
 use rubato_protocol::progress::routes as overview_routes;
 use rubato_protocol::queue::routes as queue_routes;
+use rubato_protocol::traffic::routes as traffic_routes;
 use rubato_protocol::web_link::routes as web_routes;
 use rubato_protocol::workspace::routes as workspace_routes;
 use tower_http::services::{ServeDir, ServeFile};
@@ -65,6 +66,14 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
         .route(
             &at(layout_routes::LAYOUT),
             put(layout::put_layout).delete(layout::clear_layout),
+        )
+        .route(
+            &at(traffic_routes::TRAFFIC_DISMISSALS),
+            post(traffic::dismiss),
+        )
+        .route(
+            &at(&format!("{}/{{id}}", traffic_routes::TRAFFIC_DISMISSALS)),
+            delete(traffic::undismiss),
         )
 }
 
@@ -199,6 +208,11 @@ mod tests {
             (Method::POST, approve_routes::PLAN_DRAFT_APPROVE.into()),
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
+            (Method::POST, traffic_routes::TRAFFIC_DISMISSALS.into()),
+            (
+                Method::DELETE,
+                format!("{}/1", traffic_routes::TRAFFIC_DISMISSALS),
+            ),
             (Method::POST, queue_routes::QUEUE.into()),
             (Method::PUT, queue_routes::QUEUE.into()),
             (Method::DELETE, queue_routes::QUEUE.into()),
@@ -250,7 +264,8 @@ mod tests {
     }
 
     /// The paths served per workspace: map-scoped, never team-scoped.
-    const MAP_SCOPED: [&str; 9] = [
+    const MAP_SCOPED: [&str; 10] = [
+        "/api/traffic",
         "/api/overview",
         "/api/map",
         "/api/pins",

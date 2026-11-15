@@ -114,7 +114,7 @@ session_log     prompts and last replies of launched sessions   session_log_entr
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, issue_suggestions, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
 import          a plan written outside Rubato becomes your draft  (none)
 rooms           a plan's room: messages, seam notices, agents called in, turns  room_messages, room_agents, room_requests
-traffic         observed calls per seam from a traffic report   (none; latest report in memory)
+traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
@@ -151,7 +151,7 @@ plan_mirror    plan bundle of a launched session at settle points               
 live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
 chat        talk to your own session, message states, the log    GET, POST /api/launches/:id/messages, GET /api/launches/:id/log
-map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player  PUT, DELETE /api/layout
+map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout; POST, DELETE /api/traffic/dismissals
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
@@ -189,7 +189,7 @@ plan_hash  approval_hash (the record left out), bundle_paths, bundle_hash, adr_p
 github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord and its source, ApprovalState, comment_counts
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
-traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, derive_traffic, limits
+traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
 ```
@@ -252,7 +252,8 @@ All telemetry is OpenTelemetry over OTLP, vendor-neutral. The team's stack is LG
 | Claude Code sessions | its own OTel export (already in place), launched with resource attributes `rubato.repo`, `rubato.issue`, `rubato.branch`, `rubato.node` | cost, duration and tool calls per issue and per map node come free |
 | `rubato-companion` | a heartbeat metric per machine; a span per launch, per hook forwarded, per `team --json` poll; a `rubato.session.stale` event when a session goes quiet | the trust check: is the signal still flowing? |
 | `rubato-server` | a span per inbound event with the session and issue as attributes; a span per GitHub call; metrics for sessions by state, issues by state, events dropped, GitHub rate-limit remaining | the derived progress model must be explainable from traces |
-| plan check | a log line per plan checked: node ids found, unknown ids, O-rows present | every check reports what it checked |
+| plan check | a log line per plan checked: node ids found, unknown ids, O-rows present; with an OTLP endpoint set, also a `rubato.skill.command` span with `service.name` `plan-check` | every check reports what it checked |
+| skills (`otel-emit.ts`) | a `rubato.skill.command` span per script run, with `rubato.skill.subcommand` and `rubato.exit_code`; a `rubato.skill.call` client span with `peer.service` per call to GitHub, the map or the plan file; `service.name` is the skill, `service.namespace` only from the environment (ADR 0061) | skills are parts of the system and must show on the observed map |
 | handoffs | a span that starts when a plan touches a seam and ends when the other side's PR merges, linking both traces | cross-agent handoffs are where orchestration breaks without an error |
 
 Follow the OpenTelemetry GenAI semantic conventions for anything model-related; use the `rubato.*` namespace for ours and keep the list in `crates/rubato-protocol/src/otel.rs` so companion and server agree.
@@ -277,7 +278,7 @@ Each of these has an alert rule committed under `observability/alerts/` and a te
 
 ### Map versus territory
 
-Rubato's map is declared. Production traffic is observed. When the two disagree (a service calls a node the map does not connect it to, or a declared seam carries no traffic), that is a finding, shown on the map, not an error to suppress. v0 only shows it; nothing acts on it.
+Rubato's map is declared. Production traffic is observed. When the two disagree (a service calls a node the map does not connect it to, or a declared seam carries no traffic), that is a finding, shown on the map, not an error to suppress. The overlay only shows it; nothing acts on it by itself. A person may take a discrepancy into the shared map draft and merge it through the map's pull request like any other change, or dismiss it for the workspace (ADRs 0018, 0059, 0060). A part is matched to the service it says it is, by the `service.namespace` and `service.name` that service emits; Rubato never sets or derives them.
 
 ## Conventions
 
