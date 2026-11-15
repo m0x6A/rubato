@@ -72,6 +72,8 @@ pub async fn start(
     // twice, so it stops the companion with the path in the error.
     let deliveries = Deliveries::open(&cfg.state_dir)?;
     let (hook_tx, hook_rx) = mpsc::unbounded_channel::<HookEvent>();
+    // Headless turns send their own hooks into the same channel (ADR 0062).
+    let synthetic_hooks = hook_tx.clone();
     let (dropped_tx, dropped_rx) = mpsc::unbounded_channel::<&'static str>();
     let previous = HookEndpoint::load(&cfg.state_dir);
     let (handoff_tx, handoff_rx) = mpsc::unbounded_channel::<HandoffReport>();
@@ -136,6 +138,7 @@ pub async fn start(
         server,
         deliveries,
         hook_rx,
+        synthetic_hooks,
         dropped_rx,
         handoff_rx,
         registry,
@@ -152,6 +155,7 @@ async fn run(
     server: HookServer,
     deliveries: Deliveries,
     hook_rx: mpsc::UnboundedReceiver<HookEvent>,
+    synthetic_hooks: mpsc::UnboundedSender<HookEvent>,
     dropped_rx: mpsc::UnboundedReceiver<&'static str>,
     handoff_rx: mpsc::UnboundedReceiver<HandoffReport>,
     registry: Arc<Mutex<Registry>>,
@@ -175,6 +179,30 @@ async fn run(
     let server_capabilities = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
 
     let (out_tx, out_rx) = mpsc::unbounded_channel::<CompanionMessage>();
+    // Before any task can start a turn: a turn the previous run left running is killed first,
+    // so two turns never share one transcript (plan 122 §D14).
+    let headless = cfg.workspace.companion.is_headless().then(|| {
+        let killed = sessions::reap_previous(&cfg.state_dir, &metrics);
+        tracing::info!(
+            killed,
+            "headless mode; turns left by the previous run reaped"
+        );
+        sessions::Headless::new(
+            sessions::HeadlessConfig {
+                state_dir: cfg.state_dir.clone(),
+                max_total: std::time::Duration::from_secs(
+                    cfg.workspace.companion.headless_turn_max_secs,
+                ),
+                max_quiet: std::time::Duration::from_secs(
+                    cfg.workspace.companion.headless_quiet_max_secs,
+                ),
+            },
+            registry.clone(),
+            synthetic_hooks.clone(),
+            out_tx.clone(),
+            metrics.clone(),
+        )
+    });
     let (in_tx, in_rx) = mpsc::unbounded_channel::<ServerMessage>();
     let (poll_tx, poll_rx) = mpsc::unbounded_channel::<()>();
     let skill_dir = cfg.workspace.companion.skill_dir();
@@ -187,7 +215,8 @@ async fn run(
             user: cfg.state.user.clone(),
             version: crate::kernel::VERSION.to_owned(),
             token: cfg.state.pairing_token.clone(),
-            capabilities: hello_capabilities(skill.as_deref()),
+            capabilities: hello_capabilities(skill.as_deref(), cfg.workspace.companion.mode),
+            client: cfg.workspace.companion.mode,
         },
         seq,
         cfg.state.last_server_seq,
@@ -213,25 +242,31 @@ async fn run(
             shutdown.clone(),
         ),
     );
-    tasks.spawn(
-        "events",
-        Kind::BestEffort,
-        sessions::watch_events(tmux_ide.clone(), poll_tx.clone(), shutdown.clone()),
-    );
-    tasks.spawn(
-        "reconcile",
-        Kind::Essential,
-        sessions::reconcile(
-            out_tx.clone(),
-            registry.clone(),
-            metrics.clone(),
-            tmux.clone(),
-            tmux_ide.clone(),
-            limits.clone(),
-            poll_rx,
-            shutdown.clone(),
-        ),
-    );
+    // Discovery reads tmux and tmux-ide. A headless companion has neither: its registry holds
+    // only what it launched, and the child processes are the authority (plan 122 §D14).
+    if cfg.workspace.companion.is_headless() {
+        drop(poll_rx);
+    } else {
+        tasks.spawn(
+            "events",
+            Kind::BestEffort,
+            sessions::watch_events(tmux_ide.clone(), poll_tx.clone(), shutdown.clone()),
+        );
+        tasks.spawn(
+            "reconcile",
+            Kind::Essential,
+            sessions::reconcile(
+                out_tx.clone(),
+                registry.clone(),
+                metrics.clone(),
+                tmux.clone(),
+                tmux_ide.clone(),
+                limits.clone(),
+                poll_rx,
+                shutdown.clone(),
+            ),
+        );
+    }
     tasks.spawn(
         "stale",
         Kind::Essential,
@@ -266,6 +301,7 @@ async fn run(
             registry.clone(),
             out_tx.clone(),
             poll_tx.clone(),
+            headless.clone(),
         ),
     );
     let (input_tx, input_rx) = mpsc::unbounded_channel::<SessionMessage>();
@@ -284,6 +320,9 @@ async fn run(
                 metrics: metrics.clone(),
                 deliveries,
                 skill_dir,
+                headless: headless.clone(),
+                tmux: Some(tmux.clone()),
+                permission_mode: cfg.workspace.companion.permission_mode.clone(),
                 forks: Forks::new(ForkCtx {
                     claude: Claude {
                         command: cfg.workspace.companion.claude_command.clone(),
@@ -295,6 +334,7 @@ async fn run(
                     out: out_tx.clone(),
                     limits: limits.clone(),
                     spent: Default::default(),
+                    running: Default::default(),
                 }),
             },
         ),
@@ -326,6 +366,7 @@ async fn run(
         launch: &launch_tx,
         session_input: &input_tx,
         plan_mirror: &mirror_tx,
+        headless: headless.as_ref(),
     };
     let supervised = supervise(tasks, shutdown.clone());
     tokio::pin!(supervised);
@@ -341,15 +382,19 @@ async fn run(
 /// (draft restore since PR 8, room turns since PR 11):
 /// `plan_handoff` with the `/handoff` route that forwards `HandoffReport`, and `skill:<version>`
 /// when the installed skill names its version.
-pub fn hello_capabilities(skill: Option<&str>) -> Vec<String> {
+pub fn hello_capabilities(skill: Option<&str>, mode: rubato_protocol::ClientKind) -> Vec<String> {
     let mut caps = vec![
         capability::HOOK_ALLOWLIST.to_owned(),
         capability::SESSION_INPUT.to_owned(),
         capability::DRAFT_MIRROR.to_owned(),
         capability::PLAN_HANDOFF.to_owned(),
         capability::DRAFT_RESTORE.to_owned(),
+        capability::SESSION_STOP.to_owned(),
         capability::ROOM_TURNS.to_owned(),
     ];
+    if mode == rubato_protocol::ClientKind::Headless {
+        caps.push(capability::HEADLESS.to_owned());
+    }
     if let Some(v) = skill {
         caps.push(format!("{}{v}", capability::SKILL_PREFIX));
     }
@@ -371,6 +416,8 @@ struct Dispatch<'a> {
     session_input: &'a mpsc::UnboundedSender<SessionMessage>,
     /// The plan mirror task's queue: session ids of settle hooks (ADR 0053).
     plan_mirror: &'a mpsc::UnboundedSender<String>,
+    /// Headless mode: turns killed on a cap hit or a revoked pairing (ADR 0062).
+    headless: Option<&'a sessions::Headless>,
 }
 
 impl Dispatch<'_> {
@@ -386,7 +433,7 @@ impl Dispatch<'_> {
                 _ = shutdown.changed() => break,
                 Some(ev) = hook_rx.recv() => {
                     let outcome = hooks::on_event(&ev, self.registry, self.out, self.metrics, self.cfg.state.companion_id, &self.cfg.state_dir, self.limits).await;
-                    spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux).await;
+                    spend::after_hook(&ev, outcome, self.registry, self.out, &self.cfg.workspace.companion.pricing, self.tmux, self.headless).await;
                     plan_mirror::on_hook(&ev, self.plan_mirror);
                 }
                 // A `plan.ts handoff` report from `/handoff` (ADR 0055).
@@ -407,6 +454,11 @@ impl Dispatch<'_> {
                     }
                     ServerMessage::Error { code, .. } if code == "auth" => {
                         tracing::error!("pairing token rejected; re-pair with `rubato-companion pair`");
+                        // The owner revoked this companion: nothing it started may go on (ADR 0062).
+                        if let Some(h) = self.headless {
+                            let n = h.stop_all(crate::kernel::claude::KillReason::Revoke);
+                            tracing::warn!(stopped = n, "pairing revoked: headless turns stopped");
+                        }
                     }
                     _ => {}
                 },
@@ -525,6 +577,7 @@ pub async fn supervise(mut tasks: Tasks, mut shutdown: watch::Receiver<bool>) ->
 mod tests {
     use super::*;
     use crate::kernel::telemetry::capture;
+    use rubato_protocol::ClientKind;
     use std::time::Duration;
 
     fn exited(events: &capture::Events) -> usize {
@@ -540,19 +593,26 @@ mod tests {
     /// when its version is known.
     #[test]
     fn hello_announces_the_handoff_and_the_skill_when_known() {
-        let with = hello_capabilities(Some("0.2.0"));
+        let with = hello_capabilities(Some("0.2.0"), ClientKind::Interactive);
         for c in [
             capability::HOOK_ALLOWLIST,
             capability::SESSION_INPUT,
             capability::DRAFT_MIRROR,
             capability::PLAN_HANDOFF,
             capability::DRAFT_RESTORE,
+            capability::SESSION_STOP,
             capability::ROOM_TURNS,
             "skill:0.2.0",
         ] {
             assert!(with.iter().any(|x| x == c), "{c} in {with:?}");
         }
-        let without = hello_capabilities(None);
+        assert!(
+            !with.iter().any(|x| x == capability::HEADLESS),
+            "an interactive companion does not announce headless"
+        );
+        let headless = hello_capabilities(None, ClientKind::Headless);
+        assert!(headless.iter().any(|x| x == capability::HEADLESS));
+        let without = hello_capabilities(None, ClientKind::Interactive);
         assert!(without.iter().any(|x| x == capability::PLAN_HANDOFF));
         assert!(
             without

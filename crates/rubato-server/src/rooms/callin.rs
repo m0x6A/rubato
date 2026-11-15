@@ -5,7 +5,7 @@
 //!
 //! - `POST /api/room/agents` a `CallInRequest`: 201 `Joined` or `Requested`.
 //! - `POST /api/room/requests/{id}` a `RequestAnswerBody`: the request as answered.
-//! - `DELETE /api/room/agents` a `DismissRequest`: the agent as it left.
+//! - `DELETE /api/room/agents` a `DismissAgentRequest`: the agent as it left.
 
 use super::agents::{self, AgentRow};
 use super::handlers::has_plan;
@@ -19,8 +19,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use rubato_protocol::room::{reason, routes};
 use rubato_protocol::{
-    CallInRequest, CallInResponse, DismissRequest, LeftReason, RequestAnswer, RequestAnswerBody,
-    RequestState, RoomAgent, RoomKey, RoomRequest, SessionStatus, capability,
+    CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer,
+    RequestAnswerBody, RequestState, RoomAgent, RoomKey, RoomRequest, SessionStatus, capability,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -354,7 +354,7 @@ pub async fn answer(
 pub async fn dismiss(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
-    Json(req): Json<DismissRequest>,
+    Json(req): Json<DismissAgentRequest>,
 ) -> Result<Json<RoomAgent>, Refused> {
     let route = routes::ROOM_AGENTS;
     let room = key_of(&req.repo, req.number, &req.branch);

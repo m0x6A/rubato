@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
+import { ghostTraffic, routeOverview } from "./fixtures/traffic.ts";
 
 const root = resolve(import.meta.dirname, "../..");
 const map = parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string }[] };
@@ -554,5 +555,62 @@ test("draft a part and a seam, propose", async ({ page }) => {
   await expect(panel).toContainText("3 changes");
   await panel.getByRole("button", { name: "Discard draft" }).click();
   await expect(page.getByTestId("node-billing")).toHaveCount(0);
+  await expect(panel).toContainText("empty");
+});
+
+test("a ghost taken into the draft becomes a part with its service, and its call a seam (issue #140)", async ({ page }) => {
+  // The seeded server has no traffic source: a report with two ghosts is added on the way to the page.
+  await routeOverview(page, ghostTraffic);
+  await page.goto("/");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  // Where the part sits on the canvas, not on the screen: the band above may grow.
+  const placed = () => page.locator('.react-flow__node[data-id="rubato-server"]').evaluate((el) => (el as HTMLElement).style.transform);
+  const before = await placed();
+  await page.getByRole("radio", { name: "Traffic" }).click();
+  await expect(page.getByTestId("ghost-shop/checkout")).toBeVisible();
+  // The declared parts stay where they were: the ghosts sit in their own band.
+  expect(await placed()).toBe(before);
+  const list = page.getByTestId("discrepancies");
+  // Closed by default, so the map keeps its room; the count says there is something to see.
+  await expect(list.locator(":scope > summary")).toContainText("Map versus territory (6)");
+  await list.locator(":scope > summary").click();
+  await expect(list).toContainText("shop/checkout is running but not on the map");
+  // Its call waits for its part.
+  const edgeRow = list.getByTestId("discrepancy-edge").filter({ hasText: "shop/checkout calls rubato-server" });
+  await expect(edgeRow.getByRole("button", { name: "take the part into the draft first" })).toBeDisabled();
+
+  // Take the ghost: the draft opens with the form filled in, and nothing is sent until it is submitted.
+  const ghostRow = list.getByTestId("discrepancy-ghost").filter({ hasText: "shop/checkout" });
+  await ghostRow.getByRole("button", { name: "Add as a part…" }).click();
+  const panel = page.getByTestId("draft-panel");
+  await expect(panel).toContainText("empty");
+  const addPart = panel.getByRole("form", { name: "Add part" });
+  await expect(addPart.getByLabel(/^Id/)).toHaveValue("checkout");
+  await expect(addPart.getByLabel("service.namespace", { exact: true })).toHaveValue("shop");
+  await expect(addPart.getByLabel("service.name", { exact: true })).toHaveValue("checkout");
+  await addPart.getByLabel("What it is").fill("The shop's checkout.");
+  await addPart.getByRole("button", { name: "Add part" }).click();
+  await expect(panel).toContainText("add part checkout");
+
+  // Now the call can follow, from the drafted part to the server.
+  await page.getByRole("button", { name: "Edit map" }).click();
+  await page.getByRole("radio", { name: "Traffic" }).click();
+  if (!(await list.evaluate((el) => (el as HTMLDetailsElement).open))) {
+    await list.locator(":scope > summary").click();
+  }
+  await expect(list.getByTestId("discrepancy-ghost").filter({ hasText: "shop/checkout" })).toContainText("in the draft as checkout");
+  await edgeRow.getByRole("button", { name: "Add as a seam…" }).click();
+  const addSeam = panel.getByRole("form", { name: "Add seam" });
+  await expect(addSeam.getByLabel(/^From/)).toHaveValue("checkout");
+  await expect(addSeam.getByLabel(/^To/)).toHaveValue("rubato-server");
+  await addSeam.getByRole("button", { name: "Add seam" }).click();
+  await expect(panel).toContainText("add seam checkout-rubato-server");
+
+  // The proposed map file keeps the service exactly as it was emitted.
+  const proposed = parseYaml(await (await page.request.get("/api/map/draft/yaml")).text()) as { nodes: { id: string; service?: { namespace?: string; name: string } }[] };
+  expect(proposed.nodes.find((n) => n.id === "checkout")?.service).toEqual({ namespace: "shop", name: "checkout" });
+
+  // Leave the map as found.
+  await panel.getByRole("button", { name: "Discard draft" }).click();
   await expect(panel).toContainText("empty");
 });

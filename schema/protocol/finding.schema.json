@@ -417,6 +417,29 @@
       ]
     },
     {
+      "description": "Map versus territory (ADR 0059): a service in a fresh report, emitting a namespace, that\nno part names. A person may take it into the map draft or dismiss it (plan #140).",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "const": "observed_only_part"
+        },
+        "service": {
+          "$ref": "#/$defs/ServiceId"
+        }
+      },
+      "required": [
+        "kind",
+        "service",
+        "calls"
+      ]
+    },
+    {
       "description": "Two workspaces whose maps name a repo give it different plan paths (ADR 0045). The\nfirst in config order is used.",
       "type": "object",
       "properties": {
@@ -484,6 +507,27 @@
       "required": [
         "repo",
         "number"
+      ]
+    },
+    "ServiceId": {
+      "description": "A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`\n(ADR 0059). The namespace is absent only where the emitter has none, as for a servicegraph\nvirtual node built from a caller's `peer.service`. Rubato never sets or derives it.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "`service.name`.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "`service.namespace`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
       ]
     }
   }

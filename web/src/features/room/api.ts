@@ -1,4 +1,4 @@
-import type { CallInRequest, CallInResponse, DismissRequest, RequestAnswerBody, RoomMessage, RoomPostRequest, RoomView } from "../../protocol.ts";
+import type { CallInRequest, CallInResponse, DismissAgentRequest, RequestAnswerBody, RoomMessage, RoomPostRequest, RoomView } from "../../protocol.ts";
 import { ApiError, failureText, request } from "../../shared/api.ts";
 
 /** Which room: a plan's, by issue and branch (ADR 0057). */
@@ -16,7 +16,7 @@ export const roomApi = {
   /** The owner's own launch joins at once; anyone else's call is a request (PR 11). */
   callIn: (req: CallInRequest) => request<CallInResponse>("POST", "/api/room/agents", req),
   /** Its owner, or whoever called it in. */
-  dismiss: (req: DismissRequest) => request<unknown>("DELETE", "/api/room/agents", req),
+  dismiss: (req: DismissAgentRequest) => request<unknown>("DELETE", "/api/room/agents", req),
   /** The owner accepts or declines; the asker withdraws. */
   answer: (requestId: string, body: RequestAnswerBody) => request<unknown>("POST", `/api/room/requests/${encodeURIComponent(requestId)}`, body),
 };

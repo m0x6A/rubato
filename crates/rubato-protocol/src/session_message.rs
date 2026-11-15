@@ -79,6 +79,11 @@ pub enum SessionMessageKind {
         /// Rubato's link to the approval, written into accepted ADRs.
         url: String,
     },
+    /// The owner stops their own session (ADR 0062): the companion kills the running turn's
+    /// process group (headless) or the tmux session (interactive). Never queued, not held
+    /// behind an in-flight message, and not waiting for idle. Sent only to a companion that
+    /// announced `session_stop`.
+    Stop { requested_by: String },
     /// A person addressed the owner's agent in the plan's room (ADR 0057, plan 122 §D8). The
     /// companion types `text` into the working session while planning, or runs it in a
     /// read-only fork while building; the reply comes back as `RoomReply`.
@@ -148,8 +153,14 @@ impl SessionMessageKind {
         match self {
             Self::Chat { .. } => "chat",
             Self::PlanApproved { .. } => "plan_approved",
+            Self::Stop { .. } => "stop",
             Self::RoomTurn { .. } => "room_turn",
         }
+    }
+
+    /// `stop` skips the idle check and the in-flight rule (ADR 0062).
+    pub fn is_stop(&self) -> bool {
+        matches!(self, Self::Stop { .. })
     }
 
     /// The text a person sees for it: the chat text, or a line naming the approval. For
@@ -165,6 +176,7 @@ impl SessionMessageKind {
                 "Plan approved by {approved_by} (plan {}): hand it off",
                 &approved_sha[..approved_sha.len().min(7)]
             ),
+            Self::Stop { requested_by } => format!("Stopped by {requested_by}"),
             Self::RoomTurn { text, .. } => text.clone(),
         }
     }
@@ -174,6 +186,7 @@ impl SessionMessageKind {
         match self {
             Self::Chat { author, .. } => author,
             Self::PlanApproved { approved_by, .. } => approved_by,
+            Self::Stop { requested_by } => requested_by,
             Self::RoomTurn { addressed_by, .. } => addressed_by,
         }
     }
@@ -337,6 +350,9 @@ pub struct LaunchMessages {
 pub mod routes {
     /// `GET` the launch's messages; `POST` a `SessionMessageRequest` (owner only).
     pub const LAUNCH_MESSAGES: &str = "/api/launches/{launch_id}/messages";
+    /// `POST` with no body: the owner stops their own session (ADR 0062). 403 for anyone else,
+    /// 409 `companion_offline` when its companion is not live: a stop is never queued.
+    pub const LAUNCH_STOP: &str = "/api/launches/{launch_id}/stop";
 }
 
 #[cfg(test)]

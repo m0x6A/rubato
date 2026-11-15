@@ -22,6 +22,7 @@ import { currentBranch, issueFromBranch, originRepo } from "./lib/git.ts";
 import { planSha } from "./lib/plan-sha.ts";
 import { planCheck, schemaDir } from "./lib/vendor.ts";
 import { loadWorkspace, matchedMaps, repoForCwd, type Workspace } from "./lib/local.ts";
+import { call, runCommand, subcommandOf } from "./otel-emit.ts";
 
 export interface InitOptions {
   issue: string;
@@ -154,7 +155,7 @@ export function yamlScalar(s: string): string {
 export async function sessionMaps(ws: Workspace, cwd: string) {
   const { map: mapMod } = await planCheck();
   const repo = repoForCwd(ws, cwd)?.name ?? originRepo(cwd);
-  const matched = matchedMaps(ws, repo, (file) => mapMod.loadMap(file, schemaDir()));
+  const matched = call("system-map", () => matchedMaps(ws, repo, (file) => mapMod.loadMap(file, schemaDir())));
   if (matched.length === 0) {
     throw new Error(`no map in local.yml names ${repo ?? cwd}; listed: ${ws.maps.map((m) => m.repo).join(", ")}`);
   }
@@ -196,7 +197,7 @@ export async function init(ws: Workspace, cwd: string, o: InitOptions): Promise<
   const version = matched.length === 1 ? headSha((matched[0] as (typeof matched)[number]).clone.local) : null;
   console.error(JSON.stringify({ event: "rubato.plan.init", map_version: version === null ? "omitted_several_maps" : "written" }));
   mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, planTemplate(o, version));
+  call("plan-file", () => writeFileSync(abs, planTemplate(o, version)));
   return path;
 }
 
@@ -212,7 +213,7 @@ export async function check(ws: Workspace, cwd: string, planPath?: string): Prom
   }
   const abs = resolve(cwd, path);
   const rel = relative(cwd, abs);
-  return fitsAny(ws, cwd, readFileSync(abs, "utf8"), rel);
+  return fitsAny(ws, cwd, call("plan-file", () => readFileSync(abs, "utf8")), rel);
 }
 
 /** The sha a person's `Approved: plan <sha>` comment names for the plan at `planPath`. */
@@ -225,7 +226,7 @@ export async function sha(ws: Workspace, cwd: string, planPath?: string): Promis
     }
     path = (await resolvePlanPath(ws, cwd, n, "")).path;
   }
-  return { path, sha: planSha(readFileSync(resolve(cwd, path), "utf8")) };
+  return { path, sha: planSha(call("plan-file", () => readFileSync(resolve(cwd, path), "utf8"))) };
 }
 
 /** The plan path for the issue the current branch names, as the map places it. */
@@ -292,7 +293,7 @@ export async function wait(ws: Workspace, cwd: string, planPath: string | undefi
     emit("exited", { reason, ...fields });
     return WAIT_EXIT[reason];
   };
-  const read = () => pushedPlan(cwd, rel, readFileSync(resolve(cwd, rel), "utf8"));
+  const read = () => pushedPlan(cwd, rel, call("plan-file", () => readFileSync(resolve(cwd, rel), "utf8")));
   const pushed = read();
   if (!pushed.ok) {
     return exit(pushed.reason, { branch: pushed.branch });
@@ -451,7 +452,8 @@ async function main(argv: string[]): Promise<number> {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))) {
-  process.exitCode = await main(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  process.exitCode = await runCommand("rubato", subcommandOf("plan", argv), () => main(argv));
 }
 
 export { join };

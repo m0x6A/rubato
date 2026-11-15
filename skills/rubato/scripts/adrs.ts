@@ -266,5 +266,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))) {
-  process.exitCode = await main(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const { runCommand, subcommandOf } = await import("./otel-emit.ts");
+  process.exitCode = await runCommand("rubato", subcommandOf("adrs", argv), () => main(argv));
 }

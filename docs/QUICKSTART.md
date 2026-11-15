@@ -112,11 +112,78 @@ bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
 `RUBATO_DEV_USER=<login>` skips OAuth and must never be set where others
 can reach the server.
 
-Observed traffic on the map's seams (ADR 0039) has no production source yet (#107). For
-development, `RUBATO_DEV_TRAFFIC=<file.json>` reads a traffic report from a file every
-`RUBATO_TRAFFIC_FETCH_SECS` (15–300, default 60). Each edge names a client and a server by
-their map part id (the OTel `service.name`); a name that matches no part is counted as
-unmapped:
+Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
+setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`
+(15–300, default 60).
+
+**Production: the service graph (ADR 0040).** The server reads the OpenTelemetry servicegraph
+connector's `traces_service_graph_request_total` and `…_request_failed_total` through any
+Prometheus-compatible query API (`POST /api/v1/query`). Rubato never receives the traces
+themselves.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RUBATO_TRAFFIC_PROMETHEUS_URL` | unset | base URL of the query API; unset means this source is off |
+| `RUBATO_TRAFFIC_PROMETHEUS_HEADERS` | unset | `Name=value,…` sent with every query, for example `Authorization=Bearer …`; never logged |
+| `RUBATO_TRAFFIC_WINDOW_SECS` | 3600 | how far back the counts reach, 60–86 400 |
+| `RUBATO_TRAFFIC_PROMETHEUS_TIMEOUT_SECS` | 10 | per query, at most half the fetch interval |
+| `RUBATO_TRAFFIC_PROMETHEUS_METRIC_PREFIX` | `traces_service_graph_` | for a generator that names them differently |
+| `RUBATO_TRAFFIC_PROMETHEUS_NAMESPACE_LABELS` | `client_service_namespace,server_service_namespace` | the two namespace labels, client first |
+
+The team's side of the setup:
+
+1. **Every service emits its identity.** Each one sets `service.namespace` and `service.name`
+   (`OTEL_RESOURCE_ATTRIBUTES` / `OTEL_SERVICE_NAME`). Rubato sets no namespace for anyone,
+   including itself: give `rubato-server` and the companions theirs in their environment.
+2. **The connector carries the namespace.** It drops it unless asked. In the Collector or Alloy,
+   set it as a dimension:
+
+   ```yaml
+   connectors:
+     servicegraph:
+       dimensions: [service.namespace]
+   ```
+
+   Tempo's metrics-generator takes the same as `service_graphs.dimensions`.
+3. **Calls to parts that emit nothing get `peer.service`.** For GitHub or a file, the caller sets
+   `peer.service` on its client span. The connector then draws a virtual node, which has no
+   namespace.
+
+A failing query API makes the state `failing` (log `traffic source failing`). A malformed answer
+is rejected and the previous report kept. A source set up wrong (a bad URL, window or label)
+is failing from the start, and the log line says which variable. None of them is ever read as
+quiet.
+
+**Which part a service is (ADR 0059).** A part says which service it is in the map, exactly as
+that service emits itself. Change it through the map draft like any other field:
+
+```yaml
+nodes:
+  - id: rubato-server
+    kind: context
+    service: { namespace: rubato, name: rubato-server }
+  - id: github
+    kind: external
+    service: { name: github }   # a virtual node from callers' peer.service: no namespace
+```
+
+How an edge end is read:
+
+- **It matches a part** only when namespace and name are both equal. A missing namespace equals
+  only a missing one. There is no match by id and none by name alone. A part without `service`
+  is never matched, and never shown as quiet.
+- **It becomes a ghost** when it emits a namespace but no part names it. The Traffic lens draws it
+  in a band right of the map, with its calls. Under *Map versus territory* it can be taken into
+  the draft, filled in from the telemetry, or dismissed for the workspace (ADR 0060).
+- **It is only counted** when it emits no namespace and no part matches it, as "with no namespace
+  and no part to match".
+
+**Development: a file.** `RUBATO_DEV_TRAFFIC=<file.json>` reads a traffic report from a file.
+
+- **Names.** Each edge names a client and a server by their OTel `service.name`, and may add
+  `client_namespace` and `server_namespace`.
+- **Matching.** An edge without namespaces matches parts that declare `service: { name: … }`
+  with no namespace. A name with neither a namespace nor such a part is counted as unmapped:
 
 ```json
 {

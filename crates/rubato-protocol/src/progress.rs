@@ -404,6 +404,12 @@ pub enum Finding {
         to: String,
         calls: u64,
     },
+    /// Map versus territory (ADR 0059): a service in a fresh report, emitting a namespace, that
+    /// no part names. A person may take it into the map draft or dismiss it (plan #140).
+    ObservedOnlyPart {
+        service: crate::map::ServiceId,
+        calls: u64,
+    },
     /// Two workspaces whose maps name a repo give it different plan paths (ADR 0045). The
     /// first in config order is used.
     PlanPathConflict {

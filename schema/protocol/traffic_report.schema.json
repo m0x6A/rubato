@@ -47,6 +47,13 @@
           "description": "OpenTelemetry `service.name` of the caller.",
           "type": "string"
         },
+        "client_namespace": {
+          "description": "OpenTelemetry `service.namespace` of the caller, as it emits it; absent when it emits\nnone, as a servicegraph virtual node from `peer.service` does (ADR 0059).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "errors": {
           "description": "Of which failed.",
           "type": "integer",
@@ -57,6 +64,13 @@
         "server": {
           "description": "OpenTelemetry `service.name` of the callee.",
           "type": "string"
+        },
+        "server_namespace": {
+          "description": "OpenTelemetry `service.namespace` of the callee, as it emits it.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

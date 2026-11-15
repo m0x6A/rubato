@@ -20,7 +20,7 @@ use uuid::Uuid;
 /// A pushed message unanswered this long while its companion stayed live is *delivery unknown*.
 pub const ANSWER_WITHIN_SECS: i64 = 60;
 
-fn wire(row: &MessageRow) -> ServerMessage {
+pub(super) fn wire(row: &MessageRow) -> ServerMessage {
     ServerMessage::SessionMessage(SessionMessage {
         id: row.id,
         user: row.owner.clone(),

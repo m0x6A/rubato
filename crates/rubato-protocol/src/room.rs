@@ -135,7 +135,7 @@ pub struct RequestAnswerBody {
 
 /// Dismiss an agent (`DELETE` `routes::ROOM_AGENTS`): its owner, or whoever called it in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DismissRequest {
+pub struct DismissAgentRequest {
     pub repo: String,
     pub number: u64,
     pub branch: String,
@@ -253,7 +253,7 @@ pub mod routes {
     pub const ROOM: &str = "/api/room";
     /// `POST` a `RoomPostRequest`: the new `RoomMessage`, 201.
     pub const ROOM_MESSAGES: &str = "/api/room/messages";
-    /// `POST` a `CallInRequest`; `DELETE` a `DismissRequest`.
+    /// `POST` a `CallInRequest`; `DELETE` a `DismissAgentRequest`.
     pub const ROOM_AGENTS: &str = "/api/room/agents";
     /// `POST` a `RequestAnswerBody` for one request.
     pub const ROOM_REQUEST: &str = "/api/room/requests/{request_id}";

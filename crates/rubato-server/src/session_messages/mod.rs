@@ -15,7 +15,7 @@ pub use dispatch::{
     dispatch, on_hello, on_hook, on_result, on_sessions, record_gauges, run_sweep, sweep,
 };
 pub use enqueue::{CHAT_PRIORITY, PLAN_APPROVED_PRIORITY, enqueue};
-pub use handlers::{list, send};
+pub use handlers::{list, send, stop};
 pub use store::plan_approved_open;
 
 /// A queued room turn (ADR 0057), found by its session message: where it goes and what it is.

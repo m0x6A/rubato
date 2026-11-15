@@ -91,6 +91,10 @@ pub struct Metrics {
     pub session_input_failed: Counter<u64>,
     /// Handoff reports forwarded to the server, by `rubato.outcome` (ADR 0055).
     pub handoff_reports: Counter<u64>,
+    /// Headless turns ended, by `rubato.outcome` (ADR 0062).
+    pub headless_turns: Counter<u64>,
+    /// Headless turns the companion killed, by `rubato.reason` (ADR 0062).
+    pub headless_killed: Counter<u64>,
 }
 
 impl Metrics {
@@ -112,6 +116,14 @@ impl Metrics {
                 .build(),
             sessions_discovered: m.u64_gauge(otel::metric::SESSIONS_DISCOVERED).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
+            headless_turns: m
+                .u64_counter(otel::metric::HEADLESS_TURNS)
+                .with_description("headless turns ended, by outcome")
+                .build(),
+            headless_killed: m
+                .u64_counter(otel::metric::HEADLESS_KILLED)
+                .with_description("headless turns killed by the companion, by reason")
+                .build(),
             session_input_failed: m
                 .u64_counter(otel::metric::SESSION_INPUT_FAILED)
                 .with_description("session messages not typed, or stopped while typing, by reason")

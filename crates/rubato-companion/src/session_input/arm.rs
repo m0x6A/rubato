@@ -38,6 +38,12 @@ pub struct SessionInputTask {
     /// The installed rubato skill, read for each `plan_approved` (`kernel::skill`), so an upgrade
     /// needs no companion restart.
     pub skill_dir: std::path::PathBuf,
+    /// Headless mode (ADR 0062): messages run as turns, `stop` kills the running one.
+    pub headless: Option<crate::sessions::Headless>,
+    /// For `stop` on an interactive session: its tmux session is killed.
+    pub tmux: Option<crate::kernel::tmux::Tmux>,
+    /// Passed to every headless turn.
+    pub permission_mode: String,
     /// The fork workers for room turns in fork mode (ADR 0057).
     pub forks: Forks,
 }
@@ -103,6 +109,9 @@ impl SessionInputTask {
 
     /// The outcome to answer now, or None when a fork worker answers it.
     async fn deliver(&mut self, msg: &SessionMessage) -> Option<Handled> {
+        if msg.kind.is_stop() {
+            return Some(self.stop(msg).await);
+        }
         let max_chars = self.limits.lock().unwrap().session_message_max_chars;
         // A room turn's answer is a `RoomReply`, which an older server would drop.
         if matches!(msg.kind, SessionMessageKind::RoomTurn { .. })
@@ -172,6 +181,11 @@ impl SessionInputTask {
                 return None;
             }
             Decision::Paste { target, text, .. } => (target, text),
+            Decision::Turn {
+                session_id,
+                worktree,
+                text,
+            } => return Some(self.run_turn(msg, &session_id, &worktree, text).await),
         };
         // Before anything is typed: a record that cannot be written means no paste.
         if let Err(e) = self.deliveries.record(msg.id, Delivery::Typing, Utc::now()) {
@@ -225,6 +239,129 @@ impl SessionInputTask {
                 Handled::failed(SessionMessageOutcome::Interrupted, "interrupted")
             }
         })
+    }
+
+    /// A message to a headless session is one resume turn (ADR 0062). `typing` is recorded before
+    /// the spawn and `delivered` once the child runs, so it is never typed twice.
+    async fn run_turn(
+        &mut self,
+        msg: &SessionMessage,
+        session_id: &str,
+        worktree: &std::path::Path,
+        text: String,
+    ) -> Handled {
+        let Some(headless) = self.headless.clone() else {
+            return Handled::failed(
+                SessionMessageOutcome::Failed {
+                    error: "a headless session on a companion not in headless mode".into(),
+                },
+                "not_headless",
+            );
+        };
+        if headless.is_running(msg.launch_id) {
+            return Handled {
+                outcome: SessionMessageOutcome::NotIdle,
+                repeat: false,
+                failure: None,
+            };
+        }
+        if let Err(e) = self.deliveries.record(msg.id, Delivery::Typing, Utc::now()) {
+            return Handled::failed(
+                SessionMessageOutcome::Failed {
+                    error: format!("recording the delivery: {e:#}"),
+                },
+                "state_write",
+            );
+        }
+        let at = Utc::now();
+        // Before the turn starts, so the prompt it reports is tagged with this message's id.
+        self.registry
+            .lock()
+            .await
+            .mark_input_sent(msg.launch_id, at, msg.id, &text);
+        let args = crate::kernel::claude::resume_args(session_id, &text, &self.permission_mode);
+        match headless
+            .start(msg.launch_id, session_id, worktree, args, text)
+            .await
+        {
+            Ok(()) => {
+                if let Err(e) = self
+                    .deliveries
+                    .record(msg.id, Delivery::Delivered, Utc::now())
+                {
+                    tracing::error!(id = %msg.id, error = %format!("{e:#}"), "delivered, but not recorded as delivered");
+                }
+                Handled {
+                    outcome: SessionMessageOutcome::Delivered,
+                    repeat: false,
+                    failure: None,
+                }
+            }
+            Err(e) => {
+                let _ = self.deliveries.remove(msg.id);
+                Handled::failed(
+                    SessionMessageOutcome::Failed {
+                        error: format!("{e:#}"),
+                    },
+                    "turn",
+                )
+            }
+        }
+    }
+
+    /// `stop` (ADR 0062): checks the paired user and the launch, skips only the idle check, kills
+    /// the turn's process group (headless) or the tmux session (interactive), and ends the
+    /// session. A repeat is answered from the delivery record without killing again.
+    async fn stop(&mut self, msg: &SessionMessage) -> Handled {
+        let refused = |reason| Handled {
+            outcome: SessionMessageOutcome::Refused { reason },
+            repeat: false,
+            failure: None,
+        };
+        if msg.user != self.paired_user {
+            return refused(rubato_protocol::MessageRefusal::NotPairedUser);
+        }
+        if matches!(self.deliveries.get(msg.id), Some(Delivery::Delivered)) {
+            return Handled {
+                outcome: SessionMessageOutcome::Delivered,
+                repeat: true,
+                failure: None,
+            };
+        }
+        let entry = self.registry.lock().await.by_launch(msg.launch_id).cloned();
+        let Some(entry) = entry.filter(|e| !e.ended) else {
+            return refused(rubato_protocol::MessageRefusal::NotLaunchedHere);
+        };
+        // A fork turn of the session goes with it (ADR 0057); it is not the session's own turn.
+        if self.forks.stop(msg.launch_id) {
+            tracing::info!(launch_id = %msg.launch_id, "room fork turn killed by stop");
+        }
+        let killed_turn = self
+            .headless
+            .as_ref()
+            .is_some_and(|h| h.kill(msg.launch_id, crate::kernel::claude::KillReason::Stop));
+        if !killed_turn {
+            if let (Some(t), Some(name)) = (self.tmux.clone(), entry.tmux_session.clone()) {
+                let _ = tokio::task::spawn_blocking(move || t.kill_session(&name)).await;
+            }
+            // An idle headless session, or a tmux one: nothing reports the end, so say it here.
+            let mut reg = self.registry.lock().await;
+            if let Some(e) = reg.find_by_launch(msg.launch_id) {
+                e.status = rubato_protocol::SessionStatus::Ended;
+                e.ended = true;
+            }
+            let snap = reg.snapshot();
+            let _ = self.out.send(CompanionMessage::Sessions { sessions: snap });
+        }
+        let _ = self
+            .deliveries
+            .record(msg.id, Delivery::Delivered, Utc::now());
+        tracing::info!(id = %msg.id, launch_id = %msg.launch_id, killed_turn, "session stopped by its owner");
+        Handled {
+            outcome: SessionMessageOutcome::Delivered,
+            repeat: false,
+            failure: None,
+        }
     }
 
     /// The log line and, for a failure, `rubato.session_input.failed{rubato.reason}`.
@@ -367,6 +504,9 @@ mod tests {
             metrics: Arc::new(metrics),
             deliveries: Deliveries::open(dir.path()).unwrap(),
             skill_dir: dir.path().join("skill"),
+            headless: None,
+            tmux: None,
+            permission_mode: "acceptEdits".into(),
             forks: crate::session_input::Forks::new(crate::session_input::ForkCtx {
                 claude: crate::kernel::claude::Claude {
                     command: "false".into(),
@@ -376,6 +516,7 @@ mod tests {
                 out: out_tx.clone(),
                 limits: Arc::new(std::sync::Mutex::new(Limits::default())),
                 spent: Default::default(),
+                running: Default::default(),
             }),
         };
         Fixture {

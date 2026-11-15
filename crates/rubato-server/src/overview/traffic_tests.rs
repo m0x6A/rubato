@@ -1,11 +1,11 @@
-//! The slice end to end over `RUBATO_DEV_TRAFFIC` (plan #104): the overview served over HTTP,
+//! Slice `traffic` end to end through the overview, over `RUBATO_DEV_TRAFFIC` (plan #104): the overview served over HTTP,
 //! the web fan-out, the limits, a missing file, an old file, and the instruments read back.
 
-use super::{DevFileSource, Fetcher, Outcome};
 use crate::kernel::config::Config;
 use crate::kernel::github::FakeGitHub;
 use crate::kernel::state::{AppState, LoadedMap};
 use crate::kernel::telemetry::{capture, metric_reader};
+use crate::traffic::{DevFileSource, Fetcher, Outcome};
 use rubato_protocol::otel::{attr, metric};
 use rubato_protocol::progress::routes;
 use rubato_protocol::{Finding, Overview, SystemMap, TrafficState, WebEvent};
@@ -33,10 +33,7 @@ fn traffic_findings(o: &Overview) -> Vec<Finding> {
 /// composition root, so not `app::router`.
 fn overview_only(app: crate::kernel::state::App) -> axum::Router {
     axum::Router::new()
-        .route(
-            routes::OVERVIEW,
-            axum::routing::get(crate::overview::overview),
-        )
+        .route(routes::OVERVIEW, axum::routing::get(super::overview))
         .with_state(app)
 }
 
@@ -65,7 +62,12 @@ async fn the_dev_file_feeds_the_overview_and_the_instruments() {
     let (reader, metrics) = metric_reader::start();
     let mut app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
     Arc::get_mut(&mut app).unwrap().metrics = metrics;
-    let map: SystemMap = serde_yaml_ng::from_str(MAP).unwrap();
+    // The dev file names services without a namespace, so each part declares the
+    // namespaceless service it is (ADR 0059); without `service` no part is ever matched.
+    let mut map: SystemMap = serde_yaml_ng::from_str(MAP).unwrap();
+    for n in &mut map.nodes {
+        n.service = Some(rubato_protocol::ServiceId::new(None, &n.id));
+    }
     app.set_map(
         rubato_protocol::DEFAULT_WORKSPACE,
         LoadedMap {
@@ -259,6 +261,6 @@ async fn without_a_source_traffic_is_not_configured() {
         rubato_protocol::SourceStatus::NotConfigured
     );
     let (_tx, rx) = tokio::sync::watch::channel(false);
-    let r = tokio::time::timeout(Duration::from_secs(1), super::run(app, rx)).await;
+    let r = tokio::time::timeout(Duration::from_secs(1), crate::traffic::run(app, rx)).await;
     assert!(r.expect("returns at once").is_ok());
 }

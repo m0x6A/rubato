@@ -69,6 +69,12 @@ const mutants: Mutant[] = [
     to: "max(rubato_plans_approval_record_mismatch) > 0\n        for: 0m",
     caughtBy: "alertname: ApprovalRecordMismatch, time: 6m",
   },
+  {
+    why: "#138: stops and cap kills are events of their own; HeadlessTurnsKilled pages only on a bound or a restart",
+    from: 'rubato_reason=~"timeout|quiet|companion_restarted"',
+    to: 'rubato_reason=~".+"',
+    caughtBy: "alertname: HeadlessTurnsKilled, time: 4m",
+  },
 ];
 
 /** Run the committed rule tests against `rules`, in a scratch copy of the alerts folder. */
