@@ -1,8 +1,8 @@
 # 0067. The companion reaches the server over TLS, except on loopback or by an explicit `--insecure` pairing
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #194) — proposed; option 2 with persistence chosen by the maintainer in conversation (2026-11-15, #194 Q1); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/194#issuecomment-6892514823 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #194) — proposed; option 2 with persistence chosen by the maintainer in conversation (2026-11-15, #194 Q1)
 - **Seam:** companion-server
 - **Issue:** m0x6A/rubato#194
 
