@@ -306,6 +306,7 @@ mod tests {
                 calls.display(),
                 stdin.display()
             ),
+            proc::LOCAL_TIMEOUT,
         );
         let e = tmux.paste("%9", "k2", "hello\nworld").unwrap_err();
         assert!(format!("{e:#}").contains("tmux paste-buffer"), "{e:#}");
