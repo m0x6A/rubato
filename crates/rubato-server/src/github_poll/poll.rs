@@ -1,5 +1,5 @@
 //! Per-issue reads of GitHub: issue metadata, the issue branch, its PR and checks, `Decision:`
-//! (ADR 0014), `Review:` and `Approved:` (ADR 0027) comments from members (ADR 0062); and the rate
+//! (ADR 0014), `Review:` and `Approved:` (ADR 0027) comments from members (ADR 0065); and the rate
 //! limit. `tasks::Poller` calls these in order (design §9.1).
 //!
 //! Issue #49 (ADR 0023, proposed): branches and open pull requests are listed once per repo per
@@ -310,7 +310,7 @@ pub struct CommentsRead {
 }
 
 /// One pass over an issue's comments (one call, on the full lane): `Decision:` (ADR 0014),
-/// `Review:` and `Approved:` (ADR 0027) comments, each counted only from members (ADR 0062). One
+/// `Review:` and `Approved:` (ADR 0027) comments, each counted only from members (ADR 0065). One
 /// from a Bot or from someone who is not OWNER, MEMBER or COLLABORATOR is ignored and logged, and
 /// a decision stored for it earlier is deleted. Signals whose comment is gone are dropped.
 pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> {

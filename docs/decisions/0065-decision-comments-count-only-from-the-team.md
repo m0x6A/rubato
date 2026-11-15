@@ -1,4 +1,4 @@
-# 0062. `Decision:` comments count only from team members, like `Review:` and `Approved:`
+# 0065. `Decision:` comments count only from team members, like `Review:` and `Approved:`
 
 - **Status:** proposed
 - **Date:** 2026-11-15

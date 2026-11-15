@@ -50,7 +50,7 @@ pub async fn upsert_decision(db: &SqlitePool, rec: &DecisionRecord) -> Result<()
     Ok(())
 }
 
-/// Forget the decision of one comment, if any: its author is not trusted (ADR 0062).
+/// Forget the decision of one comment, if any: its author is not trusted (ADR 0065).
 pub async fn delete_decision(db: &SqlitePool, issue: &IssueRef, comment_id: u64) -> Result<()> {
     sqlx::query("DELETE FROM decisions WHERE repo = ? AND number = ? AND comment_id = ?")
         .bind(&issue.repo)

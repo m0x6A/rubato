@@ -606,7 +606,7 @@ async fn reviews_and_approvals_count_only_from_members() {
     assert_eq!(approval.current_sha.as_deref(), Some(sha.as_str()));
 }
 
-/// Issue #164, ADR 0062: `Decision:` counts only from members, like `Review:` and `Approved:`.
+/// Issue #164, ADR 0065: `Decision:` counts only from members, like `Review:` and `Approved:`.
 /// The repo is public, so a stranger's, a contributor's and a Bot's decision must not show, and
 /// a row an older server stored for an outsider's comment goes.
 #[tokio::test]
