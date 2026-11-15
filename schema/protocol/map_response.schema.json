@@ -82,6 +82,17 @@
             "string",
             "null"
           ]
+        },
+        "service": {
+          "description": "The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No\ndefault: a part without it is never matched to observed traffic.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -247,6 +258,27 @@
         "from",
         "to",
         "owner"
+      ]
+    },
+    "ServiceId": {
+      "description": "A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`\n(ADR 0059). The namespace is absent only where the emitter has none, as for a servicegraph\nvirtual node built from a caller's `peer.service`. Rubato never sets or derives it.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "`service.name`.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "`service.namespace`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
       ]
     },
     "SystemMap": {
