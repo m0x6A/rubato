@@ -544,11 +544,11 @@
           "to": "tmux-ide"
         },
         {
-          "carries": "hook stdin JSON (async hooks); launch flags (--session-id, --settings, --permission-mode); OTel env (OTEL_RESOURCE_ATTRIBUTES); typed input through the session's tmux pane; headless forked turns",
+          "carries": "hook stdin JSON (async hooks); launch flags (--mcp-config, --allowedTools, --session-id, --settings, --permission-mode); OTel env (OTEL_RESOURCE_ATTRIBUTES); typed input through the session's tmux pane; headless forked turns",
           "description": "The companion starts Claude Code with a session id, hooks and telemetry attributes, and hears every hook the session fires. It types its own user's messages into that session when it waits for input, and runs read-only forked turns for a plan's room.",
           "flows": [
             {
-              "carries": "launch: --session-id, --settings with hooks, --permission-mode, OTEL_RESOURCE_ATTRIBUTES, the prompt; a typed prompt through the session's tmux pane; a headless forked turn in plan mode",
+              "carries": "launch: --mcp-config and --allowedTools for its own MCP server (ADR 0071), --session-id, --settings with hooks, --permission-mode, OTEL_RESOURCE_ATTRIBUTES, the prompt; a typed prompt through the session's tmux pane; a headless forked turn in plan mode",
               "from": "rubato-companion",
               "kind": "control",
               "to": "claude-code"
@@ -720,7 +720,7 @@
           "description": "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map.",
           "flows": [
             {
-              "carries": "Overview: map, issues with derived progress, findings, companions, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room",
+              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room",
               "from": "rubato-server",
               "kind": "data",
               "to": "web"
