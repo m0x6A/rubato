@@ -169,7 +169,7 @@ reaches the branch as a file at handoff. MCP only reads plan status.
 
 No tool writes an approval. The real guard is structural: approval is a web route only (ADR 0054,
 "agents and companions have no route to approve"), and `companion_link` reaches `approve` only
-through `on_launch_started` and `on_handoff_report` (`companion_link/ws.rs:372`,
+through `on_launch_started` and `on_handoff_report` (`companion_link/ws.rs:415`, `:476`,
 `approve/mod.rs:15-18`). Two tests hold it in place:
 
 1. **Server, every companion message:** a test replays every `CompanionMessage` fixture in
@@ -201,7 +201,7 @@ All additive; an older server or companion ignores what it does not know, gated 
 | `LaunchRecord` | companion `launches.json` | gains `node_ids`, `map_version`, `planning`, `attempt`, `attempt_limit` (serde default) |
 | `PlanStatus` cache | companion, `agent_mcp`, in memory | latest per launch; empty after a companion restart, so `plan_status` answers `unknown` until the first push |
 | table `agent_reports` | server, new slice `agent_reports`, migration `0024_agent_reports.sql` (or the next free number) | one row per launch: `launch_id` (key), `companion_id`, `doing`, `parts`, `reported_at` |
-| `companion_events` payload | server, `companion_link` | `AgentReport` stored with an empty payload in `stored_payload` (`ws.rs:574-585`), as ADR 0052 asks of new kinds |
+| `companion_events` payload | server, `companion_link` | `AgentReport` stored with an empty payload in `stored_payload` (`ws.rs:612-624`), as ADR 0052 asks of new kinds |
 
 **`PlanStatus` content.** Derived in `approve` (which already reads `plan_drafts` and
 `github_poll`):
@@ -218,7 +218,7 @@ announced `agent_mcp`:
 - on `approve`'s reconcile tick, sending only what differs from the last one sent (reason
   `change`).
 `companion_link` calls `approve::on_welcome(app, companion_id)` after it sends the Welcome; it
-already names `approve` (`on_launch_started`, `ws.rs:372`), so the edge exists, and `approve`
+already names `approve` (`on_launch_started`, `ws.rs:415`), so the edge exists, and `approve`
 sends through the kernel's `send_to_companion`, never through `companion_link`. The
 last-sent map is per companion connection and cleared on disconnect, so a reconnect always gets a
 fresh push. `send_to_companion` returns false for a companion that is offline
