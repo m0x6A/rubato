@@ -65,17 +65,33 @@ fn hash(text: &str) -> String {
         .collect()
 }
 
+/// One table cell as a code span (design 193 D7): no mention, link, image or HTML renders in
+/// it, a backtick cannot close it, a pipe cannot split the row and a newline cannot end it.
+fn cell(text: &str) -> String {
+    let inner: String = text
+        .chars()
+        .map(|c| match c {
+            '`' => "'".to_owned(),
+            '|' => "\\|".to_owned(),
+            '\n' | '\r' => " ".to_owned(),
+            c => c.to_string(),
+        })
+        .collect();
+    format!("`{inner}`")
+}
+
 fn body(ops: &[DraftOp], by: &str) -> String {
-    // Logins are in backticks on purpose: a bare @name would notify people from a server.
+    // Logins are code spans on purpose: a bare @name would notify people from a server.
     let mut out = format!(
-        "Opened by Rubato from the team's shared map draft, proposed by `{by}`.\n\n| # | Change | By |\n| --- | --- | --- |\n"
+        "Opened by Rubato from the team's shared map draft, proposed by {}.\n\n| # | Change | By |\n| --- | --- | --- |\n",
+        cell(by)
     );
     for (i, o) in ops.iter().enumerate() {
         out.push_str(&format!(
-            "| {} | {} | `{}` |\n",
+            "| {} | {} | {} |\n",
             i + 1,
-            o.op.summary(),
-            o.author
+            cell(&o.op.summary()),
+            cell(&o.author)
         ));
     }
     out.push_str("\nThe file is written from Rubato's map model, so hand-written comments in it are not kept. When this is merged and Rubato has loaded the map again, the draft empties. Closing it without merging makes the draft editable again, with every change kept.\n");
@@ -86,16 +102,17 @@ fn body(ops: &[DraftOp], by: &str) -> String {
 /// counted. The proposal row, if there is one, stays in `opening`.
 fn step_failed(
     app: &App,
+    cfg: &crate::kernel::workspaces::WorkspaceEntry,
     user: &str,
     step: &'static str,
-    branch: &str,
-    base_sha: &str,
+    (branch, base_sha): (&str, &str),
     frozen: bool,
     e: &anyhow::Error,
 ) -> Refusal {
     tracing::error!(
         step,
-        rubato.repo = %app.config.map_repo,
+        rubato.repo = %cfg.map_repo,
+        rubato.workspace = %cfg.id,
         branch,
         base_sha,
         rubato.user = user,
@@ -202,9 +219,27 @@ pub async fn propose(
         Ok(Some(sha)) => sha,
         Ok(None) => {
             let e = anyhow::anyhow!("branch {} not found in {}", cfg.map_ref, cfg.map_repo);
-            return Err(step_failed(&app, &user, "head", &branch, &base, frozen, &e));
+            return Err(step_failed(
+                &app,
+                cfg,
+                &user,
+                "head",
+                (&branch, &base),
+                frozen,
+                &e,
+            ));
         }
-        Err(e) => return Err(step_failed(&app, &user, "head", &branch, &base, frozen, &e)),
+        Err(e) => {
+            return Err(step_failed(
+                &app,
+                cfg,
+                &user,
+                "head",
+                (&branch, &base),
+                frozen,
+                &e,
+            ));
+        }
     };
     let on_branch = match app
         .github
@@ -212,7 +247,17 @@ pub async fn propose(
         .await
     {
         Ok(f) => f,
-        Err(e) => return Err(step_failed(&app, &user, "file", &branch, &base, frozen, &e)),
+        Err(e) => {
+            return Err(step_failed(
+                &app,
+                cfg,
+                &user,
+                "file",
+                (&branch, &base),
+                frozen,
+                &e,
+            ));
+        }
     };
     if on_branch.as_deref() != Some(map.yaml.as_str()) {
         return Err(refuse(
@@ -271,7 +316,15 @@ pub async fn propose(
     };
     app.notify_ws("draft", ws.as_str());
     let fail = |step: &'static str, e: anyhow::Error| {
-        step_failed(&app, &user, step, &row.branch, &row.base_sha, true, &e)
+        step_failed(
+            &app,
+            cfg,
+            &user,
+            step,
+            (&row.branch, &row.base_sha),
+            true,
+            &e,
+        )
     };
 
     app.github
@@ -382,7 +435,15 @@ pub async fn withdraw(
         ));
     }
     let fail = |e: anyhow::Error| {
-        let (_, text) = step_failed(&app, &user, "close", &row.branch, &row.base_sha, true, &e);
+        let (_, text) = step_failed(
+            &app,
+            cfg,
+            &user,
+            "close",
+            (&row.branch, &row.base_sha),
+            true,
+            &e,
+        );
         (
             StatusCode::BAD_GATEWAY,
             text.replace(
@@ -458,6 +519,38 @@ mod tests {
 
     const MAP: &str = include_str!("../../../../docs/design/rubato-map.yml");
     const PATH: &str = "docs/design/rubato-map.yml";
+
+    /// Design 193 D7: a summary cannot mention, link, or break the table.
+    #[test]
+    fn summaries_are_code_spans() {
+        let op = DraftOp {
+            seq: 1,
+            op_id: uuid::Uuid::new_v4(),
+            op: MapOp::RemoveNode {
+                id: "x @team [x](https://e) ` | y\nz".into(),
+            },
+            author: "m0x6A".into(),
+            created_at: Utc::now(),
+            stale: None,
+        };
+        let text = body(&[op], "alice");
+        let row = text
+            .lines()
+            .find(|l| l.starts_with("| 1 |"))
+            .expect("one row on one line");
+        assert_eq!(
+            row,
+            "| 1 | `remove part x @team [x](https://e) ' \\| y z` | `m0x6A` |"
+        );
+        // Outside code spans there is no @ and no [.
+        let outside: String = text.split('`').step_by(2).collect();
+        assert!(
+            !outside.contains('@') && !outside.contains('['),
+            "{outside}"
+        );
+        // Three cells: the only unescaped pipes are the four borders.
+        assert_eq!(row.replace("\\|", "").matches('|').count(), 4);
+    }
 
     async fn drafted() -> (
         App,
@@ -605,5 +698,39 @@ mod tests {
         assert!(failed.fields["error"].contains("Resource not accessible"));
         assert_eq!(outcome(&reader, "failed"), Some(1));
         assert_eq!(outcome(&reader, "opened"), None);
+    }
+
+    /// A failed step names the map repo of the workspace being proposed, not the default's (#130).
+    #[tokio::test]
+    async fn a_failed_step_logs_its_workspaces_map_repo() {
+        let (app, _github, _reader, _tmp) = drafted().await;
+        let shop = crate::kernel::workspaces::WorkspaceEntry {
+            id: "shop".into(),
+            name: None,
+            map_repo: "acme/shop-map".into(),
+            map_path: "system-map.yml".into(),
+            map_ref: "main".into(),
+            map_file: None,
+        };
+        let (events, _g) = capture::start();
+        let e = anyhow::anyhow!("boom");
+        step_failed(
+            &app,
+            &shop,
+            "alice",
+            "ref",
+            ("rubato/map-shop", "head1"),
+            true,
+            &e,
+        );
+        let events = events.lock().unwrap();
+        let line = events
+            .iter()
+            .find(|e| e.message == "map proposal failed")
+            .expect("the step failure is logged");
+        let field = |k: &str| line.fields.get(k).map(String::as_str);
+        assert_eq!(field("rubato.repo"), Some("acme/shop-map"));
+        assert_eq!(field("rubato.workspace"), Some("shop"));
+        assert_ne!(field("rubato.repo"), Some(app.config.map_repo.as_str()));
     }
 }
