@@ -82,6 +82,7 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
             delete(traffic::undismiss),
         )
         .route(&at(pull_routes::PULL), get(pulls::pull_view))
+        .route(&at(pull_routes::PULLS_MERGE), post(pulls::merge))
 }
 
 pub fn router(app: App) -> Router {
@@ -236,6 +237,7 @@ mod tests {
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT_GROUPED.into()),
+            (Method::POST, pull_routes::PULLS_MERGE.into()),
             (
                 Method::GET,
                 pull_routes::PULL

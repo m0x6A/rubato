@@ -96,6 +96,15 @@ impl<T: Send + Sync> Cache<T> {
         }
     }
 
+    /// Forget every view of `repo#number`, in every workspace, so the next one reads GitHub
+    /// (any merge outcome, design 82 §2).
+    pub fn evict(&self, repo: &str, number: u64) {
+        self.entries
+            .lock()
+            .unwrap()
+            .retain(|(_, r, n), _| !(r.eq_ignore_ascii_case(repo) && *n == number));
+    }
+
     pub fn person(&self, login: &str, repo: &str) -> Option<RepoAccess> {
         let m = self.person.lock().unwrap();
         m.get(&(login.to_owned(), repo.to_owned()))

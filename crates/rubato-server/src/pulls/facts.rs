@@ -46,6 +46,9 @@ pub struct Facts {
     pub outcome: Outcome,
     pub person: Option<PersonFacts>,
     pub gate: PlanGate,
+    /// For the `merge refused` log: the approval's sha and the hash at the head.
+    pub approved_sha: Option<String>,
+    pub head_hash: Option<String>,
     pub issue: Option<IssueRef>,
     pub stacked_above: u32,
 }
@@ -119,6 +122,11 @@ pub async fn gather(
         .filter(|p| p.base == pull.branch)
         .count() as u32;
     Ok(Gathered::Found(Box::new(Facts {
+        approved_sha: approval.and_then(|a| a.sha.clone()),
+        head_hash: match &head {
+            PlanAtHead::Present { hash, .. } => Some(hash.clone()),
+            _ => None,
+        },
         fetched,
         outcome,
         person,
@@ -233,7 +241,9 @@ async fn person(
     if !fresh && let Some(a) = cache.person(login, repo) {
         return Some(to_person(a));
     }
+    // The local stand-in has one person and no tokens (dev runs only).
     let token = match auth::access_token(app, login).await {
+        _ if app.github.acts_without_token() => String::new(),
         Ok(t) => t,
         Err(TokenError::NotStored | TokenError::Rejected) => return None,
         Err(TokenError::Failed(e)) => {

@@ -298,6 +298,86 @@ impl GitHubApi for LocalGit {
             .collect())
     }
 
+    fn acts_without_token(&self) -> bool {
+        true
+    }
+
+    /// A merge into the bare repo, as GitHub would make it: the head must still be `sha` (409),
+    /// the trees must merge cleanly (405); `merge` makes a commit with both parents, `squash` and
+    /// `rebase` one with the base only. The base moves only from the commit read (`update-ref`
+    /// with the old value), as GitHub guards it.
+    async fn merge_as(
+        &self,
+        _token: &str,
+        repo: &str,
+        number: u64,
+        sha: &str,
+        method: MergeMethod,
+    ) -> std::result::Result<String, super::MergeError> {
+        use super::MergeError;
+        let refused = |status: u16, message: String| MergeError::Refused { status, message };
+        let unknown = |e: anyhow::Error| MergeError::Unknown(format!("{e:#}"));
+        let found = self
+            .pulls
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|((r, _), p)| r == repo && p.number == number)
+            .map(|((_, b), p)| (b.clone(), p.clone()));
+        let Some((branch, p)) = found else {
+            return Err(refused(404, "Not Found".into()));
+        };
+        if !p.open {
+            return Err(refused(405, "Pull Request is not mergeable".into()));
+        }
+        let base = p.base.clone().unwrap_or_else(main_branch);
+        let head = self.branch_sha(repo, &branch).await.map_err(unknown)?;
+        if head.as_deref() != Some(sha) {
+            return Err(refused(
+                409,
+                "Head branch was modified. Review and try the merge again.".into(),
+            ));
+        }
+        let old = self
+            .branch_sha(repo, &base)
+            .await
+            .map_err(unknown)?
+            .ok_or_else(|| refused(422, format!("base branch {base} does not exist")))?;
+        let tree = self
+            .git_write(repo, &["merge-tree", "--write-tree", &old, sha], None, None)
+            .await
+            .map_err(|e| refused(405, format!("Merge conflict: {e:#}")))?;
+        let tree = tree.lines().next().unwrap_or_default().to_owned();
+        let message = format!("Merge pull request #{number} from {branch}");
+        let mut args = vec!["commit-tree", tree.as_str(), "-p", old.as_str()];
+        if method == MergeMethod::Merge {
+            args.extend(["-p", sha]);
+        }
+        args.extend(["-m", message.as_str()]);
+        let made = self
+            .git_write(repo, &args, None, None)
+            .await
+            .map_err(unknown)?;
+        self.git_write(
+            repo,
+            &["update-ref", &format!("refs/heads/{base}"), &made, &old],
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| refused(409, format!("Base branch was modified: {e:#}")))?;
+        if let Some(p) = self
+            .pulls
+            .lock()
+            .unwrap()
+            .get_mut(&(repo.to_owned(), branch))
+        {
+            p.open = false;
+            p.merged_at = Some(chrono::Utc::now());
+        }
+        Ok(made)
+    }
+
     /// The local stand-in has one person, who may do everything.
     async fn repo_as(&self, _token: &str, repo: &str) -> Result<RepoAccess> {
         self.path(repo)?;
@@ -608,6 +688,92 @@ mod tests {
         );
         assert!(g.repo_as("", "a/r").await.unwrap().push);
         assert!(g.repo_as("", "x/y").await.is_err());
+    }
+
+    /// Issue #82: a merge moves the base of the bare repo once, refuses a moved head, and refuses a
+    /// conflict without moving anything.
+    #[tokio::test]
+    async fn a_merge_moves_the_base_once_and_only_from_the_head_seen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let seed = tmp.path().join("seed");
+        std::fs::create_dir_all(&seed).unwrap();
+        git(&seed, &["init", "-q", "-b", "main"]);
+        std::fs::write(seed.join("a.txt"), "one\n").unwrap();
+        git(&seed, &["add", "-A"]);
+        git(&seed, &["commit", "-q", "-m", "base"]);
+        for (b, file, text) in [
+            ("issue/7-x", "b.txt", "b\n"),
+            ("issue/8-y", "a.txt", "other\n"),
+        ] {
+            git(&seed, &["checkout", "-q", "-b", b, "main"]);
+            std::fs::write(seed.join(file), text).unwrap();
+            git(&seed, &["add", "-A"]);
+            git(&seed, &["commit", "-q", "-m", b]);
+        }
+        git(&seed, &["checkout", "-q", "main"]);
+        std::fs::write(seed.join("a.txt"), "changed on main\n").unwrap();
+        git(&seed, &["commit", "-q", "-am", "main moves"]);
+        let bare = tmp.path().join("r.git");
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                seed.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        let seeds: HashMap<String, Vec<DevPull>> = serde_json::from_str(
+            r#"{"a/r": [{"number": 1, "branch": "issue/7-x", "title": "B"}, {"number": 2, "branch": "issue/8-y", "title": "C"}]}"#,
+        )
+        .unwrap();
+        let g = LocalGit::from_spec(&format!("a/r={}", bare.display()))
+            .unwrap()
+            .with_pulls(seeds);
+        let main = g.branch_sha("a/r", "main").await.unwrap().unwrap();
+        let head = g.branch_sha("a/r", "issue/7-x").await.unwrap().unwrap();
+        let refused = |r: std::result::Result<String, super::super::MergeError>| match r {
+            Err(super::super::MergeError::Refused { status, .. }) => status,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        assert_eq!(
+            refused(
+                g.merge_as("", "a/r", 1, "0000000", MergeMethod::Merge)
+                    .await
+            ),
+            409
+        );
+        assert_eq!(
+            g.branch_sha("a/r", "main").await.unwrap(),
+            Some(main.clone())
+        );
+        let made = g
+            .merge_as("", "a/r", 1, &head, MergeMethod::Merge)
+            .await
+            .unwrap();
+        assert_eq!(
+            g.branch_sha("a/r", "main").await.unwrap(),
+            Some(made.clone())
+        );
+        assert!(
+            g.file("a/r", "b.txt", "main").await.unwrap().is_some(),
+            "the head's file landed"
+        );
+        let p = g.pull("a/r", 1).await.unwrap().unwrap();
+        assert!(!p.info.open && p.info.merged_at.is_some());
+        assert_eq!(
+            refused(g.merge_as("", "a/r", 1, &head, MergeMethod::Merge).await),
+            405,
+            "merged once"
+        );
+        // A conflict: issue/8-y and main both changed a.txt.
+        let head8 = g.branch_sha("a/r", "issue/8-y").await.unwrap().unwrap();
+        assert_eq!(
+            refused(g.merge_as("", "a/r", 2, &head8, MergeMethod::Squash).await),
+            405
+        );
+        assert_eq!(g.branch_sha("a/r", "main").await.unwrap(), Some(made));
     }
 
     #[tokio::test]

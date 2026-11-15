@@ -369,6 +369,14 @@ error: string
 outcome: "failed"
 })
 /**
+ * How a pull request is merged: `merge_method` on GitHub's merge call.
+ */
+export type MergeMethod = ("merge" | "squash" | "rebase")
+/**
+ * Where a merge is.
+ */
+export type MergeState = ("merged" | "opening")
+/**
  * Where a creation stands.
  */
 export type CreationState = (("created" | "failed") | "opening")
@@ -441,10 +449,6 @@ status: "denied"
 } | {
 status: "expired"
 })
-/**
- * How a pull request is merged: `merge_method` on GitHub's merge call.
- */
-export type MergeMethod = ("merge" | "squash" | "rebase")
 /**
  * What the plan of the linked issue says about merging (ADR 0033, plan 82 Decisions 1–3).
  */
@@ -615,6 +619,8 @@ MapLayout?: MapLayout
 MapRef?: MapRef
 MapResponse?: MapResponse
 Me?: Me
+MergeRequest?: MergeRequest
+MergeResponse?: MergeResponse
 NewIssueRequest?: NewIssueRequest
 NewIssueResponse?: NewIssueResponse
 Overview?: Overview
@@ -1830,6 +1836,28 @@ can_act_on_github?: boolean
  */
 cannot_act_reason?: (string | null)
 login: string
+}
+/**
+ * Merge a pull request as yourself (`POST /api/pulls/merge`, ADR 0033): at the head the person
+ * saw, with the method they picked.
+ */
+export interface MergeRequest {
+head_sha: string
+method: MergeMethod
+number: number
+repo: string
+}
+export interface MergeResponse {
+/**
+ * Who pressed Merge for this head: a retry or a second tab gets the first press's row.
+ */
+login: string
+/**
+ * The merge commit GitHub made.
+ */
+merge_sha?: (string | null)
+method: MergeMethod
+state: MergeState
 }
 /**
  * `POST /api/issues`. Each list item is one line of its section.

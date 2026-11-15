@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MergeResponse",
+  "type": "object",
+  "properties": {
+    "login": {
+      "description": "Who pressed Merge for this head: a retry or a second tab gets the first press's row.",
+      "type": "string"
+    },
+    "merge_sha": {
+      "description": "The merge commit GitHub made.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "method": {
+      "$ref": "#/$defs/MergeMethod"
+    },
+    "state": {
+      "$ref": "#/$defs/MergeState"
+    }
+  },
+  "required": [
+    "state",
+    "login",
+    "method"
+  ],
+  "$defs": {
+    "MergeMethod": {
+      "description": "How a pull request is merged: `merge_method` on GitHub's merge call.",
+      "type": "string",
+      "enum": [
+        "merge",
+        "squash",
+        "rebase"
+      ]
+    },
+    "MergeState": {
+      "description": "Where a merge is.",
+      "oneOf": [
+        {
+          "description": "GitHub merged it.",
+          "type": "string",
+          "const": "merged"
+        },
+        {
+          "description": "Sent, and GitHub did not answer: the poll confirms it, or it is dropped within 10 minutes.",
+          "type": "string",
+          "const": "opening"
+        }
+      ]
+    }
+  }
+}

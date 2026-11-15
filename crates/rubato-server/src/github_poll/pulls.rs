@@ -15,11 +15,14 @@ use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// What one pass did, for the poll tick's log line.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PullsPass {
     pub listed: usize,
     pub failed: usize,
     pub checks_read: usize,
+    /// Repos listed and stored this tick in full (not cut at one page): what a merge reconcile
+    /// may trust (ADR 0033, plan 82 Decision 12).
+    pub complete: Vec<String>,
 }
 
 /// List the open pull requests of every repo the map names (shared with the per-issue pass,
@@ -39,7 +42,11 @@ pub async fn list_repo_pulls(
         let result = match view.pull_listing(app, repo).await {
             Ok(l) => {
                 pass.listed += 1;
-                replace(app, repo, l, tracked, full, &mut pass).await
+                let stored = replace(app, repo, l, tracked, full, &mut pass).await;
+                if stored.is_ok() && !l.truncated {
+                    pass.complete.push((*repo).to_owned());
+                }
+                stored
             }
             Err(e) => {
                 pass.failed += 1;

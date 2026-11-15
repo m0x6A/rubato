@@ -9,7 +9,7 @@
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
     approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview,
-    pairing, pins, plans, queue, rooms, session_messages, traffic,
+    pairing, pins, plans, pulls, queue, rooms, session_messages, traffic,
 };
 use anyhow::{Result, anyhow};
 use chrono::Utc;
@@ -228,6 +228,9 @@ impl Poller {
         let pulls =
             github_poll::list_repo_pulls(app, &map.map, &mut view, &owned, lane == Lane::Full)
                 .await;
+        // Merges sent from Rubato that GitHub did not confirm, against the listings just made in
+        // full (ADR 0033, plan 82 Decision 12).
+        pulls::reconcile(app, &pulls.complete).await;
         // Every tick, after the plans and comments are read: handoff commits get their link
         // comment, found or posted once, and the handoff gauges are recorded (ADR 0055).
         approve::reconcile_links(app).await;
