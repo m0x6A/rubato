@@ -165,14 +165,16 @@ impl Launcher {
                 .context("tmux-ide worktree create")?,
         };
         let launch_dir = self.state_dir.join("launches").join(cmd.id.to_string());
-        std::fs::create_dir_all(&launch_dir)?;
+        // Owner only: the directory holds the hooks token and the prompt.
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(&launch_dir)?;
         let hooks_path = launch_dir.join("hooks.json");
         write_private(
             &hooks_path,
             render_hooks(HOOKS_TEMPLATE, &self.hook_endpoint)?.as_bytes(),
         )?;
         let prompt_path = launch_dir.join("prompt.txt");
-        std::fs::write(&prompt_path, &cmd.prompt)?;
+        write_private(&prompt_path, cmd.prompt.as_bytes())?;
         let script_path = launch_dir.join("launch.sh");
         std::fs::write(
             &script_path,

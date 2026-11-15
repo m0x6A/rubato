@@ -2,7 +2,7 @@
 //! it in the web view while logged in with GitHub, the companion polls until approved and
 //! stores the token with mode 0600.
 
-use crate::kernel::config::State;
+use crate::kernel::config::{State, check_server_url};
 use anyhow::{Context, Result, bail};
 use rubato_protocol::pairing::{
     PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse, routes,
@@ -50,6 +50,9 @@ pub async fn pair(
     version: &str,
     show: impl Fn(&PairStartResponse),
 ) -> Result<Paired> {
+    // Before any request: the device code and the token must not cross the network in clear
+    // text (ADR 0067).
+    check_server_url(server_url)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;

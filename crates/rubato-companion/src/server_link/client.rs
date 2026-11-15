@@ -2,6 +2,7 @@
 //! sequence numbers, resume on reconnect. Nothing listens for the server; the companion calls.
 
 use super::seq::{Reservation, ReservationError};
+use crate::kernel::config::check_server_url;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
@@ -35,8 +36,9 @@ pub struct Client {
     last_server_seq: u64,
 }
 
-/// `http(s)://host` → `ws(s)://host/ws/companion`.
-pub fn ws_url(server_url: &str) -> String {
+/// `http(s)://host` → `ws(s)://host/ws/companion`. Refuses plain text off loopback (ADR 0067).
+pub fn ws_url(server_url: &str) -> Result<String> {
+    check_server_url(server_url)?;
     let base = server_url.trim_end_matches('/');
     let ws = if let Some(rest) = base.strip_prefix("https://") {
         format!("wss://{rest}")
@@ -45,7 +47,7 @@ pub fn ws_url(server_url: &str) -> String {
     } else {
         base.to_owned()
     };
-    format!("{ws}{}", routes::COMPANION_WS)
+    Ok(format!("{ws}{}", routes::COMPANION_WS))
 }
 
 impl Client {
@@ -86,6 +88,8 @@ impl Client {
         connected: watch::Sender<bool>,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<()> {
+        // Not a lost connection either: retrying cannot make a plain-text URL safe.
+        ws_url(&self.server_url)?;
         let mut backoff = Duration::from_secs(1);
         loop {
             if *shutdown.borrow() {
@@ -119,7 +123,7 @@ impl Client {
         connected: &watch::Sender<bool>,
         shutdown: &mut watch::Receiver<bool>,
     ) -> Result<()> {
-        let mut req = ws_url(&self.server_url)
+        let mut req = ws_url(&self.server_url)?
             .into_client_request()
             .context("bad server url")?;
         req.headers_mut().insert(
@@ -341,12 +345,14 @@ mod tests {
     #[test]
     fn ws_urls() {
         assert_eq!(
-            super::ws_url("https://rubato.example/"),
+            super::ws_url("https://rubato.example/").unwrap(),
             "wss://rubato.example/ws/companion"
         );
         assert_eq!(
-            super::ws_url("http://127.0.0.1:8080"),
+            super::ws_url("http://127.0.0.1:8080").unwrap(),
             "ws://127.0.0.1:8080/ws/companion"
         );
+        let refused = super::ws_url("http://rubato.example").unwrap_err();
+        assert!(format!("{refused:#}").contains("https"), "{refused:#}");
     }
 }

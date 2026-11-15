@@ -228,6 +228,28 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Refuse a server URL that would carry the pairing token or launch commands in clear text off
+/// this machine (ADR 0067): `https` and `wss` anywhere, `http` and `ws` only on loopback
+/// (`localhost`, `127.0.0.0/8`, `::1`). Checked before pairing and before connecting.
+pub fn check_server_url(server_url: &str) -> Result<()> {
+    let url = url::Url::parse(server_url)
+        .with_context(|| format!("server URL {server_url:?} does not parse"))?;
+    let loopback = match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    match url.scheme() {
+        "https" | "wss" => Ok(()),
+        "http" | "ws" if loopback => Ok(()),
+        "http" | "ws" => anyhow::bail!(
+            "server URL {server_url} is plain text off loopback; use https:// (or a tunnel to 127.0.0.1)"
+        ),
+        other => anyhow::bail!("server URL {server_url} has scheme {other}; use https://"),
+    }
+}
+
 /// Where the hook listener publishes its port and token for `hooks.ts` and the launcher.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct HookEndpoint {
@@ -249,6 +271,40 @@ impl HookEndpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_urls() {
+        let ok = [
+            "https://rubato.example",
+            "wss://rubato.example",
+            "http://127.0.0.1:8080",
+            "http://127.1.2.3",
+            "http://localhost:8080",
+            "http://LOCALHOST:8080/",
+            "http://[::1]:8080",
+            "ws://127.0.0.1",
+        ];
+        let refused = [
+            "http://rubato.example",
+            "ws://10.0.0.5:8080",
+            "http://localhost.evil.example",
+            "http://127.0.0.1.evil.example",
+            "http://[::ffff:10.0.0.5]",
+            "ftp://127.0.0.1",
+            "not a url",
+        ];
+        for u in ok {
+            assert!(check_server_url(u).is_ok(), "{u} should be accepted");
+        }
+        for u in refused {
+            assert!(check_server_url(u).is_err(), "{u} should be refused");
+        }
+        eprintln!(
+            "server_urls: {} accepted, {} refused",
+            ok.len(),
+            refused.len()
+        );
+    }
 
     #[test]
     fn parses_the_example_workspace() {

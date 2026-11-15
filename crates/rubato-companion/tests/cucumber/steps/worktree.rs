@@ -133,6 +133,22 @@ async fn then_settings(w: &mut RubatoWorld) {
     );
 }
 
+#[then("the launch directory has mode 0700 and its prompt file mode 0600")]
+async fn then_launch_dir_private(w: &mut RubatoWorld) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = standin_log(w).await;
+    let args = log.lines().find(|l| l.starts_with("ARGS:")).unwrap();
+    let settings = args
+        .split_whitespace()
+        .skip_while(|a| *a != "--settings")
+        .nth(1)
+        .expect("--settings <file>");
+    let dir = std::path::Path::new(settings).parent().unwrap();
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(dir), 0o700, "{}", dir.display());
+    assert_eq!(mode(&dir.join("prompt.txt")), 0o600, "prompt.txt");
+}
+
 #[then(
     expr = "the server receives a sessions snapshot with issue {int} of {string} from source {string}"
 )]

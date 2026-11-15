@@ -72,6 +72,50 @@ async fn when_pair(w: &mut RubatoWorld) {
     .unwrap();
 }
 
+#[when(expr = "the companion pairs with {string}")]
+async fn when_pair_with(w: &mut RubatoWorld, url: String) {
+    let r = rubato_companion::pairing::pair_and_save(
+        &w.state_dir,
+        &url,
+        "testhost",
+        "0.1.0-test",
+        |_| {},
+    )
+    .await;
+    w.run_error = r.err().map(|e| format!("{e:#}"));
+}
+
+#[then("no state file exists")]
+async fn then_no_state(w: &mut RubatoWorld) {
+    let p = State::path(&w.state_dir);
+    assert!(!p.exists(), "{} was written", p.display());
+}
+
+#[given(expr = "a companion paired with {string} for user {string}")]
+async fn given_paired_with(w: &mut RubatoWorld, url: String, user: String) {
+    State {
+        companion_id: Uuid::new_v4(),
+        server_url: url,
+        user,
+        pairing_token: "rbt_test".into(),
+        last_seq: 0,
+        last_server_seq: 0,
+    }
+    .save(&w.state_dir)
+    .unwrap();
+}
+
+#[then(expr = "the daemon returns an error mentioning {string} within {int} second(s)")]
+async fn then_returns_err(w: &mut RubatoWorld, word: String, secs: u64) {
+    let join = w.join.take().expect("daemon started");
+    let r = tokio::time::timeout(Duration::from_secs(secs), join)
+        .await
+        .unwrap_or_else(|_| panic!("the daemon did not return within {secs} s"))
+        .expect("the runtime task panicked");
+    let e = format!("{:#}", r.expect_err("the daemon returned Ok"));
+    assert!(e.contains(&word), "{e}");
+}
+
 #[when("the companion is asked to run")]
 async fn when_run_unpaired(w: &mut RubatoWorld) {
     w.run_error = match State::load(&w.state_dir).unwrap() {
