@@ -1,6 +1,6 @@
 # 0001. Build a planning-time tool, not an orchestrator
 
-- **Status:** accepted
+- **Status:** superseded by 0050
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (recorded in AGENTS.md)
 - **Seam:** none (non-goal)
