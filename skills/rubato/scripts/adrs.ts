@@ -7,8 +7,8 @@
  *
  * `accept` records that a person's approval of the plan accepted the ADRs it pins (ADR 0035).
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { loadWorkspace, type Workspace } from "./lib/local.ts";
 
 export interface Adr {
@@ -91,13 +91,44 @@ export function pinnedAdrs(plan: string): PinnedAdr[] {
     .map((cells) => ({ adr: cells[0] as string, file: cells[1] as string, blob: (cells[2] as string).toLowerCase() }));
 }
 
-/** Fill the Blob column of a plan's `## ADRs proposed` table from the files in `cwd`. */
-export async function pinAdrs(cwd: string, planPath: string): Promise<PinnedAdr[]> {
+/**
+ * The ADR file a plan row names, resolved against `cwd`, or null when it lies outside the
+ * decisions folder `dir` (relative to `cwd`): a `..`, an absolute path elsewhere, or a symlink
+ * that leads out. The plan is text an agent wrote, so its File column is not trusted (#195).
+ */
+export function decisionFile(cwd: string, dir: string, file: string): string | null {
+  const within = (base: string, p: string) => {
+    const rel = relative(base, p);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  };
+  const base = resolve(cwd, dir);
+  const abs = resolve(cwd, file);
+  if (!within(base, abs)) {
+    return null;
+  }
+  if (existsSync(abs) && !(existsSync(base) && within(realpathSync(base), realpathSync(abs)))) {
+    return null;
+  }
+  return abs;
+}
+
+/**
+ * Fill the Blob column of a plan's `## ADRs proposed` table from the files in `cwd`. Throws,
+ * writing nothing, when a row names a file outside `decisions` (relative to `cwd`).
+ */
+export async function pinAdrs(cwd: string, planPath: string, decisions = "docs/decisions"): Promise<PinnedAdr[]> {
   const { gitBlobSha } = await import("./lib/plan-sha.ts");
   const abs = resolve(cwd, planPath);
   const text = readFileSync(abs, "utf8");
   const rows = pinnedAdrs(text);
-  const blobs = new Map(rows.map((r) => [r.adr, gitBlobSha(readFileSync(join(cwd, r.file)))]));
+  const files = rows.map((r) => {
+    const f = decisionFile(cwd, decisions, r.file);
+    if (f === null) {
+      throw new Error(`ADR file outside ${decisions}: ${r.file}`);
+    }
+    return f;
+  });
+  const blobs = new Map(rows.map((r, i) => [r.adr, gitBlobSha(readFileSync(files[i] as string))]));
   let inSection = false;
   const lines = text.split("\n").map((l) => {
     if (l.startsWith("## ")) {
@@ -211,8 +242,13 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
   const accepted: string[] = [];
   const refused: { adr: string; reason: string }[] = [];
   const writes: [string, string][] = [];
+  const decisions = mapClone.decisions ?? "docs/decisions";
   for (const r of rows) {
-    const abs = join(cwd, r.file);
+    const abs = decisionFile(cwd, decisions, r.file);
+    if (abs === null) {
+      refused.push({ adr: r.adr, reason: "outside_decisions" });
+      continue;
+    }
     if (!existsSync(abs)) {
       refused.push({ adr: r.adr, reason: "missing" });
       continue;
@@ -230,7 +266,7 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
     accepted.push(r.adr);
   }
   const pinned = new Set(rows.map((r) => r.file));
-  const dir = join(cwd, mapClone.decisions ?? "docs/decisions");
+  const dir = join(cwd, decisions);
   const unpinned = (existsSync(dir) ? readdirSync(dir) : [])
     .filter((f) => /^\d{4}-.*\.md$/.test(f))
     .filter((f) => {
