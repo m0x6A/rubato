@@ -15,6 +15,53 @@ Feature: The system map
     Then each repository's parts are drawn inside one box
     And external parts stay outside every box
 
+  @map.by-repo-readable
+  Scenario: By repo can be read: no label covers another label or a part
+    When a person turns on By repo, in the structure, data flow or control flow lens
+    Then no seam chip, flow label or bundle badge overlaps another or a part card
+    And every part's name is whole
+
+  @map.by-repo-bundles
+  Scenario: The seams inside one repository fold into a bundle per pair of parts
+    Given By repo is on
+    Then the seams between two parts of one repository are one line with a badge that keeps any warning
+    And the seams that leave a repository are drawn in full
+    When the person points at a badge, or selects one of its parts
+    Then the bundle opens into its seams, which can be selected and dropped on
+
+  @map.by-repo-arrange
+  Scenario: Parts move inside their repository's box, and a box moves with its parts, for everyone
+    Given two people with By repo on
+    When one of them drags a part inside its box, or a box by its name
+    Then the other sees it in its new place, the box fitted to its parts
+    And it is still there after a reload
+    And a part dragged past the box's edge stays inside it
+
+  @map.by-repo-stays-in-box
+  Scenario: A part or a box dropped on another repository's box goes back
+    Given a map with two repositories and By repo on
+    When a person drops a part, or a whole box, on the other repository's box
+    Then it goes back to where it was: moving code between repositories is a map draft
+
+  @map.by-repo-flat-kept
+  Scenario: Arranging By repo never moves the flat map
+    Given parts and boxes moved with By repo on
+    When the person turns By repo off
+    Then every part is where the flat map had it
+
+  @map.by-repo-auto-arrange
+  Scenario: Auto-arrange in By repo clears only the By repo arrangement, with Undo
+    Given By repo is on and the team has moved a box
+    When a person presses Auto-arrange
+    Then the By repo arrangement is laid out automatically for everyone and the flat map stays
+    And Undo brings it back
+
+  @map.flow-label-in-full
+  Scenario: A flow label can be read in full on the map
+    Given a flow label too long for the space between two parts
+    When a person points at it or focuses it
+    Then its whole text shows
+
   @map.shared-layout
   Scenario: A part moved by one person is in the same place for everyone
     Given two people with the map open

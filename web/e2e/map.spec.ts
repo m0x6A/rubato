@@ -662,7 +662,7 @@ async function clearGrouped(page: Page, ws = ""): Promise<void> {
 }
 
 for (const lens of ["Structure", "Data flow", "Control flow"]) {
-  test(`By repo on the team's map, ${lens} lens: no chip, label or badge overlaps another or a part card, and every name is readable`, async ({ page }) => {
+  test(`By repo on the team's map, ${lens} lens: no chip, label or badge overlaps another or a part card, and every name is readable`, { tag: "@map.by-repo-readable" }, async ({ page }) => {
     await page.goto("/");
     await byRepo(page);
     await page.getByRole("radio", { name: new RegExp(`^${lens}`) }).click();
@@ -698,7 +698,7 @@ for (const lens of ["Structure", "Data flow", "Control flow"]) {
   });
 }
 
-test("By repo: a part dragged inside its box stays there for everyone and after a reload; By repo off brings back the flat map exactly", async ({ page, browser }) => {
+test("By repo: a part dragged inside its box stays there for everyone and after a reload; By repo off brings back the flat map exactly", { tag: ["@map.by-repo-arrange", "@map.by-repo-flat-kept"] }, async ({ page, browser }) => {
   const other = await (await browser.newContext({ baseURL: base })).newPage();
   await page.goto("/");
   await other.goto("/");
@@ -736,7 +736,7 @@ test("By repo: a part dragged inside its box stays there for everyone and after 
   await other.context().close();
 });
 
-test("By repo: a part dragged past its box's edge stays inside; a box moves with its parts", async ({ page }) => {
+test("By repo: a part dragged past its box's edge stays inside; a box moves with its parts", { tag: ["@map.by-repo-arrange", "@map.by-repo-auto-arrange"] }, async ({ page }) => {
   await page.goto("/");
   await byRepo(page);
   // Past the left edge (and a little down): it stops at the box's padding.
@@ -779,7 +779,7 @@ test("By repo: a part dragged past its box's edge stays inside; a box moves with
   await clearGrouped(page);
 });
 
-test("By repo in a workspace with two repos: a part or a box dropped on the other box goes back", async ({ page }) => {
+test("By repo in a workspace with two repos: a part or a box dropped on the other box goes back", { tag: "@map.by-repo-stays-in-box" }, async ({ page }) => {
   await page.goto("/?w=shop");
   await expect(page.getByTestId("node-storefront")).toBeVisible();
   await page.getByRole("button", { name: "By repo" }).click();
@@ -801,7 +801,7 @@ test("By repo in a workspace with two repos: a part or a box dropped on the othe
   expect(ov.layout.boxes ?? {}).toEqual({});
 });
 
-test("By repo: a bundle opens on hover and on a selected part; a flow label reads in full on hover", async ({ page }) => {
+test("By repo: a bundle opens on hover and on a selected part; a flow label reads in full on hover", { tag: ["@map.by-repo-bundles", "@map.flow-label-in-full"] }, async ({ page }) => {
   await page.goto("/");
   await byRepo(page);
   const badge = page.getByTestId("bundle-skill-rubato|system-map");
@@ -829,7 +829,7 @@ test("By repo: a bundle opens on hover and on a selected part; a flow label read
   await expect.poll(clipped).toBe(false);
 });
 
-test("By repo: issues drop on a part and on a seam inside a box, New issue here… opens, and Edit map turns the grouping off", async ({ page }) => {
+test("By repo: issues drop on a part and on a seam inside a box, New issue here… opens, and Edit map turns the grouping off", { tag: ["@map.by-repo-bundles", "@map.by-repo", "@pins.drag-onto-part", "@pins.drag-onto-seam"] }, async ({ page }) => {
   await page.goto("/");
   await byRepo(page);
   const backlog = page.getByTestId("backlog");

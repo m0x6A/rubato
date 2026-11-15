@@ -207,7 +207,7 @@ async function byRepoWithWebSelected(page: Page): Promise<void> {
   await expect(page.getByTestId("seam-web-server")).toBeVisible();
 }
 
-test("reduced motion, By repo: an opened bundle's flows and chevrons are still", async ({ page }) => {
+test("reduced motion, By repo: an opened bundle's flows and chevrons are still", { tag: ["@look.reduced-motion", "@map.by-repo-bundles"] }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await routeOverview(page, freshTraffic);
   await setUp(page);
@@ -223,7 +223,7 @@ test("reduced motion, By repo: an opened bundle's flows and chevrons are still",
   expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
 });
 
-test("must fail: with full motion, By repo, an opened bundle's flows travel", async ({ page }) => {
+test("must fail: with full motion, By repo, an opened bundle's flows travel", { tag: ["@look.reduced-motion", "@selftest"] }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await setUp(page);
   await page.getByRole("radio", { name: /^Data flow/ }).click();
