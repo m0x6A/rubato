@@ -26,7 +26,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | {
 seq: number
 type: "ack"
 })
@@ -148,6 +148,12 @@ kind: "unknown_ids"
 issues: IssueRef[]
 kind: "seam_collision"
 seam: string
+} | {
+branch: string
+issue: IssueRef
+kind: "draft_owner_conflict"
+other: string
+owner: string
 } | {
 error: string
 issue: IssueRef
@@ -421,6 +427,9 @@ launch_id: string
 } | {
 kind: "launch_log"
 launch_id: string
+} | {
+draft_id: string
+kind: "draft"
 })
 
 export interface RubatoProtocol {
@@ -431,6 +440,8 @@ CompanionEnvelope?: CompanionEnvelope
 DecisionRecord?: DecisionRecord
 DismissRequest?: DismissRequest
 DraftOpRequest?: DraftOpRequest
+DraftRevision?: DraftRevision
+DraftView?: DraftView
 Finding?: Finding
 Heartbeat?: Heartbeat1
 HookEvent?: HookEvent1
@@ -612,6 +623,12 @@ export interface StaleSession {
 type: "stale"
 }
 /**
+ * A launched session's plan bundle at a settle point (ADR 0053).
+ */
+export interface DraftBundle {
+type: "draft"
+}
+/**
  * A decision recorded as an issue comment with the `Decision:` template (ADR 0014).
  */
 export interface DecisionRecord {
@@ -705,6 +722,52 @@ kind: FlowKind
 to: string
 }
 /**
+ * One revision with its files (`GET /api/drafts/{draft_id}/revisions/{rev}`).
+ */
+export interface DraftRevision {
+at: string
+bundle_hash: string
+draft_id: string
+files: DraftFile[]
+missing?: string[]
+parse_error?: (string | null)
+plan_sha: string
+rev: number
+session_id?: (string | null)
+}
+/**
+ * One file of a bundle, as it is in the worktree.
+ */
+export interface DraftFile {
+/**
+ * Repository path, as `bundle_paths` gives it.
+ */
+path: string
+text: string
+}
+/**
+ * A draft and its revisions, oldest first (`GET /api/drafts/{draft_id}`).
+ */
+export interface DraftView {
+branch: string
+draft_id: string
+issue: IssueRef
+owner: string
+revisions: DraftRevisionInfo[]
+}
+/**
+ * One settled revision, without its files.
+ */
+export interface DraftRevisionInfo {
+at: string
+bundle_hash: string
+missing?: string[]
+parse_error?: (string | null)
+plan_sha: string
+rev: number
+session_id?: (string | null)
+}
+/**
  * The companion's liveness signal.
  */
 export interface Heartbeat1 {
@@ -789,6 +852,11 @@ export interface IssueSummary {
 approval?: (ApprovalState | null)
 decisions?: DecisionRecord[]
 /**
+ * The issue's plan draft in Rubato, its newest settled revision (ADR 0053). Absent when the
+ * issue has none.
+ */
+draft?: (DraftSummary | null)
+/**
  * Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.
  */
 fit?: (PlanFit | null)
@@ -859,6 +927,37 @@ note?: (string | null)
  */
 sha?: (string | null)
 url: string
+}
+/**
+ * A draft as the overview carries it, per issue: its newest settled revision.
+ */
+export interface DraftSummary {
+at: string
+branch: string
+bundle_hash: string
+draft_id: string
+/**
+ * The owner's launched session for this branch is live: the draft is being worked on.
+ * Otherwise it is parked. Derived on each overview build.
+ */
+live: boolean
+missing?: string[]
+/**
+ * The paired user whose launch first mirrored to this branch.
+ */
+owner: string
+/**
+ * Why the plan in that revision does not parse, when it does not.
+ */
+parse_error?: (string | null)
+/**
+ * The approval hash of the plan in that revision (ADR 0054).
+ */
+plan_sha: string
+/**
+ * The newest settled revision, 1-based.
+ */
+rev: number
 }
 /**
  * Where a plan fits the map, and whether it does (ADR 0029). An approval counts only while
@@ -1104,6 +1203,11 @@ otel_resource?: {
 [k: string]: string | undefined
 }
 /**
+ * Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion
+ * mirrors, with the bundle it names (ADR 0053). Absent from an older server.
+ */
+plan_path?: (string | null)
+/**
  * Initial prompt for the session.
  */
 prompt: string
@@ -1222,6 +1326,11 @@ export interface Limits {
  * A companion silent for longer than this fires `CompanionSilent`.
  */
 companion_silent_secs?: number
+/**
+ * The largest plan bundle the companion mirrors (ADR 0053); a larger one is sent without
+ * its files, refused as too large.
+ */
+draft_max_bytes?: number
 /**
  * How often the server polls GitHub for PRs, checks and decision comments per live issue.
  */
@@ -1941,6 +2050,11 @@ node_ids?: string[]
 otel_resource?: {
 [k: string]: string | undefined
 }
+/**
+ * Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion
+ * mirrors, with the bundle it names (ADR 0053). Absent from an older server.
+ */
+plan_path?: (string | null)
 /**
  * Initial prompt for the session.
  */

@@ -742,6 +742,67 @@
         "created_at"
       ]
     },
+    "DraftSummary": {
+      "description": "A draft as the overview carries it, per issue: its newest settled revision.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "bundle_hash": {
+          "type": "string"
+        },
+        "draft_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "live": {
+          "description": "The owner's launched session for this branch is live: the draft is being worked on.\nOtherwise it is parked. Derived on each overview build.",
+          "type": "boolean"
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "owner": {
+          "description": "The paired user whose launch first mirrored to this branch.",
+          "type": "string"
+        },
+        "parse_error": {
+          "description": "Why the plan in that revision does not parse, when it does not.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plan_sha": {
+          "description": "The approval hash of the plan in that revision (ADR 0054).",
+          "type": "string"
+        },
+        "rev": {
+          "description": "The newest settled revision, 1-based.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "draft_id",
+        "branch",
+        "owner",
+        "rev",
+        "at",
+        "plan_sha",
+        "bundle_hash",
+        "live"
+      ]
+    },
     "Finding": {
       "description": "Map versus territory, and plans that disagree with the map. Shown, never suppressed.",
       "oneOf": [
@@ -791,6 +852,35 @@
             "kind",
             "seam",
             "issues"
+          ]
+        },
+        {
+          "description": "Another person's launched session wrote a plan bundle on a branch whose draft someone\nelse owns; it was not stored (ADR 0053). Taking a draft over is Import.",
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "draft_owner_conflict"
+            },
+            "other": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "issue",
+            "branch",
+            "owner",
+            "other"
           ]
         },
         {
@@ -1344,6 +1434,17 @@
           "items": {
             "$ref": "#/$defs/DecisionRecord"
           }
+        },
+        "draft": {
+          "description": "The issue's plan draft in Rubato, its newest settled revision (ADR 0053). Absent when the\nissue has none.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "fit": {
           "description": "Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.",

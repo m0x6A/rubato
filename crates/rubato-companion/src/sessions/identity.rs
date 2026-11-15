@@ -190,6 +190,7 @@ mod tests {
             input_sent_at: None,
             hooks_lost: false,
             pasted: Vec::new(),
+            plan_path: None,
         }
     }
 

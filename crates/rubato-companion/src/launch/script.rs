@@ -157,6 +157,7 @@ mod tests {
                 ("rubato.branch".into(), "issue/7-it's".into()),
             ]),
             map_version: None,
+            plan_path: None,
         }
     }
 

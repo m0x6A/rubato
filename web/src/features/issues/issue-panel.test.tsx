@@ -185,3 +185,19 @@ describe("messages for launched sessions (plan 122, ADR 0051)", () => {
     fetch.mockRestore();
   });
 });
+
+describe("the draft of an issue (ADR 0053)", () => {
+  it("shows a Draft section where the plan shows when the issue has a draft, and none without", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ reason: "unknown_draft" }), { status: 404 }));
+    const draft = { draft_id: "d0000000-0000-4000-8000-000000000001", branch: "issue/12-x", owner: "alice", rev: 2, at: new Date().toISOString(), plan_sha: "p", bundle_hash: "h", live: false };
+    const withDraft = issue(12, "web", { draft });
+    const { unmount } = render(<IssuePanel overview={overview({ issues: [withDraft] })} me={me} selected={withDraft} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(screen.getByTestId("draft")).toHaveTextContent("Draft · revision 2");
+    await screen.findByText(/This draft could not be read/);
+    unmount();
+    const without = issue(13, "web");
+    renderPanel(overview({ issues: [without] }), without);
+    expect(screen.queryByTestId("draft")).toBeNull();
+    fetch.mockRestore();
+  });
+});

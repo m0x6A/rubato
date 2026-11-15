@@ -159,7 +159,7 @@ pub async fn launch(
         ("branch", branch.clone()),
         ("nodes", pins.join(", ")),
         ("map_version", map.version.clone()),
-        ("plan_path", plan_path),
+        ("plan_path", plan_path.clone()),
         ("spend_cap_usd", format!("{spend_cap}")),
         ("attempt", attempt.to_string()),
         ("attempt_limit", attempt_limit.to_string()),
@@ -184,6 +184,7 @@ pub async fn launch(
             .unwrap_or_else(|| render_prompt(PROMPT_TEMPLATE, &vars)),
         otel_resource: otel,
         map_version: Some(map.version.clone()),
+        plan_path: Some(plan_path),
     };
     store::store_launch(&app.db, ws.as_str(), companion.companion_id, &command)
         .await

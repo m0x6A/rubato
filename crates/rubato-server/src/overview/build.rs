@@ -58,6 +58,8 @@ pub struct OverviewInputs {
     pub pins: Vec<IssuePin>,
     pub sessions: Vec<SessionState>,
     pub plans: Vec<PlanRow>,
+    /// Each draft's newest settled revision (ADR 0053).
+    pub drafts: Vec<crate::plan_drafts::LatestDraft>,
     pub prs: HashMap<IssueRef, PullRequestState>,
     pub decisions: Vec<DecisionRecord>,
     /// `Review:` comments from members (ADR 0027).
@@ -176,6 +178,7 @@ pub fn build(
     let mut issues: BTreeSet<IssueRef> = inputs.pins.iter().map(|p| p.issue.clone()).collect();
     issues.extend(inputs.launched.iter().cloned());
     issues.extend(inputs.plans.iter().map(|p| p.issue.clone()));
+    issues.extend(inputs.drafts.iter().map(|d| d.issue.clone()));
     issues.extend(inputs.sessions.iter().filter_map(|s| s.issue.clone()));
     // With several workspaces, only the issues this one holds: pinned or launched here, or in a
     // repo its map names. An issue no workspace holds shows in `default`, so none is lost.
@@ -204,6 +207,8 @@ pub fn build(
 
     let mut out = Vec::new();
     let mut findings = Vec::new();
+    // Plans written as drafts and not on a branch: they count on seams too (ADR 0053).
+    let mut draft_plans: Vec<(IssueRef, rubato_protocol::Plan)> = Vec::new();
     for issue in &issues {
         let pins: Vec<MapRef> = inputs
             .pins
@@ -219,6 +224,34 @@ pub fn build(
             .collect();
         let plan_row = inputs.plans.iter().find(|p| &p.issue == issue);
         let plan = plan_row.and_then(|p| p.plan.clone());
+        // The newest draft of the issue (ADR 0053); with several branches, the newest revision.
+        let latest_draft = inputs
+            .drafts
+            .iter()
+            .filter(|d| &d.issue == issue)
+            .max_by_key(|d| d.summary.at);
+        let draft = latest_draft.map(|d| {
+            let mut summary = d.summary.clone();
+            summary.live = sessions.iter().any(|s| {
+                s.status != SessionStatus::Ended
+                    && s.branch.as_deref() == Some(d.summary.branch.as_str())
+                    && s.user.eq_ignore_ascii_case(&d.summary.owner)
+            });
+            summary
+        });
+        if let Some(d) = latest_draft
+            && let Some((other, at)) = &d.conflict
+            && now.signed_duration_since(*at) < chrono::Duration::hours(24)
+        {
+            findings.push(Finding::DraftOwnerConflict {
+                issue: issue.clone(),
+                branch: d.summary.branch.clone(),
+                owner: d.summary.owner.clone(),
+                other: other.clone(),
+            });
+        }
+        let draft_plan = latest_draft.and_then(|d| d.plan.clone());
+        let plan_on_branch = plan.is_some();
         if let Some(row) = plan_row
             && let Some(err) = &row.parse_error
         {
@@ -234,7 +267,8 @@ pub fn build(
             pins: &pins,
             launched: inputs.launched.contains(issue),
             sessions: &sessions,
-            has_plan: plan.is_some(),
+            plan_on_branch,
+            draft_plan: draft_plan.is_some(),
             cap_hit: cap_kind.filter(|_| cap_hit_blocks(cap_kind, &sessions)),
             pr,
             now,
@@ -409,7 +443,11 @@ pub fn build(
             spend_history: inputs.spend.get(issue).cloned().unwrap_or_default(),
             fits_in,
             pinned_in,
+            draft,
         });
+        if !plan_on_branch && let Some(p) = draft_plan {
+            draft_plans.push((issue.clone(), p));
+        }
     }
     for s in &mut out {
         s.progress.pinned_to = s.pins.clone();
@@ -425,6 +463,19 @@ pub fn build(
             for seam in seams_touched(p) {
                 by_seam.entry(seam).or_default().push(s.issue.clone());
             }
+        }
+    }
+    let done: HashSet<&IssueRef> = out
+        .iter()
+        .filter(|s| s.progress.state == ProgressState::Done)
+        .map(|s| &s.issue)
+        .collect();
+    for (issue, p) in &draft_plans {
+        if done.contains(issue) {
+            continue;
+        }
+        for seam in seams_touched(p) {
+            by_seam.entry(seam).or_default().push(issue.clone());
         }
     }
     for (seam, issues) in by_seam {
@@ -774,6 +825,7 @@ mod tests {
             pins: vec![],
             sessions: vec![],
             plans: vec![],
+            drafts: vec![],
             prs: HashMap::new(),
             decisions: vec![],
             reviews: vec![],
@@ -931,6 +983,52 @@ mod tests {
                 .issues
                 .iter()
                 .all(|i| i.progress.state == ProgressState::Designed)
+        );
+    }
+
+    /// ADR 0053: drafts not on a branch count on seams, an idle session with a draft is Designed,
+    /// and another person's refused bundle is a finding.
+    #[test]
+    fn drafts_count_on_seams_and_as_written_plans() {
+        let a = IssueRef::new("o/r", 1);
+        let b = IssueRef::new("o/r", 2);
+        let draft = |issue: &IssueRef, conflict: bool| crate::plan_drafts::LatestDraft {
+            issue: issue.clone(),
+            summary: rubato_protocol::DraftSummary {
+                draft_id: uuid::Uuid::new_v4(),
+                branch: format!("issue/{}-x", issue.number),
+                owner: "m0x6A".into(),
+                rev: 1,
+                at: now(),
+                plan_sha: "s".into(),
+                bundle_hash: "h".into(),
+                missing: vec![],
+                parse_error: None,
+                live: false,
+            },
+            plan: plan(issue, "companion-server", "rubato-companion").plan,
+            conflict: conflict.then(|| ("alice".to_owned(), now())),
+        };
+        let mut inputs = empty();
+        inputs.drafts = vec![draft(&a, false), draft(&b, true)];
+        let mut s = session(&a, SessionStatus::Idle, StateSource::Hook);
+        s.branch = Some("issue/1-x".into());
+        inputs.sessions = vec![s];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert!(built.findings.iter().any(|f| matches!(f, Finding::SeamCollision { seam, issues } if seam == "companion-server" && issues.len() == 2)), "two drafts on one seam");
+        assert!(built.findings.iter().any(|f| matches!(f, Finding::DraftOwnerConflict { issue, other, .. } if *issue == b && other == "alice")));
+        let ia = built.issues.iter().find(|i| i.issue == a).unwrap();
+        assert_eq!(ia.progress.state, ProgressState::Designed);
+        assert!(
+            ia.draft.as_ref().unwrap().live,
+            "the owner's session is on the draft's branch"
+        );
+        let ib = built.issues.iter().find(|i| i.issue == b).unwrap();
+        assert!(!ib.draft.as_ref().unwrap().live, "parked");
+        assert_eq!(
+            ib.progress.state,
+            ProgressState::Designed,
+            "a parked draft is written"
         );
     }
 

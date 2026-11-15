@@ -236,6 +236,20 @@
           ]
         },
         {
+          "description": "A launched session's plan bundle at a settle point (ADR 0053).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "draft"
+            }
+          },
+          "$ref": "#/$defs/DraftBundle",
+          "required": [
+            "type"
+          ]
+        },
+        {
           "description": "Acknowledges a server envelope by sequence.",
           "type": "object",
           "properties": {
@@ -253,6 +267,95 @@
             "type",
             "seq"
           ]
+        }
+      ]
+    },
+    "DraftBundle": {
+      "description": "Companion → server: the plan bundle of one launched session at a settle point (`Stop`,\n`idle_prompt`, `SessionEnd`), sent only when its hash changed.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "bundle_hash": {
+          "description": "`plan_hash::bundle_hash` of `files` (empty when refused).",
+          "type": "string"
+        },
+        "files": {
+          "description": "The plan first, then the rest of the bundle that exists in the worktree.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DraftFile"
+          }
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "missing": {
+          "description": "Bundle paths the plan names that are not in the worktree.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "refused": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftRefusal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "launch_id",
+        "issue",
+        "branch",
+        "files",
+        "bundle_hash",
+        "at"
+      ]
+    },
+    "DraftFile": {
+      "description": "One file of a bundle, as it is in the worktree.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Repository path, as `bundle_paths` gives it.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "text"
+      ]
+    },
+    "DraftRefusal": {
+      "description": "Why a bundle was sent without its files.",
+      "oneOf": [
+        {
+          "description": "The files together are larger than `Limits.draft_max_bytes`.",
+          "type": "string",
+          "const": "too_large"
         }
       ]
     },

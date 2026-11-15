@@ -272,6 +272,7 @@ mod tests {
                 issue: IssueRef::new("acme/pantry", 7),
                 branch: None,
                 spend_cap_usd: None,
+                plan_path: None,
             }],
             None,
             false,

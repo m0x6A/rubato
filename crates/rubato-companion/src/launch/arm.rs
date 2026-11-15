@@ -180,6 +180,7 @@ mod tests {
             prompt: String::new(),
             otel_resource: BTreeMap::new(),
             map_version: None,
+            plan_path: None,
         }
     }
 

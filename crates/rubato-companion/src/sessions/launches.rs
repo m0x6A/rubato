@@ -27,6 +27,9 @@ pub struct LaunchRecord {
     pub branch: Option<String>,
     #[serde(default)]
     pub spend_cap_usd: Option<f64>,
+    /// Absent from a file an older companion wrote.
+    #[serde(default)]
+    pub plan_path: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -90,6 +93,7 @@ impl Registry {
                     issue: e.issue.clone()?,
                     branch: e.branch.clone(),
                     spend_cap_usd: e.spend_cap_usd,
+                    plan_path: e.plan_path.clone(),
                 })
             })
             .collect()
@@ -158,6 +162,7 @@ impl Registry {
                 input_sent_at: None,
                 hooks_lost,
                 pasted: Vec::new(),
+                plan_path: r.plan_path,
             });
             restored += 1;
         }
@@ -184,6 +189,7 @@ mod tests {
             issue: IssueRef::new("acme/pantry", n as u64),
             branch: Some(format!("issue/{n}-x")),
             spend_cap_usd: Some(20.0),
+            plan_path: Some(format!("docs/plans/{n}.md")),
         }
     }
 

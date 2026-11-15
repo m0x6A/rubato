@@ -281,7 +281,10 @@ The *Companions* tab shows your machine as connected. Leave it running; it recon
 - heartbeats and launch results;
 - each hook's event name and metadata: session, cwd, tool name;
 - for sessions started from Rubato only, your prompts and the agent's replies, cut to
-  `Limits.session_log_max_chars`. The whole team reads them in the session's log.
+  `Limits.session_log_max_chars`. The whole team reads them in the session's log;
+- for sessions started from Rubato only, the plan the session writes: the plan file at its
+  path, the design note it links and the ADRs it proposes, up to `Limits.draft_max_bytes`, as a
+  draft the team reads in Rubato (ADR 0053). Nothing else in the worktree is read.
 
 Tool input and output stay on your machine, and so do the prompts and replies of sessions you
 start yourself. The companion cuts every hook payload to an allowlist before it leaves, and the

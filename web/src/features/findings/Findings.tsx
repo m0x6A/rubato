@@ -17,6 +17,8 @@ export function findingText(f: Finding): string {
       return `${issueKey(f.issue)} plans a flow from ${f.from} to ${f.to} over ${f.seam}, which does not join them`;
     case "unknown_ids":
       return `${issueKey(f.issue)} names ids the map does not have: ${f.ids.join(", ")}`;
+    case "draft_owner_conflict":
+      return `${issueKey(f.issue)}: ${f.other}'s session wrote a plan on ${f.branch}, whose draft ${f.owner} owns; it was not stored (taking a draft over is Import)`;
     case "seam_collision":
       return `two open plans touch ${f.seam}: ${f.issues.map(issueKey).join(", ")}`;
     case "plan_parse_error":

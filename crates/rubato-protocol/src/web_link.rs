@@ -32,6 +32,8 @@ pub enum WebResource {
     LaunchMessages { launch_id: uuid::Uuid },
     /// `GET` `session_log::routes::LAUNCH_LOG` for this launch.
     LaunchLog { launch_id: uuid::Uuid },
+    /// `GET` `plan_draft::routes::DRAFT` (and its revisions) for this draft.
+    Draft { draft_id: uuid::Uuid },
 }
 
 /// Route path for the browser websocket.

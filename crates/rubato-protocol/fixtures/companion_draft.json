@@ -1,0 +1,29 @@
+{
+  "seq": 12,
+  "sent_at": "2026-11-14T12:10:00Z",
+  "message": {
+    "type": "draft",
+    "launch_id": "9b2e4d1a-3c5f-4e6a-9b7c-8d9e0f1a2b3c",
+    "session_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "issue": {
+      "repo": "m0x6A/rubato",
+      "number": 122
+    },
+    "branch": "issue/122-plan-in-rubato",
+    "files": [
+      {
+        "path": "docs/plans/122.md",
+        "text": "---\nissue: m0x6A/rubato#122\n---\n# Plan\n"
+      },
+      {
+        "path": "docs/plans/122-plan-in-rubato/design.md",
+        "text": "# Design\n"
+      }
+    ],
+    "missing": [
+      "docs/decisions/0050-x.md"
+    ],
+    "bundle_hash": "5a3646a2ebaa6a1c0b274ba6e9a2df36744bb2d5",
+    "at": "2026-11-14T12:10:00Z"
+  }
+}

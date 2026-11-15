@@ -66,6 +66,7 @@ async fn harness() -> H {
         prompt: "p".into(),
         otel_resource: Default::default(),
         map_version: None,
+        plan_path: None,
     };
     sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, 'm0x6A/rubato', 122, ?, ?)")
         .bind(launch.to_string())

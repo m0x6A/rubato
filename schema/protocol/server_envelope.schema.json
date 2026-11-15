@@ -94,6 +94,13 @@
             "type": "string"
           }
         },
+        "plan_path": {
+          "description": "Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion\nmirrors, with the bundle it names (ADR 0053). Absent from an older server.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "prompt": {
           "description": "Initial prompt for the session.",
           "type": "string"
@@ -138,6 +145,13 @@
           "type": "integer",
           "format": "uint64",
           "default": 600,
+          "minimum": 0
+        },
+        "draft_max_bytes": {
+          "description": "The largest plan bundle the companion mirrors (ADR 0053); a larger one is sent without\nits files, refused as too large.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 1048576,
           "minimum": 0
         },
         "github_poll_interval_secs": {

@@ -106,6 +106,7 @@ map             load and serve each workspace's map, the list    map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
 new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
+plan_drafts     plan drafts mirrored from worktrees, revisions  plan_drafts, plan_draft_revisions
 approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
 session_messages  messages to your own launched session, at most once  session_messages
@@ -127,12 +128,13 @@ slices:
 ```text
 pairing        device-code pairing with a GitHub login                            pair
 server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
-sessions       Registry, identity from the branch, discovery, launches.json       reconcile (essential), events watcher (best-effort)
+sessions       Registry, identity, discovery, launches.json with plan_path        reconcile (essential), events watcher (best-effort)
 hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
 launch         LaunchCommand: own user only, worktree, tmux, exec                 launch task (essential)
 spend          transcript cost, spend cap, CapHit                                 after each hook
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
 session_input  SessionMessage: own user, launched here, idle, typed once          session input task (essential)
+plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
 ```
 <!-- /slices -->
 <!-- slices: web -->
@@ -156,7 +158,7 @@ launch      start a session through your own companion           POST /api/launc
 drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
 findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
-plans       proposed and open plans, where they fit, Accept plan  POST /api/plans/approve
+plans       proposed and open plans, fit, Accept plan, drafts    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
 repos       connected repos, what each provides, loose sessions  (none)
 workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
 ```
