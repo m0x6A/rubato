@@ -162,6 +162,7 @@ mod tests {
             repo: Some("o/r".into()),
             path: None,
             description: None,
+            service: None,
         };
         SystemMap {
             version: 1,
@@ -312,6 +313,7 @@ mod tests {
             repo: None,
             path: None,
             description: None,
+            service: None,
         });
         assert_eq!(
             apply_map_lines(

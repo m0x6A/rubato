@@ -449,7 +449,7 @@ pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) {
 /// is configured, best-effort (a dead fetch makes the report stale, and the map says unknown).
 pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
     let mut tasks = Tasks::default();
-    if app.config.dev_traffic.is_some() {
+    if app.config.traffic_configured() {
         tasks.spawn(
             "traffic",
             Kind::BestEffort,
