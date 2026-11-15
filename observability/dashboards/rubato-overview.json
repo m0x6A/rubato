@@ -1234,7 +1234,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Issues whose newest approval names an earlier version of the plan (finding 'ApprovalStale', ADR 0027): the plan changed after a team member commented 'Approved: plan <sha>'. Ticking task checkboxes does not count as a change. The overview names each issue with both shas; ask its owner to re-approve or revert. Reviews and approvals are read from comments by OWNER, MEMBER or COLLABORATOR authors on the full poll lane (every 300 s); one that is ignored logs 'approval ignored' or 'review ignored' with the reason (a Bot, or the author's association). Not 0 for longer than a review takes is a question for a person, not a fault.",
+      "description": "Issues whose newest approval names an earlier version of the plan (finding 'ApprovalStale', ADR 0027): the plan changed after a team member commented 'Approved: plan <sha>'. Ticking task checkboxes does not count as a change. The overview names each issue with both shas; ask its owner to re-approve or revert. Reviews and approvals are read from comments by OWNER, MEMBER or COLLABORATOR authors on the full poll lane (every 300 s); one that is ignored logs 'approval ignored' or 'review ignored' with the reason (a Bot, or the author's association). Decision: comments follow the same rule (ADR 0065) and log 'decision ignored'. Not 0 for longer than a review takes is a question for a person, not a fault.",
       "targets": [
         {
           "refId": "A",
