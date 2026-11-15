@@ -49,6 +49,8 @@ pub async fn draft(
         issue: d.issue,
         branch: d.branch,
         owner: d.owner,
+        imported_from: d.imported_from,
+        original_author: d.original_author,
         revisions,
     }))
 }

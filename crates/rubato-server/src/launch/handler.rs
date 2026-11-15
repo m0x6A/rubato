@@ -55,11 +55,23 @@ pub async fn launch(
     CurrentUser(user): CurrentUser,
     Json(req): Json<LaunchRequest>,
 ) -> Result<Json<LaunchResponse>, (StatusCode, String)> {
+    start(&app, ws.as_str(), &user, req, None).await.map(Json)
+}
+
+/// A launch for `user` in workspace `ws`, as the route makes it; `note` is added to the
+/// rendered prompt (Import's rewrite, ADR 0058).
+pub async fn start(
+    app: &App,
+    ws: &str,
+    user: &str,
+    req: LaunchRequest,
+    note: Option<&str>,
+) -> Result<LaunchResponse, (StatusCode, String)> {
     let map = app
-        .map_of(ws.as_str())
+        .map_of(ws)
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
-    let mine: Vec<pairing::PairingRow> = pairing::list_pairings(&app.db, Some(&user))
+    let mine: Vec<pairing::PairingRow> = pairing::list_pairings(&app.db, Some(user))
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
@@ -95,19 +107,13 @@ pub async fn launch(
             }
         },
     };
-    let pins: Vec<String> = pins::list(&app.db, ws.as_str())
+    let pins: Vec<String> = pins::list(&app.db, ws)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
         .filter(|p| p.issue == req.issue)
         .map(|p| p.target.id().to_owned())
         .collect();
-    if pins.is_empty() {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "pin the issue to the map first".into(),
-        ));
-    }
     let meta = github_poll::issue_meta(&app.db, &req.issue)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
@@ -119,11 +125,11 @@ pub async fn launch(
         .find(|p| p.issue == req.issue);
     // A draft of the caller's on this issue decides the branch (ADR 0053, plan 122 §D5), so
     // editing the title never orphans it. A teammate's draft stays theirs: taking it over is Import.
-    let mine: Vec<plan_drafts::LatestDraft> = plan_drafts::latest_drafts(&app)
+    let mine: Vec<plan_drafts::LatestDraft> = plan_drafts::latest_drafts(app)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
-        .filter(|d| d.issue == req.issue && d.summary.owner.eq_ignore_ascii_case(&user))
+        .filter(|d| d.issue == req.issue && d.summary.owner.eq_ignore_ascii_case(user))
         .collect();
     let branch = choose_branch(
         &req,
@@ -151,11 +157,29 @@ pub async fn launch(
             if branch_plan.is_none()
                 && app.announced(companion.companion_id, capability::DRAFT_RESTORE) =>
         {
-            plan_drafts::restore_of(&app, d.summary.draft_id)
+            plan_drafts::restore_of(app, d.summary.draft_id)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?
         }
         _ => None,
+    };
+    // Pinned, or with a plan that fits this workspace (ADR 0058): an imported plan places the
+    // issue by its own affected parts.
+    let pins = if pins.is_empty() {
+        match plan
+            .as_ref()
+            .filter(|p| rubato_protocol::plan_fit(Some(p), None, &map.map).is_some_and(|f| f.fits))
+        {
+            Some(p) => p.affected_parts.iter().map(|a| a.node.clone()).collect(),
+            None => {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "pin the issue to the map first".into(),
+                ));
+            }
+        }
+    } else {
+        pins
     };
     let attempt = store::launch_count(&app.db, &req.issue)
         .await
@@ -206,7 +230,7 @@ pub async fn launch(
     };
     let command = LaunchCommand {
         id: Uuid::new_v4(),
-        user: user.clone(),
+        user: user.to_owned(),
         issue: req.issue.clone(),
         repo_url: format!("https://github.com/{}.git", req.issue.repo),
         branch,
@@ -216,17 +240,23 @@ pub async fn launch(
         attempt_limit,
         attempt,
         session_id: Uuid::new_v4(),
-        prompt: req
-            .prompt
-            .clone()
-            .unwrap_or_else(|| render_prompt(template, &vars)),
+        prompt: {
+            let base = req
+                .prompt
+                .clone()
+                .unwrap_or_else(|| render_prompt(template, &vars));
+            match note {
+                Some(n) => format!("{base}\n\n{n}"),
+                None => base,
+            }
+        },
         otel_resource: otel,
         map_version: Some(map.version.clone()),
         plan_path: Some(plan_path),
         draft: restore,
         planning,
     };
-    store::store_launch(&app.db, ws.as_str(), companion.companion_id, &command)
+    store::store_launch(&app.db, ws, companion.companion_id, &command)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?;
     if !app.send_to_companion(
@@ -240,10 +270,10 @@ pub async fn launch(
     }
     tracing::info!(launch_id = %command.id, rubato.issue = %command.issue, rubato.user = %user, companion = %companion.companion_id, planning = command.planning.name(), "{}", span::LAUNCH);
     app.notify("launch");
-    Ok(Json(LaunchResponse {
+    Ok(LaunchResponse {
         command,
         companion_id: companion.companion_id,
-    }))
+    })
 }
 
 #[cfg(test)]

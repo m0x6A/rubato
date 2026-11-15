@@ -11,8 +11,20 @@
       "type": "string",
       "format": "uuid"
     },
+    "imported_from": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "issue": {
       "$ref": "#/$defs/IssueRef"
+    },
+    "original_author": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "owner": {
       "type": "string"

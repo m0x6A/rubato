@@ -57,6 +57,80 @@ pub async fn restore_of(app: &App, draft_id: Uuid) -> Result<Option<DraftRestore
         }))
 }
 
+/// The plan bundle of a branch as Import read it at the head (ADR 0058).
+pub struct ImportedBundle {
+    pub issue: IssueRef,
+    pub branch: String,
+    pub owner: String,
+    pub original_author: Option<String>,
+    /// The plan first, then the bundle paths found at the head.
+    pub files: Vec<rubato_protocol::DraftFile>,
+    pub missing: Vec<String>,
+}
+
+/// Why an import made no draft.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ImportRefused {
+    /// The branch has a draft already.
+    AlreadyInRubato,
+}
+
+/// Make the imported bundle a new draft owned by the importer, its files revision 1 (ADR 0058).
+pub async fn import(
+    app: &App,
+    b: ImportedBundle,
+) -> Result<std::result::Result<(Uuid, u32), ImportRefused>> {
+    let now = app.clock.now();
+    let Some(draft_id) = store::create_imported(
+        &app.db,
+        &b.issue,
+        &b.branch,
+        &b.owner,
+        b.original_author.as_deref(),
+        now,
+    )
+    .await?
+    else {
+        return Ok(Err(ImportRefused::AlreadyInRubato));
+    };
+    let plan_file = b
+        .files
+        .first()
+        .cloned()
+        .unwrap_or(rubato_protocol::DraftFile {
+            path: String::new(),
+            text: String::new(),
+        });
+    let (plan, parse_error) = match crate::plans::parse_plan(&plan_file.text, &plan_file.path) {
+        Ok(p) => (Some(p), None),
+        Err(e) => (None, Some(e.to_string())),
+    };
+    let texts: Vec<(String, String)> = b
+        .files
+        .iter()
+        .map(|f| (f.path.clone(), f.text.clone()))
+        .collect();
+    let rev = store::RevisionRow {
+        info: rubato_protocol::DraftRevisionInfo {
+            rev: 0,
+            at: now,
+            plan_sha: rubato_protocol::approval_hash(&plan_file.text),
+            bundle_hash: rubato_protocol::bundle_hash(&plan_file.path, &texts),
+            session_id: None,
+            missing: b.missing,
+            parse_error,
+        },
+        launch_id: None,
+        files: b.files,
+        plan,
+    };
+    let n = store::insert_revision(&app.db, draft_id, &rev)
+        .await?
+        .unwrap_or(1);
+    app.notify("draft");
+    Ok(Ok((draft_id, n)))
+}
+
 /// Every draft with at least one revision.
 pub async fn latest_drafts(app: &App) -> Result<Vec<LatestDraft>> {
     let mut out = Vec::new();
@@ -77,6 +151,8 @@ pub async fn latest_drafts(app: &App) -> Result<Vec<LatestDraft>> {
                 missing: r.info.missing.clone(),
                 parse_error: r.info.parse_error.clone(),
                 live: false,
+                imported_from: d.imported_from.clone(),
+                original_author: d.original_author.clone(),
             },
             plan: r.plan,
             conflict: d.conflict,

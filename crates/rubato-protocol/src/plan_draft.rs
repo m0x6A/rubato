@@ -95,6 +95,12 @@ pub struct DraftSummary {
     /// The owner's launched session for this branch is live: the draft is being worked on.
     /// Otherwise it is parked. Derived on each overview build.
     pub live: bool,
+    /// The branch an imported plan was found on (ADR 0058).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
+    /// Who last committed the imported plan file, kept with the draft the importer owns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_author: Option<String>,
 }
 
 /// One settled revision, without its files.
@@ -119,6 +125,10 @@ pub struct DraftView {
     pub issue: IssueRef,
     pub branch: String,
     pub owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_author: Option<String>,
     pub revisions: Vec<DraftRevisionInfo>,
 }
 
@@ -131,7 +141,48 @@ pub struct DraftRevision {
     pub files: Vec<DraftFile>,
 }
 
+/// Import a plan written outside Rubato (ADR 0058): the plan on `branch` of the issue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImportRequest {
+    pub repo: String,
+    pub number: u64,
+    pub branch: String,
+}
+
+/// What Import did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ImportResponse {
+    /// The plan parses and fits: a draft the importer owns, with the files at the head as
+    /// revision 1.
+    Imported {
+        draft_id: Uuid,
+        rev: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        original_author: Option<String>,
+    },
+    /// The plan does not parse or fit: a session of the importer's rewrites it into Rubato's
+    /// form on that branch.
+    Rewriting { launch_id: Uuid, branch: String },
+}
+
+/// Why an import was refused: the `reason` of its 4xx answer.
+pub mod import_reason {
+    /// The branch has a draft already.
+    pub const ALREADY_IN_RUBATO: &str = "already_in_rubato";
+    /// An approval counts for the issue's plan: it is not outside Rubato.
+    pub const APPROVED: &str = "approved";
+    pub const NO_BRANCH: &str = "no_branch";
+    pub const NO_PLAN: &str = "no_plan";
+    /// The branch is not `issue/<n>-<slug>` of the issue.
+    pub const BAD_BRANCH: &str = "bad_branch";
+    /// A rewrite needs a launch, and the launch was refused; `detail` says why.
+    pub const LAUNCH_REFUSED: &str = "launch_refused";
+}
+
 pub mod routes {
+    /// `POST` an `ImportRequest`, map-scoped: the fit check reads the workspace (ADR 0058).
+    pub const PLAN_IMPORT: &str = "/api/plans/import";
     /// `GET` a draft and its revisions. Everyone who may log in reads drafts.
     pub const DRAFT: &str = "/api/drafts/{draft_id}";
     /// `GET` one revision with its files.

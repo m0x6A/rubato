@@ -82,7 +82,7 @@ pub use plan::{
 };
 pub use plan_draft::{
     DraftBundle, DraftFile, DraftRefusal, DraftRestore, DraftRevision, DraftRevisionInfo,
-    DraftSummary, DraftView, RestoreSkipped,
+    DraftSummary, DraftView, ImportRequest, ImportResponse, RestoreSkipped,
 };
 pub use plan_hash::{
     APPROVAL_KEYS, AdrPin, adr_pins, approval_hash, approval_names, bundle_hash, bundle_paths,

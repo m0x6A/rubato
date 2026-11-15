@@ -5675,3 +5675,209 @@ async fn a_teammates_draft_is_not_resumed_by_someone_else() {
     assert_eq!(cmd.branch, "issue/3-alices");
     assert_eq!(cmd.draft, None);
 }
+
+/// ADR 0058: issue #95 has a plan on `issue/95-hand` written outside Rubato, at head `h95`.
+fn hand_written(h: &Harness, plan: &str) {
+    let branch = "issue/95-hand";
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push((branch.into(), "h95".into()));
+        for r in [branch, "h95"] {
+            g.files.insert(
+                ("m0x6A/rubato".into(), "docs/plans/95.md".into(), r.into()),
+                plan.into(),
+            );
+        }
+        g.commit_authors.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/95.md".into(),
+                "h95".into(),
+            ),
+            "bob".into(),
+        );
+    });
+}
+
+async fn import_95(h: &Harness, user: &str) -> reqwest::Response {
+    h.http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::plan_draft::routes::PLAN_IMPORT
+        ))
+        .header("x-rubato-dev-user", user)
+        .json(&rubato_protocol::ImportRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 95,
+            branch: "issue/95-hand".into(),
+        })
+        .send()
+        .await
+        .unwrap()
+}
+
+/// ADR 0058: after the cutover a plan with no draft and no counted approval is outside Rubato;
+/// importing a plan that fits makes a draft the importer owns, with the last committer kept as
+/// its author and the files at the head as revision 1; a second import is refused; and the
+/// issue may launch unpinned, placed by its plan.
+#[tokio::test]
+async fn a_plan_written_outside_rubato_is_imported_as_the_importers_draft() {
+    let h = harness_with(|c| c.comment_approvals_until = Some(chrono::Utc::now())).await;
+    hand_written(&h, &PLAN_49.replace("#1", "#95"));
+    // The poll reads plans of the issues it follows: pinned once, then unpinned, it keeps
+    // following #95 by its plan.
+    h.pin_issue(95).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let r = h
+        .http
+        .delete(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 95),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov
+        .issues
+        .iter()
+        .find(|i| i.issue.number == 95)
+        .expect("followed by its plan");
+    assert!(one.pins.is_empty());
+    assert!(
+        one.outside_rubato,
+        "no draft, no approval, after the cutover"
+    );
+    assert!(one.draft.is_none());
+
+    let r = import_95(&h, "m0x6A").await;
+    assert_eq!(r.status(), 201, "{:?}", r.text().await);
+    let rubato_protocol::ImportResponse::Imported {
+        draft_id,
+        rev,
+        original_author,
+    } = r.json().await.unwrap()
+    else {
+        panic!("a fitting plan is imported, not rewritten")
+    };
+    assert_eq!(rev, 1);
+    assert_eq!(original_author.as_deref(), Some("bob"));
+    assert!(
+        h.github
+            .calls()
+            .iter()
+            .any(|(c, a)| *c == "last_commit_author" && a == "m0x6A/rubato docs/plans/95.md h95"),
+        "one commits call at the head"
+    );
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 95).unwrap();
+    assert!(!one.outside_rubato, "it has a draft now");
+    let d = one.draft.as_ref().expect("the draft shows");
+    assert_eq!(d.draft_id, draft_id);
+    assert_eq!(d.owner, "m0x6A", "the importer owns it");
+    assert_eq!(d.original_author.as_deref(), Some("bob"));
+    assert_eq!(d.imported_from.as_deref(), Some("issue/95-hand"));
+
+    let again = import_95(&h, "alice").await;
+    assert_eq!(again.status(), 409);
+    assert_eq!(
+        again.json::<serde_json::Value>().await.unwrap()["reason"],
+        "already_in_rubato"
+    );
+
+    // Unpinned, but its plan fits: the owner may launch, placed by the plan's parts.
+    let _ws = launcher(&h, "m0x6A", &[]).await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": IssueRef::new("m0x6A/rubato", 95) }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let cmd = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(cmd.branch, "issue/95-hand");
+    assert_eq!(cmd.node_ids, vec!["rubato-server".to_string()]);
+}
+
+/// ADR 0058: before the cutover nothing is outside Rubato (plans are approved by comment).
+#[tokio::test]
+async fn nothing_is_outside_rubato_before_the_cutover() {
+    let h = harness().await;
+    hand_written(&h, &PLAN_49.replace("#1", "#95"));
+    h.pin_issue(95).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 95).unwrap();
+    assert!(!one.outside_rubato);
+}
+
+/// ADR 0058: a plan that does not fit is rewritten by a session of the importer's on that
+/// branch, told why; with no companion of theirs the launch's refusal is passed on.
+#[tokio::test]
+async fn a_plan_that_does_not_fit_is_rewritten_by_the_importers_session() {
+    let h = harness_with(|c| c.comment_approvals_until = Some(chrono::Utc::now())).await;
+    let unfit = PLAN_49
+        .replace("#1", "#95")
+        .replace("| rubato-server | affected |", "| nowhere | affected |");
+    hand_written(&h, &unfit);
+    h.pin_issue(95).await;
+
+    let r = import_95(&h, "m0x6A").await;
+    assert_eq!(
+        r.status(),
+        409,
+        "no companion of the importer's is connected"
+    );
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(v["reason"], "launch_refused");
+    assert!(v["detail"].as_str().unwrap().contains("companion"), "{v}");
+
+    let mut ws = launcher(&h, "m0x6A", &[]).await;
+    let r = import_95(&h, "m0x6A").await;
+    assert_eq!(r.status(), 202, "{:?}", r.text().await);
+    let rubato_protocol::ImportResponse::Rewriting { branch, .. } = r.json().await.unwrap() else {
+        panic!("a plan that does not fit is rewritten")
+    };
+    assert_eq!(branch, "issue/95-hand");
+    let cmd = loop {
+        let Some(Ok(Message::Text(t))) = ws.next().await else {
+            panic!("no launch on the socket")
+        };
+        let env: ServerEnvelope = serde_json::from_str(&t).unwrap();
+        if let ServerMessage::Launch(cmd) = env.message {
+            break cmd;
+        }
+    };
+    assert_eq!(cmd.branch, "issue/95-hand");
+    assert!(
+        cmd.prompt.contains("written outside Rubato"),
+        "{}",
+        cmd.prompt
+    );
+    assert!(
+        cmd.prompt.contains("nowhere"),
+        "the prompt says why: {}",
+        cmd.prompt
+    );
+    let ov = h.overview("m0x6A").await;
+    assert!(
+        ov.issues
+            .iter()
+            .find(|i| i.issue.number == 95)
+            .unwrap()
+            .draft
+            .is_none(),
+        "no draft until the rewrite mirrors one"
+    );
+}

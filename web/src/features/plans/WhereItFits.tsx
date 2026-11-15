@@ -1,5 +1,6 @@
 import type { IssueSummary, Me, SystemMap } from "../../protocol.ts";
 import { AcceptPlan } from "./AcceptPlan.tsx";
+import { ImportPlan } from "./ImportPlan.tsx";
 import { fitReasonText, modelsByPart } from "./group.ts";
 
 /** Where a plan fits the system (issue #80): the whole map in small with the plan's parts and
@@ -106,7 +107,9 @@ export function WhereItFits({
           )}
         </>
       )}
-      {approvalsInRubato ? (
+      {issue.outside_rubato ? (
+        <ImportPlan issue={issue} me={me} onDone={onNotice} />
+      ) : approvalsInRubato ? (
         issue.approval?.version !== "current" && <p className="muted" data-testid="approve-in-rubato">Plans are approved in Rubato on this server: approve the draft above.</p>
       ) : (
         <AcceptPlan issue={issue} me={me} onDone={onNotice} />

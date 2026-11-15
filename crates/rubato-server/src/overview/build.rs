@@ -71,6 +71,9 @@ pub struct OverviewInputs {
     pub approvals: Vec<(ApprovalRecord, Option<String>)>,
     /// `Approved:` comments posted at or after the cutover: findings, never counted.
     pub ignored_approvals: Vec<ApprovalRecord>,
+    /// The cutover is set: plans are approved in Rubato, so one with no draft and no counted
+    /// approval is outside Rubato (ADR 0058).
+    pub approvals_in_rubato: bool,
     /// What the handoffs of Rubato approvals left (ADR 0055): record mismatches, link comments
     /// waiting, ADRs not accepted. Shown for the issues this overview holds.
     pub approval_findings: Vec<Finding>,
@@ -441,6 +444,11 @@ pub fn build(
                 Some(v.iter().sum())
             }
         };
+        // ADR 0058: a plan on a branch with no draft and no counted approval, once plans are
+        // approved in Rubato.
+        let outside_rubato = inputs.approvals_in_rubato
+            && approval.is_none()
+            && plan_row.is_some_and(|p| draft.as_ref().is_none_or(|d| d.branch != p.branch));
         out.push(IssueSummary {
             issue: issue.clone(),
             title: meta.and_then(|m| m.title.clone()),
@@ -475,6 +483,7 @@ pub fn build(
             spend_history: inputs.spend.get(issue).cloned().unwrap_or_default(),
             fits_in,
             pinned_in,
+            outside_rubato,
             draft,
         });
         if !plan_on_branch && let Some(p) = draft_plan {
@@ -872,6 +881,7 @@ mod tests {
             reviews: vec![],
             approvals: vec![],
             ignored_approvals: vec![],
+            approvals_in_rubato: false,
             approval_findings: vec![],
             launched: HashSet::new(),
             cap_hits: HashMap::new(),
@@ -1048,6 +1058,8 @@ mod tests {
                 missing: vec![],
                 parse_error: None,
                 live: false,
+                imported_from: None,
+                original_author: None,
             },
             plan: plan(issue, "companion-server", "rubato-companion").plan,
             conflict: conflict.then(|| ("alice".to_owned(), now())),
@@ -1587,6 +1599,8 @@ mod tests {
                 missing: vec![],
                 parse_error: None,
                 live: false,
+                imported_from: None,
+                original_author: None,
             },
             plan: None,
             conflict: None,

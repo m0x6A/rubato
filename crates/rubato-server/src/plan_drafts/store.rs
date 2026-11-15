@@ -15,6 +15,8 @@ pub struct DraftRow {
     pub branch: String,
     pub owner: String,
     pub conflict: Option<(String, DateTime<Utc>)>,
+    pub imported_from: Option<String>,
+    pub original_author: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +41,8 @@ fn draft(r: &SqliteRow) -> Result<DraftRow> {
         branch: r.get("branch"),
         owner: r.get("owner"),
         conflict,
+        imported_from: r.get("imported_from"),
+        original_author: r.get("original_author"),
     })
 }
 
@@ -65,7 +69,8 @@ fn revision(r: &SqliteRow) -> Result<RevisionRow> {
     })
 }
 
-const DRAFT_COLUMNS: &str = "id, repo, number, branch, owner, conflict_user, conflict_at";
+const DRAFT_COLUMNS: &str =
+    "id, repo, number, branch, owner, conflict_user, conflict_at, imported_from, original_author";
 const REVISION_COLUMNS: &str =
     "rev, at, plan_sha, bundle_hash, session_id, missing, parse_error, launch_id, files, plan";
 
@@ -95,6 +100,31 @@ pub async fn get_or_create(
     .fetch_one(db)
     .await?;
     draft(&r)
+}
+
+/// A new draft of an imported plan (ADR 0058), owned by the importer. None when the branch has a
+/// draft already: an import never takes one over.
+pub async fn create_imported(
+    db: &SqlitePool,
+    issue: &IssueRef,
+    branch: &str,
+    owner: &str,
+    original_author: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<Option<Uuid>> {
+    let id = Uuid::new_v4();
+    let done = sqlx::query("INSERT OR IGNORE INTO plan_drafts (id, repo, number, branch, owner, created_at, imported_from, original_author) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(id.to_string())
+        .bind(&issue.repo)
+        .bind(issue.number as i64)
+        .bind(branch)
+        .bind(owner)
+        .bind(ts(now))
+        .bind(branch)
+        .bind(original_author)
+        .execute(db)
+        .await?;
+    Ok((done.rows_affected() == 1).then_some(id))
 }
 
 pub async fn find(db: &SqlitePool, issue: &IssueRef, branch: &str) -> Result<Option<DraftRow>> {

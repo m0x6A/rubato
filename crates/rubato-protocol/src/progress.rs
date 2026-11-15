@@ -255,6 +255,11 @@ pub struct IssueSummary {
     /// issue has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<crate::plan_draft::DraftSummary>,
+    /// The plan on the issue's branch was written outside Rubato (ADR 0058): the branch has no
+    /// draft and no approval counts. It is shown with its fit, cannot be approved as it stands,
+    /// and can be imported. Only once the cutover is set; before it, plans are approved by comment.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub outside_rubato: bool,
 }
 
 /// One point of an issue's spend over time: the total over every session it has had, at the
