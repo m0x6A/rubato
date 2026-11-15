@@ -6,3 +6,6 @@ web/dist/
 .DS_Store
 web/test-results/
 web/playwright-report/
+
+# Deployment profiles describe our own hosts; they stay local, never in this public repo
+.claude/profiles/dockge.md
