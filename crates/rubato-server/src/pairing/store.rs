@@ -57,25 +57,54 @@ pub async fn create_pairing_code(
     Ok(())
 }
 
-/// The human approved a code. Creates (or replaces) the pairing and parks the token for one poll.
+/// What an approval did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Approval {
+    /// The pairing was created, or the approver's own pairing replaced.
+    Approved(Uuid),
+    /// No pending, unexpired code with that user code.
+    NotFound,
+    /// The companion id is paired to another person (live or revoked). Nothing about that
+    /// pairing changed, and the code is now `denied` (#160).
+    Taken(Uuid),
+}
+
+/// The human approved a code. Creates the pairing, or replaces the approver's own, and parks the
+/// token for one poll. A companion id stays with the user who first paired it (ADR 0011).
 pub async fn approve_pairing_code(
     db: &SqlitePool,
     user_code: &str,
     user: &str,
     token: &str,
-) -> Result<Option<Uuid>> {
+) -> Result<Approval> {
     let Some(row) = sqlx::query("SELECT device_code, companion_id, hostname, expires_at, status FROM pairing_codes WHERE user_code = ?").bind(user_code).fetch_optional(db).await? else {
-        return Ok(None);
+        return Ok(Approval::NotFound);
     };
     let status: String = row.get("status");
     let expires = parse_ts(&row.get::<String, _>("expires_at"));
     if status != "pending" || expires < Utc::now() {
-        return Ok(None);
+        return Ok(Approval::NotFound);
     }
     let companion_id: String = row.get("companion_id");
+    let Ok(id) = Uuid::parse_str(&companion_id) else {
+        return Ok(Approval::NotFound);
+    };
     let hostname: String = row.get("hostname");
     let device_code: String = row.get("device_code");
     let mut tx = db.begin().await?;
+    // One statement decides ownership: the update applies only to a row of the same user, so
+    // two approvals cannot both pass a read and then write.
+    let upsert = sqlx::query("INSERT INTO pairings (companion_id, user, token_hash, hostname, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(companion_id) DO UPDATE SET token_hash = excluded.token_hash, hostname = excluded.hostname, revoked_at = NULL WHERE pairings.user = excluded.user")
+        .bind(&companion_id).bind(user).bind(token_hash(token)).bind(&hostname).bind(ts(Utc::now())).execute(&mut *tx).await?;
+    if upsert.rows_affected() == 0 {
+        sqlx::query("UPDATE pairing_codes SET status = 'denied', user = ? WHERE device_code = ?")
+            .bind(user)
+            .bind(&device_code)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(Approval::Taken(id));
+    }
     sqlx::query(
         "UPDATE pairing_codes SET status = 'approved', user = ?, token = ? WHERE device_code = ?",
     )
@@ -84,10 +113,8 @@ pub async fn approve_pairing_code(
     .bind(&device_code)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("INSERT INTO pairings (companion_id, user, token_hash, hostname, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(companion_id) DO UPDATE SET user = excluded.user, token_hash = excluded.token_hash, hostname = excluded.hostname, revoked_at = NULL")
-        .bind(&companion_id).bind(user).bind(token_hash(token)).bind(&hostname).bind(ts(Utc::now())).execute(&mut *tx).await?;
     tx.commit().await?;
-    Ok(Uuid::parse_str(&companion_id).ok())
+    Ok(Approval::Approved(id))
 }
 
 pub async fn poll_pairing_code(db: &SqlitePool, device_code: &str) -> Result<PairPollResponse> {
