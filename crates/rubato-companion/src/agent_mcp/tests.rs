@@ -44,6 +44,7 @@ struct World {
     out: mpsc::UnboundedReceiver<CompanionMessage>,
     hooks: mpsc::UnboundedReceiver<rubato_protocol::HookEvent>,
     caps: Arc<std::sync::Mutex<Vec<String>>>,
+    link: tokio_watch::Sender<bool>,
 }
 
 /// A registry with launch 7 started (and launch 8 still pending when `pending`), the receiver
@@ -60,7 +61,8 @@ async fn world(now: DateTime<Utc>, pending: bool) -> World {
     let caps = Arc::new(std::sync::Mutex::new(Vec::new()));
     let (out_tx, out) = mpsc::unbounded_channel();
     // Built on an empty registry, so launch 7 does not count as restored.
-    let st = AgentMcp::new(registry.clone(), metrics, caps.clone(), out_tx).await;
+    let (link, link_rx) = tokio_watch::channel(true);
+    let st = AgentMcp::new(registry.clone(), metrics, caps.clone(), out_tx, link_rx).await;
     *registry.lock().await = reg;
     if pending {
         registry.lock().await.begin_launch(&command(8), now);
@@ -80,6 +82,7 @@ async fn world(now: DateTime<Utc>, pending: bool) -> World {
         out,
         hooks,
         caps,
+        link,
     }
 }
 
@@ -220,6 +223,16 @@ async fn plan_status_is_unknown_until_pushed_and_keeps_the_newest() {
     let b = body(&w.call(7, "plan_status", json!({})).await);
     assert_eq!(b["status"], "known");
     assert_eq!(b["plan_status"]["branch"]["sha"], "new");
+    assert_eq!(b["link_up"], true);
+}
+
+/// Plan 220 §6: with the link down the answer says so; the agent reads it as "not known".
+#[tokio::test]
+async fn plan_status_says_when_the_link_is_down() {
+    let w = world(Utc::now(), false).await;
+    w.link.send(false).unwrap();
+    let b = body(&w.call(7, "plan_status", json!({})).await);
+    assert_eq!(b["link_up"], false);
 }
 
 #[tokio::test]
@@ -415,6 +428,7 @@ async fn a_launch_restored_at_start_is_not_counted() {
         Arc::new(metrics),
         Default::default(),
         out,
+        tokio_watch::channel(true).1,
     )
     .await;
     watch::tick(&st, now()).await;
