@@ -15,6 +15,7 @@ Feature: One worktree and one tmux session per issue
     And the stand-in claude was started with the session id from the command
     And the stand-in claude received "rubato.issue=acme/pantry#7" in OTEL_RESOURCE_ATTRIBUTES
     And the stand-in claude received a settings file whose hooks post to the companion's port
+    And that settings file holds no token and names a 0600 header file beside it
     And the server receives a sessions snapshot with issue 7 of "acme/pantry" from source "launch"
 
   Scenario: A second launch for the same issue is refused as already running

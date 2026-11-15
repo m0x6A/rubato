@@ -1,0 +1,23 @@
+# Ids outside the map id rule (issue #155): lower-case letters, digits and hyphens, 1 to 64,
+# no hyphen at either end. Both the Rust `SystemMap::validate` and the schema refuse each one;
+# `ok` and `ok-too` pass. The must-fail case of the every-map-in-the-repo test.
+version: 1
+name: bad-ids
+nodes:
+  - id: ok
+    kind: context
+  - id: Billing
+    kind: context
+  - id: a_b
+    kind: context
+  - id: "a'$(touch${IFS}p)'"
+    kind: context
+seams:
+  - id: ok-too
+    from: ok
+    to: Billing
+    owner: ok
+  - id: -edge
+    from: ok
+    to: a_b
+    owner: ok

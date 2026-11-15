@@ -1,6 +1,6 @@
 # 0033. Merge a pull request from Rubato as the person, through their user-to-server token
 
-- **Status:** accepted
+- **Status:** accepted; approval source extended by 0054
 - **Date:** 2026-11-12
 - **Decided by:** Mattias Jonsson (m0x6A), accepted 2026-11-12 by approval comment https://github.com/m0x6A/rubato/issues/82#issuecomment-6837330107 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #82); choices Q1–Q4 answered by Mattias Jonsson 2026-11-12
 - **Seam:** server-github, web-server

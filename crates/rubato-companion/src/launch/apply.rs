@@ -34,6 +34,13 @@ impl Registry {
         self.live_for_issue(issue)
     }
 
+    /// The launch restored a draft whose bundle hashes to `hash`: the plan mirror starts from it.
+    pub fn set_restored_hash(&mut self, launch_id: uuid::Uuid, hash: Option<String>) {
+        if let Some(e) = self.find_by_launch(launch_id) {
+            e.restored_hash = hash;
+        }
+    }
+
     /// The launch returned, whatever its result: discovery sees the issue's panes again.
     pub fn end_launch(&mut self) {
         self.launching = None;
@@ -69,6 +76,8 @@ impl Registry {
             e.issue = Some(cmd.issue.clone());
             e.launch_id = Some(cmd.id);
             e.spend_cap_usd = Some(cmd.spend_cap_usd);
+            e.plan_path = cmd.plan_path.clone();
+            self.launches_changed = true;
             // A pane reconcile found meanwhile is the same session: drop the duplicate.
             self.entries.retain(|o| {
                 !(o.session_id.is_none() && o.pane_id.as_deref() == Some(pane_id) && !o.ended)
@@ -113,11 +122,20 @@ impl Registry {
             head_mtime: None,
             branch_drift: None,
             blocked_by: None,
+            last_hook: None,
+            last_hook_idle: false,
+            last_hook_at: None,
+            input_sent_at: None,
+            hooks_lost: false,
+            pasted: Vec::new(),
+            plan_path: cmd.plan_path.clone(),
+            restored_hash: None,
         };
         match discovered {
             Some(i) => self.entries[i] = launched,
             None => self.entries.push(launched),
         }
+        self.launches_changed = true;
     }
 }
 
@@ -145,6 +163,9 @@ mod tests {
             prompt: String::new(),
             otel_resource: BTreeMap::new(),
             map_version: None,
+            plan_path: None,
+            draft: None,
+            planning: Default::default(),
         }
     }
 

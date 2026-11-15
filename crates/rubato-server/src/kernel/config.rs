@@ -1,6 +1,7 @@
 //! Server configuration from the environment.
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use rubato_protocol::Limits;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -50,6 +51,69 @@ fn one_traffic_source(dev_file: bool, traffic: &TrafficEnv) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Whether only this machine can reach the server (ADR 0064): it binds a loopback address and
+/// its public URL names a loopback host. A URL whose host does not parse is not local.
+pub fn is_local(bind: SocketAddr, public_url: &str) -> bool {
+    let url_is_loopback = url::Url::parse(public_url).ok().is_some_and(|u| {
+        u.host().is_some_and(|h| match h {
+            url::Host::Domain(d) => d.eq_ignore_ascii_case("localhost"),
+            url::Host::Ipv4(ip) => ip.is_loopback(),
+            url::Host::Ipv6(ip) => ip.is_loopback(),
+        })
+    });
+    bind.ip().is_loopback() && url_is_loopback
+}
+
+/// Refuse a server open to anyone unless it is local (ADR 0064): `RUBATO_DEV_USER` always,
+/// OAuth without the App unless `RUBATO_OPEN_LOGIN=1`. Returns the warnings of a server that
+/// starts open.
+fn exposure(
+    bind: SocketAddr,
+    public_url: &str,
+    dev_user: bool,
+    oauth_without_app: bool,
+    open_login: Option<&str>,
+) -> Result<Vec<String>> {
+    let opted_in = match open_login {
+        None => false,
+        Some("1") => true,
+        Some(other) => anyhow::bail!("RUBATO_OPEN_LOGIN must be 1 or unset, not {other:?}"),
+    };
+    let local = is_local(bind, public_url);
+    let mut warnings = Vec::new();
+    if dev_user {
+        anyhow::ensure!(
+            local,
+            "RUBATO_DEV_USER is set and the server is not local (bind {bind}, public URL {public_url}): \
+             any client could act as anyone. Bind a loopback address with a loopback RUBATO_PUBLIC_URL, \
+             or unset RUBATO_DEV_USER (ADR 0064)"
+        );
+        warnings.push(
+            "RUBATO_DEV_USER is set: every request is that user, and x-rubato-dev-user names any other; local only".into(),
+        );
+    } else if oauth_without_app {
+        anyhow::ensure!(
+            local || opted_in,
+            "OAuth is configured without the GitHub App and the server is not local (bind {bind}, \
+             public URL {public_url}): any GitHub account could log in. Configure the App \
+             (RUBATO_GITHUB_APP_*), or set RUBATO_OPEN_LOGIN=1 to run open (ADR 0064)"
+        );
+        warnings.push(if opted_in {
+            "no GitHub App configured: login is open to any GitHub account (RUBATO_OPEN_LOGIN=1)"
+                .into()
+        } else {
+            "no GitHub App configured: login is open to any GitHub account; local only".into()
+        });
+    }
+    if opted_in && !oauth_without_app {
+        warnings.push(
+            "RUBATO_OPEN_LOGIN=1 has no effect: it applies only to OAuth without the GitHub App"
+                .into(),
+        );
+    }
+    Ok(warnings)
 }
 
 /// The GitHub App the server acts as (ADR 0022). All three settings or none.
@@ -179,6 +243,12 @@ pub struct Config {
     pub default_spend_cap_usd: f64,
     pub default_attempt_limit: u32,
     pub pairing_ttl_secs: i64,
+    /// Pairing codes that may be pending and unexpired at once; a start above it is 429 (#168).
+    pub pairing_max_pending: i64,
+    /// The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, RFC 3339, ADR 0054): `Approved:` comments
+    /// count only when posted before it, *Accept plan* refuses after it, and approval in Rubato
+    /// is on once it is set. Unset: comments count as before and approval in Rubato is refused.
+    pub comment_approvals_until: Option<DateTime<Utc>>,
     /// Problems found while reading the environment. `main` logs each as `warn!` once the
     /// subscriber exists, since `from_env` runs before it does (design D14).
     pub warnings: Vec<String>,
@@ -239,7 +309,7 @@ impl Config {
             uuid::Uuid::new_v4().to_string()
         });
         insecure_cookie_warning(&public_url, &mut warnings);
-        Ok(Self {
+        let mut config = Self {
             bind,
             public_url,
             database_url: env("RUBATO_DATABASE_URL")
@@ -300,8 +370,45 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3),
             pairing_ttl_secs: 900,
+            pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,
+            comment_approvals_until: comment_approvals_until(
+                env("RUBATO_COMMENT_APPROVALS_UNTIL").as_deref(),
+            )?,
             warnings,
-        })
+        };
+        let open = exposure(
+            config.bind,
+            &config.public_url,
+            config.dev_user.is_some(),
+            config.oauth_without_app(),
+            env("RUBATO_OPEN_LOGIN").as_deref(),
+        )?;
+        config.warnings.extend(open);
+        Ok(config)
+    }
+
+    /// Whether people log in through OAuth with no team check: an OAuth client without the
+    /// GitHub App (ADR 0064).
+    pub fn oauth_without_app(&self) -> bool {
+        self.github_client_id.is_some()
+            && self.github_client_secret.is_some()
+            && self.github_app.is_none()
+    }
+
+    /// The `cutover` line at start, at info: the time, or `unset` (plan 122 §D10).
+    pub fn report_cutover(&self) {
+        match self.comment_approvals_until {
+            Some(at) => tracing::info!(
+                cutover = %at.to_rfc3339(),
+                means = "approval comments count only before this time; plans are approved in Rubato",
+                "cutover"
+            ),
+            None => tracing::info!(
+                cutover = "unset",
+                means = "approval comments count; approval in Rubato is off",
+                "cutover"
+            ),
+        }
     }
 
     /// Whether a traffic source is configured: the development file or the production one.
@@ -382,9 +489,25 @@ impl Config {
             default_spend_cap_usd: 25.0,
             default_attempt_limit: 3,
             pairing_ttl_secs: 900,
+            pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,
+            comment_approvals_until: None,
             warnings: Vec::new(),
         }
     }
+}
+
+/// `RUBATO_COMMENT_APPROVALS_UNTIL`: an RFC 3339 time, or unset. A value that does not read
+/// stops the start: a cutover silently unset would keep counting comments the team thinks no
+/// longer count.
+fn comment_approvals_until(v: Option<&str>) -> Result<Option<DateTime<Utc>>> {
+    v.map(|t| {
+        DateTime::parse_from_rfc3339(t.trim())
+            .map(|d| d.with_timezone(&Utc))
+            .with_context(|| {
+                format!("RUBATO_COMMENT_APPROVALS_UNTIL={t:?} is not an RFC 3339 time")
+            })
+    })
+    .transpose()
 }
 
 fn trim_slash(url: String) -> String {
@@ -461,6 +584,122 @@ fn insecure_cookie_warning(public_url: &str, warnings: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    /// #169: local is a loopback bind and a loopback public URL, both.
+    #[test]
+    fn is_local_needs_loopback_bind_and_url() {
+        let local = [
+            ("127.0.0.1:8080", "http://127.0.0.1:8080"),
+            ("127.0.0.1:8080", "http://localhost:8080/"),
+            ("127.0.0.2:8080", "http://127.0.0.2:8080"),
+            ("[::1]:8080", "http://[::1]:8080"),
+            ("127.0.0.1:8080", "https://LOCALHOST"),
+        ];
+        let open = [
+            ("0.0.0.0:8080", "http://127.0.0.1:8080"),
+            ("[::]:8080", "http://localhost:8080"),
+            ("192.168.1.5:8080", "http://192.168.1.5:8080"),
+            ("127.0.0.1:8080", "https://rubato.example.test"),
+            ("127.0.0.1:8080", "http://10.0.0.2:8080"),
+            ("127.0.0.1:8080", "http://localhost.example.test"),
+            ("127.0.0.1:8080", "not a url"),
+            ("127.0.0.1:8080", "http://test"),
+        ];
+        for (b, u) in local {
+            assert!(is_local(addr(b), u), "{b} {u} is local");
+        }
+        for (b, u) in open {
+            assert!(!is_local(addr(b), u), "{b} {u} is not local");
+        }
+        println!("checked {} binds and URLs", local.len() + open.len());
+    }
+
+    /// #169: the dev user never starts off loopback, with or without the opt-in.
+    #[test]
+    fn dev_user_off_loopback_refuses_to_start() {
+        let lan = addr("0.0.0.0:8080");
+        for open_login in [None, Some("1")] {
+            for oauth in [false, true] {
+                let e = exposure(lan, "http://0.0.0.0:8080", true, oauth, open_login)
+                    .unwrap_err()
+                    .to_string();
+                assert!(e.contains("RUBATO_DEV_USER"), "{e}");
+            }
+        }
+        let behind_proxy = exposure(
+            addr("127.0.0.1:8080"),
+            "https://rubato.example.test",
+            true,
+            false,
+            None,
+        );
+        assert!(behind_proxy.is_err(), "a public URL is not local");
+        let w = exposure(
+            addr("127.0.0.1:8080"),
+            "http://127.0.0.1:8080",
+            true,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("RUBATO_DEV_USER"), "{w:?}");
+    }
+
+    /// #169: OAuth without the App off loopback needs `RUBATO_OPEN_LOGIN=1`.
+    #[test]
+    fn oauth_without_app_off_loopback_needs_open_login() {
+        let lan = addr("0.0.0.0:8080");
+        let url = "https://rubato.example.test";
+        let e = exposure(lan, url, false, true, None)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("RUBATO_OPEN_LOGIN=1"), "{e}");
+        let w = exposure(lan, url, false, true, Some("1")).unwrap();
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("open to any GitHub account"), "{w:?}");
+        let w = exposure(
+            addr("127.0.0.1:8080"),
+            "http://127.0.0.1:8080",
+            false,
+            true,
+            None,
+        )
+        .unwrap();
+        assert!(w[0].contains("open to any GitHub account"), "{w:?}");
+        assert!(
+            exposure(lan, url, false, false, None).unwrap().is_empty(),
+            "as an App, or with no login at all, nothing is open"
+        );
+        let w = exposure(lan, url, false, false, Some("1")).unwrap();
+        assert!(w[0].contains("no effect"), "{w:?}");
+        for bad in ["yes", "true", "0"] {
+            let e = exposure(lan, url, false, true, Some(bad))
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("must be 1 or unset"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn oauth_without_app_needs_id_and_secret_and_no_app() {
+        let mut c = Config::for_tests("sqlite::memory:".into(), "m0x6A");
+        assert!(!c.oauth_without_app());
+        c.github_client_id = Some("Iv1.x".into());
+        assert!(!c.oauth_without_app(), "no secret: login is not configured");
+        c.github_client_secret = Some("s".into());
+        assert!(c.oauth_without_app());
+        c.github_app = Some(GitHubApp {
+            app_id: 1,
+            private_key: "k".into(),
+            installation_id: 2,
+        });
+        assert!(!c.oauth_without_app());
+    }
 
     #[test]
     fn http_public_url_off_loopback_warns() {
@@ -566,6 +805,43 @@ mod tests {
         assert_eq!(clamp_poll_secs(300, &mut w), 300);
         assert_eq!(clamp_poll_secs(30, &mut w), 30);
         assert!(w.is_empty(), "{w:?}");
+    }
+
+    /// ADR 0054: the cutover reads as RFC 3339 in any offset, is absent when unset, and a value
+    /// that does not read stops the start.
+    #[test]
+    fn the_cutover_is_an_rfc3339_time_or_unset() {
+        assert_eq!(comment_approvals_until(None).unwrap(), None);
+        let at = comment_approvals_until(Some("2026-11-20T09:00:00+01:00"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(at.to_rfc3339(), "2026-11-20T08:00:00+00:00");
+        for bad in ["2026-11-20", "tomorrow", "2026-11-20 08:00"] {
+            let e = comment_approvals_until(Some(bad)).unwrap_err().to_string();
+            assert!(e.contains("RUBATO_COMMENT_APPROVALS_UNTIL"), "{e}");
+        }
+    }
+
+    /// One `cutover` line at info, saying the time or `unset`.
+    #[test]
+    fn the_cutover_is_logged_once_at_start() {
+        let (events, _guard) = crate::kernel::telemetry::capture::start();
+        let mut c = Config::for_tests("sqlite::memory:".into(), "m0x6A");
+        c.report_cutover();
+        c.comment_approvals_until = comment_approvals_until(Some("2026-11-20T08:00:00Z")).unwrap();
+        c.report_cutover();
+        let events = events.lock().unwrap();
+        let lines: Vec<_> = events.iter().filter(|e| e.message == "cutover").collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().all(|e| e.level == tracing::Level::INFO));
+        assert_eq!(
+            lines[0].fields.get("cutover").map(String::as_str),
+            Some("unset")
+        );
+        assert_eq!(
+            lines[1].fields.get("cutover").map(String::as_str),
+            Some("2026-11-20T08:00:00+00:00")
+        );
     }
 
     /// #105: a typo cannot page for every companion or empty every bar.

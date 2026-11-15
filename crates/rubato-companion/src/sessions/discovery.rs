@@ -12,6 +12,7 @@ fn rank(s: StateSource) -> u8 {
     match s {
         StateSource::Hook => 3,
         StateSource::TmuxIde => 2,
+        StateSource::Headless => 3,
         StateSource::Launch => 1,
         StateSource::Scraped => 0,
     }
@@ -94,6 +95,14 @@ impl Registry {
                 head_mtime: None,
                 branch_drift: None,
                 blocked_by: None,
+                last_hook: None,
+                last_hook_idle: false,
+                last_hook_at: None,
+                input_sent_at: None,
+                hooks_lost: false,
+                pasted: Vec::new(),
+                plan_path: None,
+                restored_hash: None,
             });
         }
         let live: std::collections::HashSet<&str> =
@@ -178,6 +187,14 @@ impl Registry {
                 head_mtime: None,
                 branch_drift: None,
                 blocked_by: None,
+                last_hook: None,
+                last_hook_idle: false,
+                last_hook_at: None,
+                input_sent_at: None,
+                hooks_lost: false,
+                pasted: Vec::new(),
+                plan_path: None,
+                restored_hash: None,
             });
         }
     }
@@ -238,16 +255,17 @@ mod tests {
             StateSource::TmuxIde,
             StateSource::Launch,
             StateSource::Scraped,
+            StateSource::Headless,
         ];
         let counts = r.counts_by_source();
-        assert_eq!(counts.len(), 4, "{counts:?}");
+        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
         for source in all {
             assert_eq!(counts.get(&source), Some(&0), "{source:?}");
         }
         let f = Fleet::parse(include_str!("../../features/fixtures/team.json")).unwrap();
         r.apply_fleet(&f, now());
         let counts = r.counts_by_source();
-        assert_eq!(counts.len(), 4, "{counts:?}");
+        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
         assert_eq!(counts[&StateSource::TmuxIde], 1);
         assert!(counts[&StateSource::Scraped] > 0);
         assert_eq!(counts[&StateSource::Hook], 0);

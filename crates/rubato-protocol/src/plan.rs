@@ -1,8 +1,9 @@
 //! The plan file's machine-readable parts (ADR 0005, ADR 0009).
 //!
 //! A plan is Markdown on the issue branch. Its frontmatter carries `issue`, `spend_cap_usd`
-//! and `attempt_limit`; the `## Affected parts` and `## O-rows` tables are parsed into the
-//! types below and validated against `schema/plan.schema.json`.
+//! and `attempt_limit`, and after approval in Rubato the approval record (ADR 0054); the
+//! `## Affected parts`, `## O-rows` and other tables are parsed into the types below and
+//! validated against `schema/plan.schema.json`.
 
 use crate::ids::IssueRef;
 use crate::map::FlowKind;
@@ -35,6 +36,46 @@ pub struct Plan {
     /// from its `## Data models` table (ADR 0031). Optional; empty when absent or "None."
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub data_models: Vec<DataModel>,
+    /// The decisions recorded while the plan was drafted, from its `## Decisions` table
+    /// (ADR 0056). Optional; empty when absent or "None."
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<PlanDecision>,
+    /// The approval record in the front matter, written at handoff (ADR 0054). Absent when the
+    /// plan has none of its keys; a record with a key missing is kept as it is, so the check can
+    /// report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<PlanApprovalRecord>,
+}
+
+/// One row of the plan's `## Decisions` table (ADR 0056).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanDecision {
+    pub id: String,
+    pub decision: String,
+    pub chosen: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+}
+
+/// The approval record a handoff writes into the front matter (ADR 0054): who approved, when, and
+/// the approval hash of the plan they approved. Left out of that hash.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PlanApprovalRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_sha: Option<String>,
+}
+
+impl PlanApprovalRecord {
+    /// All three keys are present.
+    pub fn is_complete(&self) -> bool {
+        self.approved_by.is_some() && self.approved_at.is_some() && self.approved_sha.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -138,7 +179,33 @@ pub struct Assumption {
     pub scope: AssumptionScope,
 }
 
+/// Plans grouped by the seams they touch, each seam's plans in the order given: what the
+/// overview's `SeamCollision` and a room's seam notices both read (ADR 0057). Pure.
+pub fn seam_groups<'a, K>(
+    plans: impl IntoIterator<Item = (K, &'a Plan)>,
+) -> std::collections::BTreeMap<&'a str, Vec<K>>
+where
+    K: Clone,
+{
+    let mut out: std::collections::BTreeMap<&'a str, Vec<K>> = Default::default();
+    for (key, plan) in plans {
+        for seam in plan.seams_touched() {
+            out.entry(seam).or_default().push(key.clone());
+        }
+    }
+    out
+}
+
 impl Plan {
+    /// The seams the plan touches: those of its affected parts and of its O-rows, each once.
+    pub fn seams_touched(&self) -> std::collections::BTreeSet<&str> {
+        self.affected_parts
+            .iter()
+            .flat_map(|p| p.seams.iter().map(String::as_str))
+            .chain(self.o_rows.iter().map(|o| o.seam.as_str()))
+            .collect()
+    }
+
     /// Seam ids named in affected parts that have no O-row. Empty means the 3 am question is answered.
     pub fn seams_without_o_row(&self) -> Vec<&str> {
         let mut missing: Vec<&str> = self
@@ -224,6 +291,35 @@ impl Plan {
 mod tests {
     use super::*;
 
+    /// A plan's seams are its parts' and its O-rows', each once; plans group by seam in the order
+    /// given, which the overview's `SeamCollision` and the rooms' notices both read.
+    #[test]
+    fn plans_group_by_the_seams_they_touch_in_order() {
+        let plan = |part_seams: &[&str], o_row_seams: &[&str]| -> Plan {
+            serde_json::from_value(serde_json::json!({
+                "issue": {"repo": "o/r", "number": 1},
+                "path": "p.md",
+                "affected_parts": [{"node": "n", "status": "affected", "change": "c",
+                                    "seams": part_seams}],
+                "o_rows": o_row_seams.iter().map(|s| serde_json::json!({
+                    "seam": s, "signal": "s", "panel": "p", "owner": "o"})).collect::<Vec<_>>(),
+            }))
+            .unwrap()
+        };
+        let a = plan(&["web-server", "server-github"], &["web-server"]);
+        let b = plan(&[], &["web-server"]);
+        let c = plan(&["companion-server"], &[]);
+        assert_eq!(
+            a.seams_touched().into_iter().collect::<Vec<_>>(),
+            ["server-github", "web-server"]
+        );
+        let groups = seam_groups([("a", &a), ("b", &b), ("c", &c)]);
+        assert_eq!(groups["web-server"], ["a", "b"]);
+        assert_eq!(groups["server-github"], ["a"]);
+        assert_eq!(groups["companion-server"], ["c"]);
+        assert_eq!(groups.len(), 3);
+    }
+
     fn plan() -> Plan {
         Plan {
             issue: IssueRef::new("o/r", 1),
@@ -248,6 +344,8 @@ mod tests {
             assumed: vec![],
             flows: vec![],
             data_models: vec![],
+            decisions: vec![],
+            approval: None,
         }
     }
 
@@ -417,6 +515,8 @@ mod fit_tests {
                 crosses: Some("web-server".into()),
                 note: None,
             }],
+            decisions: vec![],
+            approval: None,
         }
     }
 

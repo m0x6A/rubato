@@ -156,16 +156,20 @@ impl TmuxIde {
         Fleet::parse(&self.run_within(&["team", "--json"], None, timeout)?)
     }
 
-    /// `tmux-ide worktree create <branch> --from <base> --no-session` in `repo`; returns the worktree path.
+    /// `tmux-ide worktree create --from <base> --no-session -- <branch>` in `repo`; returns the
+    /// worktree path. The branch comes from the server, so it goes after `--` (tmux-ide reads
+    /// its arguments with Node's `util.parseArgs`, which takes everything after `--` as
+    /// positional; issue #155).
     pub fn worktree_create(&self, repo: &Path, branch: &str, base_ref: &str) -> Result<PathBuf> {
         let out = self.run(
             &[
                 "worktree",
                 "create",
-                branch,
                 "--from",
                 base_ref,
                 "--no-session",
+                "--",
+                branch,
             ],
             Some(repo),
         )?;
@@ -179,7 +183,7 @@ impl TmuxIde {
     }
 
     pub fn adopt(&self, session: &str) -> Result<()> {
-        self.run(&["adopt", session], None).map(|_| ())
+        self.run(&["adopt", "--", session], None).map(|_| ())
     }
 
     /// Spawn `tmux-ide events --follow --json`; each stdout line is a change trigger.
@@ -238,6 +242,57 @@ mod tests {
         assert!(version_at_least("2.9.18", "2.9.0"));
         assert!(!version_at_least("2.8.30", "2.9.0"));
         assert!(version_at_least("3.0.0", "2.9.0"));
+    }
+
+    /// A stand-in tmux-ide that writes each argument on its own line to `argv` and answers like
+    /// `worktree create --no-session` does.
+    fn recording_tmux_ide(dir: &Path) -> (TmuxIde, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let argv = dir.join("argv");
+        let stub = dir.join("tmux-ide");
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\necho 'Worktree ready: /w/x'\n",
+                argv.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let ide = TmuxIde::new(stub.to_string_lossy(), Tmux::new("tmux", None));
+        (ide, argv)
+    }
+
+    fn lines(p: &Path) -> Vec<String> {
+        std::fs::read_to_string(p)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn positionals_follow_a_double_dash() {
+        let d = tempfile::tempdir().unwrap();
+        let (ide, argv) = recording_tmux_ide(d.path());
+        let wt = ide
+            .worktree_create(d.path(), "issue/7-x", "origin/main")
+            .unwrap();
+        assert_eq!(wt, PathBuf::from("/w/x"));
+        assert_eq!(
+            lines(&argv),
+            [
+                "worktree",
+                "create",
+                "--from",
+                "origin/main",
+                "--no-session",
+                "--",
+                "issue/7-x"
+            ]
+        );
+        ide.adopt("pantry@issue-7-x").unwrap();
+        assert_eq!(lines(&argv), ["adopt", "--", "pantry@issue-7-x"]);
     }
 
     #[test]

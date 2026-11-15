@@ -134,6 +134,30 @@ pub struct Metrics {
     /// The configured companion stale threshold N in seconds (#105). No unit, so the series
     /// stays `rubato_companion_silent_secs`, the name `CompanionSilent` reads.
     pub companion_silent_secs: Gauge<u64>,
+    /// Session messages as they settle, by outcome and kind (ADR 0051).
+    pub session_messages: Counter<u64>,
+    /// Age of the oldest message queued for a launch whose session waits for input.
+    pub session_messages_oldest_idle_queued: Gauge<u64>,
+    /// Connected companions per announced capability.
+    pub companions_by_capability: Gauge<u64>,
+    /// Session log entries stored, and hooks that should have made one and did not (ADR 0052).
+    pub session_log_entries: Counter<u64>,
+    pub session_log_dropped: Counter<u64>,
+    /// Draft revisions stored, and bundles not stored by reason (ADR 0053).
+    pub drafts_revisions: Counter<u64>,
+    pub drafts_refused: Counter<u64>,
+    /// `Approved:` comments first read at or after the cutover (ADR 0054).
+    pub plans_comment_after_cutover: Counter<u64>,
+    /// Room turns by `rubato.outcome`: answered, failed, stopped (ADR 0057).
+    pub rooms_agent_turns: Counter<u64>,
+    /// Times the agent turn limit stopped a room's turns.
+    pub rooms_turn_limit_hits: Counter<u64>,
+    /// Approvals delivered over 30 minutes ago, current, not on their branch (ADR 0055).
+    pub plans_handoff_overdue: Gauge<u64>,
+    /// Handoff commits whose link comment is not posted (ADR 0055).
+    pub plans_link_comment_missing: Gauge<u64>,
+    /// Plans whose approval record differs from Rubato's (ADR 0054).
+    pub plans_approval_record_mismatch: Gauge<u64>,
 }
 
 impl Metrics {
@@ -190,6 +214,30 @@ impl Metrics {
             traffic_dismissals: m.u64_gauge(otel::metric::TRAFFIC_DISMISSALS).build(),
             spend_points: m.u64_counter(otel::metric::SPEND_POINTS).build(),
             companion_silent_secs: m.u64_gauge(otel::metric::COMPANION_SILENT_SECS).build(),
+            session_messages: m.u64_counter(otel::metric::SESSION_MESSAGES).build(),
+            session_messages_oldest_idle_queued: m
+                .u64_gauge(otel::metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED)
+                .with_description(
+                    "seconds the oldest message has waited for a session that waits for input",
+                )
+                .build(),
+            companions_by_capability: m.u64_gauge(otel::metric::COMPANIONS_BY_CAPABILITY).build(),
+            session_log_entries: m.u64_counter(otel::metric::SESSION_LOG_ENTRIES).build(),
+            session_log_dropped: m.u64_counter(otel::metric::SESSION_LOG_DROPPED).build(),
+            drafts_revisions: m.u64_counter(otel::metric::DRAFTS_REVISIONS).build(),
+            drafts_refused: m.u64_counter(otel::metric::DRAFTS_REFUSED).build(),
+            plans_comment_after_cutover: m
+                .u64_counter(otel::metric::PLANS_COMMENT_AFTER_CUTOVER)
+                .build(),
+            rooms_agent_turns: m.u64_counter(otel::metric::ROOMS_AGENT_TURNS).build(),
+            rooms_turn_limit_hits: m.u64_counter(otel::metric::ROOMS_TURN_LIMIT_HITS).build(),
+            plans_handoff_overdue: m.u64_gauge(otel::metric::PLANS_HANDOFF_OVERDUE).build(),
+            plans_link_comment_missing: m
+                .u64_gauge(otel::metric::PLANS_LINK_COMMENT_MISSING)
+                .build(),
+            plans_approval_record_mismatch: m
+                .u64_gauge(otel::metric::PLANS_APPROVAL_RECORD_MISMATCH)
+                .build(),
         }
     }
 

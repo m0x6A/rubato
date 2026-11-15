@@ -5,6 +5,10 @@ use std::collections::BTreeMap;
 /// The prompt the launched session receives. Shipped with the skill; a copy is embedded.
 pub const PROMPT_TEMPLATE: &str = include_str!("../../../../skills/rubato/prompt.md");
 
+/// The prompt of a session that plans in Rubato (ADR 0053): the draft stays uncommitted, the
+/// review and summary are replies, and the approval arrives as a prompt to hand off.
+pub const RUBATO_PROMPT_TEMPLATE: &str = include_str!("../../../../skills/rubato/prompt-rubato.md");
+
 /// Slug from a title: kebab-case, at most four words.
 pub fn slugify(title: &str) -> String {
     let words: Vec<String> = title
@@ -28,12 +32,9 @@ pub fn slugify(title: &str) -> String {
 
 /// A branch slug of the shape `slugify` makes: words of letters and digits joined by single
 /// hyphens. A slug passed in a launch request must have it; it becomes the branch, the
-/// worktree folder and part of the companion's launch script.
-pub fn is_slug(s: &str) -> bool {
-    s.chars().count() <= 100
-        && s.split('-')
-            .all(|w| !w.is_empty() && w.chars().all(char::is_alphanumeric))
-}
+/// worktree folder and part of the companion's launch script. The rule lives in the protocol so
+/// the companion checks the same one (issue #155).
+pub use rubato_protocol::is_branch_slug as is_slug;
 
 pub fn render_prompt(template: &str, vars: &BTreeMap<&str, String>) -> String {
     let mut out = template.to_owned();

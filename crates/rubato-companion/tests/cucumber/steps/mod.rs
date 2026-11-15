@@ -1,7 +1,16 @@
 mod discovery;
+mod drafts;
+mod fork;
+mod handoff;
+mod headless;
 mod hooks;
+mod launch_branch;
 mod launch_refusal;
 mod launch_timeout;
 mod pairing;
+mod restart;
+mod restore;
+mod session_log;
+mod session_messages;
 mod stale;
 mod worktree;
