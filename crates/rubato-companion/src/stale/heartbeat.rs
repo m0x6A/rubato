@@ -18,7 +18,7 @@ pub async fn heartbeat(
     user: String,
     metrics: Arc<Metrics>,
     tmux_ide: TmuxIde,
-    limits: Arc<std::sync::Mutex<Limits>>,
+    mut limits: watch::Receiver<Limits>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     let hostname = std::fs::read_to_string("/etc/hostname")
@@ -46,10 +46,52 @@ pub async fn heartbeat(
                 KeyValue::new(attr::USER, user.clone()),
             ],
         );
-        let secs = limits.lock().unwrap().heartbeat_interval_secs.max(1);
+        let secs = limits.borrow_and_update().heartbeat_interval_secs.max(1);
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(secs)) => {}
+            // A `Welcome` with new limits: beat now and wait the new interval from here.
+            Ok(()) = limits.changed() => {}
             _ = shutdown.changed() => return Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::tmux::Tmux;
+
+    /// Fails on purpose without the `limits.changed()` arm: the second beat waits an hour.
+    #[tokio::test]
+    async fn a_new_welcome_wakes_the_heartbeat() {
+        let (limits_tx, limits_rx) = watch::channel(Limits {
+            heartbeat_interval_secs: 3600,
+            ..Limits::default()
+        });
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (out, mut sent) = mpsc::unbounded_channel();
+        let tmux_ide = TmuxIde::new("/nonexistent/tmux-ide", Tmux::new("tmux", None));
+        let task = tokio::spawn(heartbeat(
+            out,
+            Uuid::nil(),
+            "m0x6A".into(),
+            Arc::new(Metrics::new()),
+            tmux_ide,
+            limits_rx,
+            shutdown_rx,
+        ));
+        let first = tokio::time::timeout(Duration::from_secs(5), sent.recv()).await;
+        assert!(matches!(first, Ok(Some(CompanionMessage::Heartbeat(_)))));
+        // What `server_link::on_welcome` does with a `Welcome` carrying new limits.
+        limits_tx.send_replace(Limits {
+            heartbeat_interval_secs: 1,
+            ..Limits::default()
+        });
+        let second = tokio::time::timeout(Duration::from_secs(2), sent.recv()).await;
+        assert!(
+            matches!(second, Ok(Some(CompanionMessage::Heartbeat(_)))),
+            "the new limits wake the heartbeat: {second:?}"
+        );
+        task.abort();
     }
 }

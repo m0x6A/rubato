@@ -69,7 +69,7 @@ pub struct PlanMirrorTask {
     pub registry: Arc<Mutex<Registry>>,
     pub out: mpsc::UnboundedSender<CompanionMessage>,
     /// `draft_max_bytes`, updated by each Welcome.
-    pub limits: Arc<std::sync::Mutex<Limits>>,
+    pub limits: tokio::sync::watch::Receiver<Limits>,
     /// What the last Welcome announced: no `drafts`, no bundle.
     pub server_capabilities: Arc<std::sync::Mutex<Vec<String>>>,
     /// How long one bundle read may take before this settle point is skipped.
@@ -104,7 +104,7 @@ impl PlanMirrorTask {
             tracing::debug!(rubato.issue = %t.issue, "draft bundle not sent: the server did not announce drafts");
             return;
         }
-        let max_bytes = self.limits.lock().unwrap().draft_max_bytes;
+        let max_bytes = self.limits.borrow().draft_max_bytes;
         let read = tokio::time::timeout(
             self.read_timeout,
             tokio::task::spawn_blocking({
@@ -234,7 +234,7 @@ mod tests {
             PlanMirrorTask {
                 registry: Arc::new(Mutex::new(reg)),
                 out,
-                limits: Arc::new(std::sync::Mutex::new(Limits::default())),
+                limits: tokio::sync::watch::channel(Limits::default()).1,
                 server_capabilities: Arc::new(std::sync::Mutex::new(
                     caps.iter().map(|c| (*c).to_owned()).collect(),
                 )),
@@ -321,7 +321,11 @@ mod tests {
         assert_ne!(sent[0].bundle_hash, b.bundle_hash);
 
         // Too large: sent once with no files and no hash, then not again.
-        t.limits.lock().unwrap().draft_max_bytes = 10;
+        t.limits = tokio::sync::watch::channel(Limits {
+            draft_max_bytes: 10,
+            ..Limits::default()
+        })
+        .1;
         t.on_settle("s7").await;
         t.on_settle("s7").await;
         let sent = drafts(&mut rx);

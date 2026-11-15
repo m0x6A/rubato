@@ -230,11 +230,11 @@ impl Client {
                                             "hello treated as a replay"
                                         );
                                     }
-                                    self.outbox.retain(|e| e.seq > acked);
+                                    drop_acked(&mut self.outbox, acked);
                                 }
                                 ServerMessage::Welcome { last_seen_companion_seq, .. } => {
                                     let acked = *last_seen_companion_seq;
-                                    self.outbox.retain(|e| e.seq > acked);
+                                    drop_acked(&mut self.outbox, acked);
                                 }
                                 ServerMessage::Error { code, message } => {
                                     tracing::error!(code, message, "server error");
@@ -257,10 +257,44 @@ impl Client {
     }
 }
 
+/// Drop what an ack covers. The outbox is in seq order (each envelope takes the next number as
+/// it is pushed), so this pops from the front instead of scanning up to 10,000 entries.
+fn drop_acked(outbox: &mut VecDeque<CompanionEnvelope>, acked: u64) {
+    while outbox.front().is_some_and(|e| e.seq <= acked) {
+        outbox.pop_front();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kernel::telemetry::capture;
+
+    #[test]
+    fn an_ack_pops_only_what_it_covers() {
+        let outbox = |seqs: std::ops::RangeInclusive<u64>| -> VecDeque<CompanionEnvelope> {
+            seqs.map(|seq| CompanionEnvelope {
+                seq,
+                sent_at: Utc::now(),
+                message: CompanionMessage::Ack { seq },
+            })
+            .collect()
+        };
+        let left = |o: &VecDeque<CompanionEnvelope>| o.iter().map(|e| e.seq).collect::<Vec<_>>();
+        let mut o = outbox(5..=9);
+        drop_acked(&mut o, 7);
+        assert_eq!(left(&o), vec![8, 9]);
+        let mut o = outbox(5..=9);
+        drop_acked(&mut o, 4);
+        assert_eq!(
+            left(&o),
+            vec![5, 6, 7, 8, 9],
+            "an ack below the front drops nothing"
+        );
+        let mut o = outbox(5..=9);
+        drop_acked(&mut o, 100);
+        assert!(o.is_empty(), "an ack past the back drops everything");
+    }
     use crate::server_link::seq::BLOCK;
     use std::future::Future;
     use tokio::net::{TcpListener, TcpStream};
