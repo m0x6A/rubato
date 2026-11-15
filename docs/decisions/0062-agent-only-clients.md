@@ -1,4 +1,4 @@
-# 0059. An agent-only client is a headless companion, owned by one person; the client contract does not depend on how it pairs
+# 0062. An agent-only client is a headless companion, owned by one person; the client contract does not depend on how it pairs
 
 - **Status:** proposed
 - **Date:** 2026-11-14
@@ -102,7 +102,7 @@ O-rows:
   `rubato.headless.turns{rubato.outcome}`, and
   `rubato.headless.killed{rubato.reason=stop|cap|revoke|timeout|quiet|companion_restarted}`.
 
-On acceptance, each of these ADRs gets "superseded in part by 0059" after its status: 0003, 0004,
+On acceptance, each of these ADRs gets "superseded in part by 0062" after its status: 0003, 0004,
 0006, 0013 and 0051.
 
 ## Supersedes

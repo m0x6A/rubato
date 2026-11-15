@@ -1,7 +1,7 @@
 # Design: plan in Rubato (#122)
 
-Plan: [../122.md](../122.md) · ADRs 0050–0059, all *proposed*. Also covers #139 (§D9, ADR 0058)
-and #138 (§D14, ADR 0059), planned as one unit with #122 on Mattias's request of 2026-11-14.
+Plan: [../122.md](../122.md) · ADRs 0050–0058 and 0062, all *proposed*. Also covers #139 (§D9, ADR 0058)
+and #138 (§D14, ADR 0062), planned as one unit with #122 on Mattias's request of 2026-11-14.
 
 **Revised after the design review**, all findings taken:
 - **Three blockers.** A message for an offline companion was lost; a Rubato-mode session before
@@ -738,7 +738,7 @@ the other GitHub facts (ADR 0047). Only approve's route is map-scoped.
 - **Golden drift.** Every new overview field is optional and absent with the cutover unset; the
   golden (`tests/workspaces_golden.rs`) is re-recorded only where a PR says so.
 
-## D14. Agent-only clients (ADR 0059, #138)
+## D14. Agent-only clients (ADR 0062, #138)
 
 Mattias, 2026-11-14: "start by 1 but dont rule out 2". An agent-only client is a **headless
 companion** first. A **token client** with the agent running elsewhere stays possible, and nothing
