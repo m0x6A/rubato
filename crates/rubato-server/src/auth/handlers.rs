@@ -116,7 +116,7 @@ pub async fn callback(
         .build()
     {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => return login_failed_here(e),
     };
     let token = match client
         .exchange_code(AuthorizationCode::new(q.code))
@@ -124,13 +124,7 @@ pub async fn callback(
         .await
     {
         Ok(t) => t,
-        Err(e) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                format!("token exchange failed: {e}"),
-            )
-                .into_response();
-        }
+        Err(e) => return login_failed_upstream(&app, "token_exchange", &e.to_string()),
     };
     let user: GitHubUser = match http
         .get(format!("{}/user", app.config.github_api()))
@@ -148,11 +142,9 @@ pub async fn callback(
             .and_then(|t| serde_json::from_str::<GitHubUser>(&t).map_err(|e| e.to_string()))
         {
             Ok(u) => u,
-            Err(e) => return (StatusCode::BAD_GATEWAY, e).into_response(),
+            Err(e) => return login_failed_upstream(&app, "user_lookup", &e),
         },
-        Err(e) => {
-            return (StatusCode::BAD_GATEWAY, format!("user lookup failed: {e}")).into_response();
-        }
+        Err(e) => return login_failed_upstream(&app, "user_lookup", &e.to_string()),
     };
     // As a GitHub App: the person is on the team when their account can access the
     // installation the server acts as (ADR 0022). A failed lookup is a fault of ours or of
@@ -205,7 +197,7 @@ pub async fn callback(
     )
     .await
     {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        return login_failed_here(e);
     }
     // ADR 0030: keep the user-to-server token, so Rubato can post an approval as this person.
     let granted = super::tokens::Granted {
@@ -225,7 +217,7 @@ pub async fn callback(
     }
     let id = match store::create_web_session(&app.db, &user.login, team_checked_at).await {
         Ok(id) => id,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => return login_failed_here(e),
     };
     let mut res = Redirect::to("/").into_response();
     let secure = app.config.public_url.starts_with("https");
@@ -236,6 +228,26 @@ pub async fn callback(
     res.headers_mut()
         .append(header::SET_COOKIE, set_cookie(STATE_COOKIE, "", 0, secure));
     res
+}
+
+/// What the browser sees when GitHub did not complete the login (design 193 D8). The upstream
+/// text is logged, never echoed.
+pub const LOGIN_FAILED_UPSTREAM: &str = "GitHub did not complete the login. Try again.";
+/// What the browser sees when the login failed on this server.
+pub const LOGIN_FAILED_HERE: &str = "Login failed on the server.";
+
+fn login_failed_upstream(app: &App, step: &'static str, error: &str) -> Response {
+    tracing::error!(step, error, "login failed");
+    let reason = match step {
+        "token_exchange" => "token_exchange_failed",
+        _ => "user_lookup_failed",
+    };
+    app.reject(routes::CALLBACK, reason, "-");
+    (StatusCode::BAD_GATEWAY, LOGIN_FAILED_UPSTREAM).into_response()
+}
+
+fn login_failed_here(e: impl std::fmt::Display) -> Response {
+    (crate::kernel::http::internal("auth", e), LOGIN_FAILED_HERE).into_response()
 }
 
 /// The membership lookup itself failed: 502 with its own reason, never "no access".

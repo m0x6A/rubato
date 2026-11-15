@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { addCss } from "./fixtures/css.ts";
 
 // Issue #81: the restyle loads its fonts from the app's own origin (ADR 0036) and keeps the
 // layout inside the viewport at 900 px and below, glows and badges included.
@@ -36,9 +37,36 @@ test("must fail: a panel wider than the viewport is caught", async ({ page }) =>
   await page.setViewportSize({ width: 900, height: 900 });
   await page.goto("/");
   await expect(page.getByTestId("node-web")).toBeVisible();
-  await page.addStyleTag({ content: ".panel { min-width: 1200px; }" });
+  await addCss(page, ".panel { min-width: 1200px; }");
   const m = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, right: document.querySelector(".panel")!.getBoundingClientRect().right, inner: window.innerWidth }));
   expect(m.scroll > m.inner || m.right > m.inner).toBe(true);
+});
+
+// Issue #193 (ADR 0066): the app runs under its Content-Security-Policy without a violation.
+test("the app loads under its Content-Security-Policy with no violation", async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __csp: string[] };
+    w.__csp = [];
+    document.addEventListener("securitypolicyviolation", (e) => w.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+  const res = await page.goto("/");
+  const csp = res?.headers()["content-security-policy"] ?? "";
+  expect(csp).toContain("default-src 'self'");
+  expect(res?.headers()["x-content-type-options"]).toBe("nosniff");
+  await expect(page.getByTestId("seam-web-server")).toBeVisible();
+  // A selected part opens the inspector, and the websocket is up: most of what the app draws.
+  await page.getByTestId("node-rubato-server").click();
+  await expect(page.getByTestId("inspector")).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  const violations = await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp);
+  console.log(`checked the policy "${csp}"; ${violations.length} violations`);
+  expect(violations).toEqual([]);
+});
+
+test("must fail: an inline style is refused by the policy", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  await expect(page.addStyleTag({ content: ".panel { min-width: 1200px; }" })).rejects.toThrow(/Content Security Policy/);
 });
 
 for (const width of [900, 600]) {

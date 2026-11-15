@@ -4127,11 +4127,11 @@ async fn propose_opens_one_pr_and_freezes_the_draft() {
         "{pull}"
     );
     assert!(
-        pull.contains("| 1 | add part billing | `m0x6A` |"),
+        pull.contains("| 1 | `add part billing` | `m0x6A` |"),
         "{pull}"
     );
     assert!(
-        pull.contains("| 2 | add seam server-billing (rubato-server to billing) | `alice` |"),
+        pull.contains("| 2 | `add seam server-billing (rubato-server to billing)` | `alice` |"),
         "{pull}"
     );
     assert!(
