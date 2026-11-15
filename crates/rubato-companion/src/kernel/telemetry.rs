@@ -97,6 +97,13 @@ pub struct Metrics {
     pub headless_killed: Counter<u64>,
     /// Launch results, by `rubato.outcome` and, for a refusal, `rubato.reason` (ADR 0070).
     pub launches: Counter<u64>,
+    /// MCP requests from launched sessions, by `rubato.mcp.tool`, `rubato.outcome` and
+    /// `rubato.reason` (ADR 0071).
+    pub mcp_calls: Counter<u64>,
+    /// Agent reports drained, by `rubato.outcome` and `rubato.reason` (ADR 0071).
+    pub mcp_reports: Counter<u64>,
+    /// Launches with no MCP request 5 minutes after they started, once each (ADR 0071).
+    pub mcp_not_initialized: Counter<u64>,
 }
 
 impl Metrics {
@@ -137,6 +144,20 @@ impl Metrics {
             handoff_reports: m
                 .u64_counter(otel::metric::HANDOFF_REPORTS)
                 .with_description("handoff reports forwarded to the server, by outcome")
+                .build(),
+            mcp_calls: m
+                .u64_counter(otel::metric::MCP_CALLS)
+                .with_description(
+                    "MCP requests from launched sessions, by tool, outcome and reason",
+                )
+                .build(),
+            mcp_reports: m
+                .u64_counter(otel::metric::MCP_REPORTS)
+                .with_description("agent reports drained, sent or not sent")
+                .build(),
+            mcp_not_initialized: m
+                .u64_counter(otel::metric::MCP_NOT_INITIALIZED)
+                .with_description("launches with no MCP request five minutes after they started")
                 .build(),
         }
     }
