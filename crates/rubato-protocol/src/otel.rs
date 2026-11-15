@@ -80,6 +80,12 @@ pub mod attr {
     pub const GITHUB_EVENT: &str = "rubato.github.event";
     /// What a catch-up change was (ADR 0074): `issue`, `pull` or `plan`.
     pub const CHANGE_KIND: &str = "rubato.change.kind";
+    /// A speech call (ADR 0073): `stt` or `tts`.
+    pub const VOICE_OP: &str = "rubato.voice.op";
+    /// The speech adapter: `openai_compatible` or `fake`.
+    pub const VOICE_PROVIDER: &str = "rubato.voice.provider";
+    /// Bytes sent to or read from the speech provider in one call.
+    pub const VOICE_BYTES: &str = "rubato.voice.bytes";
     /// The MCP tool or method a companion's `rubato.mcp.call` served (ADR 0071): `get_assignment`,
     /// `report_status`, `plan_status`, `initialize`, `ping`, `tools/list`, `discovery` or
     /// `unknown`. Never a client-chosen string.
@@ -258,6 +264,15 @@ pub mod metric {
     pub const PULLS_VIEW_FETCHES: &str = "rubato.pulls.view_fetches";
     /// Merges sent and not confirmed for more than 120 s (ADR 0033), every poll tick.
     pub const PULLS_MERGES_OPENING: &str = "rubato.pulls.merges_opening";
+    /// Speech calls by `rubato.voice.op`, `rubato.outcome` and `rubato.voice.provider` (ADR 0073);
+    /// alert `SpeechProviderFailing`.
+    pub const VOICE_SPEECH: &str = "rubato.voice.speech";
+    /// Seconds one speech call took, by `rubato.voice.op`.
+    pub const VOICE_DURATION: &str = "rubato.voice.duration";
+    /// Voice join tokens minted or refused, by `rubato.outcome`.
+    pub const VOICE_TOKENS: &str = "rubato.voice.tokens";
+    /// Failed voice joins the browser reported, by `rubato.reason`.
+    pub const VOICE_JOIN_FAILED: &str = "rubato.voice.join_failed";
     /// Companion: MCP requests from launched sessions (ADR 0071), by `rubato.mcp.tool`,
     /// `rubato.outcome` (`ok`, `refused`, `coalesced`, `error`) and `rubato.reason`.
     pub const MCP_CALLS: &str = "rubato.mcp.calls";
@@ -306,6 +321,12 @@ pub mod span {
     /// A call from a skill to another part, a client span with `peer.service` naming the map id
     /// of the other side (`github`, `system-map`, `plan-file`).
     pub const SKILL_CALL: &str = "rubato.skill.call";
+    /// Server: one voice join token minted (ADR 0073).
+    pub const VOICE_TOKEN: &str = "rubato.voice.token";
+    /// Server: one transcription call to the speech provider.
+    pub const VOICE_STT: &str = "rubato.voice.stt";
+    /// Server: one synthesis call to the speech provider.
+    pub const VOICE_TTS: &str = "rubato.voice.tts";
     /// Companion: one MCP request on `/mcp` (ADR 0071), with `rubato.mcp.tool`,
     /// `rubato.launch_id`, `rubato.issue`, `rubato.outcome` and `rubato.reason`.
     pub const MCP_CALL: &str = "rubato.mcp.call";
@@ -395,6 +416,9 @@ pub fn all_names() -> Vec<&'static str> {
         attr::LAYOUT_ARRANGEMENT,
         attr::GITHUB_EVENT,
         attr::CHANGE_KIND,
+        attr::VOICE_OP,
+        attr::VOICE_PROVIDER,
+        attr::VOICE_BYTES,
         attr::MCP_TOOL,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
@@ -473,6 +497,10 @@ pub fn all_names() -> Vec<&'static str> {
         metric::PLANS_LINK_COMMENT_MISSING,
         metric::PLANS_APPROVAL_RECORD_MISMATCH,
         metric::PLANS_COMMENT_AFTER_CUTOVER,
+        metric::VOICE_SPEECH,
+        metric::VOICE_DURATION,
+        metric::VOICE_TOKENS,
+        metric::VOICE_JOIN_FAILED,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::TEAM_POLL,
@@ -491,6 +519,9 @@ pub fn all_names() -> Vec<&'static str> {
         span::ROOM_FORK_TURN,
         span::SKILL_COMMAND,
         span::SKILL_CALL,
+        span::VOICE_TOKEN,
+        span::VOICE_STT,
+        span::VOICE_TTS,
         span::MCP_CALL,
         event::SESSION_STALE,
         event::CAP_HIT,

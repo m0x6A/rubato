@@ -100,8 +100,8 @@ describe("map.ts", () => {
     const { dir, ws } = tempMapRepo();
     const repo = tempRepo("acme/pantry", "issue/7-restock");
     const s = await summarize(ws, repo);
-    expect(s.nodes.length).toBe(11);
-    expect(s.seams.length).toBe(12);
+    expect(s.nodes.length).toBe(13);
+    expect(s.seams.length).toBe(14);
     expect(s.seams.map((x) => x.id)).toContain("skill-github");
     expect(s.map_version).toBe(git(dir, "rev-parse", "--short", "HEAD"));
     expect(s.repo).toBe("acme/pantry");

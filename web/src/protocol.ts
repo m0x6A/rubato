@@ -651,6 +651,10 @@ SessionState?: SessionState
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
 TrafficReport?: TrafficReport
+UtteranceQuery?: UtteranceQuery
+VoiceJoinFailed?: VoiceJoinFailed
+VoiceToken?: VoiceToken
+VoiceTokenRequest?: VoiceTokenRequest
 WebEvent?: WebEvent
 }
 /**
@@ -1899,6 +1903,27 @@ can_act_on_github?: boolean
  */
 cannot_act_reason?: (string | null)
 login: string
+/**
+ * A plan room's voice channel (ADR 0073); absent while `RUBATO_VOICE` is off.
+ */
+voice?: (VoiceAvailability | null)
+}
+/**
+ * Whether voice is on for this server, on `Me` only while it is (ADR 0073).
+ */
+export interface VoiceAvailability {
+/**
+ * A voice channel can be joined: LiveKit is configured.
+ */
+enabled: boolean
+/**
+ * A speech provider is configured: utterances reach the room and spoken replies play.
+ */
+speech: boolean
+/**
+ * The provider's hosts, for the consent text; empty for the fake adapter.
+ */
+speech_hosts?: string[]
 }
 /**
  * Merge a pull request as yourself (`POST /api/pulls/merge`, ADR 0033): at the head the person
@@ -2690,6 +2715,10 @@ id: string
  * For a seam notice: the other issue and the seam both plans touch.
  */
 notice?: (SeamNotice | null)
+/**
+ * Posted from a push-to-talk utterance (ADR 0073); a turn it makes is asked aloud.
+ */
+spoken?: boolean
 text: string
 /**
  * The turn this message made, or the turn an agent's message answers.
@@ -2906,4 +2935,61 @@ server: string
  * OpenTelemetry `service.namespace` of the callee, as it emits it.
  */
 server_namespace?: (string | null)
+}
+/**
+ * The query of an utterance (`POST` `routes::VOICE_UTTERANCE`); the audio is the body.
+ */
+export interface UtteranceQuery {
+branch: string
+/**
+ * Chosen by the browser; it becomes the room message's id, so a repeat posts once.
+ */
+id: string
+number: number
+repo: string
+/**
+ * An agent's handle in the room: the transcript is posted as `@<to> <transcript>`.
+ */
+to?: (string | null)
+}
+/**
+ * A failed join, reported by the browser (`POST` `routes::VOICE_JOIN_FAILED`): Rubato never sees
+ * LiveKit, so this is the only signal for a LiveKit that is down or unreachable.
+ */
+export interface VoiceJoinFailed {
+branch: string
+number: number
+/**
+ * One of `join_reason`; anything else is counted as `other`.
+ */
+reason: string
+repo: string
+}
+/**
+ * A LiveKit join token for one person and one plan room. `expires_at` bounds the join only:
+ * LiveKit refreshes the token of a connected participant (ADR 0073).
+ */
+export interface VoiceToken {
+expires_at: string
+/**
+ * `<login>#<suffix>`, so two tabs of one person do not evict each other.
+ */
+identity: string
+/**
+ * The LiveKit room: `rubato-` and 32 hex digits of the plan room's key.
+ */
+room: string
+token: string
+/**
+ * The LiveKit server, `wss://…`.
+ */
+url: string
+}
+/**
+ * Which room's voice channel to join (`POST` `routes::VOICE_TOKEN`).
+ */
+export interface VoiceTokenRequest {
+branch: string
+number: number
+repo: string
 }

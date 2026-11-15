@@ -39,6 +39,166 @@ impl std::fmt::Debug for WebhookSecret {
     }
 }
 
+/// A credential read from the environment (ADR 0073: the LiveKit secret, the speech keys).
+/// `Debug` never prints it; nothing logs, stores or sends it but the call it is for.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[redacted]")
+    }
+}
+
+/// A plan room's voice channel (ADR 0073), present only with `RUBATO_VOICE=1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceConfig {
+    /// The team's own LiveKit; `None` makes the token route answer `no_livekit`.
+    pub livekit: Option<LiveKitConfig>,
+    /// The speech provider; `None` is voice for people only.
+    pub speech: Option<SpeechConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveKitConfig {
+    /// `wss://…` (or `ws://` on a LAN test).
+    pub url: String,
+    pub api_key: String,
+    pub api_secret: Secret,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpeechConfig {
+    /// Tests and the dev server only: echoes text (design 146 §5).
+    Fake,
+    OpenAiCompatible(OpenAiSpeech),
+}
+
+/// The `openai_compatible` adapter's settings, STT and TTS on their own base URLs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiSpeech {
+    pub stt_url: String,
+    pub tts_url: String,
+    pub stt_key: Option<Secret>,
+    pub tts_key: Option<Secret>,
+    pub stt_model: String,
+    pub tts_model: String,
+    pub tts_voice: String,
+    pub language: Option<String>,
+}
+
+/// The shortest LiveKit secret Rubato takes: LiveKit itself refuses shorter ones.
+pub const MIN_LIVEKIT_SECRET_CHARS: usize = 32;
+
+/// Voice settings from the environment (ADR 0073). Off unless `RUBATO_VOICE` is `1` or `true`.
+/// A half-configured LiveKit or speech provider stops the start, naming what is missing, and the
+/// fake adapter needs `RUBATO_DEV_USER`, which ADR 0064 keeps to loopback.
+pub fn voice_from(
+    get: impl Fn(&str) -> Option<String>,
+    dev_user: bool,
+) -> Result<Option<VoiceConfig>> {
+    match get("RUBATO_VOICE").as_deref().map(str::trim) {
+        None | Some("0") | Some("false") => return Ok(None),
+        Some("1") | Some("true") => {}
+        Some(other) => anyhow::bail!("RUBATO_VOICE={other:?}: use 1 or 0"),
+    }
+    let trio = [
+        "RUBATO_LIVEKIT_URL",
+        "RUBATO_LIVEKIT_API_KEY",
+        "RUBATO_LIVEKIT_API_SECRET",
+    ];
+    let set: Vec<Option<String>> = trio.iter().map(|k| get(k)).collect();
+    let livekit = if set.iter().all(Option::is_none) {
+        None
+    } else {
+        let missing: Vec<&str> = trio
+            .iter()
+            .zip(&set)
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| *k)
+            .collect();
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "RUBATO_VOICE=1 with LiveKit half configured: set {}",
+                missing.join(", ")
+            );
+        }
+        let url = set[0].clone().unwrap_or_default();
+        if !(url.starts_with("wss://") || url.starts_with("ws://")) {
+            anyhow::bail!("RUBATO_LIVEKIT_URL must be wss://… (or ws:// on a LAN test)");
+        }
+        let secret = set[2].clone().unwrap_or_default();
+        if secret.chars().count() < MIN_LIVEKIT_SECRET_CHARS {
+            anyhow::bail!(
+                "RUBATO_LIVEKIT_API_SECRET must be at least {MIN_LIVEKIT_SECRET_CHARS} characters"
+            );
+        }
+        Some(LiveKitConfig {
+            url: trim_slash(url),
+            api_key: set[1].clone().unwrap_or_default(),
+            api_secret: Secret::new(secret),
+        })
+    };
+    let speech = match get("RUBATO_SPEECH").as_deref().map(str::trim) {
+        None => None,
+        Some("fake") if dev_user => Some(SpeechConfig::Fake),
+        Some("fake") => anyhow::bail!(
+            "RUBATO_SPEECH=fake is for tests and the dev server: it needs RUBATO_DEV_USER"
+        ),
+        Some("openai_compatible") => {
+            let need = [
+                "RUBATO_STT_URL",
+                "RUBATO_TTS_URL",
+                "RUBATO_STT_MODEL",
+                "RUBATO_TTS_MODEL",
+                "RUBATO_TTS_VOICE",
+            ];
+            let missing: Vec<&str> = need.iter().filter(|k| get(k).is_none()).copied().collect();
+            if !missing.is_empty() {
+                anyhow::bail!(
+                    "RUBATO_SPEECH=openai_compatible: set {}",
+                    missing.join(", ")
+                );
+            }
+            let v = |k: &str| get(k).unwrap_or_default();
+            Some(SpeechConfig::OpenAiCompatible(OpenAiSpeech {
+                stt_url: trim_slash(v("RUBATO_STT_URL")),
+                tts_url: trim_slash(v("RUBATO_TTS_URL")),
+                stt_key: get("RUBATO_STT_API_KEY").map(Secret::new),
+                tts_key: get("RUBATO_TTS_API_KEY").map(Secret::new),
+                stt_model: v("RUBATO_STT_MODEL"),
+                tts_model: v("RUBATO_TTS_MODEL"),
+                tts_voice: v("RUBATO_TTS_VOICE"),
+                language: get("RUBATO_SPEECH_LANGUAGE"),
+            }))
+        }
+        Some(other) => {
+            anyhow::bail!("RUBATO_SPEECH={other:?}: use openai_compatible or fake")
+        }
+    };
+    Ok(Some(VoiceConfig { livekit, speech }))
+}
+
+/// The host of a URL, for the consent text: `speaches:8000`, `api.openai.com`.
+fn host_of(url: &str) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    let host = u.host_str()?;
+    Some(match u.port() {
+        Some(p) => format!("{host}:{p}"),
+        None => host.to_owned(),
+    })
+}
+
 /// The traffic adapter's own settings, `RUBATO_TRAFFIC_PROMETHEUS_*` and
 /// `RUBATO_TRAFFIC_WINDOW_SECS`, kept as text for the slice to read (ADR 0040): what they mean,
 /// and which are credentials, is the adapter's business. Debug prints the names only.
@@ -281,6 +441,9 @@ pub struct Config {
     /// With webhooks on, seconds between catch-up polls (`RUBATO_GITHUB_CATCHUP_SECS`, 300–3600,
     /// default 900). Unused with webhooks off.
     pub github_catchup_secs: u64,
+    /// A plan room's voice channel (`RUBATO_VOICE`, ADR 0073); `None` while it is off, the
+    /// default.
+    pub voice: Option<VoiceConfig>,
     /// Problems found while reading the environment. `main` logs each as `warn!` once the
     /// subscriber exists, since `from_env` runs before it does (design D14).
     pub warnings: Vec<String>,
@@ -414,6 +577,7 @@ impl Config {
                 env("RUBATO_GITHUB_CATCHUP_SECS").as_deref(),
                 &mut warnings,
             ),
+            voice: voice_from(env, env("RUBATO_DEV_USER").is_some())?,
             warnings,
         };
         let open = exposure(
@@ -425,6 +589,53 @@ impl Config {
         )?;
         config.warnings.extend(open);
         Ok(config)
+    }
+
+    /// The LiveKit URL while voice is on with LiveKit configured: what the CSP allows (ADR 0073).
+    pub fn livekit_url(&self) -> Option<&str> {
+        self.voice
+            .as_ref()
+            .and_then(|v| v.livekit.as_ref())
+            .map(|l| l.url.as_str())
+    }
+
+    /// What `Me.voice` says: `None` while voice is off, so nothing changes for anyone (ADR 0073).
+    pub fn voice_availability(&self) -> Option<rubato_protocol::VoiceAvailability> {
+        let v = self.voice.as_ref()?;
+        let mut hosts: Vec<String> = match &v.speech {
+            Some(SpeechConfig::OpenAiCompatible(o)) => [&o.stt_url, &o.tts_url]
+                .into_iter()
+                .filter_map(|u| host_of(u))
+                .collect(),
+            _ => vec![],
+        };
+        hosts.dedup();
+        Some(rubato_protocol::VoiceAvailability {
+            enabled: v.livekit.is_some(),
+            speech: v.speech.is_some(),
+            speech_hosts: hosts,
+        })
+    }
+
+    /// One line at start: voice off, or on with what is configured (never a secret).
+    pub fn report_voice(&self) {
+        match &self.voice {
+            None => tracing::info!(voice = "off", "voice"),
+            Some(v) => tracing::info!(
+                voice = "on",
+                livekit = v
+                    .livekit
+                    .as_ref()
+                    .map(|l| l.url.as_str())
+                    .unwrap_or("unset"),
+                speech = match &v.speech {
+                    None => "unset",
+                    Some(SpeechConfig::Fake) => "fake",
+                    Some(SpeechConfig::OpenAiCompatible(_)) => "openai_compatible",
+                },
+                "voice"
+            ),
+        }
     }
 
     /// Whether people log in through OAuth with no team check: an OAuth client without the
@@ -556,6 +767,7 @@ impl Config {
             comment_approvals_until: None,
             github_webhook_secret: None,
             github_catchup_secs: CATCHUP_SECS.1,
+            voice: None,
             warnings: Vec::new(),
         }
     }
@@ -674,6 +886,145 @@ mod tests {
 
     fn addr(s: &str) -> SocketAddr {
         s.parse().unwrap()
+    }
+
+    fn vars(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let m: std::collections::HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        move |k: &str| m.get(k).cloned()
+    }
+
+    const SECRET: &str = "0123456789abcdef0123456789abcdef";
+
+    /// ADR 0073: voice is off unless `RUBATO_VOICE` says on, and the test config has none.
+    #[test]
+    fn voice_is_off_by_default() {
+        assert_eq!(voice_from(vars(&[]), false).unwrap(), None);
+        assert_eq!(
+            voice_from(vars(&[("RUBATO_VOICE", "0")]), true).unwrap(),
+            None
+        );
+        // The LiveKit trio alone does not turn it on.
+        assert_eq!(
+            voice_from(
+                vars(&[
+                    ("RUBATO_LIVEKIT_URL", "wss://lk.example"),
+                    ("RUBATO_LIVEKIT_API_KEY", "k"),
+                    ("RUBATO_LIVEKIT_API_SECRET", SECRET),
+                ]),
+                true
+            )
+            .unwrap(),
+            None
+        );
+        let c = Config::for_tests("sqlite::memory:".into(), "m0x6A");
+        assert!(c.voice.is_none());
+        assert!(c.voice_availability().is_none());
+        assert!(c.livekit_url().is_none());
+        assert!(voice_from(vars(&[("RUBATO_VOICE", "yes")]), true).is_err());
+    }
+
+    /// A half-configured LiveKit or speech provider refuses to start, naming what is missing.
+    #[test]
+    fn half_configured_voice_refuses_to_start() {
+        let e = voice_from(
+            vars(&[
+                ("RUBATO_VOICE", "1"),
+                ("RUBATO_LIVEKIT_URL", "wss://lk.example"),
+            ]),
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            e.contains("RUBATO_LIVEKIT_API_KEY") && e.contains("RUBATO_LIVEKIT_API_SECRET"),
+            "{e}"
+        );
+        let e = voice_from(
+            vars(&[
+                ("RUBATO_VOICE", "1"),
+                ("RUBATO_LIVEKIT_URL", "wss://lk.example"),
+                ("RUBATO_LIVEKIT_API_KEY", "k"),
+                ("RUBATO_LIVEKIT_API_SECRET", "short"),
+            ]),
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("at least 32"), "{e}");
+        let e = voice_from(
+            vars(&[
+                ("RUBATO_VOICE", "1"),
+                ("RUBATO_SPEECH", "openai_compatible"),
+                ("RUBATO_STT_URL", "http://speaches:8000/v1"),
+            ]),
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        for k in [
+            "RUBATO_TTS_URL",
+            "RUBATO_STT_MODEL",
+            "RUBATO_TTS_MODEL",
+            "RUBATO_TTS_VOICE",
+        ] {
+            assert!(e.contains(k), "{e}");
+        }
+        assert!(
+            voice_from(
+                vars(&[("RUBATO_VOICE", "1"), ("RUBATO_SPEECH", "whisper")]),
+                true
+            )
+            .is_err()
+        );
+    }
+
+    /// The fake adapter echoes uploads: only a dev server (loopback, ADR 0064) may use it.
+    #[test]
+    fn the_fake_speech_adapter_needs_the_dev_user() {
+        let on = vars(&[("RUBATO_VOICE", "1"), ("RUBATO_SPEECH", "fake")]);
+        let e = voice_from(&on, false).unwrap_err().to_string();
+        assert!(e.contains("RUBATO_DEV_USER"), "{e}");
+        let v = voice_from(&on, true).unwrap().unwrap();
+        assert_eq!(v.speech, Some(SpeechConfig::Fake));
+        assert_eq!(v.livekit, None);
+    }
+
+    /// A full configuration, what `Me.voice` says about it, and no secret in `Debug`.
+    #[test]
+    fn voice_on_names_its_hosts_and_never_prints_a_secret() {
+        let v = voice_from(
+            vars(&[
+                ("RUBATO_VOICE", "1"),
+                ("RUBATO_LIVEKIT_URL", "wss://lk.example/"),
+                ("RUBATO_LIVEKIT_API_KEY", "APIkey"),
+                ("RUBATO_LIVEKIT_API_SECRET", SECRET),
+                ("RUBATO_SPEECH", "openai_compatible"),
+                ("RUBATO_STT_URL", "https://api.example.com/v1/"),
+                ("RUBATO_TTS_URL", "http://kokoro:8880/v1"),
+                ("RUBATO_STT_API_KEY", "sk-stt-marker"),
+                ("RUBATO_STT_MODEL", "whisper-1"),
+                ("RUBATO_TTS_MODEL", "kokoro"),
+                ("RUBATO_TTS_VOICE", "af_heart"),
+            ]),
+            false,
+        )
+        .unwrap();
+        let mut c = Config::for_tests("sqlite::memory:".into(), "m0x6A");
+        c.voice = v;
+        assert_eq!(c.livekit_url(), Some("wss://lk.example"));
+        let a = c.voice_availability().unwrap();
+        assert!(a.enabled && a.speech);
+        assert_eq!(a.speech_hosts, ["api.example.com", "kokoro:8880"]);
+        let shown = format!("{c:?}");
+        assert!(
+            !shown.contains(SECRET),
+            "the LiveKit secret leaked: {shown}"
+        );
+        assert!(!shown.contains("sk-stt-marker"), "the speech key leaked");
+        println!("checked the config's Debug output for 2 secrets");
     }
 
     /// #169: local is a loopback bind and a loopback public URL, both.

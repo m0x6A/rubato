@@ -160,8 +160,34 @@ pub async fn same_origin(State(app): State<App>, req: Request, next: Next) -> Re
 }
 
 /// The Content-Security-Policy for this server (ADR 0066): only its own origin, its websocket,
-/// and the font subsets the build inlines as `data:`; never framed.
-pub fn content_security_policy(public_url: &str) -> String {
+/// and the font subsets the build inlines as `data:`; never framed. With voice on (ADR 0073)
+/// `connect-src` also allows the LiveKit server, as `wss:` and `https:`; with it off the policy is
+/// exactly as before.
+pub fn content_security_policy(public_url: &str, livekit_url: Option<&str>) -> String {
+    let base = policy_without_voice(public_url);
+    match livekit_url.and_then(livekit_origins) {
+        Some(extra) => base.replacen("; font-src", &format!(" {extra}; font-src"), 1),
+        None => base,
+    }
+}
+
+/// `wss://host[:port] https://host[:port]` for a LiveKit URL (`ws:` and `http:` for a plain one).
+fn livekit_origins(url: &str) -> Option<String> {
+    let o = origin_of(url)?;
+    let rest = ["wss://", "https://"]
+        .iter()
+        .find_map(|p| o.strip_prefix(p))
+        .map(|r| (format!("wss://{r}"), format!("https://{r}")))
+        .or_else(|| {
+            ["ws://", "http://"]
+                .iter()
+                .find_map(|p| o.strip_prefix(p))
+                .map(|r| (format!("ws://{r}"), format!("http://{r}")))
+        })?;
+    Some(format!("{} {}", rest.0, rest.1))
+}
+
+fn policy_without_voice(public_url: &str) -> String {
     let ws = origin_of(public_url)
         .map(|o| {
             if let Some(rest) = o.strip_prefix("https://") {
@@ -355,16 +381,49 @@ mod tests {
 
     #[test]
     fn the_policy_names_the_public_websocket_origin() {
-        let csp = content_security_policy("http://192.168.1.20:8081/");
+        let csp = content_security_policy("http://192.168.1.20:8081/", None);
         assert!(
             csp.contains("connect-src 'self' ws://192.168.1.20:8081;"),
             "{csp}"
         );
         assert!(csp.contains("frame-ancestors 'none'"));
-        let csp = content_security_policy("https://rubato.example");
+        let csp = content_security_policy("https://rubato.example", None);
         assert!(
             csp.contains("connect-src 'self' wss://rubato.example;"),
             "{csp}"
+        );
+    }
+
+    /// ADR 0073: voice on adds the LiveKit origin to `connect-src` only; voice off is byte-equal
+    /// to the policy before voice.
+    #[test]
+    fn voice_adds_only_the_livekit_origin() {
+        let off = content_security_policy("https://rubato.example", None);
+        assert_eq!(
+            off,
+            "default-src 'self'; connect-src 'self' wss://rubato.example; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+        );
+        let on = content_security_policy(
+            "https://rubato.example",
+            Some("wss://livekit.example:7880/"),
+        );
+        assert!(
+            on.contains(
+                "connect-src 'self' wss://rubato.example wss://livekit.example:7880 https://livekit.example:7880; font-src"
+            ),
+            "{on}"
+        );
+        assert_eq!(
+            on.replace(
+                " wss://livekit.example:7880 https://livekit.example:7880",
+                ""
+            ),
+            off
+        );
+        // A URL that does not read adds nothing.
+        assert_eq!(
+            content_security_policy("https://rubato.example", Some("nope")),
+            off
         );
     }
 

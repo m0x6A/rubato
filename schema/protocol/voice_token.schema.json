@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VoiceToken",
+  "description": "A LiveKit join token for one person and one plan room. `expires_at` bounds the join only:\nLiveKit refreshes the token of a connected participant (ADR 0073).",
+  "type": "object",
+  "properties": {
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "identity": {
+      "description": "`<login>#<suffix>`, so two tabs of one person do not evict each other.",
+      "type": "string"
+    },
+    "room": {
+      "description": "The LiveKit room: `rubato-` and 32 hex digits of the plan room's key.",
+      "type": "string"
+    },
+    "token": {
+      "type": "string"
+    },
+    "url": {
+      "description": "The LiveKit server, `wss://…`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "url",
+    "token",
+    "room",
+    "identity",
+    "expires_at"
+  ]
+}

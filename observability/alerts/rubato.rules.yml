@@ -181,3 +181,17 @@ groups:
         annotations:
           summary: "A GitHub webhook delivery has waited over 5 minutes to be applied"
           panel: Webhooks
+
+      # #146, ADR 0073: the speech provider failed every call for 10 minutes while people used
+      # voice: no transcript reaches the room and no reply is spoken. `unless` (not `and … == 0`)
+      # so it also fires when no call has ever succeeded, after a restart, when no `ok` series
+      # exists. Empty transcripts and busy refusals are not provider failures.
+      - alert: SpeechProviderFailing
+        expr: sum(increase(rubato_voice_speech_total{rubato_outcome!~"ok|empty|busy"}[10m])) > 0 unless sum(increase(rubato_voice_speech_total{rubato_outcome="ok"}[10m])) > 0
+        labels:
+          severity: ticket
+          seam: server-speech
+          owner: rubato-server
+        annotations:
+          summary: "Every speech provider call failed in the last 10 minutes"
+          panel: Voice

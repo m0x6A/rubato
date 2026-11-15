@@ -34,6 +34,7 @@ pub mod session;
 pub mod session_log;
 pub mod session_message;
 pub mod traffic;
+pub mod voice;
 pub mod web_link;
 pub mod workspace;
 
@@ -120,6 +121,9 @@ pub use traffic::{
     DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, ObservedTraffic, SeamTraffic,
     SourceStatus, TrafficDismissal, TrafficEdge, TrafficEnd, TrafficReport, TrafficState,
     UndeclaredEdge, derive_traffic,
+};
+pub use voice::{
+    UtteranceQuery, VoiceAvailability, VoiceJoinFailed, VoiceToken, VoiceTokenRequest,
 };
 pub use web_link::{WebEvent, WebResource};
 pub use workspace::{DEFAULT_WORKSPACE, WorkspaceInfo, is_workspace_id};

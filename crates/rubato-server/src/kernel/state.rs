@@ -4,6 +4,7 @@
 use crate::kernel::config::Config;
 use crate::kernel::github::GitHubApi;
 use crate::kernel::signer::Signer;
+use crate::kernel::speech::Speech;
 use crate::kernel::telemetry::Metrics;
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
@@ -102,6 +103,9 @@ pub struct AppState {
     /// In-memory state a slice keeps for this server, one value per type (the pull request view
     /// cache, issue #82). Never a table; gone on restart.
     pub slots: Slots,
+    /// The speech adapter while voice is on with a provider configured (ADR 0073). Tests swap it
+    /// for a counting or blocking fake with `set_speech`.
+    speech: std::sync::RwLock<Option<Arc<dyn Speech>>>,
 }
 
 /// One value per type, made on first use: lets a slice keep in-memory state on the `App`
@@ -137,7 +141,13 @@ impl AppState {
                 SourceStatus::NotConfigured
             },
         };
+        let speech = config
+            .voice
+            .as_ref()
+            .and_then(|v| v.speech.as_ref())
+            .map(crate::kernel::speech::from_config);
         Arc::new(Self {
+            speech: std::sync::RwLock::new(speech),
             db,
             config: Arc::new(config),
             github,
@@ -154,6 +164,16 @@ impl AppState {
             polled_repos: Mutex::new(BTreeSet::new()),
             slots: Slots::default(),
         })
+    }
+
+    /// The speech adapter, if one is configured (ADR 0073).
+    pub fn speech(&self) -> Option<Arc<dyn Speech>> {
+        self.speech.read().unwrap().clone()
+    }
+
+    /// Replace the speech adapter: tests use a counting or blocking fake.
+    pub fn set_speech(&self, s: Option<Arc<dyn Speech>>) {
+        *self.speech.write().unwrap() = s;
     }
 
     /// A companion's latest snapshot replaces its earlier one.
