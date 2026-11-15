@@ -23,6 +23,41 @@
     "message"
   ],
   "$defs": {
+    "AgentReport": {
+      "description": "What a launched session's agent said it is doing, through `report_status` (ADR 0071). A\nsignal with its own time, never a progress state: the server shows the newest per launch and\nnever derives progress from it.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "When the agent called `report_status`.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "doing": {
+          "description": "One line, at most 200 characters (`limits::AGENT_DOING_MAX_CHARS`).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "launch_id": {
+          "description": "The launch the companion resolved from the call's `X-Rubato-Launch`, never from what the\nagent said.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "parts": {
+          "description": "Map ids the agent says it is on, at most 8 (`limits::AGENT_PARTS_MAX`).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+          },
+          "maxItems": 8
+        }
+      },
+      "required": [
+        "launch_id",
+        "doing",
+        "at"
+      ]
+    },
     "BlockCause": {
       "description": "Which hook blocked a session (ADR 0043): the current cause of the current status, set with\na *blocked* status and cleared by the next hook that implies a status.",
       "oneOf": [
@@ -292,6 +327,20 @@
             }
           },
           "$ref": "#/$defs/RoomReply",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "What a launched session's agent said it is doing, through MCP (ADR 0071). Sent only to a\nserver that announced `agent_mcp`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "agent_report"
+            }
+          },
+          "$ref": "#/$defs/AgentReport",
           "required": [
             "type"
           ]
