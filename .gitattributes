@@ -1,0 +1,2 @@
+# The CRLF approval-hash fixture must keep its line endings byte for byte (plan 122, PR 2).
+schema/fixtures/plans/approval-hash/crlf.md -text

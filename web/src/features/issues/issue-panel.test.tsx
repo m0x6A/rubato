@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { companion, issue, overview } from "../../../test/fixtures.ts";
 import { IssuePanel, ownConnectedCompanions } from "./IssuePanel.tsx";
@@ -165,5 +165,57 @@ describe("opening an issue", () => {
     const heading = screen.getByRole("heading", { name: "m0x6A/rubato#7" });
     expect(heading).toHaveAttribute("tabindex", "-1");
     expect(heading).toHaveFocus();
+  });
+});
+
+describe("messages for launched sessions (plan 122, ADR 0051)", () => {
+  it("a session Rubato launched gets a Conversation section; one it did not launch does not", () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const now = new Date().toISOString();
+    const base = { companion_id: "c1", user: "alice", cwd: "/w/9", source: "hook" as const, status: "idle" as const, last_seen: now };
+    const launched = issue(9, "web", { sessions: [{ ...base, session_id: "s1", launch_id: "6f1c0c1e-0000-4000-8000-000000000009", spend_usd: 1.25 }, { ...base, session_id: "s2" }] });
+    renderPanel(overview({ issues: [launched] }), launched);
+    const toggles = screen.getAllByRole("button", { name: /Conversation/ });
+    expect(toggles).toHaveLength(1);
+    // The session row itself is unchanged: its spend still reads in dollars.
+    expect(screen.getByText("$1.25")).toBeInTheDocument();
+    // Someone else's session starts collapsed, so opening the issue reads nothing yet.
+    expect(toggles[0]).toHaveAttribute("aria-expanded", "false");
+    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockRestore();
+  });
+});
+
+describe("the draft of an issue (ADR 0053)", () => {
+  it("shows a Draft section where the plan shows when the issue has a draft, and none without", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ reason: "unknown_draft" }), { status: 404 }));
+    const draft = { draft_id: "d0000000-0000-4000-8000-000000000001", branch: "issue/12-x", owner: "alice", rev: 2, at: new Date().toISOString(), plan_sha: "p", bundle_hash: "h", live: false };
+    const withDraft = issue(12, "web", { draft });
+    const { unmount } = render(<IssuePanel overview={overview({ issues: [withDraft] })} me={me} selected={withDraft} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(screen.getByTestId("draft")).toHaveTextContent("Draft · revision 2");
+    await screen.findByText(/This draft could not be read/);
+    unmount();
+    const without = issue(13, "web");
+    renderPanel(overview({ issues: [without] }), without);
+    expect(screen.queryByTestId("draft")).toBeNull();
+    fetch.mockRestore();
+  });
+});
+
+describe("the plan's room on the issue (ADR 0057)", () => {
+  it("shows the room for an issue with a draft, and none for an issue with neither draft nor plan", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ repo: "m0x6A/rubato", number: 30, branch: "issue/30-x", messages: [] }), { status: 200 }));
+    const draft = { draft_id: "d0000000-0000-4000-8000-000000000030", branch: "issue/30-x", owner: "alice", rev: 1, at: new Date().toISOString(), plan_sha: "p", bundle_hash: "h", live: false };
+    const withDraft = issue(30, "web", { draft });
+    const { unmount } = render(<IssuePanel overview={overview({ issues: [withDraft] })} me={me} selected={withDraft} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(screen.getByTestId("room")).toHaveTextContent("issue/30-x");
+    await waitFor(() => expect(fetch.mock.calls.some((c) => String(c[0]).startsWith("/api/room?"))).toBe(true));
+    unmount();
+    fetch.mockClear();
+    const neither = issue(31, "web");
+    renderPanel(overview({ issues: [neither] }), neither);
+    expect(screen.queryByTestId("room")).toBeNull();
+    expect(fetch.mock.calls.some((c) => String(c[0]).startsWith("/api/room"))).toBe(false);
+    fetch.mockRestore();
   });
 });

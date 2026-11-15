@@ -120,6 +120,11 @@ function Lane({ companion: c, own, sessions, queue, issues, titles, staleMs, onQ
       <header data-testid={`companion-${c.user}`}>
         <span>
           <i className={c.connected && !c.revoked_at ? "led live" : "led"} aria-hidden="true" /> <strong>{c.hostname}</strong> <span className="muted">{own ? "yours" : c.user}</span>
+          {c.client === "headless" && (
+            <span className="badge" title={`Agent-only client owned by ${c.user}: no terminal, each turn a claude -p child`}>
+              headless
+            </span>
+          )}
           <div className={c.connected && !c.revoked_at ? "muted" : "warn"}>{state}</div>
           {!c.revoked_at && (
             <span className="fresh" data-testid={`fresh-${c.companion_id}`} data-share={share.toFixed(2)} aria-hidden="true">

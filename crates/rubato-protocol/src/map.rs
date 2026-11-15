@@ -102,6 +102,44 @@ pub struct MapNode {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No
+    /// default: a part without it is never matched to observed traffic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<ServiceId>,
+}
+
+/// A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`
+/// (ADR 0059). The namespace is absent only where the emitter has none, as for a servicegraph
+/// virtual node built from a caller's `peer.service`. Rubato never sets or derives it.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceId {
+    /// `service.namespace`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// `service.name`.
+    pub name: String,
+}
+
+impl ServiceId {
+    pub fn new(namespace: Option<&str>, name: &str) -> Self {
+        Self {
+            namespace: namespace.map(str::to_owned),
+            name: name.to_owned(),
+        }
+    }
+}
+
+impl std::fmt::Display for ServiceId {
+    /// `namespace/name`, or `name` alone when there is no namespace.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.namespace {
+            Some(ns) => write!(f, "{ns}/{}", self.name),
+            None => f.write_str(&self.name),
+        }
+    }
 }
 
 /// A seam between two nodes. The owner side is woken when it breaks.
@@ -184,6 +222,12 @@ fn carrying(carries: &Option<String>) -> String {
 pub enum MapError {
     #[error("duplicate id {0:?}")]
     DuplicateId(String),
+    #[error("parts {first:?} and {second:?} both name service {service:?}; a service is one part")]
+    DuplicateService {
+        service: String,
+        first: String,
+        second: String,
+    },
     #[error("seam {seam:?} references unknown node {node:?}")]
     UnknownNode { seam: String, node: String },
     #[error("seam {seam:?} owner {owner:?} is neither its from nor its to side")]
@@ -237,6 +281,12 @@ impl SystemMap {
         self.nodes.iter().find(|n| n.id == id)
     }
 
+    /// The part whose `service` is exactly `s` (ADR 0059): namespace and name equal, an absent
+    /// namespace equal only to an absent one. Never by id, never by name alone.
+    pub fn node_for_service(&self, s: &ServiceId) -> Option<&MapNode> {
+        self.nodes.iter().find(|n| n.service.as_ref() == Some(s))
+    }
+
     pub fn seam(&self, id: &str) -> Option<&Seam> {
         self.seams.iter().find(|s| s.id == id)
     }
@@ -284,6 +334,18 @@ impl SystemMap {
     /// side, flows along their seam, every scenario step is exactly one declared flow.
     pub fn validate(&self) -> Result<(), Vec<MapError>> {
         let mut errors = Vec::new();
+        let mut services: std::collections::BTreeMap<&ServiceId, &str> = Default::default();
+        for n in &self.nodes {
+            if let Some(s) = &n.service
+                && let Some(first) = services.insert(s, &n.id)
+            {
+                errors.push(MapError::DuplicateService {
+                    service: s.to_string(),
+                    first: first.to_owned(),
+                    second: n.id.clone(),
+                });
+            }
+        }
         let mut seen = BTreeSet::new();
         for id in self
             .nodes
@@ -436,6 +498,7 @@ mod tests {
             repo: None,
             path: None,
             description: None,
+            service: None,
         }
     }
 
@@ -641,5 +704,75 @@ mod tests {
             "features/4-companion/plan.md"
         );
         assert_eq!(m.plan_path_for("o/other", 4, "x"), "docs/plans/4.md");
+    }
+
+    #[test]
+    fn a_service_is_one_part_and_matches_only_exactly() {
+        let mut m = map(vec![]);
+        m.nodes[0].service = Some(ServiceId::new(Some("shop"), "payments"));
+        m.nodes[1].service = Some(ServiceId::new(None, "payments"));
+        assert!(
+            m.validate().is_ok(),
+            "same name, other namespace: two parts"
+        );
+        let exact = |ns: Option<&str>, n: &str| {
+            m.node_for_service(&ServiceId::new(ns, n))
+                .map(|x| x.id.as_str())
+        };
+        assert_eq!(exact(Some("shop"), "payments"), Some("a"));
+        assert_eq!(exact(None, "payments"), Some("b"));
+        assert_eq!(exact(Some("other"), "payments"), None);
+        assert_eq!(exact(None, "a"), None, "never by id");
+        m.nodes[1].service = Some(ServiceId::new(Some("shop"), "payments"));
+        let errs = m.validate().unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, MapError::DuplicateService { first, second, .. } if first == "a" && second == "b")),
+            "{errs:?}"
+        );
+        assert_eq!(
+            ServiceId::new(Some("shop"), "payments").to_string(),
+            "shop/payments"
+        );
+        assert_eq!(ServiceId::new(None, "github").to_string(), "github");
+    }
+
+    #[test]
+    fn a_service_with_an_unknown_key_is_refused() {
+        let yaml = "id: a\nkind: context\nservice: { name: x, namspace: typo }\n";
+        assert!(serde_yaml_ng::from_str::<MapNode>(yaml).is_err());
+    }
+
+    /// The same files the plan-check tests read: same parts, same refusals, same words.
+    #[test]
+    fn service_fixtures() {
+        let good: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../schema/fixtures/maps/services.yml"))
+                .unwrap();
+        assert_eq!(good.validate(), Ok(()));
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../../../schema/fixtures/maps/services.json"))
+                .unwrap();
+        assert_eq!(serde_json::to_value(&good).unwrap(), expected);
+        let bad: SystemMap = serde_yaml_ng::from_str(include_str!(
+            "../../../schema/fixtures/maps/services-duplicate.yml"
+        ))
+        .unwrap();
+        let said: Vec<String> = bad
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "parts \"checkout\" and \"checkout-v2\" both name service \"shop/checkout\"; a service is one part",
+                "parts \"github\" and \"gh\" both name service \"github\"; a service is one part",
+            ]
+        );
+        println!(
+            "checked 2 service map fixtures, {} parts",
+            good.nodes.len() + bad.nodes.len()
+        );
     }
 }

@@ -1,6 +1,6 @@
 # 0028. One planning workflow in this repo: the rubato skill
 
-- **Status:** accepted
+- **Status:** accepted; review and approval moved into Rubato by 0054 and 0056
 - **Date:** 2026-11-12
 - **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #71)
 - **Seam:** skill-plan-file

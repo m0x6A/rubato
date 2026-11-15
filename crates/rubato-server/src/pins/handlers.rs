@@ -1,6 +1,6 @@
 //! Pin an issue to a map node or seam, and unpin it.
 
-use super::map_lines::check_target;
+use super::map_lines::{check_repo, check_target};
 use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
@@ -24,7 +24,11 @@ pub async fn add_pin(
         .map_of(ws.as_str())
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
-    if let Err((reason, msg)) = check_target(&map.map, &map.version, &req.target) {
+    // The repo first: an issue of a repo no map names would be read with the App's token and
+    // shown to every member (issue #163).
+    if let Err((reason, msg)) = check_repo(&map.map, &map.version, &req.issue.repo)
+        .and_then(|()| check_target(&map.map, &map.version, &req.target))
+    {
         app.reject(routes::PINS, reason, &user);
         return Err((StatusCode::UNPROCESSABLE_ENTITY, msg));
     }

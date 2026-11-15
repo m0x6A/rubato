@@ -16,6 +16,50 @@
     "companion_id"
   ],
   "$defs": {
+    "DraftFile": {
+      "description": "One file of a bundle, as it is in the worktree.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Repository path, as `bundle_paths` gives it.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "text"
+      ]
+    },
+    "DraftRestore": {
+      "description": "Server → companion, in `LaunchCommand.draft`: a parked draft's newest settled revision.",
+      "type": "object",
+      "properties": {
+        "draft_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "files": {
+          "description": "Repository paths, relative, as `bundle_paths` gives them; the plan first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DraftFile"
+          }
+        },
+        "rev": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "draft_id",
+        "rev",
+        "files"
+      ]
+    },
     "IssueRef": {
       "description": "A GitHub issue, addressed as `owner/name#number`.",
       "type": "object",
@@ -59,6 +103,17 @@
           "description": "`issue/<n>-<slug>`.",
           "type": "string"
         },
+        "draft": {
+          "description": "The newest settled revision of the launcher's parked draft on this branch, for the\ncompanion to write into a worktree this launch creates (ADR 0053, plan 122 §D5). Sent\nonly to a companion that announced `draft_restore`, and only while no plan is on the branch.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftRestore"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "id": {
           "type": "string",
           "format": "uuid"
@@ -86,6 +141,17 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "plan_path": {
+          "description": "Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion\nmirrors, with the bundle it names (ADR 0053). Absent from an older server.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "planning": {
+          "description": "How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.",
+          "$ref": "#/$defs/PlanningMode"
         },
         "prompt": {
           "description": "Initial prompt for the session.",
@@ -121,6 +187,14 @@
         "attempt",
         "session_id",
         "prompt"
+      ]
+    },
+    "PlanningMode": {
+      "description": "How a launched session plans (ADR 0053): `git` is today's flow (commit, push, `Review:` and\n`Approved:` comments); `rubato` drafts in Rubato and hands off at approval. The server sends\n`rubato` only after the cutover and to a companion and skill that can carry it.",
+      "type": "string",
+      "enum": [
+        "git",
+        "rubato"
       ]
     }
   }

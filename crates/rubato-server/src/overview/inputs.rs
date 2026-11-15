@@ -2,18 +2,27 @@
 
 use super::build::{OtherWorkspace, OverviewInputs, WorkspaceInputs};
 use crate::kernel::state::App;
-use crate::{companion_link, github_poll, launch, layout, pins, plans, queue, spend_history};
+use crate::{
+    approve, companion_link, github_poll, launch, layout, pins, plan_drafts, plans, queue,
+    spend_history, traffic,
+};
 use anyhow::Result;
 
 pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs> {
+    // Comments under the cutover and approvals given in Rubato, as one list (ADR 0054).
+    let approvals = approve::approvals(app).await?;
     Ok(OverviewInputs {
         pins: pins::list(&app.db, ws).await?,
         sessions: companion_link::all_sessions(&app.db).await?,
         plans: plans::all(&app.db).await?,
+        drafts: plan_drafts::latest_drafts(app).await?,
         prs: github_poll::all_prs(&app.db).await?,
         decisions: github_poll::all_decisions(&app.db).await?,
         reviews: github_poll::all_reviews(&app.db).await?,
-        approvals: github_poll::all_approvals(&app.db).await?,
+        approvals: approvals.counted,
+        ignored_approvals: approvals.ignored,
+        approvals_in_rubato: app.config.comment_approvals_until.is_some(),
+        approval_findings: approve::link_findings(app).await?,
         launched: launch::launched_issues(&app.db).await?,
         cap_hits: launch::issues_with_live_cap_hit(&app.db).await?,
         meta: github_poll::all_issue_meta(&app.db).await?,
@@ -24,6 +33,7 @@ pub async fn build_overview_inputs(app: &App, ws: &str) -> Result<OverviewInputs
         queue: queue::all(&app.db).await?,
         repo_pulls: github_poll::repo_pulls(&app.db).await?,
         traffic: app.traffic.read().await.clone(),
+        dismissals: traffic::dismissals(&app.db, ws).await?,
         spend: spend_history::series(&app.db).await?,
         workspaces: workspace_inputs(app, ws).await?,
     })

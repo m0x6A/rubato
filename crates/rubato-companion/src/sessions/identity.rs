@@ -33,6 +33,17 @@ fn mtime(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
+/// `cwd` is in `worktree`, also when one of them is spelled through a symlink (git names the
+/// worktree by its resolved path; macOS `/var` is `/private/var`). Resolved only when the plain
+/// prefix test fails; a path that does not resolve is outside (#191).
+fn inside(cwd: &Path, worktree: &Path) -> bool {
+    cwd.starts_with(worktree)
+        || matches!(
+            (std::fs::canonicalize(cwd), std::fs::canonicalize(worktree)),
+            (Ok(c), Ok(w)) if c.starts_with(&w)
+        )
+}
+
 /// Off the lock: identity again for every entry whose cwd left its worktree or whose `HEAD`
 /// changed since it was read. An entry never read (no `head`) is read once. A stat per entry;
 /// git only for those that changed.
@@ -40,7 +51,7 @@ pub fn recheck(checks: Vec<Check>) -> Vec<Rechecked> {
     checks
         .into_iter()
         .filter_map(|c| {
-            let left = c.worktree.as_ref().is_none_or(|w| !c.cwd.starts_with(w));
+            let left = c.worktree.as_ref().is_none_or(|w| !inside(&c.cwd, w));
             let now = c.head.as_deref().and_then(mtime);
             let moved = c.head.is_none() || now != c.head_mtime;
             if !(left || moved) {
@@ -184,6 +195,14 @@ mod tests {
             head_mtime: None,
             branch_drift: None,
             blocked_by: None,
+            last_hook: None,
+            last_hook_idle: false,
+            last_hook_at: None,
+            input_sent_at: None,
+            hooks_lost: false,
+            pasted: Vec::new(),
+            plan_path: None,
+            restored_hash: None,
         }
     }
 
@@ -208,6 +227,32 @@ mod tests {
         assert_eq!(cycle(&mut r), 1);
         assert_eq!(r.entries[0].issue, Some(IssueRef::new("acme/pantry", 42)));
         assert_eq!(r.entries[0].branch.as_deref(), Some("issue/42-x"));
+    }
+
+    /// #191: git names the worktree by its resolved path; a cwd spelled through a symlink
+    /// (macOS `/var` → `/private/var`, a symlinked worktree root) is still inside it.
+    #[test]
+    fn a_cwd_through_a_symlink_costs_no_git_while_head_is_unchanged() {
+        let d = repo();
+        let links = tempfile::tempdir().unwrap();
+        let link = links.path().join("via-link");
+        std::os::unix::fs::symlink(d.path(), &link).unwrap();
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        r.entries.push(entry(&link, false));
+        assert_eq!(cycle(&mut r), 1, "first read records the HEAD file");
+        assert_eq!(cycle(&mut r), 0, "unchanged HEAD through a symlink: no git");
+    }
+
+    #[test]
+    fn a_cwd_that_left_its_worktree_is_read_again() {
+        let (a, b) = (repo(), repo());
+        git(b.path(), &["checkout", "-q", "-b", "issue/9-w"]);
+        let mut r = Registry::new(Uuid::nil(), "m0x6A");
+        r.entries.push(entry(a.path(), false));
+        cycle(&mut r);
+        r.entries[0].cwd = b.path().to_owned();
+        assert_eq!(cycle(&mut r), 1, "cwd left its worktree: read again");
+        assert_eq!(r.entries[0].issue, Some(IssueRef::new("acme/pantry", 9)));
     }
 
     #[test]

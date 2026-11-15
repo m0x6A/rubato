@@ -17,6 +17,8 @@ export function findingText(f: Finding): string {
       return `${issueKey(f.issue)} plans a flow from ${f.from} to ${f.to} over ${f.seam}, which does not join them`;
     case "unknown_ids":
       return `${issueKey(f.issue)} names ids the map does not have: ${f.ids.join(", ")}`;
+    case "draft_owner_conflict":
+      return `${issueKey(f.issue)}: ${f.other}'s session wrote a plan on ${f.branch}, whose draft ${f.owner} owns; it was not stored (taking a draft over is Import)`;
     case "seam_collision":
       return `two open plans touch ${f.seam}: ${f.issues.map(issueKey).join(", ")}`;
     case "plan_parse_error":
@@ -29,16 +31,30 @@ export function findingText(f: Finding): string {
       return `${f.repo} is not covered by the GitHub App installation; its branches, plans and pull requests cannot be read`;
     case "approved_without_fit":
       return `${issueKey(f.issue)} was approved, but its plan does not fit the map, so the approval does not count`;
+    case "comment_approval_ignored":
+      return `${issueKey(f.issue)}: ${f.author}'s Approved: comment was posted after the cutover, so it does not count; plans are approved in Rubato`;
     case "unattributed_session":
       return `a session${f.repo ? ` in ${f.repo}` : ""} on ${f.branch ? `branch ${f.branch}` : "no branch"} is not tied to an issue; name its branch issue/<n>-…`;
     case "seam_quiet":
       return `no calls observed on ${f.seam} in the last ${windowText(f.window_secs)}, though its two parts both show traffic`;
     case "undeclared_traffic":
       return `${f.from} calls ${f.to} (${f.calls} call${f.calls === 1 ? "" : "s"} in the last window), but no seam on the map joins them`;
+    case "observed_only_part": {
+      const s = f.service.namespace ? `${f.service.namespace}/${f.service.name}` : f.service.name;
+      return `${s} is running (${f.calls} call${f.calls === 1 ? "" : "s"} in the last window), but no part on the map says it is this service`;
+    }
     case "plan_path_conflict":
       return `the maps of ${f.workspaces.join(" and ")} give ${f.repo} different plan paths; the first one is used`;
     case "id_collision":
       return `${f.id} names different parts in ${f.workspaces.join(" and ")}; plans that name it may mean either`;
+    case "approval_record_mismatch":
+      return `${issueKey(f.issue)}: the plan on ${f.branch} carries an approval record Rubato did not make (${f.reason}); no link comment is posted`;
+    case "link_comment_waiting":
+      return `${issueKey(f.issue)}: the link comment for the handoff has not been found on the issue for 30 minutes; it may be posted again`;
+    case "link_waiting_for_approver":
+      return `${issueKey(f.issue)}: the link comment waits for ${f.approver} to log in to Rubato again`;
+    case "adrs_not_accepted":
+      return `${issueKey(f.issue)}: the approval covers ${f.adrs.join(", ")}, which live in the map repo and stay proposed until accepted there`;
   }
 }
 
