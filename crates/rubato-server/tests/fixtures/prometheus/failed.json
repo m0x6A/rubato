@@ -1,0 +1,16 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": { "client": "web", "server": "rubato-server", "client_service_namespace": "rubato", "server_service_namespace": "rubato" },
+        "value": [1794657600, "12"]
+      },
+      {
+        "metric": { "client": "checkout", "server": "payments", "client_service_namespace": "shop", "server_service_namespace": "shop" },
+        "value": [1794657600, "9"]
+      }
+    ]
+  }
+}

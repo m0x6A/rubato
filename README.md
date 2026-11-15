@@ -58,6 +58,19 @@ pnpm e2e                          # two repos, three issues through the flow, no
 
 CI runs all of the above plus Playwright against the server and `promtool test rules` on the alert rules.
 
+### Several agents on one machine
+
+Each agent session in its own worktree runs its own `cargo build` and `rust-analyzer`, so a few at once can use up the machine's memory. The workspace's `[profile.dev]` already keeps line tables for our own crates (backtraces and `tracing` still show file and line) and drops debug info for dependencies. Release builds are unchanged. The rest is per machine and not committed:
+
+- **Share compiled dependencies** across worktrees and `cargo clean` with [sccache](https://github.com/mozilla/sccache): `cargo install sccache --locked`, then `export RUSTC_WRAPPER=sccache` in your shell profile. It caches dependencies only. The workspace's own crates build incrementally, and sccache skips those.
+- **Cap parallel jobs** on a machine that runs several agents, in `~/.cargo/config.toml`:
+  ```toml
+  [build]
+  jobs = 4
+  ```
+- **Keep the desktop responsive** (Linux, optional): start the agents' tmux in a memory-limited scope, `systemd-run --user --scope -p MemoryHigh=22G -p MemoryMax=26G -p CPUWeight=50 tmux`. Size the limits to the machine (these are for 32 GB). `/proc/pressure/memory` shows whether it helps.
+- **Cranelift for dev builds** (optional, local only): it needs nightly, and the repo stays on stable, so keep it out of committed config.
+
 ## Status and limits of v0
 
 - Plans travel as Markdown files on the issue branch; the server reads them from GitHub.

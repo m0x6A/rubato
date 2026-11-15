@@ -14,3 +14,12 @@ schemars = { version = "1", features = ["chrono04", "uuid1"] }
 chrono = { version = "0.4", features = ["serde"], default-features = false }
 uuid = { version = "1", features = ["serde", "v4"] }
 thiserror = "2"
+
+# Lighter dev builds when several agents build at once (#150). Our own crates keep line tables,
+# so backtraces and tracing still give file and line; dependencies carry no debug info.
+# Release builds are unchanged.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

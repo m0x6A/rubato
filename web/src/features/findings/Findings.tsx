@@ -39,6 +39,10 @@ export function findingText(f: Finding): string {
       return `no calls observed on ${f.seam} in the last ${windowText(f.window_secs)}, though its two parts both show traffic`;
     case "undeclared_traffic":
       return `${f.from} calls ${f.to} (${f.calls} call${f.calls === 1 ? "" : "s"} in the last window), but no seam on the map joins them`;
+    case "observed_only_part": {
+      const s = f.service.namespace ? `${f.service.namespace}/${f.service.name}` : f.service.name;
+      return `${s} is running (${f.calls} call${f.calls === 1 ? "" : "s"} in the last window), but no part on the map says it is this service`;
+    }
     case "plan_path_conflict":
       return `the maps of ${f.workspaces.join(" and ")} give ${f.repo} different plan paths; the first one is used`;
     case "id_collision":
