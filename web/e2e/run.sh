@@ -46,6 +46,13 @@ g switch -q -c issue/916-room
 mkdir -p "$SEED/docs/plans"
 cp e2e/fixtures/916.md "$SEED/docs/plans/916.md"
 g add -A && g commit -q -m "plan for #916"
+# Issue #82: a pull request (RUBATO_DEV_PULLS) from issue/917-pull into e2e/pull-base, a branch of
+# its own so the merge the dev test makes never moves main, where the map is read.
+g switch -q main
+g switch -q -c e2e/pull-base
+g switch -q -c issue/917-pull
+echo "merged from Rubato" > "$SEED/PULL.md"
+g add -A && g commit -q -m "a change to merge from Rubato"
 g switch -q main
 git clone -q --bare "$SEED" "$TMP/rubato.git"
 
@@ -67,6 +74,7 @@ RUBATO_BIND=127.0.0.1:18090 RUBATO_PUBLIC_URL=http://127.0.0.1:18090 RUBATO_DEV_
   RUBATO_DATABASE_URL="sqlite://$TMP/e2e.db?mode=rwc" \
   RUBATO_LOCAL_REPOS="m0x6A/rubato=$TMP/rubato.git" RUBATO_WORKSPACES_FILE="$TMP/workspaces.yml" \
   RUBATO_DEV_ISSUES="$PWD/e2e/fixtures/issues.json" \
+  RUBATO_DEV_PULLS="$PWD/e2e/fixtures/pulls.json" \
   RUBATO_WEB_DIST="$PWD/dist" RUBATO_GITHUB_POLL_SECS=5 RUST_LOG=info \
   "$BIN" > "$TMP/server.log" 2>&1 &
 PID=$!
@@ -96,6 +104,7 @@ RUBATO_BIND=127.0.0.1:18091 RUBATO_PUBLIC_URL=http://127.0.0.1:18091 \
   RUBATO_DATABASE_URL="sqlite://$TMP/app.db?mode=rwc" RUBATO_SESSION_SECRET=e2e \
   RUBATO_GITHUB_API_URL=http://127.0.0.1:18092 RUBATO_GITHUB_WEB_URL=http://127.0.0.1:18092 \
   GITHUB_CLIENT_ID=Iv1.e2e GITHUB_CLIENT_SECRET=e2e-secret \
+  RUBATO_TOKEN_KEY=0707070707070707070707070707070707070707070707070707070707070707 \
   RUBATO_GITHUB_APP_ID=12 RUBATO_GITHUB_APP_PRIVATE_KEY_FILE="$TMP/app.pem" RUBATO_GITHUB_APP_INSTALLATION_ID=34 \
   RUBATO_MAP_REPO=m0x6A/rubato RUBATO_MAP_FILE="$ROOT/docs/design/rubato-map.yml" \
   RUBATO_WEB_DIST="$PWD/dist" RUBATO_GITHUB_POLL_SECS=5 RUST_LOG=info \

@@ -1,0 +1,5 @@
+{
+  "m0x6A/rubato": [
+    { "number": 917, "branch": "issue/917-pull", "base": "e2e/pull-base", "title": "A change to merge from Rubato", "author": "m0x6A" }
+  ]
+}

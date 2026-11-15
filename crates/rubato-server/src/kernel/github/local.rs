@@ -21,6 +21,9 @@ pub struct LocalGit {
     open: std::sync::Mutex<HashMap<String, Vec<OpenIssueInfo>>>,
     /// Pull requests opened through this stand-in, by (repo, head branch). Git has none.
     pulls: std::sync::Mutex<HashMap<(String, String), PullInfo>>,
+    /// Pull requests `create_pull` made so far: numbered from 1 on their own, so seeded ones
+    /// (`RUBATO_DEV_PULLS`) do not shift the numbers a map proposal gets.
+    created: std::sync::atomic::AtomicU64,
 }
 
 /// One seeded pull request of `RUBATO_DEV_PULLS`: `{"owner/name": [{number, branch, base,
@@ -59,6 +62,7 @@ impl LocalGit {
             repos,
             open: Default::default(),
             pulls: Default::default(),
+            created: Default::default(),
         })
     }
 
@@ -544,7 +548,10 @@ impl GitHubApi for LocalGit {
             .await?
             .with_context(|| format!("branch {head} does not exist in {repo}"))?;
         let mut pulls = self.pulls.lock().unwrap();
-        let number = pulls.len() as u64 + 1;
+        let number = self
+            .created
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
         let url = format!("local-git://{repo}/pull/{number}");
         pulls.insert(
             (repo.to_owned(), head.to_owned()),

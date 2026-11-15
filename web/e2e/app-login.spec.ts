@@ -70,6 +70,28 @@ test("a member creates an issue from a part, as the App, and it is pinned there 
   expect(calls["/app/installations/34"]).toBeGreaterThan(0);
 });
 
+test("a member merges a pull request as themselves through their token (ADR 0033)", { tag: ["@pulls.view", "@pulls.merge-as-yourself"] }, async ({ page }) => {
+  await logInAs(page, "member");
+  await expect.poll(async () => JSON.stringify((await (await page.request.get("/api/overview")).json()).pulls ?? []), { timeout: 20_000 }).toContain('"number":920');
+  await page.reload();
+  await page.getByTestId("tab-repos").click();
+  const work = page.getByTestId("repo-work-m0x6A/rubato");
+  await work.locator("summary").click();
+  await work.getByTestId("pull-row-920").getByRole("button").click();
+  const view = page.getByTestId("pull-view");
+  await expect(view).toContainText("Merges as the person who pressed Merge.");
+  await expect(view).toContainText("checks green");
+  // The repo allows merge commits and squash, not rebase: only those two are offered, squash first.
+  const select = view.getByRole("combobox");
+  await expect(select).toHaveValue("squash");
+  await expect(select.locator("option")).toHaveText(["Merge commit", "Squash and merge"]);
+  await view.getByRole("button", { name: "Merge" }).click();
+  await expect(view.getByTestId("merge-result")).toHaveText("Merged by member.");
+  // GitHub recorded the person, at the head they saw, with the method they picked.
+  const merges = (await (await fetch(`${github}/_standin/merges`)).json()) as { login: string; number: number; sha: string; merge_method: string }[];
+  expect(merges).toEqual([{ login: "member", number: 920, sha: "a920a920a920a920a920a920a920a920a920a920", merge_method: "squash" }]);
+});
+
 test("an account with no access to the installation is refused and gets no session", async ({ page }) => {
   const callback = await logInAs(page, "outsider");
   expect(callback.status()).toBe(403);
