@@ -132,18 +132,19 @@ pub async fn for_launch(db: &SqlitePool, launch_id: Uuid) -> Result<Vec<MessageR
 /// messages is `sent` already: at most one in flight per launch, `plan_approved` first
 /// (`priority`), then oldest first. One statement, so two dispatches cannot both send. Without
 /// `plan_handoff` a queued `plan_approved` is passed over and waits for a companion that can
-/// type it; the chat behind it still goes.
+/// type it, and without `room_turns` so is a `room_turn`; the chat behind it still goes.
 pub async fn take_next(
     db: &SqlitePool,
     launch_id: Uuid,
     now: DateTime<Utc>,
     plan_handoff: bool,
+    room_turns: bool,
 ) -> Result<Option<MessageRow>> {
     let l = launch_id.to_string();
     let r = sqlx::query(&format!(
         "UPDATE session_messages SET state = 'sent', pushed_at = ? \
          WHERE id = (SELECT id FROM session_messages WHERE launch_id = ? AND state = 'queued' \
-                       AND (kind <> 'plan_approved' OR ?) \
+                       AND (kind <> 'plan_approved' OR ?) AND (kind <> 'room_turn' OR ?) \
                      ORDER BY priority, created_at, id LIMIT 1) \
            AND NOT EXISTS (SELECT 1 FROM session_messages WHERE launch_id = ? AND state = 'sent') \
          RETURNING {COLUMNS}"
@@ -151,6 +152,7 @@ pub async fn take_next(
     .bind(ts(now))
     .bind(&l)
     .bind(plan_handoff)
+    .bind(room_turns)
     .bind(&l)
     .fetch_optional(db)
     .await?;

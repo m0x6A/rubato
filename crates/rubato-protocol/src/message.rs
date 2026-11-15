@@ -34,6 +34,10 @@ pub mod capability {
     pub const HANDOFF_REPORTS: &str = "handoff_reports";
     /// The companion writes `LaunchCommand.draft` into a worktree the launch creates (ADR 0053).
     pub const DRAFT_RESTORE: &str = "draft_restore";
+    /// The companion types room turns and runs read-only fork turns (ADR 0057).
+    pub const ROOM_TURNS: &str = "room_turns";
+    /// The server takes `CompanionMessage::RoomReply`.
+    pub const ROOM_REPLIES: &str = "room_replies";
     /// Prefix of the installed skill's version, `skill:0.2.0`.
     pub const SKILL_PREFIX: &str = "skill:";
 }
@@ -69,6 +73,8 @@ pub enum CompanionMessage {
     Draft(DraftBundle),
     /// What `plan.ts handoff` reported to the loopback endpoint (ADR 0055).
     HandoffReport(HandoffReport),
+    /// An agent's answer to a room turn (ADR 0057).
+    RoomReply(crate::room::RoomReply),
     /// Acknowledges a server envelope by sequence.
     Ack {
         seq: u64,

@@ -7,6 +7,7 @@
 
 use super::decide::{Decision, decide, last_hook};
 use super::deliveries::{Deliveries, Delivery};
+use super::fork::{ForkTurn, Forks};
 use crate::kernel::telemetry::Metrics;
 use crate::kernel::tmux::SessionInput;
 use crate::sessions::Registry;
@@ -37,6 +38,8 @@ pub struct SessionInputTask {
     /// The installed rubato skill, read for each `plan_approved` (`kernel::skill`), so an upgrade
     /// needs no companion restart.
     pub skill_dir: std::path::PathBuf,
+    /// The fork workers for room turns in fork mode (ADR 0057).
+    pub forks: Forks,
 }
 
 pub async fn run(
@@ -61,6 +64,14 @@ impl SessionInputTask {
         self.handle(msg).instrument(span).await
     }
 
+    fn server_takes(&self, cap: &str) -> bool {
+        self.server_capabilities
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c == cap)
+    }
+
     async fn handle(&mut self, msg: &SessionMessage) {
         let takes_results = self
             .server_capabilities
@@ -72,7 +83,12 @@ impl SessionInputTask {
             tracing::warn!(id = %msg.id, "session message ignored: the server did not announce session_messages");
             return;
         }
-        let handled = self.deliver(msg).await;
+        let Some(handled) = self.deliver(msg).await else {
+            // A fork turn: its worker answers when the fork starts (`fork.rs`).
+            tracing::Span::current().record(attr::OUTCOME, "forked");
+            tracing::info!(id = %msg.id, launch_id = %msg.launch_id, "room turn handed to a fork");
+            return;
+        };
         tracing::Span::current().record(attr::OUTCOME, handled.outcome.name());
         self.report(msg, &handled).await;
         let outcome = handled.outcome;
@@ -85,8 +101,20 @@ impl SessionInputTask {
         ));
     }
 
-    async fn deliver(&mut self, msg: &SessionMessage) -> Handled {
+    /// The outcome to answer now, or None when a fork worker answers it.
+    async fn deliver(&mut self, msg: &SessionMessage) -> Option<Handled> {
         let max_chars = self.limits.lock().unwrap().session_message_max_chars;
+        // A room turn's answer is a `RoomReply`, which an older server would drop.
+        if matches!(msg.kind, SessionMessageKind::RoomTurn { .. })
+            && !self.server_takes(capability::ROOM_REPLIES)
+        {
+            return Some(Handled::failed(
+                SessionMessageOutcome::Failed {
+                    error: "the server did not announce room_replies".into(),
+                },
+                "no_room_replies",
+            ));
+        }
         // Only a `plan_approved` needs the skill: read it then, as it is installed now.
         let skill = match msg.kind {
             SessionMessageKind::PlanApproved { .. } => {
@@ -113,22 +141,46 @@ impl SessionInputTask {
                 );
                 let failure =
                     matches!(o, SessionMessageOutcome::Interrupted).then_some("interrupted");
-                return Handled {
+                return Some(Handled {
                     outcome: o,
                     repeat,
                     failure,
-                };
+                });
+            }
+            Decision::Fork {
+                session_id,
+                worktree,
+            } => {
+                // Recorded before it runs: a repeated push is answered from the record and
+                // never runs (or pays for) a second fork.
+                if let Err(e) = self
+                    .deliveries
+                    .record(msg.id, Delivery::Delivered, Utc::now())
+                {
+                    return Some(Handled::failed(
+                        SessionMessageOutcome::Failed {
+                            error: format!("recording the delivery: {e:#}"),
+                        },
+                        "state_write",
+                    ));
+                }
+                self.forks.submit(ForkTurn {
+                    msg: msg.clone(),
+                    session_id,
+                    worktree,
+                });
+                return None;
             }
             Decision::Paste { target, text, .. } => (target, text),
         };
         // Before anything is typed: a record that cannot be written means no paste.
         if let Err(e) = self.deliveries.record(msg.id, Delivery::Typing, Utc::now()) {
-            return Handled::failed(
+            return Some(Handled::failed(
                 SessionMessageOutcome::Failed {
                     error: format!("recording the delivery: {e:#}"),
                 },
                 "state_write",
-            );
+            ));
         }
         let pasted = tokio::task::spawn_blocking({
             let input = self.input.clone();
@@ -137,7 +189,7 @@ impl SessionInputTask {
             move || input.paste(&target, &key, &text)
         })
         .await;
-        match pasted {
+        Some(match pasted {
             Ok(Ok(())) => {
                 let at = Utc::now();
                 if let Err(e) = self.deliveries.record(msg.id, Delivery::Delivered, at) {
@@ -172,7 +224,7 @@ impl SessionInputTask {
                 tracing::error!(id = %msg.id, error = %e, "paste task did not finish");
                 Handled::failed(SessionMessageOutcome::Interrupted, "interrupted")
             }
-        }
+        })
     }
 
     /// The log line and, for a failure, `rubato.session_input.failed{rubato.reason}`.
@@ -302,10 +354,11 @@ mod tests {
         );
         let (out_tx, out) = mpsc::unbounded_channel();
         let (reader, metrics) = metric_reader::start();
+        let registry = Arc::new(Mutex::new(reg));
         let task = SessionInputTask {
             paired_user: USER.into(),
-            registry: Arc::new(Mutex::new(reg)),
-            out: out_tx,
+            registry: registry.clone(),
+            out: out_tx.clone(),
             limits: Arc::new(std::sync::Mutex::new(Limits::default())),
             server_capabilities: Arc::new(std::sync::Mutex::new(
                 server_caps.iter().map(|c| (*c).to_owned()).collect(),
@@ -314,6 +367,16 @@ mod tests {
             metrics: Arc::new(metrics),
             deliveries: Deliveries::open(dir.path()).unwrap(),
             skill_dir: dir.path().join("skill"),
+            forks: crate::session_input::Forks::new(crate::session_input::ForkCtx {
+                claude: crate::kernel::claude::Claude {
+                    command: "false".into(),
+                    timeout: std::time::Duration::from_secs(5),
+                },
+                registry: registry.clone(),
+                out: out_tx.clone(),
+                limits: Arc::new(std::sync::Mutex::new(Limits::default())),
+                spent: Default::default(),
+            }),
         };
         Fixture {
             task,

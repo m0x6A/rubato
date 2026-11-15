@@ -9,7 +9,8 @@ use crate::sessions::{PASTED_KEPT, Registry};
 use chrono::{DateTime, Utc};
 use rubato_protocol::session_message::handoff_prompt;
 use rubato_protocol::{
-    HookEventKind, MessageRefusal, SessionMessage, SessionMessageOutcome, skill_has_handoff,
+    HookEventKind, MessageRefusal, RoomTurnMode, SessionMessage, SessionMessageKind,
+    SessionMessageOutcome, skill_has_handoff,
 };
 use uuid::Uuid;
 
@@ -23,6 +24,12 @@ pub enum Decision {
         target: String,
         session_id: String,
         text: String,
+    },
+    /// A room turn in fork mode (ADR 0057): nothing is typed; a read-only fork of `session_id`
+    /// runs in `worktree` and its answer comes back as `RoomReply`.
+    Fork {
+        session_id: String,
+        worktree: std::path::PathBuf,
     },
 }
 
@@ -66,6 +73,17 @@ pub fn decide(
         Some(Delivery::Delivered) => return Answer(SessionMessageOutcome::Delivered),
         Some(Delivery::Typing) => return Answer(SessionMessageOutcome::Interrupted),
         None => {}
+    }
+    // A fork does not need the session idle or a pane: it runs beside it.
+    if let SessionMessageKind::RoomTurn {
+        mode: RoomTurnMode::Fork,
+        ..
+    } = &msg.kind
+    {
+        return Decision::Fork {
+            session_id,
+            worktree: e.worktree.clone().unwrap_or_else(|| e.cwd.clone()),
+        };
     }
     if !e.waits_for_input() {
         return Answer(SessionMessageOutcome::NotIdle);
@@ -161,7 +179,9 @@ mod tests {
     fn outcome(d: Decision) -> SessionMessageOutcome {
         match d {
             Decision::Answer(o) => o,
-            Decision::Paste { .. } => panic!("expected an answer, got {d:?}"),
+            Decision::Paste { .. } | Decision::Fork { .. } => {
+                panic!("expected an answer, got {d:?}")
+            }
         }
     }
 

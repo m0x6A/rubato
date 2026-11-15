@@ -11,3 +11,14 @@ mod tests;
 
 pub use handlers::log;
 pub use intake::on_hook;
+
+/// The session message a launched session's prompt carried, if it was typed from one: how a
+/// `Stop` is tied back to the message it answers (ADR 0051, ADR 0057).
+pub async fn prompt_message(
+    db: &sqlx::SqlitePool,
+    launch_id: uuid::Uuid,
+    session_id: &str,
+    prompt_id: &str,
+) -> anyhow::Result<Option<uuid::Uuid>> {
+    store::prompt_message(db, launch_id, session_id, prompt_id).await
+}

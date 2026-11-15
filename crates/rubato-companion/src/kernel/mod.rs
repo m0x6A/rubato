@@ -1,6 +1,7 @@
 //! Leaf infrastructure every slice may use: configuration and state files, telemetry, and the
 //! adapters to tmux, tmux-ide and git. The kernel names no slice (ADR 0015, design D2).
 
+pub mod claude;
 pub mod config;
 pub mod gitx;
 pub mod proc;

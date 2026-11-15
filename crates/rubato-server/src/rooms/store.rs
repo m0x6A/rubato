@@ -36,15 +36,25 @@ fn message(r: &SqliteRow) -> Result<RoomMessage> {
         text: r.get("text"),
         at: parse_ts(&r.get::<String, _>("at")),
         notice,
+        addressed: r
+            .get::<Option<String>, _>("addressed")
+            .map(|j| serde_json::from_str(&j))
+            .transpose()?
+            .unwrap_or_default(),
+        turn_id: r
+            .get::<Option<String>, _>("turn_id")
+            .map(|t| t.parse())
+            .transpose()?,
     })
 }
 
-/// Store a message in `room`. False when it is a seam notice the room already has.
+/// Store a message in `room`. False when it is a seam notice the room already has, or an
+/// agent's reply to a turn it already answered.
 pub async fn insert(db: &SqlitePool, room: &RoomKey, m: &RoomMessage) -> Result<bool> {
     let n = m.notice.as_ref();
     let r = sqlx::query(
-        "INSERT OR IGNORE INTO room_messages (id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO room_messages (id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(m.id.to_string())
     .bind(&room.repo)
@@ -58,6 +68,12 @@ pub async fn insert(db: &SqlitePool, room: &RoomKey, m: &RoomMessage) -> Result<
     .bind(n.map(|n| n.other.repo.as_str()))
     .bind(n.map(|n| n.other.number as i64))
     .bind(n.map(|n| n.other_branch.as_str()))
+    .bind(if m.addressed.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&m.addressed)?)
+    })
+    .bind(m.turn_id.map(|t| t.to_string()))
     .execute(db)
     .await?;
     Ok(r.rows_affected() == 1)
@@ -66,7 +82,7 @@ pub async fn insert(db: &SqlitePool, room: &RoomKey, m: &RoomMessage) -> Result<
 /// The room's messages, oldest first.
 pub async fn messages(db: &SqlitePool, room: &RoomKey) -> Result<Vec<RoomMessage>> {
     let rows = sqlx::query(
-        "SELECT id, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch \
+        "SELECT id, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id \
          FROM room_messages WHERE repo = ? AND number = ? AND branch = ? ORDER BY at, rowid",
     )
     .bind(&room.repo)

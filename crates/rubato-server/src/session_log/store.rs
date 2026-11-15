@@ -50,6 +50,24 @@ fn kind(s: &str) -> LogKind {
     }
 }
 
+/// The session message a prompt carried (its `UserPromptSubmit` entry's `message_id`).
+pub async fn prompt_message(
+    db: &SqlitePool,
+    launch_id: Uuid,
+    session_id: &str,
+    prompt_id: &str,
+) -> Result<Option<Uuid>> {
+    let r = sqlx::query("SELECT message_id FROM session_log_entries WHERE launch_id = ? AND session_id = ? AND prompt_id = ? AND role = 'user'")
+        .bind(launch_id.to_string())
+        .bind(session_id)
+        .bind(prompt_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(r.and_then(|r| r.get::<Option<String>, _>("message_id"))
+        .map(|m| m.parse())
+        .transpose()?)
+}
+
 /// A launch's entries, oldest first; within one turn the prompt before the reply.
 pub async fn for_launch(db: &SqlitePool, launch_id: Uuid) -> Result<Vec<SessionLogEntry>> {
     let rows = sqlx::query("SELECT session_id, prompt_id, role, kind, text, truncated, message_id, mixed, at FROM session_log_entries WHERE launch_id = ? ORDER BY at, CASE role WHEN 'user' THEN 0 ELSE 1 END")

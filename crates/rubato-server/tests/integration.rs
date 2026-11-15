@@ -1542,7 +1542,12 @@ async fn welcome_carries_last_seen_seq_after_reconnect() {
     // What this server takes: a companion sends a message kind only to a server that said so.
     assert_eq!(
         capabilities,
-        ["session_messages", "drafts", "handoff_reports"],
+        [
+            "session_messages",
+            "drafts",
+            "handoff_reports",
+            "room_replies"
+        ],
         "the Welcome names every message kind the server takes"
     );
     let mut beat = with_companion(Harness::fixture("companion_heartbeat.json"), companion_id);

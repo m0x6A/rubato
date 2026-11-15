@@ -234,6 +234,10 @@ impl Poller {
         if let Err(e) = rooms::post_seam_notices(app).await {
             tracing::error!(error = %format!("{e:#}"), "posting seam notices failed");
         }
+        // Agents not addressed for the idle limit, or whose session ended, leave their rooms.
+        if let Err(e) = rooms::sweep_agents(app).await {
+            tracing::error!(error = %format!("{e:#}"), "sweeping room agents failed");
+        }
         // After the comments pass: approvals posted from Rubato that GitHub did not confirm,
         // and the tokens of people with no session that still counts (ADR 0030).
         if lane == Lane::Full {

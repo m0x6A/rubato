@@ -261,6 +261,15 @@ tr.chat-row > td { padding-top: 0; }
 .room-compose textarea { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); resize: vertical; }
 .room-compose textarea[aria-invalid="true"] { border-color: var(--bad); }
 .room-compose-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+/* who is in a room: agents called in, requests, the call-in and its estimate (PR 11) */
+.room h4 { margin: 10px 0 4px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.room h4[tabindex="-1"]:focus { outline: none; }
+.room-agents, .room-requests { gap: 4px; font-size: 12px; }
+.room-agents button, .room-requests button, .room-callin-open button, .room-callin button { padding: 2px 8px; min-height: 24px; font-size: 12px; }
+.room-request.pending .room-request-state { color: var(--warn-ink); font-weight: 600; }
+.room-callin { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent-wash); }
+.room-addressed { font-size: 12px; color: var(--accent-ink); }
+.room-replies { margin: 6px 0 0 12px; gap: 6px; }
 /* the plan draft on an issue, its revisions and what changed since you last looked (ADR 0053) */
 .draft h4 { margin: 10px 0 4px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .draft p { margin: 4px 0; }

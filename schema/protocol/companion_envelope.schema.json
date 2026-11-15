@@ -264,6 +264,20 @@
           ]
         },
         {
+          "description": "An agent's answer to a room turn (ADR 0057).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "room_reply"
+            }
+          },
+          "$ref": "#/$defs/RoomReply",
+          "required": [
+            "type"
+          ]
+        },
+        {
           "description": "Acknowledges a server envelope by sequence.",
           "type": "object",
           "properties": {
@@ -810,6 +824,56 @@
           "type": "string",
           "const": "path_outside"
         }
+      ]
+    },
+    "RoomReply": {
+      "description": "Companion → server: an agent's answer to a room turn (ADR 0057).",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cost_usd": {
+          "description": "What a fork turn cost; it counts on the issue and the owner's spend cap.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fork_session_id": {
+          "description": "A fork turn's session, for the next turn's `--resume`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message_id": {
+          "description": "The `room_turn` session message this answers.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "description": "The reply, cut to `Limits.session_log_max_chars`; empty when the turn failed.",
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "message_id",
+        "turn_id",
+        "text",
+        "at"
       ]
     },
     "SessionMessageResult": {

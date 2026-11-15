@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 /// The priority of `plan_approved`: before every chat (priority 1).
 pub const PLAN_APPROVED_PRIORITY: i64 = 0;
+/// The priority of a chat, and of a room turn (ADR 0057).
+pub const CHAT_PRIORITY: i64 = 1;
 
 /// Queue `kind` for the launch, as `author`, and try to push it. `None` when the launch is
 /// unknown. The message goes to the launch's own companion and its paired user only.
