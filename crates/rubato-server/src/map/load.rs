@@ -9,11 +9,12 @@ use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::SystemMap;
 use rubato_protocol::otel::attr;
+use std::sync::Arc;
 
 /// Reload every workspace's map, in config order. Answers with `default`'s, which unprefixed
 /// routes serve; another workspace that fails is logged (`workspace map load failed`), counted
 /// and keeps its last good map.
-pub async fn reload(app: &App) -> Result<LoadedMap> {
+pub async fn reload(app: &App) -> Result<Arc<LoadedMap>> {
     let (entries, _) = app.config.workspace_entries();
     let mut default = None;
     for w in &entries {
@@ -28,7 +29,7 @@ pub async fn reload(app: &App) -> Result<LoadedMap> {
 }
 
 /// Fetch, validate and cache one workspace's map. Falls back to the cached copy when GitHub fails.
-pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<LoadedMap> {
+pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> {
     let cfg = w;
     if let Some(file) = &cfg.map_file {
         return load_from_file(app, w, file).await;
@@ -77,12 +78,12 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<LoadedMap> {
         map,
         version: version.clone(),
         loaded_at: stored_at.unwrap_or_else(Utc::now),
-        yaml: yaml.clone(),
+        yaml,
     };
     if stored_at.is_none() {
-        store::store_map(&app.db, &w.id, &version, &yaml, loaded.loaded_at).await?;
+        store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
     }
-    app.set_map(&w.id, loaded.clone()).await;
+    let loaded = app.set_map(&w.id, loaded).await;
     app.metrics.map_loaded.record(
         1,
         &[
@@ -100,7 +101,7 @@ async fn load_from_file(
     app: &App,
     w: &WorkspaceEntry,
     file: &std::path::Path,
-) -> Result<LoadedMap> {
+) -> Result<Arc<LoadedMap>> {
     let yaml = tokio::fs::read_to_string(file)
         .await
         .with_context(|| format!("reading {}", file.display()))
@@ -120,10 +121,10 @@ async fn load_from_file(
         map,
         version: version.clone(),
         loaded_at: Utc::now(),
-        yaml: yaml.clone(),
+        yaml,
     };
-    store::store_map(&app.db, &w.id, &version, &yaml, loaded.loaded_at).await?;
-    app.set_map(&w.id, loaded.clone()).await;
+    store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
+    let loaded = app.set_map(&w.id, loaded).await;
     app.metrics.map_loaded.record(
         1,
         &[

@@ -380,7 +380,12 @@ fn rich() -> OverviewInputs {
                 OtherWorkspace {
                     id: "auth".into(),
                     name: "auth".into(),
-                    map: Some(system(AUTH_MAP)),
+                    map: Some(std::sync::Arc::new(LoadedMap {
+                        map: system(AUTH_MAP),
+                        version: "a1".into(),
+                        loaded_at: now(),
+                        yaml: AUTH_MAP.into(),
+                    })),
                     pinned: HashSet::from([auth5.clone(), i("acme/auth", 22)]),
                     launched: HashSet::new(),
                 },
@@ -413,11 +418,9 @@ struct Served {
 
 fn serve(inputs: OverviewInputs) -> String {
     let map = loaded();
-    let built = build(&inputs, Some(&map), &Limits::default(), now());
-    let maps = vec![
-        ("app".to_string(), map.map.clone()),
-        ("auth".to_string(), system(AUTH_MAP)),
-    ];
+    let built = build(inputs.clone(), Some(&map), &Limits::default(), now());
+    let auth = system(AUTH_MAP);
+    let maps = vec![("app", &map.map), ("auth", &auth)];
     let served = Served {
         issues: built.issues,
         findings: built.findings,
@@ -571,11 +574,13 @@ fn build_time_over_a_scaled_fixture() {
             .extend(base.spend.iter().map(|(i, v)| (shift(i), v.clone())));
     }
     let map = loaded();
-    let started = std::time::Instant::now();
     let rounds = 20;
+    // The copies are made before the clock starts: only the build is timed.
+    let copies: Vec<OverviewInputs> = (0..rounds).map(|_| inputs.clone()).collect();
+    let started = std::time::Instant::now();
     let mut issues = 0;
-    for _ in 0..rounds {
-        issues = build(&inputs, Some(&map), &Limits::default(), now())
+    for copy in copies {
+        issues = build(copy, Some(&map), &Limits::default(), now())
             .issues
             .len();
     }

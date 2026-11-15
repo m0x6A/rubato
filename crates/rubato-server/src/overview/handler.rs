@@ -1,7 +1,7 @@
 //! `GET /api/overview`: the map, every issue with its derived progress, findings, companions.
 
 use super::build;
-use super::inputs::build_overview_inputs;
+use super::inputs::{Maps, build_overview_inputs};
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
@@ -23,10 +23,12 @@ pub async fn overview(
         .map_of(ws.as_str())
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let inputs = build_overview_inputs(&app, ws.as_str())
+    // The workspace list and every loaded map, read once for this request (#171).
+    let all = crate::map::list_workspaces(&app).await;
+    let maps = Maps::read(&app).await;
+    let mut inputs = build_overview_inputs(&app, ws.as_str(), &all, &maps)
         .await
         .map_err(|e| internal(SLICE, e))?;
-    let built = build::build(&inputs, Some(&map), &app.config.limits, Utc::now());
     let companions: Vec<_> = pairing::list_pairings(&app.db, None)
         .await
         .map_err(|e| internal(SLICE, e))?
@@ -35,53 +37,50 @@ pub async fn overview(
         .collect();
     // A revoked companion's lane takes no starts, so its queue is not shown (its rows go with
     // the next queue write).
-    let queue = inputs
-        .queue
-        .iter()
+    let queue = std::mem::take(&mut inputs.queue)
+        .into_iter()
         .filter(|q| {
             companions
                 .iter()
                 .any(|c| c.companion_id == q.companion_id && c.revoked_at.is_none())
         })
-        .cloned()
         .collect();
     let draft = map_draft::snapshot(&app.db, ws.as_str(), &map.map)
         .await
         .map_err(|e| internal(SLICE, e))?;
-    // A part that exists only in the draft may have a position too (ADR 0016).
+    // A part that exists only in the draft may have a position too (ADR 0016). Read before the
+    // build takes the stored positions.
+    let preview_positions: Vec<_> = draft
+        .preview
+        .iter()
+        .flat_map(|preview| &preview.nodes)
+        .filter_map(|n| {
+            inputs
+                .layout
+                .positions
+                .get(&n.id)
+                .map(|p| (n.id.clone(), *p))
+        })
+        .collect();
+    let built = build::build(inputs, Some(&map), &app.config.limits, Utc::now());
     let mut layout = built.layout;
-    if let Some(preview) = &draft.preview {
-        for n in &preview.nodes {
-            if let Some(p) = inputs.layout.positions.get(&n.id) {
-                layout.positions.insert(n.id.clone(), *p);
-            }
-        }
-    }
+    layout.positions.extend(preview_positions);
+    // A repo two workspaces share may get two plan paths or an id meaning two parts.
+    let here = all
+        .iter()
+        .find(|w| w.id == ws.as_str())
+        .map(|w| w.name.as_str())
+        .unwrap_or_default();
+    let mut findings = built.findings;
+    findings.extend(build::cross_workspace_findings(here, &maps.named(&all)));
     Ok(Json(Overview {
         map: MapResponse {
-            map: map.map,
-            version: map.version,
+            map: map.map.clone(),
+            version: map.version.clone(),
             loaded_at: map.loaded_at,
         },
         issues: built.issues,
-        findings: {
-            // A repo two workspaces share may get two plan paths or an id meaning two parts.
-            let all = crate::map::list_workspaces(&app).await;
-            let mut maps = Vec::new();
-            for w in &all {
-                if let Some(m) = app.map_of(&w.id).await {
-                    maps.push((w.name.clone(), m.map));
-                }
-            }
-            let here = all
-                .iter()
-                .find(|w| w.id == ws.as_str())
-                .map(|w| w.name.clone())
-                .unwrap_or_default();
-            let mut f = built.findings;
-            f.extend(build::cross_workspace_findings(&here, &maps));
-            f
-        },
+        findings,
         companions,
         unpinned_sessions: built.unpinned_sessions,
         backlog: built.backlog,
@@ -96,10 +95,7 @@ pub async fn overview(
         workspace: ws.as_str().to_string(),
         // Only when there is a choice: one workspace shows no switcher, and its overview stays as
         // it was before workspaces (the golden test).
-        workspaces: {
-            let all = crate::map::list_workspaces(&app).await;
-            if all.len() > 1 { all } else { vec![] }
-        },
+        workspaces: if all.len() > 1 { all } else { vec![] },
         generated_at: Utc::now(),
     }))
 }
