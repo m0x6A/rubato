@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { planCheck, schemaDir } from "./lib/vendor.ts";
 import { headSha, originRepo } from "./lib/git.ts";
 import { loadWorkspace, type MapClone, mapFile, matchedMaps, repoForCwd, selectLine, type Workspace } from "./lib/local.ts";
+import { call, runCommand } from "./otel-emit.ts";
 
 export interface MapSummary {
   map_file: string;
@@ -130,12 +131,12 @@ async function main(argv: string[]): Promise<number> {
     const ws = loadWorkspace();
     const { map: mapMod } = await planCheck();
     const repo = repoForCwd(ws, cwd)?.name ?? originRepo(cwd);
-    const matched = matchedMaps(ws, repo, (file) => {
+    const matched = call("system-map", () => matchedMaps(ws, repo, (file) => {
       if (!existsSync(file)) {
         throw new Error(`map file ${file} not found; is its repo cloned?`);
       }
       return mapMod.loadMap(file, schemaDir());
-    });
+    }));
     console.error(selectLine(repo, matched.length, ws.maps.length));
     if (matched.length === 0) {
       console.error(`no map in local.yml names ${repo ?? "this repo"}; listed: ${ws.maps.map((m) => m.repo).join(", ")}`);
@@ -158,5 +159,6 @@ async function main(argv: string[]): Promise<number> {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))) {
-  process.exitCode = await main(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  process.exitCode = await runCommand("rubato", "map", () => main(argv));
 }

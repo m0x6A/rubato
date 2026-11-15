@@ -4,3 +4,5 @@ export type { DraftMarkLike } from "./graph.ts";
 export { MapView } from "./MapView.tsx";
 export { mapApi } from "./api.ts";
 export { Inspector, PlanInspector } from "./Inspector.tsx";
+export { Discrepancies } from "./Discrepancies.tsx";
+export type { Take } from "./territory.ts";

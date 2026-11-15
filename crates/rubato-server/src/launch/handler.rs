@@ -1,6 +1,6 @@
 //! `POST /api/launch`: start a session on an issue through one of the caller's own companions.
 
-use super::prompt::{PROMPT_TEMPLATE, RUBATO_PROMPT_TEMPLATE, render_prompt, slugify};
+use super::prompt::{PROMPT_TEMPLATE, RUBATO_PROMPT_TEMPLATE, is_slug, render_prompt, slugify};
 use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
@@ -307,17 +307,16 @@ fn choose_branch(
     let prefix = branch_prefix(&req.issue);
     match (&req.branch, &req.slug, drafts) {
         (Some(b), _, _) => match b.strip_prefix(&prefix) {
-            Some(s)
-                if !s.is_empty()
-                    && !s.contains(|c: char| c.is_whitespace() || c == '~' || c == ':') =>
-            {
-                Ok(b.clone())
-            }
+            Some(s) if is_branch_rest(s) => Ok(b.clone()),
             _ => Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 format!("branch must be {prefix}<slug>"),
             )),
         },
+        (None, Some(slug), _) if !is_slug(slug) => Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "slug: letters, digits and single hyphens only".into(),
+        )),
         (None, Some(slug), _) => Ok(format!("{prefix}{slug}")),
         (None, None, [one]) => Ok((*one).to_owned()),
         (None, None, []) => Ok(format!("{prefix}{}", slugify(title))),
@@ -331,6 +330,19 @@ fn choose_branch(
             ),
         )),
     }
+}
+
+/// What may follow `issue/<n>-` in a branch a launch names: what the companion's `check_ref`
+/// accepts, so the refusal is a 422 here and not a failed launch on the developer's machine.
+fn is_branch_rest(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        && !s.starts_with(['-', '/'])
+        && !s.ends_with('/')
+        && !s.ends_with(".lock")
+        && !s.contains("..")
+        && !s.contains("//")
 }
 
 /// What a session needs from its companion to plan in Rubato (ADR 0053, plan 122 §D7): typed
@@ -412,5 +424,55 @@ mod planning_tests {
             "skill:0.3.1",
         ];
         assert_eq!(planning_mode(true, &caps(&newer)), PlanningMode::Rubato);
+    }
+}
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+
+    fn req(branch: Option<&str>, slug: Option<&str>) -> LaunchRequest {
+        serde_json::from_value(serde_json::json!({
+            "issue": { "repo": "m0x6A/rubato", "number": 122 },
+            "branch": branch,
+            "slug": slug,
+        }))
+        .unwrap()
+    }
+
+    /// A slug or branch from the request reaches `launch.sh` on the developer's machine: only
+    /// what the companion's `check_ref` accepts gets past this, as a 422 (#156).
+    #[test]
+    fn a_launch_names_only_a_slug_or_branch_the_companion_accepts() {
+        let ok = |b: Option<&str>, s: Option<&str>| choose_branch(&req(b, s), "Title", &[]);
+        assert_eq!(
+            ok(None, Some("plan-in-rubato")).unwrap(),
+            "issue/122-plan-in-rubato"
+        );
+        assert_eq!(
+            ok(Some("issue/122-plan_in.rubato"), None).unwrap(),
+            "issue/122-plan_in.rubato"
+        );
+        for bad in ["it's", "a b", "x;y", "-x", ""] {
+            assert_eq!(
+                ok(None, Some(bad)).unwrap_err().0,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{bad:?}"
+            );
+        }
+        for bad in [
+            "issue/122-it's",
+            "issue/122-a b",
+            "issue/122-a..b",
+            "issue/122-",
+            "issue/9-x",
+            "issue/122-x.lock",
+        ] {
+            assert_eq!(
+                ok(Some(bad), None).unwrap_err().0,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{bad:?}"
+            );
+        }
     }
 }
