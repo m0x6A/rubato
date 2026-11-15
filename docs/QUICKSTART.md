@@ -268,7 +268,20 @@ In a terminal that is **not** inside tmux:
 
 It prints a code such as `KMCN-C2MH`. In the web view, open the *Companions* tab, paste the
 code and approve. The companion stores its pairing token in
-`~/.local/state/rubato/companion.json` with mode 0600 and exits. Then:
+`~/.local/state/rubato/companion.json` with mode 0600 and exits.
+
+The server URL must be `https://`, or `http://` on loopback (`localhost`, `127.0.0.1`, `::1`)
+as above (ADR 0067). For a server that serves plain http on another host, such as a homelab
+LAN address, pair with `--insecure`:
+
+```sh
+./target/release/rubato-companion pair --insecure --server http://192.168.1.20:8080
+```
+
+The pairing token and launch commands then travel unencrypted. The choice is stored in
+`companion.json` (`allow_plain_http: true`), so `run` needs no flag, and the companion logs a
+warning naming the URL at pairing and at every start. Pair again without `--insecure` to undo it.
+Then:
 
 ```sh
 ./target/release/rubato-companion run

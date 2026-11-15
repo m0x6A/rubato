@@ -29,6 +29,7 @@ pub(crate) async fn given_paired(w: &mut RubatoWorld, user: String) {
         pairing_token: s.token.clone(),
         last_seq: 0,
         last_server_seq: 0,
+        allow_plain_http: false,
     }
     .save(&w.state_dir)
     .unwrap();
@@ -64,6 +65,7 @@ async fn when_pair(w: &mut RubatoWorld) {
     rubato_companion::pairing::pair_and_save(
         &w.state_dir,
         &s.url,
+        false,
         "testhost",
         "0.1.0-test",
         |start| assert_eq!(start.user_code, "ABCD-1234"),
@@ -72,11 +74,71 @@ async fn when_pair(w: &mut RubatoWorld) {
     .unwrap();
 }
 
+/// This machine's own non-loopback address: the one it would use to reach the internet. A UDP
+/// connect sends nothing; it only picks the route.
+fn lan_address() -> std::net::IpAddr {
+    let sock = std::net::UdpSocket::bind(("0.0.0.0", 0)).unwrap();
+    sock.connect(("192.0.2.1", 9))
+        .expect("a route off this machine, to find its LAN address");
+    let ip = sock.local_addr().unwrap().ip();
+    assert!(
+        !ip.is_loopback() && !ip.is_unspecified(),
+        "no LAN address: {ip}"
+    );
+    ip
+}
+
+#[given(
+    expr = "a test server on this machine's LAN address that approves pairing for user {string}"
+)]
+async fn given_lan_server(w: &mut RubatoWorld, user: String) {
+    assert!(w.server.is_none(), "a test server already runs");
+    let s = crate::world::TestServer::start_on(&user, lan_address()).await;
+    assert!(s.url.starts_with("http://"), "{}", s.url);
+    w.server = Some(s);
+}
+
+#[when("the companion pairs with the server using --insecure")]
+async fn when_pair_insecure(w: &mut RubatoWorld) {
+    let s = w.server().clone();
+    rubato_companion::pairing::pair_and_save(
+        &w.state_dir,
+        &s.url,
+        true,
+        "testhost",
+        "0.1.0-test",
+        |_| {},
+    )
+    .await
+    .unwrap();
+}
+
+#[then("the state file allows plain http to the server")]
+async fn then_state_allows_plain(w: &mut RubatoWorld) {
+    let s = State::load(&w.state_dir).unwrap().unwrap();
+    assert!(s.allow_plain_http);
+    assert_eq!(s.server_url, w.server().url);
+}
+
+#[then(expr = "the companion has logged {int} warning(s) mentioning {string}")]
+async fn then_warned(_w: &mut RubatoWorld, n: usize, text: String) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while crate::logs::count(&text) < n && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        crate::logs::count(&text),
+        n,
+        "log lines mentioning {text:?}"
+    );
+}
+
 #[when(expr = "the companion pairs with {string}")]
 async fn when_pair_with(w: &mut RubatoWorld, url: String) {
     let r = rubato_companion::pairing::pair_and_save(
         &w.state_dir,
         &url,
+        false,
         "testhost",
         "0.1.0-test",
         |_| {},
@@ -100,6 +162,7 @@ async fn given_paired_with(w: &mut RubatoWorld, url: String, user: String) {
         pairing_token: "rbt_test".into(),
         last_seq: 0,
         last_server_seq: 0,
+        allow_plain_http: false,
     }
     .save(&w.state_dir)
     .unwrap();
