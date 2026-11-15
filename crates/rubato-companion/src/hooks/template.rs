@@ -76,4 +76,60 @@ mod tests {
         let args = String::from_utf8(got.stdout).unwrap();
         assert!(args.lines().any(|l| l == format!("@{path}")), "{args}");
     }
+
+    /// Plan 122 §D1: each command sends the launch id from `launch.sh`'s `RUBATO_LAUNCH_ID`.
+    /// The shell runs the command, so that header is double-quoted (expanded). The token travels
+    /// in the header file (ADR 0063), so curl gets `@<file>` and never the token. A stand-in
+    /// `curl` prints its arguments, so this checks what the shell really passes, set and unset.
+    #[test]
+    fn every_hook_sends_the_launch_id_the_shell_expands() {
+        let header = "/state/hook-auth.header";
+        let out = render_hooks(HOOKS_TEMPLATE, 4321, Path::new(header)).unwrap();
+        let commands = commands(&out);
+        assert_eq!(commands.len(), 9, "{commands:?}");
+        for c in &commands {
+            assert!(
+                c.contains("-H \"X-Rubato-Launch: ${RUBATO_LAUNCH_ID:-}\""),
+                "{c}"
+            );
+        }
+        let dir = tempfile::tempdir().unwrap();
+        // Written by a child `sh`, so no fork in a concurrent test holds it open for writing
+        // when it runs ("text file busy", see `launch::arm::tests`).
+        let written = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf '%s' \"$1\" > \"$2\" && chmod +x \"$2\"")
+            .arg("sh")
+            .arg("#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done\n")
+            .arg(dir.path().join("curl"))
+            .status()
+            .unwrap();
+        assert!(written.success());
+        let path = format!(
+            "{}:{}",
+            dir.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let run = |launch: Option<&str>| {
+            let mut sh = std::process::Command::new("sh");
+            sh.arg("-c").arg(&commands[0]).env("PATH", &path);
+            match launch {
+                Some(id) => sh.env("RUBATO_LAUNCH_ID", id),
+                None => sh.env_remove("RUBATO_LAUNCH_ID"),
+            };
+            let o = sh.output().unwrap();
+            assert!(o.status.success());
+            String::from_utf8(o.stdout).unwrap()
+        };
+        let id = "6f1c1b5e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+        let set = run(Some(id));
+        assert!(
+            set.lines().any(|l| l == format!("X-Rubato-Launch: {id}")),
+            "{set}"
+        );
+        assert!(set.lines().any(|l| l == format!("@{header}")), "{set}");
+        assert!(!set.contains("Bearer"), "{set}");
+        let unset = run(None);
+        assert!(unset.lines().any(|l| l == "X-Rubato-Launch: "), "{unset}");
+    }
 }

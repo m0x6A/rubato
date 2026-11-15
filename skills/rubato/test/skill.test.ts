@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { legacyKeys } from "../../../actions/plan-check/src/parse-plan.ts";
+import { legacyKeys, parsePlan } from "../../../actions/plan-check/src/parse-plan.ts";
 import { listAdrs, parseAdr } from "../scripts/adrs.ts";
 import { HOOK_EVENTS, main, renderHooks, templatePath } from "../scripts/hooks.ts";
 import { install } from "../scripts/install.ts";
@@ -250,6 +250,9 @@ describe("plan.ts", () => {
     // ADR 0031: the Data models table follows Affected parts, and an unfilled one parses to none.
     expect(headings[headings.indexOf("Affected parts") + 1]).toBe("Data models");
     expect(text).toContain("| Model | Kind | Part | Change | Crosses | Note |");
+    // ADR 0056: a Decisions section that parses to none until a row is written.
+    expect(headings).toContain("Decisions");
+    expect(parsePlan(text, path).decisions).toBeUndefined();
   });
 
   it("refuses to overwrite an existing plan", async () => {
@@ -265,7 +268,7 @@ describe("plan.ts sha", () => {
   const cases = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
 
   it("matches the shared fixtures, so ticking tasks keeps the sha and any other edit changes it", () => {
-    expect(cases).toEqual(["edited.md", "ticked.md", "unticked.md"]);
+    expect(cases).toEqual(["crlf.md", "edited.md", "ticked.md", "unticked.md", "with-keys.md"]);
     for (const f of cases) {
       const want = readFileSync(join(dir, f.replace(/\.md$/, ".txt")), "utf8").trim();
       expect(planSha(readFileSync(join(dir, f), "utf8")), f).toBe(want);
@@ -273,6 +276,8 @@ describe("plan.ts sha", () => {
     const sha = (f: string) => planSha(readFileSync(join(dir, f), "utf8"));
     expect(sha("ticked.md")).toBe(sha("unticked.md"));
     expect(sha("edited.md")).not.toBe(sha("ticked.md"));
+    // Writing the approval record keeps the hash (ADR 0054).
+    expect(sha("with-keys.md")).toBe(sha("unticked.md"));
   });
 
   it("is git's blob sha of the normalised text", () => {

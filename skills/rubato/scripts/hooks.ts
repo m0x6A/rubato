@@ -75,5 +75,7 @@ export function main(argv: string[], err: (s: string) => void = (s) => console.e
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))) {
-  process.exitCode = main(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const { runCommand } = await import("./otel-emit.ts");
+  process.exitCode = await runCommand("rubato", "hooks", () => main(argv));
 }

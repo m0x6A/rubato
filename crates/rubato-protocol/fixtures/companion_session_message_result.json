@@ -1,0 +1,11 @@
+{
+  "seq": 9,
+  "sent_at": "2026-11-14T12:00:03Z",
+  "message": {
+    "type": "session_message_result",
+    "message_id": "5d3b1f0e-2c4a-4b8e-9f1d-7a6c5e4b3a21",
+    "outcome": "refused",
+    "reason": "not_launched_here",
+    "at": "2026-11-14T12:00:03Z"
+  }
+}

@@ -82,8 +82,19 @@ pub fn init(service_name: &'static str, endpoint: Option<&str>) -> Result<Guard>
 pub struct Metrics {
     pub heartbeat: Gauge<u64>,
     pub hook_forwarded: Counter<u64>,
+    /// Hook events whose payload lost keys outside the allowlist before forwarding (ADR 0052).
+    pub hook_payload_trimmed: Counter<u64>,
     pub sessions_discovered: Gauge<u64>,
     pub events_dropped: Counter<u64>,
+    /// Session messages the companion could not type, or stopped while typing, by
+    /// `rubato.reason` (ADR 0051).
+    pub session_input_failed: Counter<u64>,
+    /// Handoff reports forwarded to the server, by `rubato.outcome` (ADR 0055).
+    pub handoff_reports: Counter<u64>,
+    /// Headless turns ended, by `rubato.outcome` (ADR 0062).
+    pub headless_turns: Counter<u64>,
+    /// Headless turns the companion killed, by `rubato.reason` (ADR 0062).
+    pub headless_killed: Counter<u64>,
 }
 
 impl Metrics {
@@ -99,8 +110,28 @@ impl Metrics {
                 .with_description("unix seconds of the last heartbeat")
                 .build(),
             hook_forwarded: m.u64_counter(otel::metric::HOOK_FORWARDED).build(),
+            hook_payload_trimmed: m
+                .u64_counter(otel::metric::HOOK_PAYLOAD_TRIMMED)
+                .with_description("hook events whose payload was cut to the allowlist")
+                .build(),
             sessions_discovered: m.u64_gauge(otel::metric::SESSIONS_DISCOVERED).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
+            headless_turns: m
+                .u64_counter(otel::metric::HEADLESS_TURNS)
+                .with_description("headless turns ended, by outcome")
+                .build(),
+            headless_killed: m
+                .u64_counter(otel::metric::HEADLESS_KILLED)
+                .with_description("headless turns killed by the companion, by reason")
+                .build(),
+            session_input_failed: m
+                .u64_counter(otel::metric::SESSION_INPUT_FAILED)
+                .with_description("session messages not typed, or stopped while typing, by reason")
+                .build(),
+            handoff_reports: m
+                .u64_counter(otel::metric::HANDOFF_REPORTS)
+                .with_description("handoff reports forwarded to the server, by outcome")
+                .build(),
         }
     }
 }

@@ -103,6 +103,9 @@ async fn then_otel_attr(w: &mut RubatoWorld, attr: String) {
         .find(|l| l.starts_with("OTEL_RESOURCE_ATTRIBUTES="))
         .expect("OTEL_RESOURCE_ATTRIBUTES set");
     assert!(line.contains(&attr), "{line}");
+    // Claude Code strips OTEL_* from its Bash tool, so the same value is mirrored (ADR 0061).
+    let mirror = format!("RUBATO_{line}");
+    assert!(log.lines().any(|l| l == mirror), "no {mirror} in {log}");
     assert!(log.contains("CLAUDE_CODE_ENABLE_TELEMETRY=1"));
     assert!(log.contains("OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"));
 }

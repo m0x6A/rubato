@@ -121,3 +121,40 @@ async fn then_header_private(w: &mut RubatoWorld) {
     assert!(!cmd.contains(&token), "{cmd}");
     assert!(cmd.contains(&format!("@'{}'", header.display())), "{cmd}");
 }
+
+/// The payload of the last hook the server received (ADR 0052: only the allowlist leaves).
+async fn last_forwarded_payload(w: &mut RubatoWorld) -> serde_json::Value {
+    w.server()
+        .wait_for(Duration::from_secs(10), |m| match m {
+            CompanionMessage::Hook(h) => Some(h.payload.clone().unwrap_or_default()),
+            _ => None,
+        })
+        .await
+        .expect("a forwarded hook")
+}
+
+#[then(expr = "the forwarded hook payload has no key {string}")]
+async fn then_payload_lacks(w: &mut RubatoWorld, key: String) {
+    let p = last_forwarded_payload(w).await;
+    assert!(p.get(&key).is_none(), "{key} left the machine: {p}");
+}
+
+#[then(expr = "the forwarded hook payload keeps key {string}")]
+async fn then_payload_keeps(w: &mut RubatoWorld, key: String) {
+    let p = last_forwarded_payload(w).await;
+    assert!(p.get(&key).is_some(), "{key} was cut: {p}");
+}
+
+#[then("the forwarded hook names no launch")]
+async fn then_no_launch(w: &mut RubatoWorld) {
+    let h = w
+        .server()
+        .wait_for(Duration::from_secs(10), |m| match m {
+            CompanionMessage::Hook(h) => Some(h.clone()),
+            _ => None,
+        })
+        .await
+        .expect("a forwarded hook");
+    assert_eq!(h.launch_id, None, "{h:?}");
+    assert_eq!((h.message_id, h.truncated), (None, false), "{h:?}");
+}

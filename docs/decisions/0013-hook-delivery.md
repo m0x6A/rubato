@@ -1,6 +1,6 @@
 # 0013. Deliver Claude Code hooks to the companion over loopback HTTP, config injected at launch
 
-- **Status:** accepted; hook command and `{token}` placeholder superseded by 0063
+- **Status:** accepted; superseded in part by 0062; hook command and `{token}` placeholder superseded by 0063
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (drafted by agent, Claude Code v0 planning session)
 - **Seam:** companion-claude-code, skill-plan-file

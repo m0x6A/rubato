@@ -238,13 +238,16 @@ async fn a_layout_change_tells_browsers_which_workspace_changed() {
             .unwrap();
         if let tokio_tungstenite::tungstenite::Message::Text(t) = msg {
             let ev: WebEvent = serde_json::from_str(&t).unwrap();
-            let WebEvent::Changed { reason, .. } = &ev;
-            if reason == "layout" {
+            if let WebEvent::Changed { reason, .. } = &ev
+                && reason == "layout"
+            {
                 break ev;
             }
         }
     };
-    let WebEvent::Changed { workspace, .. } = ev;
+    let WebEvent::Changed { workspace, .. } = ev else {
+        panic!("not a Changed event")
+    };
     assert_eq!(workspace.as_deref(), Some("shop"));
     let _ = &h.app;
 }

@@ -30,6 +30,8 @@ const SLICES: &[&str] = &[
     "launch",
     "spend",
     "stale",
+    "session_input",
+    "plan_mirror",
 ];
 
 /// The composition root plus this check. Twin of rubato-server's `slices.rs`.

@@ -19,6 +19,7 @@ use tokio::sync::{Mutex, mpsc};
 /// The `rubato.reason` a refused transcript is counted under in `rubato.events.dropped`.
 pub const DROP_REASON_TRANSCRIPT: &str = "transcript";
 
+#[allow(clippy::too_many_arguments)]
 pub async fn after_hook(
     ev: &HookEvent,
     (issue, transcript, cap): (Option<IssueRef>, Option<PathBuf>, Option<f64>),
@@ -27,6 +28,7 @@ pub async fn after_hook(
     pricing: &BTreeMap<String, ModelPrice>,
     tmux: &Tmux,
     metrics: &Metrics,
+    headless: Option<&crate::sessions::Headless>,
 ) {
     let Some(path) = transcript else { return };
     if pricing.is_empty() {
@@ -61,7 +63,12 @@ pub async fn after_hook(
             limit,
             at: Utc::now(),
         }));
-        if let Some(name) = entry.and_then(|e| e.tmux_session) {
+        // A headless turn is a process group the companion holds (ADR 0062).
+        let killed_turn = match (headless, entry.as_ref().and_then(|e| e.launch_id)) {
+            (Some(h), Some(launch)) => h.kill(launch, crate::kernel::claude::KillReason::Cap),
+            _ => false,
+        };
+        if !killed_turn && let Some(name) = entry.and_then(|e| e.tmux_session) {
             let t = tmux.clone();
             let _ = tokio::task::spawn_blocking(move || t.kill_session(&name)).await;
         }
@@ -126,6 +133,7 @@ mod tests {
             &pricing,
             &tmux,
             &metrics,
+            None,
         )
         .await;
         let points = reader.points(metric::EVENTS_DROPPED);

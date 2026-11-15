@@ -8,10 +8,11 @@
 
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
-    approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview, pins,
-    plans, queue, traffic,
+    approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview,
+    pairing, pins, plans, queue, rooms, session_messages, traffic,
 };
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 use rubato_protocol::otel::event;
 use rubato_protocol::{IssueRef, SessionStatus};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -19,6 +20,19 @@ use std::future::Future;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::task::{Id, JoinSet};
+
+/// Fill the kernel's session cache from the stored snapshots, once at start, so a slice that
+/// reads it (approval's "is the owner's session working") sees what the overview sees before
+/// any companion reconnects.
+pub async fn warm_sessions(app: &App) -> Result<()> {
+    let snapshots = companion_link::session_snapshots(&app.db).await?;
+    let n = snapshots.len();
+    for (companion_id, sessions) in snapshots {
+        app.set_sessions(companion_id, sessions);
+    }
+    tracing::info!(companions = n, "session snapshots loaded");
+    Ok(())
+}
 
 /// The map is refetched every this many seconds of poll intervals.
 const MAP_RELOAD_SECS: u64 = 300;
@@ -135,10 +149,12 @@ impl Poller {
         let found: Vec<new_issue::Found> = listed
             .requests()
             .into_iter()
-            .map(|(issue, url, request_id)| new_issue::Found {
-                issue,
-                url,
-                request_id,
+            .map(|r| new_issue::Found {
+                issue: r.issue,
+                url: r.url,
+                request_id: r.request_id,
+                author: r.author,
+                author_is_bot: r.author_is_bot,
             })
             .collect();
         new_issue::reconcile(app, &found, listed.fresh_repos()).await;
@@ -171,7 +187,10 @@ impl Poller {
         }
 
         let mut view = github_poll::RepoView::default();
-        let approved = github_poll::approved_branches(&app.db).await?;
+        // One list of counted approvals, comments under the cutover and Rubato approvals
+        // (ADR 0054), built here so `github_poll` never names `approve`.
+        let approvals = approve::approvals(app).await?;
+        let approved = github_poll::approved_branches(&approvals.counted);
         let stored: HashMap<IssueRef, String> = plans::all(&app.db)
             .await?
             .into_iter()
@@ -210,6 +229,18 @@ impl Poller {
         let pulls =
             github_poll::list_repo_pulls(app, &map.map, &mut view, &owned, lane == Lane::Full)
                 .await;
+        // Every tick, after the plans and comments are read: handoff commits get their link
+        // comment, found or posted once, and the handoff gauges are recorded (ADR 0055).
+        approve::reconcile_links(app).await;
+        // Every tick, after the plans are read: one notice per pair of issue and seam in the
+        // rooms of two open plans that touch the same seam (ADR 0057).
+        if let Err(e) = rooms::post_seam_notices(app).await {
+            tracing::error!(error = %format!("{e:#}"), "posting seam notices failed");
+        }
+        // Agents not addressed for the idle limit, or whose session ended, leave their rooms.
+        if let Err(e) = rooms::sweep_agents(app).await {
+            tracing::error!(error = %format!("{e:#}"), "sweeping room agents failed");
+        }
         // After the comments pass: approvals posted from Rubato that GitHub did not confirm,
         // and the tokens of people with no session that still counts (ADR 0030).
         if lane == Lane::Full {
@@ -254,6 +285,10 @@ impl Poller {
         }
         map_draft::record_gauges(app).await;
         queue::record_depth(app).await;
+        let sessions = companion_link::all_sessions(&app.db)
+            .await
+            .unwrap_or_default();
+        session_messages::record_gauges(app, &sessions).await;
         github_poll::record_rate_limit(app).await;
         overview::refresh_gauges(app).await?;
         app.notify("poll");
@@ -296,7 +331,7 @@ impl Poller {
             Some(head) => {
                 let key = (plans::plan_path(map, issue, &head.name), head.sha.clone());
                 if self.plan_heads.get(issue) != Some(&key) {
-                    plans::fetch_and_store(app, map, issue, &head.name).await?;
+                    plans::fetch_and_store(app, map, issue, &head.name, &head.sha).await?;
                     self.plan_heads.insert(issue.clone(), key);
                 }
                 github_poll::poll_pr(app, issue, &head.name, view, full).await?;
@@ -316,7 +351,9 @@ impl Poller {
                 && read_from.as_deref() != Some(branch)
             {
                 let sha = plans::hash_on_branch(app, map, issue, branch).await?;
-                github_poll::set_target_sha(&app.db, issue, a.comment_id, sha.as_deref()).await?;
+                if let Some(id) = a.comment_id {
+                    github_poll::set_target_sha(&app.db, issue, id, sha.as_deref()).await?;
+                }
             }
         }
         self.seen.insert(issue.clone());
@@ -373,7 +410,7 @@ impl Poller {
                 if self.discovered.get(*issue) == Some(&key) {
                     continue;
                 }
-                match plans::fetch_and_store(app, map, issue, &head.name).await {
+                match plans::fetch_and_store(app, map, issue, &head.name, &head.sha).await {
                     Ok(()) => {
                         self.discovered.insert((*issue).clone(), key);
                         if plans::has_plan(&app.db, issue).await.unwrap_or(false) {
@@ -405,6 +442,12 @@ pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) {
         if let Err(e) = poller.tick(&app, lanes.next_lane()).await {
             tracing::error!(error = %e, "poll failed");
         }
+        // Outside the tick, so a missing map or a failing GitHub call does not stop it (#168).
+        match pairing::sweep_codes(&app.db, Utc::now()).await {
+            Ok(0) => {}
+            Ok(gone) => tracing::info!(gone, "pairing codes swept"),
+            Err(e) => tracing::error!(error = %format!("{e:#}"), "sweeping pairing codes failed"),
+        }
         app.metrics.record_poll_tick(&app.config.limits);
         let secs = app.config.limits.github_poll_interval_secs.max(5);
         map_age = (map_age + secs) % MAP_RELOAD_SECS;
@@ -426,6 +469,13 @@ pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
             traffic::run(app.clone(), shutdown.clone()),
         );
     }
+    tasks.spawn("session_messages_sweep", Kind::Essential, {
+        let (app, shutdown) = (app.clone(), shutdown.clone());
+        async move {
+            session_messages::run_sweep(app, shutdown).await;
+            Ok(())
+        }
+    });
     tasks.spawn("poll", Kind::Essential, async move {
         run(app, shutdown).await;
         Ok(())

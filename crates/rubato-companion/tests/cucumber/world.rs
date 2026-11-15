@@ -15,7 +15,7 @@ use rubato_protocol::pairing::{
 };
 use rubato_protocol::{
     CompanionEnvelope, CompanionMessage, IssueRef, LaunchCommand, Limits, ServerEnvelope,
-    ServerMessage,
+    ServerMessage, SessionMessage,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -37,6 +37,8 @@ pub struct TestServer {
     pub push: broadcast::Sender<ServerEnvelope>,
     pub seq: Arc<std::sync::atomic::AtomicU64>,
     pub limits: Arc<std::sync::Mutex<Limits>>,
+    /// What the Welcome announces; a scenario may take one away before the daemon starts.
+    pub capabilities: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl TestServer {
@@ -58,6 +60,12 @@ impl TestServer {
             push,
             seq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             limits: Arc::new(std::sync::Mutex::new(Limits::default())),
+            capabilities: Arc::new(std::sync::Mutex::new(vec![
+                rubato_protocol::capability::SESSION_MESSAGES.into(),
+                rubato_protocol::capability::DRAFTS.into(),
+                rubato_protocol::capability::HANDOFF_REPORTS.into(),
+                rubato_protocol::capability::ROOM_REPLIES.into(),
+            ])),
         };
         let st = srv.clone();
         let app = Router::new()
@@ -91,7 +99,7 @@ impl TestServer {
                                         st.notify.notify_waiters();
                                         if is_hello {
                                             let seq = st.seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                                            let welcome = ServerEnvelope { seq, sent_at: chrono::Utc::now(), message: ServerMessage::Welcome { server_version: "test".into(), protocol_version: 1, last_seen_companion_seq: 0, limits: *st.limits.lock().unwrap() } };
+                                            let welcome = ServerEnvelope { seq, sent_at: chrono::Utc::now(), message: ServerMessage::Welcome { capabilities: st.capabilities.lock().unwrap().clone(), server_version: "test".into(), protocol_version: 1, last_seen_companion_seq: 0, limits: *st.limits.lock().unwrap() } };
                                             let _ = sink.send(Message::Text(serde_json::to_string(&welcome).unwrap().into())).await;
                                         }
                                     }
@@ -180,6 +188,15 @@ pub struct RubatoWorld {
     pub registry: Option<Registry>,
     pub fleet: Option<Fleet>,
     pub team_result: Option<anyhow::Result<(Fleet, String)>>,
+    /// The last session message the server pushed (`session-messages.feature`).
+    pub last_message: Option<SessionMessage>,
+    /// An id recorded as `typing` in `deliveries.json` before the daemon started.
+    pub typing_id: Option<Uuid>,
+    /// The session id a launched session moved to.
+    pub new_session_id: Option<String>,
+    /// The hook endpoint before a restart, and a port held so the restart cannot take it back.
+    pub endpoint_before: Option<HookEndpoint>,
+    pub held_port: Option<std::net::TcpListener>,
 }
 
 impl std::fmt::Debug for RubatoWorld {
@@ -211,8 +228,16 @@ impl RubatoWorld {
         let real = fake_bin.join("real");
         std::fs::create_dir_all(&real).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_rubato-companion"), real.join("claude")).unwrap();
+        // A headless `-p` run (a room's fork turn, ADR 0057) records its args, its Rubato and tmux
+        // environment and its stdin in .claude-fork.log, then prints stream-json: an init and a
+        // result whose session is `fork-of-<resumed>` with --fork-session, else the resumed one,
+        // at the cost in <root>/fork-cost (0.05 when absent).
+        let fork = format!(
+            "case \" $* \" in *\" -p \"*)\n  resume=''; fork=''; prev=''\n  for a in \"$@\"; do [ \"$prev\" = --resume ] && resume=\"$a\"; [ \"$a\" = --fork-session ] && fork=1; prev=\"$a\"; done\n  if [ -n \"$fork\" ]; then sid=\"fork-of-$resume\"; else sid=\"$resume\"; fi\n  {{ echo \"ARGS: $*\"; env | grep -E '^(RUBATO_|TMUX=)'; echo 'STDIN:'; cat; echo; echo 'END'; }} >> \"$PWD/.claude-fork.log\"\n  cost=$(cat '{}' 2>/dev/null || echo 0.05)\n  printf '%s\\n' \"{{\\\"type\\\":\\\"system\\\",\\\"subtype\\\":\\\"init\\\",\\\"session_id\\\":\\\"$sid\\\"}}\"\n  printf '%s\\n' \"{{\\\"type\\\":\\\"result\\\",\\\"subtype\\\":\\\"success\\\",\\\"is_error\\\":false,\\\"result\\\":\\\"b keeps it in one place\\\",\\\"session_id\\\":\\\"$sid\\\",\\\"total_cost_usd\\\":$cost}}\"\n  exit 0;;\nesac\n",
+            root.join("fork-cost").display()
+        );
         let script = format!(
-            "#!/bin/sh\n{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log\" 2>&1\nexec '{}' idle\n",
+            "#!/bin/sh\n{fork}{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log\" 2>&1\nexec '{}' idle --record \"$PWD/.claude-standin.typed\"\n",
             real.join("claude").display()
         );
         let claude = fake_bin.join("claude");
@@ -242,6 +267,8 @@ impl RubatoWorld {
                     ..Limits::default()
                 },
                 pricing: BTreeMap::new(),
+                // Never the developer's own skill: a scenario installs one here when it needs it.
+                skill_dir: Some(root.join("skill")),
                 ..CompanionConfig::default()
             },
         };
@@ -263,6 +290,11 @@ impl RubatoWorld {
             registry: None,
             fleet: None,
             team_result: None,
+            last_message: None,
+            typing_id: None,
+            new_session_id: None,
+            endpoint_before: None,
+            held_port: None,
         }
     }
 
@@ -351,6 +383,9 @@ impl RubatoWorld {
             prompt: format!("Work on {repo}#{issue}."),
             otel_resource: otel,
             map_version: Some("test".into()),
+            plan_path: Some(format!("docs/plans/{issue}.md")),
+            draft: None,
+            planning: Default::default(),
         }
     }
 
@@ -370,6 +405,78 @@ impl RubatoWorld {
         self.handles = Some(handles);
         self.shutdown = Some(tx);
         self.join = Some(join);
+    }
+
+    /// Stop the daemon as Ctrl-C does and wait until it has returned, so its hook port is free.
+    pub async fn stop_daemon(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(true);
+        }
+        if let Some(join) = self.join.take() {
+            tokio::time::timeout(Duration::from_secs(10), join)
+                .await
+                .expect("the daemon stops within 10 s")
+                .unwrap()
+                .unwrap();
+        }
+        self.handles = None;
+    }
+
+    /// Run the launched session's own hook command for `event`, exactly as Claude Code does:
+    /// the command from the `--settings` file the stand-in got, through `sh`, with the payload
+    /// on stdin and `RUBATO_LAUNCH_ID` exported as `launch.sh` does.
+    /// `extra` adds payload keys, such as `prompt` or `last_assistant_message`.
+    pub async fn fire_launched_hook(
+        &self,
+        event: &str,
+        session_id: &str,
+        extra: serde_json::Value,
+    ) {
+        let log = standin_log(self).await;
+        let args = log.lines().find(|l| l.starts_with("ARGS:")).unwrap();
+        let settings = args
+            .split_whitespace()
+            .skip_while(|a| *a != "--settings")
+            .nth(1)
+            .expect("--settings <file>");
+        let hooks: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(settings).unwrap()).unwrap();
+        let command = hooks["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no {event} hook in {settings}"))
+            .to_owned();
+        let cmd = self.last_launch.as_ref().unwrap();
+        let worktree = worktree_of(self, &cmd.issue.repo, &cmd.branch);
+        let mut payload = serde_json::json!({
+            "session_id": session_id,
+            "hook_event_name": event,
+            "cwd": worktree.to_string_lossy(),
+            "permission_mode": "acceptEdits",
+        });
+        if let (Some(p), serde_json::Value::Object(more)) = (payload.as_object_mut(), extra) {
+            p.extend(more);
+        }
+        let mut sh = Command::new("sh");
+        sh.arg("-c")
+            .arg(&command)
+            .env("RUBATO_LAUNCH_ID", cmd.id.to_string())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = sh.spawn().unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "hook command failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     pub fn hook_fixture(fixture: &str) -> String {
@@ -401,6 +508,11 @@ impl RubatoWorld {
             .as_str()
             .unwrap()
             .to_owned()
+    }
+
+    /// As `post_hook`, with a body the step built: a hook from a session started by hand.
+    pub async fn post_hook_body(&self, body: &str, with_token: bool) -> u16 {
+        self.post_body(body, with_token).await
     }
 
     /// With the token: exactly what Claude Code does, the rendered hook command under `sh -c`
@@ -468,6 +580,13 @@ impl Drop for RubatoWorld {
 
 pub fn worktree_of(w: &RubatoWorld, repo: &str, branch: &str) -> PathBuf {
     default_worktree_path(w.repos.get(repo).unwrap(), branch)
+}
+
+/// What was typed into the stand-in claude's pane, line by line (`idle --record`).
+pub fn typed(w: &RubatoWorld) -> String {
+    let cmd = w.last_launch.as_ref().unwrap();
+    let wt = worktree_of(w, &cmd.issue.repo, &cmd.branch);
+    std::fs::read_to_string(wt.join(".claude-standin.typed")).unwrap_or_default()
 }
 
 pub async fn standin_log(w: &RubatoWorld) -> String {

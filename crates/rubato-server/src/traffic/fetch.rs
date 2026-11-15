@@ -145,8 +145,9 @@ impl<S: Source> Fetcher<S> {
         app.metrics
             .traffic_report_age
             .record(u64::try_from(age).unwrap_or(0), &[]);
-        // Judged against each workspace's map (ADR 0039 per workspace); the browsers are told
-        // once, from `default`'s, which unprefixed overviews show.
+        // Judged against each workspace's map and its dismissals (ADR 0039, 0060); the browsers
+        // are told once, from `default`'s, which unprefixed overviews show. A dismissal changed
+        // in another workspace notifies that workspace itself (`dismiss.rs`).
         let maps: Vec<(String, crate::kernel::state::LoadedMap)> = app
             .maps
             .read()
@@ -154,15 +155,25 @@ impl<S: Source> Fetcher<S> {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        for (ws, m) in maps
-            .iter()
-            .filter(|(w, _)| w != rubato_protocol::DEFAULT_WORKSPACE)
-        {
-            let (t, f) = derive_traffic(&m.map, latest.report.as_ref(), &latest.source, now);
-            let w = [KeyValue::new(
-                rubato_protocol::otel::attr::WORKSPACE,
-                ws.clone(),
-            )];
+        let mut default = None;
+        for (ws, m) in &maps {
+            let dismissed = super::dismiss::list(&app.db, ws).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, rubato.workspace = ws.as_str(), "traffic dismissals unreadable");
+                Vec::new()
+            });
+            let (t, f) = derive_traffic(
+                &m.map,
+                latest.report.as_ref(),
+                &latest.source,
+                &dismissed,
+                now,
+            );
+            let is_default = ws == rubato_protocol::DEFAULT_WORKSPACE;
+            let w: Vec<KeyValue> = if is_default {
+                vec![]
+            } else {
+                vec![KeyValue::new(attr::WORKSPACE, ws.clone())]
+            };
             let quiet = f
                 .iter()
                 .filter(|f| matches!(f, Finding::SeamQuiet { .. }))
@@ -174,27 +185,19 @@ impl<S: Source> Fetcher<S> {
             app.metrics
                 .traffic_unmapped_services
                 .record(u64::from(t.unmapped_services), &w);
+            app.metrics
+                .traffic_ghost_parts
+                .record(t.ghosts.len() as u64, &w);
+            app.metrics
+                .traffic_dismissals
+                .record(t.dismissed.len() as u64, &w);
+            if is_default {
+                default = Some(t);
+            }
         }
-        let Some(map) = maps
-            .iter()
-            .find(|(w, _)| w == rubato_protocol::DEFAULT_WORKSPACE)
-            .map(|(_, m)| m.clone())
-        else {
+        let Some(traffic) = default else {
             return;
         };
-        let (traffic, findings) =
-            derive_traffic(&map.map, latest.report.as_ref(), &latest.source, now);
-        let quiet = findings
-            .iter()
-            .filter(|f| matches!(f, Finding::SeamQuiet { .. }))
-            .count();
-        app.metrics.traffic_seams_quiet.record(quiet as u64, &[]);
-        app.metrics
-            .traffic_undeclared_edges
-            .record(traffic.undeclared.len() as u64, &[]);
-        app.metrics
-            .traffic_unmapped_services
-            .record(u64::from(traffic.unmapped_services), &[]);
         let summary = ObservedTraffic {
             observed_at: None,
             ..traffic
