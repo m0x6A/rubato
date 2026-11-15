@@ -177,6 +177,17 @@ pub struct RepoAccess {
     pub methods: Vec<rubato_protocol::pulls::MergeMethod>,
 }
 
+/// How a merge as the person failed (ADR 0033). `Refused` sent nothing that took effect: GitHub
+/// answered 405 (not mergeable), 409 (the head moved), 403, 422. `Unknown` may have merged: the
+/// caller must not send again and lets the poll find out.
+#[derive(Debug, thiserror::Error)]
+pub enum MergeError {
+    #[error("GitHub refused the merge ({status}): {message}")]
+    Refused { status: u16, message: String },
+    #[error("the merge may have happened: {0}")]
+    Unknown(String),
+}
+
 /// One page of changed files per view (design 82 A3).
 pub const FILES_PER_PAGE: usize = rubato_protocol::pulls::FILES_PER_PAGE_HINT;
 
@@ -260,6 +271,26 @@ pub trait GitHubApi: Send + Sync {
         Err(anyhow::anyhow!(
             "this GitHub connection cannot act as a person"
         ))
+    }
+    /// Merge `number` at `sha` with `method`, as the person whose user-to-server token this is
+    /// (ADR 0033): `PUT …/pulls/{n}/merge`. Sent once, retries off, [`USER_WRITE_TIMEOUT`]. The
+    /// merge commit's sha.
+    async fn merge_as(
+        &self,
+        _token: &str,
+        _repo: &str,
+        _number: u64,
+        _sha: &str,
+        _method: rubato_protocol::pulls::MergeMethod,
+    ) -> std::result::Result<String, MergeError> {
+        Err(MergeError::Refused {
+            status: 501,
+            message: "this GitHub connection cannot merge".into(),
+        })
+    }
+    /// The local stand-in has one person and no tokens: it acts for whoever is logged in.
+    fn acts_without_token(&self) -> bool {
+        false
     }
     /// (remaining, limit) of the core REST budget.
     async fn rate_limit(&self) -> Result<(u64, u64)>;
@@ -1001,6 +1032,43 @@ impl GitHubApi for Octo {
         let crab = user_client(token, self.base.as_deref())?;
         let v: serde_json::Value = crab.get(format!("/repos/{o}/{r}"), None::<&()>).await?;
         Ok(access_from_repo(&v))
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, token), err, fields(rubato.github.endpoint = "merge"))]
+    async fn merge_as(
+        &self,
+        token: &str,
+        repo: &str,
+        number: u64,
+        sha: &str,
+        method: rubato_protocol::pulls::MergeMethod,
+    ) -> std::result::Result<String, MergeError> {
+        count_call("merge", 1);
+        let (o, r) = split_repo(repo).map_err(|e| MergeError::Refused {
+            status: 400,
+            message: e.to_string(),
+        })?;
+        let crab = user_client(token, self.base.as_deref())
+            .map_err(|e| MergeError::Unknown(format!("{e:#}")))?;
+        let body = serde_json::json!({ "sha": sha, "merge_method": method.as_str() });
+        match crab
+            .put::<serde_json::Value, _, _>(
+                format!("/repos/{o}/{r}/pulls/{number}/merge"),
+                Some(&body),
+            )
+            .await
+        {
+            Ok(v) => Ok(v
+                .get("sha")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_owned()),
+            Err(octocrab::Error::GitHub { source, .. }) => Err(MergeError::Refused {
+                status: source.status_code.as_u16(),
+                message: source.message.clone(),
+            }),
+            Err(e) => Err(MergeError::Unknown(e.to_string())),
+        }
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "rate_limit"))]
