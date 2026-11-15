@@ -14,6 +14,29 @@ use anyhow::{Result, bail};
 use rubato_protocol::LaunchCommand;
 use std::path::Path;
 
+/// The MCP server a launched session gets (ADR 0071, plan 220 §5): its name in `mcp.json`.
+pub const MCP_SERVER: &str = "rubato-companion";
+/// `--allowedTools`: every tool of that server, so a headless turn (which cannot answer a
+/// permission prompt) can call them; no other server's.
+pub const ALLOWED_TOOLS: &str = "mcp__rubato-companion";
+/// Next to `hooks.json` in the launch dir, mode 0600: it holds the receiver's token.
+pub const MCP_CONFIG_FILE: &str = "mcp.json";
+
+/// `mcp.json` for one launch: the receiver's `/mcp` on loopback, its token and the launch id as
+/// headers. Claude Code reads it through `--mcp-config <path>`, so the token is on no command
+/// line (ADR 0063).
+pub fn render_mcp_config(hook: &HookEndpoint, launch_id: uuid::Uuid) -> String {
+    serde_json::json!({"mcpServers": {MCP_SERVER: {
+        "type": "http",
+        "url": format!("http://127.0.0.1:{}/mcp", hook.port),
+        "headers": {
+            "Authorization": format!("Bearer {}", hook.token),
+            "X-Rubato-Launch": launch_id.to_string(),
+        },
+    }}})
+    .to_string()
+}
+
 /// The variables mirrored as `RUBATO_<name>`, in the order they are exported.
 pub const MIRRORED: [&str; 5] = [
     "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -131,10 +154,14 @@ pub fn launcher_script(
         q(&worktree.display().to_string())
     ));
     // `claude_command` is the developer's own `local.yml`, never a server value, and may carry
-    // arguments (`claude --model …`): written as is, so it is the one unquoted word here.
+    // arguments (`claude --model …`): written as is, so it is the one unquoted word here. The MCP
+    // flags take lists of values, so they come right after it and `--session-id` ends them; the
+    // prompt stays the last word (plan 220 §5). `mcp.json` sits next to `hooks.json`.
     s.push_str(&format!(
-        "exec {} --session-id {} --settings {} --permission-mode {} \"$(cat {})\"\n",
+        "exec {} --mcp-config {} --allowedTools {} --session-id {} --settings {} --permission-mode {} \"$(cat {})\"\n",
         workspace.companion.claude_command,
+        q(&hooks.with_file_name(MCP_CONFIG_FILE).display().to_string()),
+        ALLOWED_TOOLS,
         q(&cmd.session_id.to_string()),
         q(&hooks.display().to_string()),
         q(&workspace.companion.permission_mode),
@@ -398,6 +425,70 @@ mod tests {
             format!("rubato.node={node}")
         );
         assert!(!marker.exists(), "the id ran as a command:\n{script}");
+    }
+
+    /// Plan 220 §5: `--mcp-config` and `--allowedTools` take lists, so they go right after the
+    /// claude command; `--session-id` ends their lists and the prompt is still the last word.
+    #[test]
+    fn the_mcp_flags_come_first_and_the_prompt_stays_last() {
+        let d = tempfile::tempdir().unwrap();
+        let stand = d.path().join("claude.sh");
+        std::fs::write(&stand, "printf '%s\\n' \"$@\"\n").unwrap();
+        let prompt = d.path().join("prompt.txt");
+        std::fs::write(&prompt, "hi there").unwrap();
+        let mut ws = Workspace::parse("{}").unwrap();
+        ws.companion.claude_command = format!("sh {} --model x", stand.display());
+        let hooks = d.path().join("hooks.json");
+        let script = launcher_script(&ws, &command(), d.path(), &hooks, &prompt, &endpoint());
+        let path = d.path().join("launch.sh");
+        std::fs::write(&path, &script).unwrap();
+        let out = Command::new("sh").arg(&path).output().unwrap();
+        assert!(out.status.success(), "{out:?}\n{script}");
+        let argv: Vec<String> = String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let mcp = d.path().join(MCP_CONFIG_FILE).display().to_string();
+        assert_eq!(
+            argv[..7],
+            [
+                "--model",
+                "x",
+                "--mcp-config",
+                mcp.as_str(),
+                "--allowedTools",
+                ALLOWED_TOOLS,
+                "--session-id"
+            ],
+            "{argv:?}"
+        );
+        assert_eq!(
+            argv.last().map(String::as_str),
+            Some("hi there"),
+            "{argv:?}"
+        );
+        assert!(
+            argv.iter().all(|a| !a.contains(&endpoint().token)),
+            "no token on the command line"
+        );
+    }
+
+    /// Plan 220 §5: the MCP config names the receiver's `/mcp`, its token and the launch.
+    #[test]
+    fn the_mcp_config_names_this_receiver_and_this_launch() {
+        let id = Uuid::from_u128(7);
+        let v: serde_json::Value =
+            serde_json::from_str(&render_mcp_config(&endpoint(), id)).unwrap();
+        let s = &v["mcpServers"][MCP_SERVER];
+        assert_eq!(s["type"], "http");
+        assert_eq!(s["url"], "http://127.0.0.1:43125/mcp");
+        assert_eq!(
+            s["headers"]["Authorization"],
+            format!("Bearer {}", endpoint().token)
+        );
+        assert_eq!(s["headers"]["X-Rubato-Launch"], id.to_string());
+        assert_eq!(ALLOWED_TOOLS, format!("mcp__{MCP_SERVER}"));
     }
 
     #[test]
