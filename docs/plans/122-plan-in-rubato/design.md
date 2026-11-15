@@ -1,6 +1,7 @@
 # Design: plan in Rubato (#122)
 
-Plan: [../122.md](../122.md) · ADRs 0050–0058, all *proposed*.
+Plan: [../122.md](../122.md) · ADRs 0050–0058 and 0062, all *proposed*. Also covers #139 (§D9, ADR 0058)
+and #138 (§D14, ADR 0062), planned as one unit with #122 on Mattias's request of 2026-11-14.
 
 **Revised after the design review**, all findings taken:
 - **Three blockers.** A message for an offline companion was lost; a Rubato-mode session before
@@ -39,6 +40,7 @@ Choices answered by Mattias in the planning session, on 2026-11-14:
 | Q10 | Session log source | hook payloads, not a transcript reader |
 | Q11 | Hook payloads already stored | purged in migration 0015 |
 | Q12 | ADRs proposed from connected repos | stay *proposed*, with a finding |
+| Q13 | Agent-only clients (#138) | a headless companion first; a token client with the agent running elsewhere is not ruled out (§D14) |
 
 This plan is itself planned and approved the old way, with a `Review:` comment and `Approved: plan
 <sha>`, because the new flow is what it builds.
@@ -637,15 +639,15 @@ added in PR 1.
 
 | Kind | Names |
 | --- | --- |
-| attrs | `rubato.session_message.id`, `rubato.session_message.kind`, `rubato.approval_id`, `rubato.draft.rev`, `rubato.capability`, `rubato.room` |
+| attrs | `rubato.session_message.id`, `rubato.session_message.kind`, `rubato.approval_id`, `rubato.draft.rev`, `rubato.capability`, `rubato.room`, `rubato.client` (`interactive` or `headless`), `rubato.adapter` (`tmux` or `headless`) |
 | server metrics | `rubato.session_messages{rubato.outcome, rubato.session_message.kind}`; gauge `rubato.session_messages.oldest_idle_queued_seconds`; `rubato.session_log.entries`, `rubato.session_log.dropped{rubato.reason}`; `rubato.drafts.revisions`, `rubato.drafts.refused{rubato.reason}`; gauge `rubato.companions.by_capability{rubato.capability}`; gauges `rubato.plans.handoff_overdue`, `rubato.plans.link_comment_missing`, `rubato.plans.approval_record_mismatch`; `rubato.plans.comment_after_cutover`; `rubato.rooms.agent_turns{rubato.outcome}`, `rubato.rooms.turn_limit_hits` |
-| companion metrics | `rubato.hook.payload_trimmed`, `rubato.session_input.failed{rubato.reason}` |
+| companion metrics | `rubato.hook.payload_trimmed`, `rubato.session_input.failed{rubato.reason}`; `rubato.headless.turns{rubato.outcome}`, `rubato.headless.killed{rubato.reason}` (§D14) |
 | spans | `rubato.session_message.dispatch` (server), `rubato.session_input.deliver` (companion: adapter, outcome, mixed, duration), `rubato.plan.draft` (server receive), `rubato.plan.link_comment`, `rubato.room.fork_turn` (exit, cost) |
 | skill line | `rubato.plan.handoff` |
 | findings | `DraftOwnerConflict`, `ApprovalRecordMismatch`, `LinkCommentWaiting`, `LinkWaitingForApprover`, `AdrsNotAccepted`, `CommentApprovalIgnored` |
 | log lines | at info: `session message dispatched`, `session message outcome`, `draft revision stored`, `link comment posted`, `cutover` (at start), `vacuum after hook payload purge`, `handoff reported`; at warn: `link comment unknown`, `hook port changed`, `session message delivery unknown` |
 
-**Never silent.** Four rules join AGENTS.md's list. Each gets a rule in `rubato.rules.yml`, a
+**Never silent.** Four rules join AGENTS.md's list, and PR 13 adds a fifth, `HeadlessTurnsKilled` (§D14). Each gets a rule in `rubato.rules.yml`, a
 promtool firing test and a quiet case, a mutant in `rules.test.ts`, an entry in `REQUIRED` in
 `check.ts`, and a panel. The dashboard row "Planning in Rubato" is created in PR 3 with the
 session-message panels; PRs 4–11 add their panels to it, so no PR ships a metric without one:
@@ -656,6 +658,7 @@ session-message panels; PRs 4–11 add their panels to it, so no PR ships a metr
 | `ApprovalNoHandoff` | `handoff_overdue` > 0 for 30 m: an approval delivered more than 30 minutes ago, still current (its `plan_sha` is still the newest), with no matching commit and no `committed` handoff report. A harmless `plan_changed` makes the approval no longer current, so it does not page |
 | `HandoffNoLinkComment` | `link_comment_missing` > 0 for 30 m |
 | `ApprovalRecordMismatch` | `approval_record_mismatch` > 0 for 5 m |
+| `HeadlessTurnsKilled` (PR 13) | `rubato.headless.killed` with reason `timeout`, `quiet` or `companion_restarted` increased in the last 30 m (§D14) |
 
 ## D11. Slices and deploy order
 
@@ -664,7 +667,7 @@ session-message panels; PRs 4–11 add their panels to it, so no PR ships a metr
 | Deployable | New slices and tables | Changed |
 | --- | --- | --- |
 | server | `session_messages` (`session_messages`); `session_log` (`session_log_entries`); `plan_drafts` (`plan_drafts`, `plan_draft_revisions`); `rooms` (`room_messages`, `room_agents`, `room_requests`); `import` (no table: the Import route) | `approve` owns `rubato_approvals`, `plan_links`, the approval route and the link reconcile; `github_poll` gets the cutover filter and the merged `BranchPrefs`; `companion_link` dispatches the new envelopes; `launch` gets the draft branch, `plan_path` and `draft` |
-| companion | `session_input` (messages, paste, `deliveries.json`, fork turns); `plan_mirror` (bundle at settle points; restore called by `launch`) | `hooks` (allowlist, launch header, `/handoff`, a kept port and token); `sessions` (`last_hook`, `input_sent_at`, `launches.json`); `kernel/tmux.rs` (paste), `kernel/claude.rs` (headless), `kernel/proc.rs` (stdin) |
+| companion | `session_input` (messages, paste, `deliveries.json`, fork turns; from PR 13 the `HeadlessInput` adapter and `stop`); `plan_mirror` (bundle at settle points; restore called by `launch`) | `hooks` (allowlist, launch header, `/handoff`, a kept port and token); `sessions` (`last_hook`, `input_sent_at`, `launches.json`; PR 13: headless entries from the child process); `launch` (PR 13: the headless branch, no tmux-ide gate); `server_link` (PR 13: reports a revoked pairing to `runtime.rs`, which stops headless turns); `kernel/tmux.rs` (paste), `kernel/claude.rs` (fork turns; PR 13 adds launch and resume turns in a process group), `kernel/proc.rs` (stdin), `kernel/config.rs` (`mode`) |
 | web | `chat` (compose on your own session, message states, session log); `room` | `plans` grows the draft view: revisions, diff since last seen, approve with summary, import; `drafts` stays the map draft |
 
 Edges stay acyclic:
@@ -716,7 +719,8 @@ the other GitHub facts (ADR 0047). Only approve's route is map-scoped.
 | 9 | `issue/122-import` | outside Rubato, Import (slice `import`) | |
 | 10 | `issue/122-room` | the room for people, seam notices | 0021 |
 | 11 | `issue/122-call-in` | call-in and requests, addressed turns, fork turns, turn limit, timeout | 0022 |
-| 12 | `issue/122-cutover` | AGENTS.md, README, QUICKSTART, SKILL.md without the comment path; `plan.ts wait` and `adrs.ts accept --comment` retired; deploy record with the cutover | |
+| 13 | `issue/122-headless` (runs before 12) | agent-only clients (#138): headless companion mode, one turn at a time across restarts, `Hello.client` on the pairing, `StateSource::Headless`, `stop`, revoke closes the socket and stops turns, alert `HeadlessTurnsKilled`, the badge and Stop in the web | 0023 |
+| 12 | `issue/122-cutover` | AGENTS.md, README, QUICKSTART, SKILL.md without the comment path; `plan.ts wait` and `adrs.ts accept --comment` retired; AGENTS.md "tmux is required" for interactive companions only; deploy record with the cutover; closes #91, #138, #139 | |
 
 ## D13. Risks
 
@@ -733,3 +737,170 @@ the other GitHub facts (ADR 0047). Only approve's route is map-scoped.
   a guarantee.
 - **Golden drift.** Every new overview field is optional and absent with the cutover unset; the
   golden (`tests/workspaces_golden.rs`) is re-recorded only where a PR says so.
+
+## D14. Agent-only clients (ADR 0062, #138)
+
+Mattias, 2026-11-14: "start by 1 but dont rule out 2". An agent-only client is a **headless
+companion** first. A **token client** with the agent running elsewhere stays possible, and nothing
+below assumes it away. Both keep #122's rules: one GitHub owner per client, and an agent never
+approves.
+
+**Why headless fits.** The spike found that `claude -p --resume` writes into the session's
+transcript. That is unsafe only beside a *live* session (§Spike), and a headless client has no
+interactive one. Every turn can therefore be a headless resume, provided that **at most one turn per
+session ever runs**, which the rules below guarantee. This also removes D13's "two inputs to one
+terminal", so `mixed` never applies.
+
+**Hooks are not relied on.** The spike's fork run fired no hooks, but it ran without Rubato's hooks
+on purpose (§D8, A12), so it does not show whether hooks fire under `-p`. The headless design does
+not depend on them either way. The companion holds the child process and its stream-json stdout,
+and those are the authority:
+
+| Signal | Interactive | Headless |
+| --- | --- | --- |
+| Turn ended (idle) | hook `Stop` / `idle_prompt` | the child exits; the stream's `result` event |
+| Reply | `Stop.last_assistant_message` | the `result` event's text; a `Stop` hook, if one fires, is only cross-checked |
+| Spend | transcript sum after each hook (`spend::after_hook`, `runtime.rs:250`) | the same transcript sum, run at each turn end and every 60 s while a turn runs (A22); the `result`'s `total_cost_usd` is cross-checked |
+| Liveness (`last_seen`) | hooks, tmux-ide | each stream event, at most one update per 10 s |
+
+**Mode.** `kernel/config.rs` gains `mode: interactive | headless`, with `interactive` as the default.
+One companion has one mode (A18). In headless mode:
+
+- the tmux-ide version gate (`launch/launcher.rs:89`) and `tmux_ide.adopt` are skipped, and tmux and
+  tmux-ide need not be installed;
+- the worktree is made with `git worktree add` through `kernel/gitx.rs`, on the same `issue/` branch
+  and path rule as today. Hooks are injected and `launch.sh` is rendered as today;
+- discovery from tmux-ide does not run, and the registry holds only launched sessions. Identity is
+  the launch's worktree and branch, known at spawn, never a pane cwd (ADR 0006's rule, read through
+  the worktree);
+- the tmux-ide reconciliation poll, the backstop for lost hooks (ADR 0013), is replaced by the
+  child process. A lost hook cannot hide a turn end, because the exit is observed directly.
+
+**Turns.** `kernel/claude.rs` is added in PR 11 for fork turns. PR 13 gives it two more calls, each
+spawned as its own process group with stdout read as stream-json:
+
+```text
+first turn:  claude -p "<rendered prompt>" --session-id <id> --output-format stream-json --verbose
+next turns:  claude -p --resume <id> "<text>" --output-format stream-json --verbose
+```
+
+- `launch` spawns the first turn. `session_input` spawns the rest. Both go through `kernel/claude.rs`
+  and record the turn on the registry entry: `turn: Option<{ pgid, started_at, message_id }>`.
+- `LaunchResult::Started` is sent once the child runs. `SessionState.tmux` is `None`, which it
+  already may be (`rubato-protocol/src/session.rs:130`).
+- A new `StateSource::Headless` says the companion holds the child.
+- **Bound (A19).** Two config values: `headless_turn_max_secs` (default 4 h) and
+  `headless_quiet_max_secs` (default 15 min with no stream event). Past either, the group is
+  killed and the outcome is `failed { timeout }` or `failed { quiet }`.
+
+**One turn at a time, across restarts.**
+- The turn's pgid and start time are written to `launches.json` (A17) before the child gets input.
+- On start, for each launch with a recorded turn, the companion checks the group through
+  `kernel/ps.rs`, matching pgid and start time so a reused pid is not mistaken for it.
+  - A live group is killed, which reports `failed { companion_restarted }` for its message.
+  - A dead group is cleared.
+  - The session counts as idle only after that.
+- Every exit path kills every group: a clean shutdown, the `supervise` abort of an essential task in
+  `runtime.rs`, and revoke. A `Drop` guard on the turn in `kernel/claude.rs` covers a panic.
+- Gherkin `headless.feature` has a "restart mid-turn" scenario. It must fail on purpose with the
+  startup check removed: a second stand-in turn then starts while the first runs.
+
+**Session messages: the second adapter.** The `SessionInput` port of §D1 gets `HeadlessInput`.
+Checks 1–4 of §D1 apply unchanged (paired user, launched here, length, `deliveries.json`). Check 5,
+idle, reads "no `turn` on the entry". `deliveries.json` records `typing` before the spawn and
+`delivered` once the child runs.
+
+- **Turn end reaches the server.** When a turn ends, the companion sends the existing `SessionState`
+  snapshot with `status: idle`, `source: headless`. `session_messages` adds this to its dispatch
+  triggers (§D1 "Dispatch"), beside the idle hooks. So a `not_idle` message is pushed again even if
+  no hook ever fires.
+- The reply goes to the session log (§D2) from the `result` text, carrying `message_id`. A
+  `rubato.headless.turns{rubato.outcome=no_result}` counts a turn that exits without one.
+- `plan_approved` and the handoff (§D7) run as a turn like any other message. Room turns follow §D8
+  unchanged: while planning, a headless turn of the session; while building, the read-only fork.
+
+**Stop.** A new `SessionMessageKind::stop`, owner only (A21):
+
+- `POST /api/sessions/{id}/stop`, owned by `session_messages`; 403 `not_your_session` otherwise.
+  The web button lives in feature `chat`, next to the compose box of your own session. `companions`
+  only shows the badge.
+- **Never queued.** If the launch's companion is not live (§D1), the route answers 409
+  `companion_offline`, so a stop never waits for a later Hello and never hits a later turn.
+- **Not behind the in-flight rule.** `stop` is pushed at once, even while another row of the launch
+  is `sent` (an exception to §D1 "What dispatch does").
+- **On the companion.** It passes checks 1–4, skips only check 5, kills the turn's process group
+  (headless) or the tmux session (interactive, as `spend/arm.rs:47` does), and answers `delivered`.
+  The session is then reported `SessionStatus::Ended`, not left to go stale: the sweep reports only
+  *Working* (`stale/sweep.rs:18`).
+- A `sent` chat row of that launch that was interrupted gets `failed { stopped }`.
+
+**Revoke.**
+- With the companion connected, the server sends `Error { code: "auth" }` and drops its sender
+  (`pairing/handlers.rs:109-113`). Today the socket loop then only stops sending: `Some(msg) =
+  rx.recv()` is disabled on `None` (`companion_link/ws.rs:92`), so the socket stays open and
+  envelopes keep being applied. PR 13 breaks the loop and closes the socket on `None`, with a
+  server test that a revoked companion's next envelope is not applied.
+- On the companion, `runtime.rs:257` already receives that `Error` through `tx_in`
+  (`server_link/client.rs:197-208`). On `code: "auth"` it calls `session_input::stop_all()` and
+  exits.
+- A 401 at connect is today a generic error retried forever (`client.rs:102-109`). PR 13 returns a
+  typed `Revoked` error, handled like `ReservationError` (`client.rs:101`), which leads to the same
+  `stop_all()` and exit.
+
+**Caps.** These apply as for any launch.
+- The spend check runs at each turn end and every 60 s during a turn (A22). A cap hit kills the
+  group, raises `CapHit`, and marks the issue *Blocked*, as today.
+- The attempt limit counts launches and draft resumes (A14). A resume turn is not an attempt.
+
+**Never approves.** Approval is `POST /api/plans/drafts/approve` (map-scoped) from a logged-in team
+member's web session (§D6). No client of either mode holds one. A server test posts with a
+companion's bearer token and gets 401.
+
+**Old peers.** `StateSource::Headless` and `stop` are new enum values. An old peer drops an envelope
+it cannot decode (§D1 "Capabilities"), so each is gated:
+
+| Capability | Announced by | Gates |
+| --- | --- | --- |
+| `headless` | a companion in headless mode | the server accepts `source: headless` snapshots from it, and the web shows the badge |
+| `session_stop` | companion and server | the server pushes `stop` only to a companion that announced it; the web shows Stop only then |
+
+A headless companion sends `source: headless` only to a server that announced `session_stop`.
+Before that, it refuses to start in headless mode and logs why. Fixtures: an old Hello without
+`client` decodes as `interactive`, and a server without `session_stop` never receives `stop`.
+
+**Where `client` lives.** `Hello.client` is stored on the pairing: migration 0023 adds
+`pairings.client` (text, default `interactive`), owned by `pairing`, and written at each Hello by
+`companion_link` through `pairing`'s store API (an existing edge). An offline companion therefore
+still shows its badge.
+
+**Slice edges in the companion.** These are the new ones beside today's. `spend` keeps naming
+`sessions` and `kernel`. The kill goes through `kernel/claude.rs` with the pgid read from
+`sessions::Entry`, so `spend` does not name `session_input`, and `session_input` does not name
+`spend`.
+
+| Slice | Names (new) | Why |
+| --- | --- | --- |
+| `launch` | `kernel::claude`, `kernel::gitx` | spawn turn 1; the headless worktree |
+| `session_input` | `sessions`, `kernel::claude` | the entry's `turn`; resume and stop |
+| `spend` | `kernel::claude` | kill a headless group on a cap hit |
+| `server_link` | none | `Revoked` goes to `runtime.rs`, the composition root |
+
+**Telemetry.**
+- Span `rubato.session_input.deliver` with `rubato.adapter=headless`.
+- `rubato.headless.turns{rubato.outcome=ok|failed|no_result}`.
+- `rubato.headless.killed{rubato.reason=stop|cap|revoke|timeout|quiet|companion_restarted}`.
+- `rubato.client` on the companion's Hello span.
+- One panel "Headless turns" on the row "Planning in Rubato".
+- Log lines at info: `headless turn started`, `headless turn ended` (exit, duration, cost). At warn:
+  `headless turn killed` (reason).
+- **Never silent.** One new rule, `HeadlessTurnsKilled`: `increase(rubato.headless.killed{reason=~
+  "timeout|quiet|companion_restarted"}[30m]) > 0`. A cap or stop kill is already an event (CapHit,
+  Ended). The rule gets a promtool firing test, a quiet case, a mutant in `rules.test.ts`, an entry
+  in `REQUIRED`, and its panel. With it, AGENTS.md's list grows by five, not four.
+
+**Live check.** PR 13 runs the stand-in suite and then one live run against real Claude Code:
+launch, two resume turns, stop, a cap hit at a tiny cap. It records whether hooks fired. That
+changes nothing in the design, which does not depend on them.
+
+**Order.** PR 13 runs after PR 11, which adds `kernel/claude.rs`, and before PR 12, the cutover,
+which closes #138.
