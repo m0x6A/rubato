@@ -94,7 +94,7 @@ pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,
     ProgressInputs, ProgressState, SpendPoint, blocked_from, derive_progress,
 };
-pub use pulls::{OpenPull, RepoPulls};
+pub use pulls::{MergeMethod, MergeOffer, OpenPull, PlanGate, PullDetail, PullState, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use room::{
     CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer,

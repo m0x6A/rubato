@@ -442,6 +442,26 @@ status: "denied"
 status: "expired"
 })
 /**
+ * How a pull request is merged: `merge_method` on GitHub's merge call.
+ */
+export type MergeMethod = ("merge" | "squash" | "rebase")
+/**
+ * What the plan of the linked issue says about merging (ADR 0033, plan 82 Decisions 1–3).
+ */
+export type PlanGate = ({
+kind: "no_plan"
+} | {
+kind: "approved"
+sha: string
+} | {
+kind: "not_approved"
+why: string
+})
+/**
+ * Whether the pull request is open, closed without merging, or merged.
+ */
+export type PullState = ("open" | "closed" | "merged")
+/**
  * The owner answers a request (`POST` `routes::ROOM_REQUEST`), or its asker withdraws it.
  */
 export type RequestAnswer = ("accept" | "decline" | "withdraw")
@@ -608,6 +628,7 @@ PinRequest?: PinRequest
 Plan?: Plan
 Progress?: Progress
 ProposeResponse?: ProposeResponse
+PullDetail?: PullDetail
 PullRequestState?: PullRequestState
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
@@ -2321,6 +2342,135 @@ target: MapRef
  */
 export interface ProposeResponse {
 proposal: Proposal
+}
+/**
+ * A pull request's view (`GET /api/pulls/{owner}/{repo}/{number}`, ADR 0034): read when opened,
+ * cached 30 s. Titles and bodies are shown as text.
+ */
+export interface PullDetail {
+author: string
+base: string
+/**
+ * The description, as written (plain text, design A4).
+ */
+body?: string
+branch: string
+check_runs?: CheckRun[]
+/**
+ * The folded check runs at the head.
+ */
+checks: (("green" | "red" | "pending") | "none")
+draft: boolean
+files: FilesSummary
+/**
+ * The head is in another repo (ADR 0034: never merged from Rubato).
+ */
+fork?: boolean
+head_sha: string
+/**
+ * The issue the branch names (ADR 0006).
+ */
+issue?: (IssueRef | null)
+merge: MergeOffer
+/**
+ * GitHub's `mergeable`; absent while GitHub is still computing it.
+ */
+mergeable?: (boolean | null)
+merged_at?: (string | null)
+number: number
+/**
+ * Reviews from outside the team: counted, not shown (design A7).
+ */
+outside_reviews?: number
+/**
+ * When GitHub was read for this view; a cached view is at most 30 s old.
+ */
+read_at: string
+repo: string
+/**
+ * The latest review per team reviewer.
+ */
+reviews?: PullReview[]
+state: PullState
+title: string
+url: string
+}
+/**
+ * One check run at the head.
+ */
+export interface CheckRun {
+/**
+ * `success`, `failure`, `neutral`, … once completed.
+ */
+conclusion?: (string | null)
+name: string
+/**
+ * `queued`, `in_progress` or `completed`, as GitHub says.
+ */
+status: string
+url: string
+}
+/**
+ * What the pull request changes, from one page of 100 files.
+ */
+export interface FilesSummary {
+additions: number
+/**
+ * Files on the page read.
+ */
+count: number
+deletions: number
+/**
+ * The [`TOP_FILES`] with the most changed lines.
+ */
+top?: ChangedFile[]
+/**
+ * The page was full: the pull request changes more files than `count`.
+ */
+truncated?: boolean
+}
+/**
+ * One changed file.
+ */
+export interface ChangedFile {
+additions: number
+deletions: number
+path: string
+}
+/**
+ * What *Merge* offers the person, from [`merge_refusal`] with no ask.
+ */
+export interface MergeOffer {
+can_merge: boolean
+/**
+ * Squash when allowed (ADR 0033), else the first allowed.
+ */
+default_method?: (MergeMethod | null)
+/**
+ * The methods the repo allows; empty without the person's facts.
+ */
+methods?: MergeMethod[]
+plan_gate: PlanGate
+/**
+ * Open pull requests whose base is this head branch: a squash makes them conflict
+ * (plan 82 Decision 7).
+ */
+stacked_above?: number
+/**
+ * A [`reason`] when `can_merge` is false.
+ */
+why_not?: (string | null)
+}
+/**
+ * The latest review of one team reviewer (ADR 0027's trusted authors).
+ */
+export interface PullReview {
+author: string
+/**
+ * `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` or `DISMISSED`, as GitHub says.
+ */
+state: string
+submitted_at: string
 }
 /**
  * Body of `PUT`: the full order of one lane. Refused when its set of issues differs from what

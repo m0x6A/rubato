@@ -240,6 +240,8 @@ pub mod metric {
     /// Unix seconds of the newest such change, 0 before any; recorded every poll tick while
     /// webhooks are on. `GitHubWebhooksSilent` compares it with the last accepted delivery.
     pub const GITHUB_CATCHUP_LAST_CHANGE_AT: &str = "rubato.github.catchup.last_change_at";
+    /// Pull request views by outcome (`cached`, `fetched`, `failed`), issue #82, ADR 0034.
+    pub const PULLS_VIEW_FETCHES: &str = "rubato.pulls.view_fetches";
 }
 
 /// Span names.
@@ -407,6 +409,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GITHUB_WEBHOOK_PENDING_OLDEST,
         metric::GITHUB_CATCHUP_CHANGES,
         metric::GITHUB_CATCHUP_LAST_CHANGE_AT,
+        metric::PULLS_VIEW_FETCHES,
         metric::SESSION_MESSAGES,
         metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
         metric::COMPANIONS_BY_CAPABILITY,
