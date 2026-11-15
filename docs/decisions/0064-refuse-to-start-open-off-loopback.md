@@ -1,8 +1,8 @@
 # 0064. Refuse to start open to anyone unless the server is local or the operator opts in
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, issue m0x6A/rubato#169), proposed; a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/169#issuecomment-6892513103 (self); drafted by agent (Claude Code, issue m0x6A/rubato#169), proposed
 - **Seam:** web-server
 - **Issue:** m0x6A/rubato#169
 
