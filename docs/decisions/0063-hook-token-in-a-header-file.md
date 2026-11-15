@@ -1,8 +1,8 @@
 # 0063. Pass the hook token to curl in a 0600 header file, and read only capped transcripts under the Claude projects dir
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (m0x6A/rubato#167); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/167#issuecomment-6892512493 (self); drafted by agent (m0x6A/rubato#167)
 - **Seam:** companion-claude-code
 - **Issue:** m0x6A/rubato#167
 
