@@ -29,6 +29,34 @@ pub enum StateSource {
     Scraped,
     /// The companion just launched it; no event yet.
     Launch,
+    /// A headless companion holds the session's turn as its own child process (ADR 0062): the
+    /// turn's end, reply and liveness come from that process, not from tmux or hooks. Sent only
+    /// to a server that announced `session_stop`.
+    Headless,
+}
+
+/// What kind of client a companion is (ADR 0062). Every client has one owner and never approves.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientKind {
+    /// Sessions in the developer's tmux, input pasted into the pane.
+    #[default]
+    Interactive,
+    /// No terminal: each turn is a `claude -p` child process the companion holds.
+    Headless,
+}
+
+impl ClientKind {
+    pub fn is_interactive(&self) -> bool {
+        matches!(self, Self::Interactive)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Headless => "headless",
+        }
+    }
 }
 
 impl SessionStatus {
@@ -56,7 +84,13 @@ impl SessionStatus {
 
 impl StateSource {
     /// Every source, for the gauges that also report zero. Checked like `SessionStatus::ALL`.
-    pub const ALL: [Self; 4] = [Self::Hook, Self::TmuxIde, Self::Scraped, Self::Launch];
+    pub const ALL: [Self; 5] = [
+        Self::Hook,
+        Self::TmuxIde,
+        Self::Scraped,
+        Self::Launch,
+        Self::Headless,
+    ];
 
     /// The source as the protocol spells it on the wire.
     pub fn name(self) -> &'static str {
@@ -65,6 +99,7 @@ impl StateSource {
             Self::TmuxIde => "tmux_ide",
             Self::Scraped => "scraped",
             Self::Launch => "launch",
+            Self::Headless => "headless",
         }
     }
 
@@ -153,6 +188,13 @@ pub struct SessionState {
     /// older companion and for a block tmux-ide reported: read as mid-turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_by: Option<BlockCause>,
+    /// The Rubato launch this session belongs to, when Rubato launched it (ADR 0051).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_id: Option<Uuid>,
+    /// The companion restarted and could not take its old hook port back, so this launched
+    /// session's hooks go nowhere: chat and mirroring need a relaunch (plan 122 §D1).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hooks_lost: bool,
 }
 
 impl SessionState {
@@ -223,6 +265,8 @@ mod tests {
             spend_usd: None,
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         };
         (s, now)
     }

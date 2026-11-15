@@ -1,10 +1,42 @@
 //! tmux as a CLI, honouring a private socket directory. Pane *metadata* only (cwd, command,
-//! ids); pane content is never read. State comes from hooks and tmux-ide.
+//! ids); pane content is never read. State comes from hooks and tmux-ide. The one write into a
+//! pane is [`SessionInput::paste`] (ADR 0051, amending ADR 0003 for typed input).
 
 use crate::kernel::proc;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// The port that types text into a session (plan 122 §D1). Its first adapter is [`Tmux`]; a
+/// second (a headless turn, plan 122 PR 11) can come later. Blocking: call from
+/// `spawn_blocking`.
+pub trait SessionInput: Send + Sync {
+    /// Type `text` into `target` (a tmux pane id or session name) and press Enter, exactly
+    /// once. `key` names the transient buffer, so two pastes never share one.
+    fn paste(&self, target: &str, key: &str, text: &str) -> Result<()>;
+}
+
+impl SessionInput for Tmux {
+    /// `load-buffer` from stdin (the text never touches argv or a file), `paste-buffer -p -d`
+    /// (bracketed paste when the program asked for it; the buffer is deleted after), then
+    /// `send-keys Enter`. The spike in plan 122 showed the prompt arrives byte for byte.
+    fn paste(&self, target: &str, key: &str, text: &str) -> Result<()> {
+        let buffer = format!("rubato-{key}");
+        self.run_input(
+            &["load-buffer", "-b", &buffer, "-"],
+            text.as_bytes().to_vec(),
+        )
+        .context("tmux load-buffer")?;
+        if let Err(e) = self.run(&["paste-buffer", "-p", "-d", "-b", &buffer, "-t", target]) {
+            // Nothing was typed; leave no buffer behind.
+            let _ = self.run(&["delete-buffer", "-b", &buffer]);
+            return Err(e.context("tmux paste-buffer"));
+        }
+        self.run(&["send-keys", "-t", target, "Enter"])
+            .context("tmux send-keys Enter")?;
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Tmux {
@@ -56,10 +88,27 @@ impl Tmux {
             &format!("{} {}", self.command, args.join(" ")),
             self.timeout,
         )?;
+        Self::stdout_of(out, &self.command, args)
+    }
+
+    /// As `run`, with `input` on stdin.
+    fn run_input(&self, args: &[&str], input: Vec<u8>) -> Result<String> {
+        let mut c = self.cmd();
+        c.args(args);
+        let out = proc::output_with_stdin(
+            c,
+            &format!("{} {}", self.command, args.join(" ")),
+            self.timeout,
+            input,
+        )?;
+        Self::stdout_of(out, &self.command, args)
+    }
+
+    fn stdout_of(out: std::process::Output, command: &str, args: &[&str]) -> Result<String> {
         if !out.status.success() {
             bail!(
                 "{} {} failed: {}",
-                self.command,
+                command,
                 args.join(" "),
                 String::from_utf8_lossy(&out.stderr).trim()
             );
@@ -207,5 +256,146 @@ mod tests {
             "pantry@issue-7-restock"
         );
         assert_eq!(super::session_name("acme/my.repo", "a:b"), "my-repo@a-b");
+    }
+
+    /// The paste on a real, private tmux server: the pane's program reads exactly the text, its
+    /// lines intact, then the Enter. No buffer is left behind.
+    #[test]
+    fn paste_types_the_text_once_into_a_real_pane() {
+        // Unix socket paths are short-limited: keep the socket dir under /tmp.
+        let dir = tempfile::Builder::new()
+            .prefix("rubato-paste-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let tmux = Tmux::new("tmux", Some(dir.path().to_path_buf()));
+        let typed = dir.path().join("typed");
+        let pane = tmux
+            .new_session("paste", dir.path(), &format!("cat > '{}'", typed.display()))
+            .unwrap();
+        let text = "line one\nline two\nline three, with 'quotes' and \"more\"";
+        let pasted = tmux.paste(&pane, "k1", text);
+        let mut got = String::new();
+        for _ in 0..100 {
+            got = std::fs::read_to_string(&typed).unwrap_or_default();
+            if got.lines().count() >= 3 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let buffers = tmux.run(&["list-buffers", "-F", "#{buffer_name}"]);
+        tmux.kill_server();
+        pasted.unwrap();
+        assert_eq!(got, format!("{text}\n"));
+        assert!(
+            !buffers.unwrap_or_default().contains("rubato-k1"),
+            "the buffer is deleted after the paste"
+        );
+    }
+
+    /// A paste that fails names its step, types nothing more, and deletes its buffer. The
+    /// stand-in records each call and keeps what `load-buffer` read from stdin.
+    #[test]
+    fn a_failed_paste_says_which_step_and_deletes_its_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let calls = dir.path().join("calls");
+        let stdin = dir.path().join("stdin");
+        let tmux = standin(
+            dir.path(),
+            &format!(
+                "echo \"$*\" >> '{}'\ncase \"$1\" in\n  load-buffer) cat > '{}' ;;\n  paste-buffer) echo 'no such pane' >&2; exit 1 ;;\nesac",
+                calls.display(),
+                stdin.display()
+            ),
+        );
+        let e = tmux.paste("%9", "k2", "hello\nworld").unwrap_err();
+        assert!(format!("{e:#}").contains("tmux paste-buffer"), "{e:#}");
+        assert!(format!("{e:#}").contains("no such pane"), "{e:#}");
+        assert_eq!(std::fs::read_to_string(&stdin).unwrap(), "hello\nworld");
+        let calls = std::fs::read_to_string(&calls).unwrap();
+        assert_eq!(
+            calls.lines().collect::<Vec<_>>(),
+            [
+                "load-buffer -b rubato-k2 -",
+                "paste-buffer -p -d -b rubato-k2 -t %9",
+                "delete-buffer -b rubato-k2",
+            ],
+            "no Enter after a failed paste"
+        );
+    }
+
+    /// Every subcommand that reads what a pane shows. Spelled in parts so this file does not
+    /// match its own scan.
+    fn pane_reads() -> Vec<String> {
+        [["capture", "pane"], ["pipe", "pane"]]
+            .iter()
+            .flat_map(|[a, b]| {
+                // The long names, and the aliases tmux also takes: the first word and one letter.
+                [format!("{a}-{b}"), format!("{a}{}", &b[..1])]
+            })
+            .collect()
+    }
+
+    /// The (file, needle) pairs in `files` that read a pane.
+    fn scan(files: &[(String, String)]) -> Vec<(String, String)> {
+        let needles = pane_reads();
+        files
+            .iter()
+            .flat_map(|(path, text)| {
+                needles
+                    .iter()
+                    .filter(|n| text.contains(n.as_str()))
+                    .map(|n| (path.clone(), n.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn rust_files(dir: &Path, out: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push((
+                    path.display().to_string(),
+                    std::fs::read_to_string(&path).unwrap(),
+                ));
+            }
+        }
+    }
+
+    /// AGENTS.md and ADR 0003: the companion writes into a pane and never reads one; replies
+    /// come from hooks (plan 122, "What it must not break").
+    #[test]
+    fn the_companion_never_reads_a_pane() {
+        let mut files = Vec::new();
+        rust_files(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut files,
+        );
+        assert!(files.len() > 30, "scanned only {} files", files.len());
+        let hits = scan(&files);
+        assert!(hits.is_empty(), "pane reads in the companion: {hits:?}");
+
+        // Must fail: the same scan over fixtures that read a pane reports each one.
+        let mut fixtures = Vec::new();
+        rust_files(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pane_reads"),
+            &mut fixtures,
+        );
+        let caught = scan(&fixtures);
+        assert_eq!(fixtures.len(), 2, "{fixtures:?}");
+        for (path, _) in &fixtures {
+            assert!(
+                caught.iter().any(|(p, _)| p == path),
+                "{path} reads a pane and was not caught"
+            );
+        }
+        println!(
+            "scanned {} files for {} pane reads: none; {} must-fail fixtures caught",
+            files.len(),
+            pane_reads().len(),
+            fixtures.len()
+        );
     }
 }

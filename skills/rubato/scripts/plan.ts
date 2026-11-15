@@ -7,6 +7,14 @@
  *   plan.ts path  --issue <owner/name#n> --slug <slug> [--cwd <repo>]
  *   plan.ts check [<plan path>] [--cwd <repo>]
  *   plan.ts sha   [<plan path>] [--cwd <repo>]
+ *   plan.ts handoff --approval <uuid> --sha <plan sha> --bundle <bundle hash> --by <login> --at <rfc3339> [--self] --url <rubato url> [--cwd <repo>]
+ *
+ * `handoff` (ADR 0055) runs once a plan drafted in Rubato is approved there: the approval record
+ * into the front matter, the pinned ADRs accepted (map repo only), one commit of the plan and its
+ * bundle, the push. It prints one `rubato.plan.handoff` line and posts it to the companion when
+ * `RUBATO_HOOK_URL` and `RUBATO_HOOK_TOKEN` are set. Exit codes (`HANDOFF_EXIT`): 0 committed,
+ * 2 error, 7 plan_changed, 8 bundle_changed, 9 adr_changed, 10 push_failed (committed; run it
+ * again to push). Nothing is written on 7, 8 or 9.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -103,6 +111,12 @@ See the O-rows.
 | # | Decision | Chosen | Alternatives | Scope |
 | --- | --- | --- | --- | --- |
 | A1 | | | | node |
+
+## Decisions
+
+<!-- Each decision made while planning, recorded as it is made (ADR 0056), so the approval covers it and the handoff commits it: | # | Decision | Chosen | Why | Decided by |. Write "None." when there are none. -->
+
+None.
 
 ## O-rows
 
@@ -361,6 +375,11 @@ function opt(argv: string[], name: string): string | undefined {
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   const cwd = resolve(opt(rest, "--cwd") ?? process.cwd());
+  if (cmd === "handoff") {
+    // Its own errors end in a `rubato.plan.handoff` line, not only in a message.
+    const { handoffMain } = await import("./lib/handoff.ts");
+    return handoffMain(rest, cwd, loadWorkspace, { planPath: planPathFromBranch });
+  }
   try {
     const given = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd")[0];
     if (cmd === "sha" && given) {
@@ -424,7 +443,7 @@ async function main(argv: string[]): Promise<number> {
       console.log(JSON.stringify(r.line));
       return r.ok ? 0 : 1;
     }
-    console.error("usage: plan.ts init|path|check|sha|wait|adrs-pin ...");
+    console.error("usage: plan.ts init|path|check|sha|wait|adrs-pin|handoff ...");
     return 2;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));

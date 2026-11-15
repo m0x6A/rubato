@@ -25,13 +25,15 @@ pub async fn reconcile(app: &App) {
     let now = Utc::now();
     let mut stuck = 0u64;
     for i in rows {
-        let found = approvals.iter().map(|(a, _)| a).find(|a| {
-            a.issue == i.issue
+        let found = approvals.iter().map(|(a, _)| a).find_map(|a| {
+            let id = a.comment_id?;
+            (a.issue == i.issue
                 && a.author == i.login
-                && a.sha.as_deref().is_some_and(|s| i.sha.starts_with(s))
+                && a.sha.as_deref().is_some_and(|s| i.sha.starts_with(s)))
+            .then_some((id, a))
         });
-        if let Some(a) = found {
-            match store::posted(&app.db, &i, a.comment_id, &a.url).await {
+        if let Some((comment_id, a)) = found {
+            match store::posted(&app.db, &i, comment_id, &a.url).await {
                 Ok(()) => {
                     tracing::info!(rubato.issue = %i.issue, login = %i.login, "approval found in the comments")
                 }
