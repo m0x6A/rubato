@@ -19,8 +19,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use rubato_protocol::room::{reason, routes};
 use rubato_protocol::{
-    CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer, RequestAnswerBody,
-    RequestState, RoomAgent, RoomKey, RoomRequest, SessionStatus, capability,
+    CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer,
+    RequestAnswerBody, RequestState, RoomAgent, RoomKey, RoomRequest, SessionStatus, capability,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;

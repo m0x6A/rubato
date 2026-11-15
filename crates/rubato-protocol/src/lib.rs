@@ -97,9 +97,9 @@ pub use progress::{
 pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use room::{
-    CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer, RequestAnswerBody,
-    RequestState, RoomAgent, RoomAuthorKind, RoomKey, RoomMessage, RoomPostRequest, RoomReply,
-    RoomRequest, RoomView, SeamNotice, addressed_handles, agent_handle,
+    CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer,
+    RequestAnswerBody, RequestState, RoomAgent, RoomAuthorKind, RoomKey, RoomMessage,
+    RoomPostRequest, RoomReply, RoomRequest, RoomView, SeamNotice, addressed_handles, agent_handle,
 };
 pub use session::{
     BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
