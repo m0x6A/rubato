@@ -15,16 +15,28 @@ interface Mergeable {
   parentId?: string;
 }
 
-/** `wanted` in its order, each taking over what `current` holds for the same id. */
+/** What React Flow writes onto a node it draws: kept across refreshes. Everything else is what is wanted. */
+const LEARNED = ["measured", "selected", "dragging"] as const;
+
+/**
+ * `wanted` in its order, each keeping what React Flow learned about the node already there (its
+ * measurement, its selection, whether it is being dragged). Everything else comes from what is
+ * wanted, so a box's new size, a part's box and whether a node can be dragged follow the view
+ * (issue #144: a box kept its first size).
+ */
 export function mergeNodes<N extends Mergeable>(current: N[], wanted: N[]): N[] {
   const byId = new Map(current.map((n) => [n.id, n]));
   return wanted.map((w) => {
-    const have = byId.get(w.id);
+    const have = byId.get(w.id) as Record<string, unknown> | undefined;
     if (!have) {
       return w;
     }
-    // The parent follows what is wanted, so leaving the grouping takes a part out of its box.
-    const { parentId: _was, ...kept } = have;
-    return (w.parentId ? { ...kept, position: w.position, data: w.data, parentId: w.parentId } : { ...kept, position: w.position, data: w.data }) as N;
+    const out: Record<string, unknown> = { ...(w as unknown as Record<string, unknown>) };
+    for (const k of LEARNED) {
+      if (have[k] !== undefined && out[k] === undefined) {
+        out[k] = have[k];
+      }
+    }
+    return out as N;
   });
 }

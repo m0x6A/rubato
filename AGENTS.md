@@ -101,7 +101,7 @@ pairing         device-code pairing, the caller's pairings      pairing_codes, p
 companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
 pins            pin an issue to a node or seam, Map: lines      pins, map_line_pins
 launch          start a session through your own companion      launches, cap_hits
-layout          where each part sits on the shared map          map_layout
+layout          where each part sits on the shared map, and in By repo  map_layout, map_layout_grouped
 map             load and serve each workspace's map, the list    map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
 new_issue       create an issue as the App, pinned where begun  issue_creations
@@ -152,7 +152,7 @@ plan_mirror    plan bundle of a launched session at settle points               
 live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
 chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
-map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout; POST, DELETE /api/traffic/dismissals
+map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout, DELETE /api/layout/grouped; POST, DELETE /api/traffic/dismissals
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue, headless badge), revoke  POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
@@ -182,7 +182,7 @@ pins       IssuePin, PinRequest; PINS
 issue_body the Map: line (parse_map_line, parse_map_placement, map_line_in), MapPlacement, PinSuggestion
 issue_new  NewIssueRequest, NewIssueResponse, render_issue, the Rubato-Request: line; ISSUES
 launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
-layout     MapLayout, Position; LAYOUT
+layout     MapLayout (flat and By repo), Position; LAYOUT, LAYOUT_GROUPED
 map        SystemMap, Scenario, MapResponse; MAP, MAP_RELOAD
 map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_RESTORE, DRAFT_YAML, DRAFT_PROPOSE, DRAFT_WITHDRAW
 plan       Plan and its affected parts, O-rows, assumptions, decisions, the approval record

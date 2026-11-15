@@ -614,3 +614,253 @@ test("a ghost taken into the draft becomes a part with its service, and its call
   await panel.getByRole("button", { name: "Discard draft" }).click();
   await expect(panel).toContainText("empty");
 });
+
+// Issue #144: the By repo grouping, readable and arranged by the team (ADR 0068). These run last
+// in this file, after the flat layout's own test, and leave every arrangement as they found it.
+const DEV = { "x-rubato-dev-user": "m0x6A" };
+const BOX = "repo-box-m0x6A/rubato";
+const PAD = { left: 24, top: 48 };
+
+async function byRepo(page: Page): Promise<void> {
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  await page.getByRole("button", { name: "By repo" }).click();
+  await expect(page.getByTestId(BOX)).toBeVisible();
+}
+
+/** A node's top-left on the canvas; for a part in a box, relative to its box. */
+async function inBox(page: Page, id: string, box = "repo:m0x6A/rubato"): Promise<{ x: number; y: number }> {
+  const p = await canvasPosition(page, id);
+  const b = await canvasPosition(page, box);
+  return { x: p.x - b.x, y: p.y - b.y };
+}
+
+async function dragBy(page: Page, target: ReturnType<Page["getByTestId"]>, dx: number, dy: number): Promise<void> {
+  const r = (await target.boundingBox())!;
+  const at = { x: r.x + Math.min(40, r.width / 2), y: r.y + Math.min(14, r.height / 2) };
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  await page.mouse.move(at.x + dx / 2, at.y + dy / 2, { steps: 6 });
+  await page.mouse.move(at.x + dx, at.y + dy, { steps: 6 });
+  await page.mouse.up();
+}
+
+async function partIds(page: Page): Promise<string[]> {
+  return page.locator(".react-flow__node-map").evaluateAll((ns) => ns.map((n) => (n as HTMLElement).dataset["id"] ?? ""));
+}
+
+async function flatPositions(page: Page): Promise<Record<string, { x: number; y: number }>> {
+  const out: Record<string, { x: number; y: number }> = {};
+  for (const id of await partIds(page)) {
+    out[id] = await canvasPosition(page, id);
+  }
+  return out;
+}
+
+async function clearGrouped(page: Page, ws = ""): Promise<void> {
+  const r = await page.request.delete(`${base}${ws ? `/api/w/${ws}` : "/api"}/layout/grouped`, { headers: DEV });
+  expect(r.status()).toBe(200);
+}
+
+for (const lens of ["Structure", "Data flow", "Control flow"]) {
+  test(`By repo on the team's map, ${lens} lens: no chip, label or badge overlaps another or a part card, and every name is readable`, async ({ page }) => {
+    await page.goto("/");
+    await byRepo(page);
+    await page.getByRole("radio", { name: new RegExp(`^${lens}`) }).click();
+    await page.waitForTimeout(300);
+    const boxes = await page.evaluate(() => {
+      const rect = (e: Element, what: string) => {
+        const r = e.getBoundingClientRect();
+        return { what, x: r.left, y: r.top, w: r.width, h: r.height };
+      };
+      return [
+        ...[...document.querySelectorAll(".seam-label")].map((e) => rect(e, (e.textContent ?? "").slice(0, 40))),
+        ...[...document.querySelectorAll(".react-flow__node-map")].map((e) => rect(e, `part ${(e as HTMLElement).dataset["id"]}`)),
+      ];
+    });
+    const clash: string[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i]!;
+        const b = boxes[j]!;
+        if (a.what.startsWith("part ") && b.what.startsWith("part ")) {
+          continue;
+        }
+        if (a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1) {
+          clash.push(`${a.what} / ${b.what}`);
+        }
+      }
+    }
+    console.log(`${lens}: checked ${boxes.length} labels and cards`);
+    expect(clash).toEqual([]);
+    // Every part's name is whole: not clipped by its card.
+    const clipped = await page.locator(".react-flow__node-map .id").evaluateAll((ns) => ns.filter((n) => n.scrollWidth > n.clientWidth + 1).map((n) => n.textContent));
+    expect(clipped).toEqual([]);
+  });
+}
+
+test("By repo: a part dragged inside its box stays there for everyone and after a reload; By repo off brings back the flat map exactly", async ({ page, browser }) => {
+  const other = await (await browser.newContext({ baseURL: base })).newPage();
+  await page.goto("/");
+  await other.goto("/");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  const flat = await flatPositions(page);
+  await byRepo(page);
+  await byRepo(other);
+  const before = await inBox(page, "web");
+
+  await dragBy(page, page.getByTestId("node-web"), 40, 160);
+  const after = await inBox(page, "web");
+  expect(after).not.toEqual(before);
+  // Inside its box.
+  const box = (await page.getByTestId(BOX).boundingBox())!;
+  const part = (await page.getByTestId("node-web").boundingBox())!;
+  expect(part.x >= box.x && part.y >= box.y && part.x + part.width <= box.x + box.width + 1 && part.y + part.height <= box.y + box.height + 1).toBe(true);
+  // The second browser follows over the websocket, box size included.
+  await expect.poll(() => inBox(other, "web")).toEqual(after);
+  await expect.poll(async () => (await other.locator(`.react-flow__node[data-id="repo:m0x6A/rubato"]`).evaluate((n) => (n as HTMLElement).style.height))).toBe(await page.locator(`.react-flow__node[data-id="repo:m0x6A/rubato"]`).evaluate((n) => (n as HTMLElement).style.height));
+
+  // Still there after a reload, with By repo on again.
+  await page.reload();
+  await byRepo(page);
+  await expect.poll(() => inBox(page, "web")).toEqual(after);
+
+  // By repo off: every part is where the flat map has it, untouched by the grouping.
+  await page.getByRole("button", { name: "By repo" }).click();
+  await expect(page.getByTestId(BOX)).toHaveCount(0);
+  await expect.poll(() => flatPositions(page)).toEqual(flat);
+  const stored = await (await page.request.get(`${base}/api/overview`, { headers: DEV })).json();
+  expect(Object.keys(stored.layout.positions ?? {})).toEqual([]);
+  expect(stored.layout.grouped.web).toBeDefined();
+
+  await clearGrouped(page);
+  await other.context().close();
+});
+
+test("By repo: a part dragged past its box's edge stays inside; a box moves with its parts", async ({ page }) => {
+  await page.goto("/");
+  await byRepo(page);
+  // Past the left edge (and a little down): it stops at the box's padding.
+  const was = await inBox(page, "web");
+  await dragBy(page, page.getByTestId("node-web"), -400, 30);
+  await expect.poll(() => inBox(page, "web").then((p) => p.y)).toBeGreaterThan(was.y);
+  await expect.poll(() => inBox(page, "web").then((p) => p.x)).toBe(PAD.left);
+
+  // The box, by its name bar: every part in it moves by the same offset, the externals do not.
+  const ids = await partIds(page);
+  const inside = new Map<string, { x: number; y: number }>();
+  for (const id of ids) {
+    inside.set(id, await canvasPosition(page, id));
+  }
+  const boxAt = await canvasPosition(page, "repo:m0x6A/rubato");
+  await dragBy(page, page.locator(".repo-box-frame").first(), 0, 120);
+  await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato").then((p) => p.y)).toBeGreaterThan(boxAt.y);
+  const moved = await canvasPosition(page, "repo:m0x6A/rubato");
+  const d = { x: moved.x - boxAt.x, y: moved.y - boxAt.y };
+  const externals = map.nodes.filter((n) => !(n as { repo?: string }).repo).map((n) => n.id);
+  for (const id of ids) {
+    const was = inside.get(id)!;
+    const want = externals.includes(id) ? was : { x: was.x + d.x, y: was.y + d.y };
+    expect(await canvasPosition(page, id), id).toEqual(want);
+  }
+  // Saved for the team (the write follows the drop after a short pause), and after a reload the same.
+  await expect.poll(async () => (await (await page.request.get(`${base}/api/overview`, { headers: DEV })).json()).layout.boxes?.["m0x6A/rubato"]).toBeDefined();
+  await page.reload();
+  await byRepo(page);
+  await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato")).toEqual(moved);
+  await expect.poll(() => inBox(page, "web").then((p) => p.x)).toBe(PAD.left);
+
+  // Auto-arrange in By repo clears only the grouping, for everyone; Undo brings it back.
+  await page.getByRole("button", { name: "Auto-arrange" }).click();
+  await expect(page.getByRole("status")).toContainText("By repo auto-arranged for everyone: 2 saved positions removed");
+  await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato")).not.toEqual(moved);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByRole("status")).toContainText("The saved positions are back");
+  await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato")).toEqual(moved);
+  await clearGrouped(page);
+});
+
+test("By repo in a workspace with two repos: a part or a box dropped on the other box goes back", async ({ page }) => {
+  await page.goto("/?w=shop");
+  await expect(page.getByTestId("node-storefront")).toBeVisible();
+  await page.getByRole("button", { name: "By repo" }).click();
+  const ledger = page.getByTestId("repo-box-acme/ledger");
+  await expect(ledger).toBeVisible();
+  const start = await canvasPosition(page, "storefront");
+  const target = (await ledger.boundingBox())!;
+  const from = (await page.getByTestId("node-storefront").boundingBox())!;
+  await dragBy(page, page.getByTestId("node-storefront"), target.x + target.width / 2 - from.x - 40, target.y + target.height / 2 - from.y - 14);
+  await expect.poll(() => canvasPosition(page, "storefront")).toEqual(start);
+  // The shop box by its name bar onto the ledger box: back too.
+  const shopAt = await canvasPosition(page, "repo:acme/shop");
+  const shopBar = page.getByTestId("repo-box-acme/shop").locator(".repo-box-frame");
+  const bar = (await shopBar.boundingBox())!;
+  await dragBy(page, shopBar, target.x + 30 - bar.x, target.y + 10 - bar.y);
+  await expect.poll(() => canvasPosition(page, "repo:acme/shop")).toEqual(shopAt);
+  const ov = await (await page.request.get(`${base}/api/w/shop/overview`, { headers: DEV })).json();
+  expect(ov.layout.grouped ?? {}).toEqual({});
+  expect(ov.layout.boxes ?? {}).toEqual({});
+});
+
+test("By repo: a bundle opens on hover and on a selected part; a flow label reads in full on hover", async ({ page }) => {
+  await page.goto("/");
+  await byRepo(page);
+  const badge = page.getByTestId("bundle-skill-rubato|system-map");
+  await expect(badge).toHaveText("1 seam");
+  await expect(page.getByTestId("seam-skill-system-map")).toHaveCount(0);
+  // The seams that leave the repo are always drawn.
+  await expect(page.getByTestId("seam-server-github")).toBeVisible();
+  await badge.hover();
+  await expect(page.getByTestId("seam-skill-system-map")).toBeVisible();
+  await page.mouse.move(5, 5);
+  await expect(page.getByTestId("seam-skill-system-map")).toHaveCount(0);
+  await page.getByTestId("node-skill-rubato").click();
+  await expect(page.getByTestId("seam-skill-system-map")).toBeVisible();
+  await expect(page.getByTestId("seam-skill-plan-file")).toBeVisible();
+  // Its warning stays on the badge: companion-server has two open plans touching it.
+  await page.getByTestId("inspector").getByRole("button", { name: "Close" }).click();
+  await expect(page.getByTestId("bundle-rubato-companion|rubato-server")).toContainText("⚠");
+
+  // Data flow: a long flow label is clipped until hovered, then read whole.
+  await page.getByRole("radio", { name: /^Data flow/ }).click();
+  const label = page.getByTestId("flow-server-github#data-0");
+  const clipped = () => label.locator(".flow-text").evaluate((e) => e.scrollWidth > e.clientWidth + 1);
+  expect(await clipped()).toBe(true);
+  await label.hover();
+  await expect.poll(clipped).toBe(false);
+});
+
+test("By repo: issues drop on a part and on a seam inside a box, New issue here… opens, and Edit map turns the grouping off", async ({ page }) => {
+  await page.goto("/");
+  await byRepo(page);
+  const backlog = page.getByTestId("backlog");
+  await backlog.getByTestId("backlog-row-917").dragTo(page.getByTestId("node-plan-check"));
+  const detail = page.getByTestId("issue-detail");
+  await expect(detail).toContainText("m0x6A/rubato#917");
+  await expect(detail).toContainText("node plan-check");
+  await page.getByRole("button", { name: "← all issues" }).click();
+  // Onto a seam in a bundle: the bundle opens under the dragged issue, and the drop lands on its chip.
+  await backlog.getByTestId("backlog-row-918").dragTo(page.getByTestId("bundle-skill-rubato|system-map"));
+  await expect(detail).toContainText("m0x6A/rubato#918");
+  await expect(detail).toContainText("seam skill-system-map");
+  await page.getByRole("button", { name: "← all issues" }).click();
+
+  await page.getByTestId("node-web").click();
+  await page.getByTestId("inspector").getByTestId("new-issue-here").click();
+  await expect(page.getByTestId("new-issue")).toBeVisible();
+  await page.goto("/");
+  await byRepo(page);
+
+  await page.getByRole("button", { name: "Edit map" }).click();
+  await expect(page.getByTestId(BOX)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "By repo" })).toBeDisabled();
+  await page.getByRole("button", { name: "Edit map" }).click();
+  await expect(page.getByTestId(BOX)).toBeVisible();
+
+  for (const [n, target] of [
+    [917, { kind: "node", id: "plan-check" }],
+    [918, { kind: "seam", id: "skill-system-map" }],
+  ] as const) {
+    const r = await page.request.delete(`${base}/api/pins`, { headers: DEV, data: { issue: { repo: "m0x6A/rubato", number: n }, target } });
+    expect(r.ok()).toBe(true);
+  }
+});

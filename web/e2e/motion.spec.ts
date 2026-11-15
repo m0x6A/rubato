@@ -193,3 +193,41 @@ test("must fail: with full motion the pulse animates and the canvas moves", asyn
   const running = await page.evaluate(() => document.querySelectorAll(".particle").length);
   expect(running).toBeGreaterThan(0);
 });
+
+// Issue #144: inside a By repo box, a closed bundle draws no particles and no chevrons; opened
+// (here by selecting a part), its seams draw them as the flat map does, still under reduced motion.
+async function byRepoWithWebSelected(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "By repo" }).click();
+  await expect(page.getByTestId("repo-box-m0x6A/rubato")).toBeVisible();
+  await expect(page.getByTestId("bundle-rubato-server|web")).toBeVisible();
+  await expect(page.locator('[data-flow^="web-server#"]')).toHaveCount(0);
+  await expect(page.locator('[data-traffic="web-server"]')).toHaveCount(0);
+  await page.getByTestId("node-web").click();
+  await expect(page.getByTestId("seam-web-server")).toBeVisible();
+}
+
+test("reduced motion, By repo: an opened bundle's flows and chevrons are still", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await routeOverview(page, freshTraffic);
+  await setUp(page);
+  await page.getByRole("radio", { name: /^Data flow/ }).click();
+  await byRepoWithWebSelected(page);
+  const flows = page.locator('[data-flow^="web-server#"]');
+  expect(await flows.count()).toBeGreaterThan(0);
+  expect(await page.locator('[data-flow^="web-server#"]:not(.still)').count()).toBe(0);
+  await page.getByRole("radio", { name: "Traffic" }).click();
+  // web-server: 20/min forward (2), 0.5/min back (1), one still chevron per direction.
+  await expect(page.locator('[data-traffic="web-server"]')).toHaveCount(2);
+  expect(await page.locator('[data-traffic="web-server"]:not(.still)').count()).toBe(0);
+  expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
+});
+
+test("must fail: with full motion, By repo, an opened bundle's flows travel", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await setUp(page);
+  await page.getByRole("radio", { name: /^Data flow/ }).click();
+  await byRepoWithWebSelected(page);
+  const moving = page.locator('[data-flow^="web-server#"]:not(.still)');
+  expect(await moving.count()).toBeGreaterThan(0);
+  expect(await moving.first().evaluate((e) => e.getAnimations().length)).toBeGreaterThan(0);
+});

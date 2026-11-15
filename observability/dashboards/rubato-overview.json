@@ -982,12 +982,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Accepted writes to the shared map layout: a part dragged to a new place, or the layout cleared with Auto-arrange (an info log line 'layout cleared' with rubato.user). If people see different maps and this moves, the write landed: look at 'Web clients' and at 'Events dropped' with reason web_lagged. If it does not move, look at 'Web writes rejected' for /api/layout.",
+      "description": "Accepted writes to the shared map layout, by arrangement: flat is the map (ADR 0016), grouped the By repo grouping (ADR 0068). A part or box dragged to a new place, or an arrangement cleared with Auto-arrange (info lines 'layout written' and 'layout cleared' with rubato.user and rubato.layout.arrangement). A flat count that moves while people only use By repo means a grouped move reached the flat map. If people see different maps and this moves, the write landed: look at 'Web clients' and at 'Events dropped' with reason web_lagged. If it does not move, look at 'Web writes rejected' for /api/layout.",
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(rubato_layout_writes_total[1h]))",
-          "legendFormat": "writes"
+          "expr": "sum by (rubato_layout_arrangement) (increase(rubato_layout_writes_total[1h]))",
+          "legendFormat": "{{rubato_layout_arrangement}}"
         }
       ],
       "fieldConfig": {
