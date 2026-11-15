@@ -10,6 +10,13 @@
       "default": 600,
       "minimum": 0
     },
+    "draft_max_bytes": {
+      "description": "The largest plan bundle the companion mirrors (ADR 0053); a larger one is sent without\nits files, refused as too large.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 1048576,
+      "minimum": 0
+    },
     "github_poll_interval_secs": {
       "description": "How often the server polls GitHub for PRs, checks and decision comments per live issue.",
       "type": "integer",
@@ -29,6 +36,48 @@
       "type": "integer",
       "format": "uint64",
       "default": 60,
+      "minimum": 0
+    },
+    "room_agent_idle_secs": {
+      "description": "An agent not addressed for this long leaves the room (ADR 0057).",
+      "type": "integer",
+      "format": "uint64",
+      "default": 1800,
+      "minimum": 0
+    },
+    "room_agent_turn_limit": {
+      "description": "Turns made by agents' messages in a row, with no person posting, before Rubato stops.",
+      "type": "integer",
+      "format": "uint32",
+      "default": 3,
+      "minimum": 0
+    },
+    "room_context_max_chars": {
+      "description": "The room context a turn carries, in characters (A9).",
+      "type": "integer",
+      "format": "uint64",
+      "default": 16000,
+      "minimum": 0
+    },
+    "room_message_max_chars": {
+      "description": "The longest room message a person may post, in characters (ADR 0057).",
+      "type": "integer",
+      "format": "uint64",
+      "default": 8000,
+      "minimum": 0
+    },
+    "session_log_max_chars": {
+      "description": "The longest prompt or reply the companion forwards for the session log (ADR 0052); longer\ntext is cut and marked truncated.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 16000,
+      "minimum": 0
+    },
+    "session_message_max_chars": {
+      "description": "The longest session message the companion types (ADR 0051); longer ones are refused.",
+      "type": "integer",
+      "format": "uint64",
+      "default": 8000,
       "minimum": 0
     },
     "session_stale_secs": {

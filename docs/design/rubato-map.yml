@@ -78,11 +78,12 @@ seams:
     carries: CompanionMessage / ServerMessage envelopes, JSON over one outbound websocket
     owner: rubato-server
     guard: protocol JSON Schema snapshot test; both suites replay crates/rubato-protocol/fixtures/
-    description: "Each companion reports what its sessions are doing, and receives launch commands for its own user only. The companion always dials out."
+    description: "Each companion reports what its sessions are doing, and receives launch commands and messages for its own user's sessions only. The companion always dials out."
     flows:
-      - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent, Heartbeat, StaleSession, LaunchResult, CapHit" }
+      - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "LaunchCommand, for the paired user only" }
-      - { kind: control, from: rubato-server, to: rubato-companion, carries: Welcome with limits and the last sequence seen; acks }
+      - { kind: control, from: rubato-server, to: rubato-companion, carries: "Welcome with limits, server capabilities and the last sequence seen; acks" }
+      - { kind: control, from: rubato-server, to: rubato-companion, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn" }
 
   - id: server-github
     from: rubato-server
@@ -95,7 +96,8 @@ seams:
       - { kind: data, from: github, to: rubato-server, carries: "open issues, issue state, Decision: comments, pull requests, check runs, plan files and the map from branches" }
       - { kind: data, from: github, to: rubato-server, carries: "who a login is, and whether the account can access the App installation" }
       - { kind: data, from: github, to: rubato-server, carries: "a pull request's detail when someone opens it: body, reviews, check runs, changed files, mergeable; the person's permission and allowed merge methods" }
-      - { kind: control, from: rubato-server, to: github, carries: "OAuth login redirect; a branch, a commit and a pull request for a map draft; as the person, an Approved: comment and a pull request merge at the head they saw" }
+      - { kind: control, from: rubato-server, to: github, carries: "OAuth login redirect; a branch, a commit and a pull request for a map draft; as the person, an Approved: comment (until the cutover), one link comment per approved plan commit as its approver, and a pull request merge at the head they saw" }
+      - { kind: data, from: github, to: rubato-server, carries: "the last commit to a plan file, for Import" }
 
   - id: companion-tmux-ide
     from: rubato-companion
@@ -111,13 +113,13 @@ seams:
   - id: companion-claude-code
     from: rubato-companion
     to: claude-code
-    carries: hook stdin JSON (async hooks); launch flags (--session-id, --settings, --permission-mode); OTel env (OTEL_RESOURCE_ATTRIBUTES)
+    carries: hook stdin JSON (async hooks); launch flags (--session-id, --settings, --permission-mode); OTel env (OTEL_RESOURCE_ATTRIBUTES); typed input through the session's tmux pane; headless forked turns
     owner: rubato-companion
     guard: Gherkin replays recorded hook payloads per event name; fixtures refreshed on Claude Code upgrade
-    description: "The companion starts Claude Code with a session id, hooks and telemetry attributes, and hears every hook the session fires."
+    description: "The companion starts Claude Code with a session id, hooks and telemetry attributes, and hears every hook the session fires. It types its own user's messages into that session when it waits for input, and runs read-only forked turns for a plan's room."
     flows:
-      - { kind: control, from: rubato-companion, to: claude-code, carries: "launch: --session-id, --settings with hooks, --permission-mode, OTEL_RESOURCE_ATTRIBUTES, the prompt" }
-      - { kind: data, from: claude-code, to: rubato-companion, carries: "hook payloads on stdin (session start, tool use, stop, notification); the transcript with usage" }
+      - { kind: control, from: rubato-companion, to: claude-code, carries: "launch: --session-id, --settings with hooks, --permission-mode, OTEL_RESOURCE_ATTRIBUTES, the prompt; a typed prompt through the session's tmux pane; a headless forked turn in plan mode" }
+      - { kind: data, from: claude-code, to: rubato-companion, carries: "hook payloads on stdin (session start, tool use, stop, notification), with the prompt and the last reply joined by prompt_id; the transcript with usage; a fork's stream-json result" }
 
   - id: skill-plan-file
     from: skill-rubato
@@ -127,18 +129,18 @@ seams:
     guard: skill Vitest writes a plan and runs the plan check on it
     description: "The skill writes the plan in the agreed form at the agreed path, so the team and the plan check can read it."
     flows:
-      - { kind: data, from: skill-rubato, to: plan-file, carries: "plan Markdown: frontmatter, Affected parts, Flows, O-rows, Assumed, Tasks" }
+      - { kind: data, from: skill-rubato, to: plan-file, carries: "plan Markdown: frontmatter, Affected parts, Flows, O-rows, Assumed, Decisions, Tasks; at handoff, the approval record and the accepted ADRs in one commit" }
 
   - id: skill-github
     from: skill-rubato
     to: github
-    carries: "gh in the developer's session: Review: and Decision: comments posted; issue comments read for an approval"
+    carries: "gh in the developer's session: the issue read; until the cutover, Review: and Decision: comments posted and issue comments read for an approval"
     owner: skill-rubato
     guard: skill Vitest against a stub gh on PATH; the comment fixtures shared with rubato-protocol
-    description: "The planning session posts its review and decisions on the issue and waits there for a person's approval, with the developer's own gh."
+    description: "The planning session reads its issue with the developer's own gh. Until the cutover it also posts its review and decisions there and waits for a person's approval; after it, both happen in Rubato."
     flows:
-      - { kind: control, from: skill-rubato, to: github, carries: "Review: and Decision: comments, as the developer" }
-      - { kind: data, from: github, to: skill-rubato, carries: "issue comments: Approved:, Review:, Decision:, with author, association and edit time" }
+      - { kind: control, from: skill-rubato, to: github, carries: "Review: and Decision: comments, as the developer, until the cutover" }
+      - { kind: data, from: github, to: skill-rubato, carries: "the issue; until the cutover, issue comments: Approved:, Review:, Decision:, with author, association and edit time" }
 
   - id: server-plan-file
     from: rubato-server
@@ -148,7 +150,7 @@ seams:
     guard: schema/fixtures/plans/ parsed identically by Rust and TypeScript
     description: "The server reads each issue branch's plan and paints the map with it."
     flows:
-      - { kind: data, from: plan-file, to: rubato-server, carries: "Plan: affected parts, flows, O-rows, assumptions, caps" }
+      - { kind: data, from: plan-file, to: rubato-server, carries: "Plan at the branch head's sha: affected parts, flows, O-rows, assumptions, caps, decisions, the approval record" }
 
   - id: plan-check-plan-file
     from: plan-check
@@ -159,7 +161,7 @@ seams:
     description: The Action reads the same plan and fails the pull request when it names an unknown id or misses an O-row.
     flows:
       - { kind: data, from: plan-file, to: plan-check, carries: Plan parsed with the same rules as the server }
-      - { kind: control, from: plan-check, to: plan-file, carries: "pass or fail on the pull request, with the rubato.plan.check line" }
+      - { kind: control, from: plan-check, to: plan-file, carries: "pass or fail on the pull request, with the rubato.plan.check line; a plan changed after its approval fails" }
 
   - id: skill-system-map
     from: skill-rubato
@@ -190,10 +192,10 @@ seams:
     guard: generated web/src/protocol.ts diffed in CI
     description: "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map."
     flows:
-      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail" }
-      - { kind: control, from: rubato-server, to: web, carries: "WebEvent Changed over /ws/web: fetch the overview again" }
-      - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations" }
-      - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself" }
+      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room" }
+      - { kind: control, from: rubato-server, to: web, carries: "WebEvent Changed over /ws/web: fetch the overview again; Updated: fetch one draft, log or room" }
+      - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages" }
+      - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan" }
 
 # Journeys through the system, step by step over the flows above (ADR 0024). The map view plays
 # them. A step names `carries` only where its seam has two flows with the same kind and direction.
@@ -236,3 +238,21 @@ scenarios:
       - { seam: server-system-map, from: system-map, to: rubato-server, kind: data, says: "the map is validated and loaded" }
       - { seam: web-server, from: rubato-server, to: web, kind: control, says: "browsers are told" }
       - { seam: web-server, from: rubato-server, to: web, kind: data, says: "everyone sees the new map" }
+  - id: plan-in-rubato
+    name: Plan in Rubato
+    description: "A person talks to their own planning agent from the plan, a teammate approves the settled draft, and the agent hands it off to Git in one commit that the issue links to."
+    steps:
+      - { seam: web-server, from: web, to: rubato-server, kind: data, says: "you ask your agent to change the plan" }
+      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn", says: "the message goes to your own companion, for your own session" }
+      - { seam: companion-claude-code, from: rubato-companion, to: claude-code, kind: control, says: "it is typed into the session when the session waits for input" }
+      - { seam: companion-claude-code, from: claude-code, to: rubato-companion, kind: data, says: "the reply comes back with the Stop hook" }
+      - { seam: companion-server, from: rubato-companion, to: rubato-server, kind: data, says: "the reply and the new draft revision reach the server" }
+      - { seam: web-server, from: rubato-server, to: web, kind: control, says: "the plan's viewers are told" }
+      - { seam: web-server, from: rubato-server, to: web, kind: data, says: "everyone sees the reply and what changed in the draft" }
+      - { seam: web-server, from: web, to: rubato-server, kind: control, says: "a teammate approves the settled draft" }
+      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn", says: "the approval goes to your session ahead of anything else" }
+      - { seam: companion-claude-code, from: rubato-companion, to: claude-code, kind: control, says: "the approval is typed into the session" }
+      - { seam: skill-plan-file, from: skill-rubato, to: plan-file, kind: data, says: "the agent commits the plan once, with the approval record" }
+      - { seam: server-plan-file, from: plan-file, to: rubato-server, kind: data, says: "the server reads the plan at the new head" }
+      - { seam: server-github, from: rubato-server, to: github, kind: control, says: "Rubato posts one link comment, as the approver" }
+      - { seam: plan-check-plan-file, from: plan-file, to: plan-check, kind: data, says: "the Action checks the approval on the pull request" }

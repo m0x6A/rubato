@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LaunchLog",
+  "description": "A launch's log, oldest first.",
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SessionLogEntry"
+      }
+    },
+    "launch_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "launch_id",
+    "entries"
+  ],
+  "$defs": {
+    "LogKind": {
+      "description": "What a reply is, by its first line (ADR 0056): the design review, the discussion summary, or\nany other reply.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "reply"
+          ]
+        },
+        {
+          "description": "First line starts `Review:`.",
+          "type": "string",
+          "const": "review"
+        },
+        {
+          "description": "First line starts `Summary:`.",
+          "type": "string",
+          "const": "summary"
+        }
+      ]
+    },
+    "LogRole": {
+      "description": "Who said it.",
+      "oneOf": [
+        {
+          "description": "A prompt: typed in the terminal, or a session message from Rubato.",
+          "type": "string",
+          "const": "user"
+        },
+        {
+          "description": "The last assistant text of the turn.",
+          "type": "string",
+          "const": "assistant"
+        }
+      ]
+    },
+    "SessionLogEntry": {
+      "description": "One line of a launched session's log.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "kind": {
+          "$ref": "#/$defs/LogKind"
+        },
+        "message_id": {
+          "description": "The session message this prompt carried, when it was one (ADR 0051).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "mixed": {
+          "description": "The prompt held text before the message: a person was typing in the terminal when it was\npasted.",
+          "type": "boolean"
+        },
+        "prompt_id": {
+          "description": "Claude Code's `prompt_id`: the prompt and the reply of one turn share it.",
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/LogRole"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncated": {
+          "description": "The text was cut to `Limits.session_log_max_chars` on the machine.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "session_id",
+        "prompt_id",
+        "role",
+        "kind",
+        "text",
+        "at"
+      ]
+    }
+  }
+}

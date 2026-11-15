@@ -3,9 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { legacyKeys } from "../../../actions/plan-check/src/parse-plan.ts";
+import { legacyKeys, parsePlan } from "../../../actions/plan-check/src/parse-plan.ts";
 import { listAdrs, parseAdr } from "../scripts/adrs.ts";
-import { HOOK_EVENTS, renderHooks, templatePath } from "../scripts/hooks.ts";
+import { HOOK_EVENTS, main, renderHooks, templatePath } from "../scripts/hooks.ts";
 import { install } from "../scripts/install.ts";
 import { normalisePlan, planSha } from "../scripts/lib/plan-sha.ts";
 import { render, summarize } from "../scripts/map.ts";
@@ -250,6 +250,9 @@ describe("plan.ts", () => {
     // ADR 0031: the Data models table follows Affected parts, and an unfilled one parses to none.
     expect(headings[headings.indexOf("Affected parts") + 1]).toBe("Data models");
     expect(text).toContain("| Model | Kind | Part | Change | Crosses | Note |");
+    // ADR 0056: a Decisions section that parses to none until a row is written.
+    expect(headings).toContain("Decisions");
+    expect(parsePlan(text, path).decisions).toBeUndefined();
   });
 
   it("refuses to overwrite an existing plan", async () => {
@@ -265,7 +268,7 @@ describe("plan.ts sha", () => {
   const cases = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
 
   it("matches the shared fixtures, so ticking tasks keeps the sha and any other edit changes it", () => {
-    expect(cases).toEqual(["edited.md", "ticked.md", "unticked.md"]);
+    expect(cases).toEqual(["crlf.md", "edited.md", "ticked.md", "unticked.md", "with-keys.md"]);
     for (const f of cases) {
       const want = readFileSync(join(dir, f.replace(/\.md$/, ".txt")), "utf8").trim();
       expect(planSha(readFileSync(join(dir, f), "utf8")), f).toBe(want);
@@ -273,6 +276,8 @@ describe("plan.ts sha", () => {
     const sha = (f: string) => planSha(readFileSync(join(dir, f), "utf8"));
     expect(sha("ticked.md")).toBe(sha("unticked.md"));
     expect(sha("edited.md")).not.toBe(sha("ticked.md"));
+    // Writing the approval record keeps the hash (ADR 0054).
+    expect(sha("with-keys.md")).toBe(sha("unticked.md"));
   });
 
   it("is git's blob sha of the normalised text", () => {
@@ -342,19 +347,40 @@ describe("approval stays human (ADR 0027)", () => {
 });
 
 describe("hooks.ts", () => {
-  it("renders every forwarded event with port and token, as valid JSON", () => {
+  it("renders every forwarded event with port and header file, as valid JSON, with no token", () => {
     const template = readFileSync(templatePath(), "utf8");
-    const out = renderHooks(template, 43125, "abcdefghijklmnopqrstuvwxyz012345");
-    const parsed = JSON.parse(out) as { hooks: Record<string, unknown> };
+    const out = renderHooks(template, 43125, "/home/me/.local/state/rubato/hook-auth.header");
+    const parsed = JSON.parse(out) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
     expect(Object.keys(parsed.hooks).sort()).toEqual([...HOOK_EVENTS].sort());
     expect(out).not.toContain("{port}");
+    expect(out).not.toContain("{header_file}");
     expect(out).not.toContain("{token}");
+    expect(out).not.toContain("Bearer");
     expect(out).toContain("http://127.0.0.1:43125/hook");
+    for (const entries of Object.values(parsed.hooks)) {
+      for (const h of entries.flatMap((e) => e.hooks)) {
+        expect(h.command).toContain("-H @'/home/me/.local/state/rubato/hook-auth.header'");
+      }
+    }
   });
 
-  it("rejects a bad port or a short token", () => {
+  it("shell-quotes a header path with a quote in it the way the companion does", () => {
     const template = readFileSync(templatePath(), "utf8");
-    expect(() => renderHooks(template, 0, "abcdefghijklmnopqrstuvwxyz")).toThrow(/port/);
-    expect(() => renderHooks(template, 8080, "short")).toThrow(/token/);
+    const out = renderHooks(template, 1, "/tmp/it's/hook-auth.header");
+    const cmd = (JSON.parse(out) as { hooks: { Stop: { hooks: { command: string }[] }[] } }).hooks.Stop[0]!.hooks[0]!.command;
+    expect(cmd).toContain("-H @'/tmp/it'\\''s/hook-auth.header'");
+  });
+
+  it("rejects a bad port or an empty header path", () => {
+    const template = readFileSync(templatePath(), "utf8");
+    expect(() => renderHooks(template, 0, "/x/hook-auth.header")).toThrow(/port/);
+    expect(() => renderHooks(template, 8080, "")).toThrow(/header/);
+  });
+
+  it("refuses --token: the token must not go on a command line (ADR 0063)", () => {
+    const errors: string[] = [];
+    const code = main(["--port", "8080", "--token", "abcdefghijklmnopqrstuvwxyz012345"], (s) => errors.push(s));
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toMatch(/--header-file/);
   });
 });

@@ -5,7 +5,8 @@
  * the dashboard, the "Map age" panel queries `rubato_map_loaded_at`, the "Interactive map" panels
  * of issue #48 exist and query their metrics, `CompanionSilent` and the "Companions" panel query
  * the threshold `rubato_companion_silent_secs` (#105), no expression groups by the
- * bare label `state`, and the working-sessions line takes `max by`. Reports what it checked.
+ * bare label `state`, the working-sessions line takes `max by`, and no two panels share an id
+ * (Grafana keys panels by id, so a second one is dropped or overwritten). Reports what it checked.
  * `promtool test rules` is the semantic check; `check.test.ts` makes this one fail on purpose.
  *
  *   check.ts [--rules <file>] [--tests <file>] [--dashboard <file>]
@@ -16,7 +17,21 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const REQUIRED = ["CompanionSilent", "SessionWorkingNoHooks", "PlanUnknownNodes", "SeamCollision", "GitHubRateLimitLow", "ServerPollSilent"];
+const REQUIRED = [
+  "CompanionSilent",
+  "SessionWorkingNoHooks",
+  "PlanUnknownNodes",
+  "SeamCollision",
+  "GitHubRateLimitLow",
+  "ServerPollSilent",
+  // Issue #122 (ADRs 0051, 0054, 0055).
+  "SessionMessageStuck",
+  "ApprovalNoHandoff",
+  "HandoffNoLinkComment",
+  "ApprovalRecordMismatch",
+  // Issue #138 (ADR 0062).
+  "HeadlessTurnsKilled",
+];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
 const INTERACTIVE_MAP: [string, string][] = [
@@ -39,14 +54,30 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Quiet seams and undeclared edges", "rubato_traffic_seams_quiet"],
   ["Quiet seams and undeclared edges", "rubato_traffic_undeclared_edges"],
   ["Quiet seams and undeclared edges", "rubato_traffic_unmapped_services"],
+  // Issue #140 (ADRs 0059, 0060): the O-row of seam web-server names these.
+  ["Quiet seams and undeclared edges", "rubato_traffic_ghost_parts"],
+  ["Quiet seams and undeclared edges", "rubato_traffic_dismissals"],
   ["Traffic fetches", "rubato_traffic_fetches_total"],
   // Issue #106 (ADR 0043): both O-rows name this panel.
   ["Blocked, by station left from", "rubato_issues_blocked_from"],
   // Issue #105: the Companions panel shows the N that CompanionSilent compares against.
   ["Companions", "rubato_companion_silent_secs"],
+  // Issue #122: the row "Planning in Rubato" the O-rows of its seams name.
+  ["Session messages by outcome", "rubato_session_messages_total"],
+  ["Oldest message waiting for an idle session", "rubato_session_messages_oldest_idle_queued_seconds"],
+  ["Companions by capability", "rubato_companions_by_capability"],
+  ["Approvals waiting for handoff", "rubato_plans_handoff_overdue"],
+  ["Link comments missing", "rubato_plans_link_comment_missing"],
+  ["Approval records that differ", "rubato_plans_approval_record_mismatch"],
+  ["Draft revisions", "rubato_drafts_revisions_total"],
+  ["Draft revisions", "rubato_drafts_refused_total"],
+  ["Session log", "rubato_session_log_entries_total"],
+  ["Session log", "rubato_session_log_dropped_total"],
+  // Issue #142 (ADR 0061): the O-rows of the skill seams and companion-claude-code name this panel.
+  ["Skills emitting", "traces_service_graph_request_total"],
 ];
 
-type Panel = { title: string; type?: string; targets?: { expr?: string }[] };
+type Panel = { id?: number; title: string; type?: string; targets?: { expr?: string }[] };
 
 function opt(argv: string[], name: string, fallback: string): string {
   const i = argv.indexOf(name);
@@ -60,6 +91,19 @@ export function check(rulesText: string, testsText: string, dashboardText: strin
   const dashboard = JSON.parse(dashboardText) as { panels: (Panel & { panels?: Panel[] })[] };
   const panels: Panel[] = dashboard.panels.flatMap((p) => [p, ...(p.panels ?? [])]);
   const panelTitles = new Set(panels.map((p) => p.title));
+  const byId = new Map<number, string[]>();
+  for (const p of panels) {
+    if (p.id === undefined) {
+      problems.push(`panel ${JSON.stringify(p.title)} has no id`);
+    } else {
+      byId.set(p.id, [...(byId.get(p.id) ?? []), p.title]);
+    }
+  }
+  for (const [id, titles] of byId) {
+    if (titles.length > 1) {
+      problems.push(`panel id ${id} is used by ${titles.length} panels: ${titles.map((t) => JSON.stringify(t)).join(", ")}`);
+    }
+  }
   const exprs = (title: string) => panels.filter((p) => p.title === title && p.type !== "row").flatMap((p) => (p.targets ?? []).map((t) => t.expr ?? ""));
   const alerts = rules.groups.flatMap((g) => g.rules);
   const names = new Set(alerts.map((a) => a.alert));

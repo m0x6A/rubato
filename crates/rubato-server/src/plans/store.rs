@@ -15,8 +15,11 @@ pub struct PlanRow {
     pub parse_error: Option<String>,
     /// The approval hash of the file as read (ADR 0027).
     pub approval_sha: Option<String>,
+    /// The commit the file was read at (ADR 0055); absent for a row stored before.
+    pub head_sha: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_plan(
     db: &SqlitePool,
     issue: &IssueRef,
@@ -25,9 +28,10 @@ pub async fn upsert_plan(
     plan: Option<&Plan>,
     error: Option<&str>,
     approval_sha: &str,
+    head_sha: &str,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, approval_sha, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(repo, number) DO UPDATE SET branch = excluded.branch, path = excluded.path, plan = excluded.plan, parse_error = excluded.parse_error, approval_sha = excluded.approval_sha, fetched_at = excluded.fetched_at")
-        .bind(&issue.repo).bind(issue.number as i64).bind(branch).bind(path).bind(plan.map(serde_json::to_string).transpose()?).bind(error).bind(approval_sha).bind(ts(Utc::now()))
+    sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, approval_sha, head_sha, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(repo, number) DO UPDATE SET branch = excluded.branch, path = excluded.path, plan = excluded.plan, parse_error = excluded.parse_error, approval_sha = excluded.approval_sha, head_sha = excluded.head_sha, fetched_at = excluded.fetched_at")
+        .bind(&issue.repo).bind(issue.number as i64).bind(branch).bind(path).bind(plan.map(serde_json::to_string).transpose()?).bind(error).bind(approval_sha).bind(head_sha).bind(ts(Utc::now()))
         .execute(db).await?;
     Ok(())
 }
@@ -66,6 +70,7 @@ pub async fn all_plans(db: &SqlitePool) -> Result<Vec<PlanRow>> {
                 .and_then(|s| serde_json::from_str(&s).ok()),
             parse_error: r.get("parse_error"),
             approval_sha: r.get("approval_sha"),
+            head_sha: r.get("head_sha"),
         })
         .collect())
 }

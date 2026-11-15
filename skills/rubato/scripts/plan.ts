@@ -7,6 +7,14 @@
  *   plan.ts path  --issue <owner/name#n> --slug <slug> [--cwd <repo>]
  *   plan.ts check [<plan path>] [--cwd <repo>]
  *   plan.ts sha   [<plan path>] [--cwd <repo>]
+ *   plan.ts handoff --approval <uuid> --sha <plan sha> --bundle <bundle hash> --by <login> --at <rfc3339> [--self] --url <rubato url> [--cwd <repo>]
+ *
+ * `handoff` (ADR 0055) runs once a plan drafted in Rubato is approved there: the approval record
+ * into the front matter, the pinned ADRs accepted (map repo only), one commit of the plan and its
+ * bundle, the push. It prints one `rubato.plan.handoff` line and posts it to the companion when
+ * `RUBATO_HOOK_URL` and `RUBATO_HOOK_TOKEN` are set. Exit codes (`HANDOFF_EXIT`): 0 committed,
+ * 2 error, 7 plan_changed, 8 bundle_changed, 9 adr_changed, 10 push_failed (committed; run it
+ * again to push). Nothing is written on 7, 8 or 9.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -14,6 +22,7 @@ import { currentBranch, issueFromBranch, originRepo } from "./lib/git.ts";
 import { planSha } from "./lib/plan-sha.ts";
 import { planCheck, schemaDir } from "./lib/vendor.ts";
 import { loadWorkspace, matchedMaps, repoForCwd, type Workspace } from "./lib/local.ts";
+import { call, runCommand, subcommandOf } from "./otel-emit.ts";
 
 export interface InitOptions {
   issue: string;
@@ -103,6 +112,12 @@ See the O-rows.
 | --- | --- | --- | --- | --- |
 | A1 | | | | node |
 
+## Decisions
+
+<!-- Each decision made while planning, recorded as it is made (ADR 0056), so the approval covers it and the handoff commits it: | # | Decision | Chosen | Why | Decided by |. Write "None." when there are none. -->
+
+None.
+
 ## O-rows
 
 <!-- One per seam in Affected parts: if it breaks at 3 am, which signal leads back, on which panel, who is woken. -->
@@ -140,7 +155,7 @@ export function yamlScalar(s: string): string {
 export async function sessionMaps(ws: Workspace, cwd: string) {
   const { map: mapMod } = await planCheck();
   const repo = repoForCwd(ws, cwd)?.name ?? originRepo(cwd);
-  const matched = matchedMaps(ws, repo, (file) => mapMod.loadMap(file, schemaDir()));
+  const matched = call("system-map", () => matchedMaps(ws, repo, (file) => mapMod.loadMap(file, schemaDir())));
   if (matched.length === 0) {
     throw new Error(`no map in local.yml names ${repo ?? cwd}; listed: ${ws.maps.map((m) => m.repo).join(", ")}`);
   }
@@ -182,7 +197,7 @@ export async function init(ws: Workspace, cwd: string, o: InitOptions): Promise<
   const version = matched.length === 1 ? headSha((matched[0] as (typeof matched)[number]).clone.local) : null;
   console.error(JSON.stringify({ event: "rubato.plan.init", map_version: version === null ? "omitted_several_maps" : "written" }));
   mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, planTemplate(o, version));
+  call("plan-file", () => writeFileSync(abs, planTemplate(o, version)));
   return path;
 }
 
@@ -198,7 +213,7 @@ export async function check(ws: Workspace, cwd: string, planPath?: string): Prom
   }
   const abs = resolve(cwd, path);
   const rel = relative(cwd, abs);
-  return fitsAny(ws, cwd, readFileSync(abs, "utf8"), rel);
+  return fitsAny(ws, cwd, call("plan-file", () => readFileSync(abs, "utf8")), rel);
 }
 
 /** The sha a person's `Approved: plan <sha>` comment names for the plan at `planPath`. */
@@ -211,7 +226,7 @@ export async function sha(ws: Workspace, cwd: string, planPath?: string): Promis
     }
     path = (await resolvePlanPath(ws, cwd, n, "")).path;
   }
-  return { path, sha: planSha(readFileSync(resolve(cwd, path), "utf8")) };
+  return { path, sha: planSha(call("plan-file", () => readFileSync(resolve(cwd, path), "utf8"))) };
 }
 
 /** The plan path for the issue the current branch names, as the map places it. */
@@ -246,6 +261,9 @@ async function fitsAny(ws: Workspace, cwd: string, text: string, rel: string): P
 }
 
 /** Exit codes of `plan.ts wait`: one per reason, so a caller can act on it. */
+/** The exit of a command retired at the cutover (ADR 0054): plans are approved in Rubato. */
+export const RETIRED_EXIT = 11;
+
 export const WAIT_EXIT = { approved: 0, not_yet: 3, not_pushed: 4, local_edit: 4, does_not_fit: 5, gh_failed: 6, plan_changed: 7 } as const;
 
 export interface WaitOptions {
@@ -275,7 +293,7 @@ export async function wait(ws: Workspace, cwd: string, planPath: string | undefi
     emit("exited", { reason, ...fields });
     return WAIT_EXIT[reason];
   };
-  const read = () => pushedPlan(cwd, rel, readFileSync(resolve(cwd, rel), "utf8"));
+  const read = () => pushedPlan(cwd, rel, call("plan-file", () => readFileSync(resolve(cwd, rel), "utf8")));
   const pushed = read();
   if (!pushed.ok) {
     return exit(pushed.reason, { branch: pushed.branch });
@@ -360,6 +378,11 @@ function opt(argv: string[], name: string): string | undefined {
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   const cwd = resolve(opt(rest, "--cwd") ?? process.cwd());
+  if (cmd === "handoff") {
+    // Its own errors end in a `rubato.plan.handoff` line, not only in a message.
+    const { handoffMain } = await import("./lib/handoff.ts");
+    return handoffMain(rest, cwd, loadWorkspace, { planPath: planPathFromBranch });
+  }
   try {
     const given = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd")[0];
     if (cmd === "sha" && given) {
@@ -399,18 +422,18 @@ async function main(argv: string[]): Promise<number> {
     if (cmd === "adrs-pin") {
       const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd");
       const { pinAdrs } = await import("./adrs.ts");
-      const rows = await pinAdrs(cwd, positional[0] ?? (await planPathFromBranch(ws, cwd)));
+      // The decisions folder of the map whose repo this checkout is, the same one `adrs.ts accept` uses.
+      const here = (originRepo(cwd) ?? "").toLowerCase();
+      const decisions = ws.maps.find((m) => m.repo.toLowerCase() === here)?.decisions ?? "docs/decisions";
+      const rows = await pinAdrs(cwd, positional[0] ?? (await planPathFromBranch(ws, cwd)), decisions);
       console.log(JSON.stringify({ pinned: rows }));
       return 0;
     }
     if (cmd === "wait") {
-      const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd" && rest[i - 1] !== "--interval");
-      const o: WaitOptions = { once: rest.includes("--once") };
-      const interval = opt(rest, "--interval");
-      if (interval) {
-        o.intervalSecs = Number(interval);
-      }
-      return await wait(ws, cwd, positional[0], o);
+      // Retired at the cutover (ADR 0054): an Approved: comment no longer counts, so there is
+      // nothing to wait for. A plan is approved in Rubato, and the approval arrives as a prompt.
+      console.log(JSON.stringify({ event: "rubato.plan.wait", kind: "exited", reason: "approval_in_rubato" }));
+      return RETIRED_EXIT;
     }
     if (cmd === "check" || cmd === "sha") {
       const positional = rest.filter((a, i) => !a.startsWith("--") && rest[i - 1] !== "--cwd");
@@ -423,7 +446,7 @@ async function main(argv: string[]): Promise<number> {
       console.log(JSON.stringify(r.line));
       return r.ok ? 0 : 1;
     }
-    console.error("usage: plan.ts init|path|check|sha|wait|adrs-pin ...");
+    console.error("usage: plan.ts init|path|check|sha|wait|adrs-pin|handoff ...");
     return 2;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
@@ -432,7 +455,8 @@ async function main(argv: string[]): Promise<number> {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))) {
-  process.exitCode = await main(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  process.exitCode = await runCommand("rubato", subcommandOf("plan", argv), () => main(argv));
 }
 
 export { join };

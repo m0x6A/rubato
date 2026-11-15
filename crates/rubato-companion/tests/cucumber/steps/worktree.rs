@@ -103,6 +103,9 @@ async fn then_otel_attr(w: &mut RubatoWorld, attr: String) {
         .find(|l| l.starts_with("OTEL_RESOURCE_ATTRIBUTES="))
         .expect("OTEL_RESOURCE_ATTRIBUTES set");
     assert!(line.contains(&attr), "{line}");
+    // Claude Code strips OTEL_* from its Bash tool, so the same value is mirrored (ADR 0061).
+    let mirror = format!("RUBATO_{line}");
+    assert!(log.lines().any(|l| l == mirror), "no {mirror} in {log}");
     assert!(log.contains("CLAUDE_CODE_ENABLE_TELEMETRY=1"));
     assert!(log.contains("OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"));
 }
@@ -126,7 +129,38 @@ async fn then_settings(w: &mut RubatoWorld) {
     assert_eq!(
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
         0o600,
-        "hooks file holds the token"
+        "hooks file names the header file"
+    );
+}
+
+#[then("that settings file holds no token and names a 0600 header file beside it")]
+async fn then_settings_no_token(w: &mut RubatoWorld) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = standin_log(w).await;
+    let args = log.lines().find(|l| l.starts_with("ARGS:")).unwrap();
+    let path = args
+        .split_whitespace()
+        .skip_while(|a| *a != "--settings")
+        .nth(1)
+        .expect("--settings <file>");
+    let text = std::fs::read_to_string(path).unwrap();
+    // ADR 0063: the token is in a 0600 header file beside it, never in a hook command.
+    let token = &w.handles.as_ref().unwrap().hook_endpoint.token;
+    assert!(!text.contains(token.as_str()), "{text}");
+    let header = std::path::Path::new(path)
+        .parent()
+        .unwrap()
+        .join(rubato_companion::kernel::config::HOOK_HEADER_FILE);
+    assert!(text.contains(&format!("@'{}'", header.display())), "{text}");
+    assert!(
+        std::fs::read_to_string(&header)
+            .unwrap()
+            .contains(token.as_str())
+    );
+    assert_eq!(
+        std::fs::metadata(&header).unwrap().permissions().mode() & 0o777,
+        0o600,
+        "header file holds the token"
     );
 }
 

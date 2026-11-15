@@ -1,0 +1,17 @@
+# Must fail: two parts name the same service (ADR 0059). Both sides refuse it with the same
+# words.
+version: 1
+name: services
+nodes:
+  - id: checkout
+    kind: context
+    service: { namespace: shop, name: checkout }
+  - id: checkout-v2
+    kind: context
+    service: { namespace: shop, name: checkout }
+  - id: github
+    kind: external
+    service: { name: github }
+  - id: gh
+    kind: external
+    service: { name: github }

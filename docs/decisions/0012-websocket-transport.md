@@ -1,6 +1,6 @@
 # 0012. Carry companion ↔ server traffic over one outbound websocket with JSON envelopes
 
-- **Status:** accepted
+- **Status:** accepted; replay superseded in part by 0051
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (drafted by agent, Claude Code v0 planning session)
 - **Seam:** companion-server

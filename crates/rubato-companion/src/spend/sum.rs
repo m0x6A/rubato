@@ -2,8 +2,8 @@
 //! Prices come from `workspace.yml`; nothing is guessed. The dashboard cross-checks against
 //! `claude_code.cost.usage`.
 
+use super::transcript::{MAX_TRANSCRIPT_BYTES, Refusal, read_transcript};
 use crate::kernel::config::ModelPrice;
-use anyhow::Result;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -115,8 +115,15 @@ pub fn sum_text(text: &str, pricing: &BTreeMap<String, ModelPrice>) -> Spend {
     s
 }
 
-pub fn sum_file(path: &Path, pricing: &BTreeMap<String, ModelPrice>) -> Result<Spend> {
-    Ok(sum_text(&std::fs::read_to_string(path)?, pricing))
+/// Sum a transcript file, read only if it passes the guard in `transcript.rs` (ADR 0063): a
+/// regular file under `root`, at most `MAX_TRANSCRIPT_BYTES`.
+pub fn sum_file(
+    path: &Path,
+    root: &Path,
+    pricing: &BTreeMap<String, ModelPrice>,
+) -> Result<Spend, Refusal> {
+    let text = read_transcript(path, root, MAX_TRANSCRIPT_BYTES)?;
+    Ok(sum_text(&text, pricing))
 }
 
 #[cfg(test)]

@@ -20,6 +20,8 @@ pub mod reason {
     pub const PINNED: &str = "pinned";
     pub const DRAFT_FULL: &str = "draft_full";
     pub const INVALID_OP: &str = "invalid_op";
+    /// The operation gives a second part the service another part already names (ADR 0059).
+    pub const DUPLICATE_SERVICE: &str = "duplicate_service";
     pub const NOTHING_TO_RESTORE: &str = "nothing_to_restore";
 }
 
@@ -101,7 +103,14 @@ pub async fn add_op(
                 "The draft already holds {DRAFT_MAX_OPS} changes; propose it or remove some first."
             ),
         ),
-        Appended::Invalid(why) => refuse(reason::INVALID_OP, StatusCode::UNPROCESSABLE_ENTITY, why),
+        Appended::Invalid(why) => {
+            let r = if super::apply::is_duplicate_service(&why) {
+                reason::DUPLICATE_SERVICE
+            } else {
+                reason::INVALID_OP
+            };
+            refuse(r, StatusCode::UNPROCESSABLE_ENTITY, why)
+        }
     }
 }
 

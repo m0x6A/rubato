@@ -1,6 +1,6 @@
 # 0035. A team member's approval comment accepts the ADRs its plan pins; the session waits for it
 
-- **Status:** accepted
+- **Status:** superseded by 0054
 - **Date:** 2026-11-12
 - **Decided by:** Mattias Jonsson (m0x6A), accepted 2026-11-12 by approval comment https://github.com/m0x6A/rubato/issues/90#issuecomment-6837591374 (self), recorded by hand; drafted by agent (Claude Code, claude-opus-5-5, issue #90), asked for by Mattias Jonsson 2026-11-12 ("a comment on an issue from a teammember IS acceptance"); choices on self-approval, pinning, scope and the seam answered by him the same day
 - **Seam:** skill-github, skill-plan-file

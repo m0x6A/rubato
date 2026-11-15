@@ -5,10 +5,12 @@
  *   adrs.ts [--all] [--json]
  *   adrs.ts accept --comment <url> [--plan <path>] [--cwd <dir>]
  *
- * `accept` records that a person's approval of the plan accepted the ADRs it pins (ADR 0035).
+ * `accept` recorded that a person's `Approved:` comment accepted the ADRs a plan pins (ADR 0035). It is
+ * retired at the cutover (ADR 0054): it prints `approval_in_rubato` and exits 11, since approval in
+ * Rubato accepts them and `plan.ts handoff` records it. `accept()` stays for that history.
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { loadWorkspace, type Workspace } from "./lib/local.ts";
 
 export interface Adr {
@@ -91,13 +93,44 @@ export function pinnedAdrs(plan: string): PinnedAdr[] {
     .map((cells) => ({ adr: cells[0] as string, file: cells[1] as string, blob: (cells[2] as string).toLowerCase() }));
 }
 
-/** Fill the Blob column of a plan's `## ADRs proposed` table from the files in `cwd`. */
-export async function pinAdrs(cwd: string, planPath: string): Promise<PinnedAdr[]> {
+/**
+ * The ADR file a plan row names, resolved against `cwd`, or null when it lies outside the
+ * decisions folder `dir` (relative to `cwd`): a `..`, an absolute path elsewhere, or a symlink
+ * that leads out. The plan is text an agent wrote, so its File column is not trusted (#195).
+ */
+export function decisionFile(cwd: string, dir: string, file: string): string | null {
+  const within = (base: string, p: string) => {
+    const rel = relative(base, p);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  };
+  const base = resolve(cwd, dir);
+  const abs = resolve(cwd, file);
+  if (!within(base, abs)) {
+    return null;
+  }
+  if (existsSync(abs) && !(existsSync(base) && within(realpathSync(base), realpathSync(abs)))) {
+    return null;
+  }
+  return abs;
+}
+
+/**
+ * Fill the Blob column of a plan's `## ADRs proposed` table from the files in `cwd`. Throws,
+ * writing nothing, when a row names a file outside `decisions` (relative to `cwd`).
+ */
+export async function pinAdrs(cwd: string, planPath: string, decisions = "docs/decisions"): Promise<PinnedAdr[]> {
   const { gitBlobSha } = await import("./lib/plan-sha.ts");
   const abs = resolve(cwd, planPath);
   const text = readFileSync(abs, "utf8");
   const rows = pinnedAdrs(text);
-  const blobs = new Map(rows.map((r) => [r.adr, gitBlobSha(readFileSync(join(cwd, r.file)))]));
+  const files = rows.map((r) => {
+    const f = decisionFile(cwd, decisions, r.file);
+    if (f === null) {
+      throw new Error(`ADR file outside ${decisions}: ${r.file}`);
+    }
+    return f;
+  });
+  const blobs = new Map(rows.map((r, i) => [r.adr, gitBlobSha(readFileSync(files[i] as string))]));
   let inSection = false;
   const lines = text.split("\n").map((l) => {
     if (l.startsWith("## ")) {
@@ -117,6 +150,32 @@ export async function pinAdrs(cwd: string, planPath: string): Promise<PinnedAdr[
     r.blob = blobs.get(r.adr) as string;
   }
   return rows;
+}
+
+/** An ADR's status word: `proposed`, `accepted`, `superseded`, … */
+export function adrStatus(text: string): string {
+  return field(text, "Status").split(/\s+/)[0] ?? "";
+}
+
+/**
+ * The ADR moved to accepted (ADR 0035, ADR 0055): *Decided by* names who accepted it and how,
+ * and keeps who drafted it. Shared by `adrs.ts accept` and `plan.ts handoff`.
+ */
+export function acceptedText(text: string, acceptedBy: string): string {
+  const decider = field(text, "Decided by").replace(/;\s*a human accepts\s*$/, "");
+  return text
+    .replace(/^- \*\*Status:\*\*\s*proposed\b.*$/m, "- **Status:** accepted")
+    .replace(/^- \*\*Decided by:\*\*.*$/m, `- **Decided by:** ${acceptedBy}; drafted by ${decider}`);
+}
+
+/** How `plan.ts handoff` names an acceptance by a Rubato approval: approver, date, link, self. */
+export function rubatoAcceptance(by: string, date: string, url: string, self: boolean): string {
+  return `${by}, accepted ${date}, approved in Rubato ${url}${self ? " (self)" : ""}`;
+}
+
+/** Whether the ADR is accepted by the Rubato approval at `url`: a handoff already wrote it. */
+export function acceptedInRubato(text: string, url: string): boolean {
+  return adrStatus(text) === "accepted" && field(text, "Decided by").includes(`approved in Rubato ${url}`);
 }
 
 export type AcceptResult = { code: number; line: Record<string, unknown> };
@@ -185,8 +244,13 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
   const accepted: string[] = [];
   const refused: { adr: string; reason: string }[] = [];
   const writes: [string, string][] = [];
+  const decisions = mapClone.decisions ?? "docs/decisions";
   for (const r of rows) {
-    const abs = join(cwd, r.file);
+    const abs = decisionFile(cwd, decisions, r.file);
+    if (abs === null) {
+      refused.push({ adr: r.adr, reason: "outside_decisions" });
+      continue;
+    }
     if (!existsSync(abs)) {
       refused.push({ adr: r.adr, reason: "missing" });
       continue;
@@ -196,19 +260,15 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
       refused.push({ adr: r.adr, reason: "adr_changed" });
       continue;
     }
-    if (field(text, "Status").split(/\s+/)[0] !== "proposed") {
+    if (adrStatus(text) !== "proposed") {
       refused.push({ adr: r.adr, reason: "not_proposed" });
       continue;
     }
-    const decider = field(text, "Decided by").replace(/;\s*a human accepts\s*$/, "");
-    const next = text
-      .replace(/^- \*\*Status:\*\*\s*proposed\b.*$/m, "- **Status:** accepted")
-      .replace(/^- \*\*Decided by:\*\*.*$/m, `- **Decided by:** ${c.user.login}, accepted ${today} by approval comment ${c.html_url}${self ? " (self)" : ""}; drafted by ${decider}`);
-    writes.push([abs, next]);
+    writes.push([abs, acceptedText(text, `${c.user.login}, accepted ${today} by approval comment ${c.html_url}${self ? " (self)" : ""}`)]);
     accepted.push(r.adr);
   }
   const pinned = new Set(rows.map((r) => r.file));
-  const dir = join(cwd, mapClone.decisions ?? "docs/decisions");
+  const dir = join(cwd, decisions);
   const unpinned = (existsSync(dir) ? readdirSync(dir) : [])
     .filter((f) => /^\d{4}-.*\.md$/.test(f))
     .filter((f) => {
@@ -224,14 +284,10 @@ export async function accept(ws: Workspace, cwd: string, commentRef: string, pla
 async function main(argv: string[]): Promise<number> {
   try {
     if (argv[0] === "accept") {
-      const at = (n: string) => (argv.indexOf(n) >= 0 ? argv[argv.indexOf(n) + 1] : undefined);
-      const comment = at("--comment");
-      if (!comment) {
-        throw new Error("--comment <url> is required");
-      }
-      const r = await accept(loadWorkspace(), resolve(at("--cwd") ?? process.cwd()), comment, at("--plan"));
-      console.log(JSON.stringify(r.line));
-      return r.code;
+      // Retired at the cutover (ADR 0054, ADR 0055): approving a plan in Rubato accepts its pinned
+      // ADRs, and plan.ts handoff records that in the handoff commit.
+      console.log(JSON.stringify({ event: "rubato.adrs.accept", outcome: "refused", reason: "approval_in_rubato" }));
+      return 11;
     }
     let adrs = listAdrs(loadWorkspace());
     if (!argv.includes("--all")) {
@@ -246,5 +302,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))) {
-  process.exitCode = await main(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const { runCommand, subcommandOf } = await import("./otel-emit.ts");
+  process.exitCode = await runCommand("rubato", subcommandOf("adrs", argv), () => main(argv));
 }

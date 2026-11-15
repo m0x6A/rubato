@@ -1,9 +1,10 @@
 /**
  * Parse a plan Markdown file into the `Plan` shape from `rubato-protocol` (ADR 0009).
  *
- * Frontmatter carries `issue`, `title`, `spend_cap_usd`, `attempt_limit`. The tables under
- * `## Affected parts`, `## O-rows` and `## Assumed, not yet approved` are parsed by column
- * name. Output must equal what the Rust parser produces for the same file; the fixtures under
+ * Frontmatter carries `issue`, `title`, `spend_cap_usd`, `attempt_limit` and, after approval
+ * in Rubato, the approval record (ADR 0054). The tables under `## Affected parts`, `## O-rows`,
+ * `## Assumed, not yet approved`, `## Flows`, `## Data models` and `## Decisions` are parsed by
+ * column name. Output must equal what the Rust parser produces for the same file; the fixtures under
  * `schema/fixtures/plans/` hold the expected JSON for both.
  */
 import { parse as parseYaml } from "yaml";
@@ -58,6 +59,24 @@ export interface DataModel {
   note?: string;
 }
 
+/** One row of the `## Decisions` table (ADR 0056). */
+export interface PlanDecision {
+  id: string;
+  decision: string;
+  chosen: string;
+  why?: string;
+  decided_by?: string;
+}
+
+/** The approval record in the front matter (ADR 0054); any of its keys may be missing. */
+export interface PlanApprovalRecord {
+  approved_by?: string;
+  approved_at?: string;
+  approved_sha?: string;
+}
+
+export const APPROVAL_KEYS = ["approved_by", "approved_at", "approved_sha"] as const;
+
 const MODEL_KINDS = ["table", "type", "schema", "event", "file"] as const;
 const MODEL_CHANGES = ["new", "changed", "removed"] as const;
 
@@ -72,6 +91,8 @@ export interface Plan {
   assumed?: Assumption[];
   flows?: PlanFlow[];
   data_models?: DataModel[];
+  decisions?: PlanDecision[];
+  approval?: PlanApprovalRecord;
 }
 
 export class PlanParseError extends Error {
@@ -225,6 +246,7 @@ export const O_ROWS_HEADING = /^o-rows/i;
 export const ASSUMED_HEADING = /^assumed, not yet approved/i;
 export const FLOWS_HEADING = /^flows/i;
 export const DATA_MODELS_HEADING = /^data models/i;
+export const DECISIONS_HEADING = /^decisions/i;
 
 export function parsePlan(text: string, path: string): Plan {
   const { body, data } = splitFrontmatter(text);
@@ -244,6 +266,17 @@ export function parsePlan(text: string, path: string): Plan {
   }
   if (typeof data["attempt_limit"] === "number") {
     plan.attempt_limit = data["attempt_limit"];
+  }
+  const record: PlanApprovalRecord = {};
+  for (const k of APPROVAL_KEYS) {
+    const v = data[k];
+    if (v !== undefined && v !== null) {
+      // The handoff writes every value quoted; an unquoted one is read back as text.
+      record[k] = String(v instanceof Date ? v.toISOString() : v).trim();
+    }
+  }
+  if (Object.keys(record).length) {
+    plan.approval = record;
   }
 
   const parts = tableAfterHeading(body, AFFECTED_PARTS_HEADING);
@@ -376,6 +409,31 @@ export function parsePlan(text: string, path: string): Plan {
     }
     if (list.length) {
       plan.data_models = list;
+    }
+  }
+
+  const decisions = tableAfterHeading(body, DECISIONS_HEADING);
+  if (decisions) {
+    const idCol = requireColumn(decisions, "decisions", "id", /^#$/, /^id/);
+    const decisionCol = requireColumn(decisions, "decisions", "decision", /^decision/);
+    const chosenCol = requireColumn(decisions, "decisions", "chosen", /^chosen/);
+    const whyCol = column(decisions.headers, /^why/);
+    const byCol = column(decisions.headers, /^decided by/, /^by/);
+    const list: PlanDecision[] = [];
+    for (const row of decisions.rows) {
+      const d: PlanDecision = { id: cleanId(row[idCol] ?? ""), decision: row[decisionCol] ?? "", chosen: row[chosenCol] ?? "" };
+      const why = whyCol >= 0 ? (row[whyCol] ?? "").trim() : "";
+      if (why) {
+        d.why = why;
+      }
+      const by = byCol >= 0 ? (row[byCol] ?? "").trim() : "";
+      if (by) {
+        d.decided_by = by;
+      }
+      list.push(d);
+    }
+    if (list.length) {
+      plan.decisions = list;
     }
   }
   return plan;
