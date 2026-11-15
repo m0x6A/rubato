@@ -1,9 +1,12 @@
 //! Envelopes on the `companion-server` seam (ADR 0012): JSON over one outbound websocket.
 
+use crate::handoff::HandoffReport;
 use crate::hook::HookEvent;
 use crate::launch::{CapHit, LaunchCommand, LaunchResult};
 use crate::limits::Limits;
-use crate::session::{Heartbeat, SessionState, StaleSession};
+use crate::plan_draft::DraftBundle;
+use crate::session::{ClientKind, Heartbeat, SessionState, StaleSession};
+use crate::session_message::{SessionMessage, SessionMessageResult};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,6 +14,38 @@ use uuid::Uuid;
 
 /// Bumped on any breaking change to the envelopes. Both sides refuse a mismatch.
 pub const PROTOCOL_VERSION: u32 = 1;
+
+/// What each side can take (ADR 0051). Each announces its own in Hello or Welcome, and neither
+/// sends a kind the other did not announce. Unknown names are ignored, so either side can add one.
+pub mod capability {
+    /// The companion types session messages into the sessions it launched.
+    pub const SESSION_INPUT: &str = "session_input";
+    /// The companion forwards only the allowlisted hook payload (ADR 0052).
+    pub const HOOK_ALLOWLIST: &str = "hook_allowlist";
+    /// The server takes `SessionMessageResult` and sends `SessionMessage`.
+    pub const SESSION_MESSAGES: &str = "session_messages";
+    /// The companion mirrors launched sessions' plan bundles at settle points (ADR 0053).
+    pub const DRAFT_MIRROR: &str = "draft_mirror";
+    /// The server takes `CompanionMessage::Draft`.
+    pub const DRAFTS: &str = "drafts";
+    /// The companion types `plan_approved` and forwards the skill's handoff report (ADR 0055).
+    pub const PLAN_HANDOFF: &str = "plan_handoff";
+    /// The server takes `CompanionMessage::HandoffReport`.
+    pub const HANDOFF_REPORTS: &str = "handoff_reports";
+    /// The companion writes `LaunchCommand.draft` into a worktree the launch creates (ADR 0053).
+    pub const DRAFT_RESTORE: &str = "draft_restore";
+    /// The companion runs in headless mode (ADR 0062) and may send `source: headless` snapshots.
+    pub const HEADLESS: &str = "headless";
+    /// Companion: it takes `SessionMessageKind::Stop`. Server: it takes `source: headless`
+    /// snapshots and offers Stop. Neither side sends a stop or a headless snapshot otherwise.
+    pub const SESSION_STOP: &str = "session_stop";
+    /// The companion types room turns and runs read-only fork turns (ADR 0057).
+    pub const ROOM_TURNS: &str = "room_turns";
+    /// The server takes `CompanionMessage::RoomReply`.
+    pub const ROOM_REPLIES: &str = "room_replies";
+    /// Prefix of the installed skill's version, `skill:0.2.0`.
+    pub const SKILL_PREFIX: &str = "skill:";
+}
 
 /// Companion → server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -24,6 +59,12 @@ pub enum CompanionMessage {
         protocol_version: u32,
         /// Last server sequence the companion has seen; the server replays newer commands.
         last_seen_server_seq: u64,
+        /// What this companion can take (`capability`). Absent from an older companion.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        capabilities: Vec<String>,
+        /// Interactive (tmux) or headless (ADR 0062). An older companion is interactive.
+        #[serde(default, skip_serializing_if = "ClientKind::is_interactive")]
+        client: ClientKind,
     },
     Heartbeat(Heartbeat),
     Hook(HookEvent),
@@ -34,6 +75,14 @@ pub enum CompanionMessage {
     Launch(LaunchResult),
     CapHit(CapHit),
     Stale(StaleSession),
+    /// The answer to one `SessionMessage` (ADR 0051).
+    SessionMessageResult(SessionMessageResult),
+    /// A launched session's plan bundle at a settle point (ADR 0053).
+    Draft(DraftBundle),
+    /// What `plan.ts handoff` reported to the loopback endpoint (ADR 0055).
+    HandoffReport(HandoffReport),
+    /// An agent's answer to a room turn (ADR 0057).
+    RoomReply(crate::room::RoomReply),
     /// Acknowledges a server envelope by sequence.
     Ack {
         seq: u64,
@@ -51,8 +100,13 @@ pub enum ServerMessage {
         /// Last companion sequence the server has; the companion replays newer events.
         last_seen_companion_seq: u64,
         limits: Limits,
+        /// What this server can take (`capability`). Absent from an older server.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        capabilities: Vec<String>,
     },
     Launch(LaunchCommand),
+    /// Text for one session the paired user launched (ADR 0051).
+    SessionMessage(SessionMessage),
     Ack {
         seq: u64,
     },

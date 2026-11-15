@@ -1,0 +1,73 @@
+{
+  "issue": {
+    "repo": "m0x6A/rubato",
+    "number": 42
+  },
+  "path": "schema/fixtures/plans/decisions.md",
+  "affected_parts": [
+    {
+      "node": "rubato-companion",
+      "status": "affected",
+      "change": "forwards one more hook field",
+      "seams": [
+        "companion-server",
+        "companion-claude-code"
+      ]
+    },
+    {
+      "node": "rubato-server",
+      "status": "affected",
+      "change": "reads the new field",
+      "seams": [
+        "companion-server"
+      ]
+    },
+    {
+      "node": "web",
+      "status": "quiet",
+      "change": "—"
+    }
+  ],
+  "title": "Fixture plan with a Decisions table",
+  "spend_cap_usd": 10,
+  "attempt_limit": 2,
+  "o_rows": [
+    {
+      "seam": "companion-server",
+      "signal": "counter `rubato.events.dropped`",
+      "panel": "Companions",
+      "owner": "rubato-server",
+      "breaks_like": "server drops the event"
+    },
+    {
+      "seam": "companion-claude-code",
+      "signal": "counter `rubato.hook.forwarded` at zero",
+      "panel": "Hooks/min",
+      "owner": "rubato-companion",
+      "breaks_like": "hook stops firing"
+    }
+  ],
+  "assumed": [
+    {
+      "id": "F1",
+      "decision": "Field name",
+      "chosen": "`tool_name`",
+      "scope": "node",
+      "alternatives": "`tool`"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "decision": "Where the approval hash lives",
+      "chosen": "`rubato-protocol`",
+      "why": "the companion needs it too",
+      "decided_by": "Mattias Jonsson, 2026-11-14"
+    },
+    {
+      "id": "D2",
+      "decision": "Session log source",
+      "chosen": "hook payloads"
+    }
+  ]
+}

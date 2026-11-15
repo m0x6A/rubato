@@ -95,7 +95,7 @@ pub(crate) mod tests {
             .route(
                 "/app/installations/34",
                 get(|| async {
-                    Json(json!({"id": 34, "permissions": {"issues": "write", "contents": "write"}}))
+                    Json(json!({"id": 34, "app_slug": "rubato-test", "permissions": {"issues": "write", "contents": "write"}}))
                 }),
             )
             .route(

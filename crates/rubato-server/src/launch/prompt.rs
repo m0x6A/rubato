@@ -5,6 +5,10 @@ use std::collections::BTreeMap;
 /// The prompt the launched session receives. Shipped with the skill; a copy is embedded.
 pub const PROMPT_TEMPLATE: &str = include_str!("../../../../skills/rubato/prompt.md");
 
+/// The prompt of a session that plans in Rubato (ADR 0053): the draft stays uncommitted, the
+/// review and summary are replies, and the approval arrives as a prompt to hand off.
+pub const RUBATO_PROMPT_TEMPLATE: &str = include_str!("../../../../skills/rubato/prompt-rubato.md");
+
 /// Slug from a title: kebab-case, at most four words.
 pub fn slugify(title: &str) -> String {
     let words: Vec<String> = title

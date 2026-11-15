@@ -16,6 +16,7 @@ async fn main() -> Result<()> {
     for w in &config.warnings {
         tracing::warn!("{w}");
     }
+    config.report_cutover();
     let pool = db::connect(&config.database_url).await?;
     let dev_issues = match &config.dev_issues {
         Some(path) => {
@@ -80,6 +81,7 @@ async fn main() -> Result<()> {
     let state = AppState::new(pool, config, github);
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
+    tasks::warm_sessions(&state).await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let background = tasks::spawn(state.clone(), shutdown_rx.clone());
     let listener = tokio::net::TcpListener::bind(bind).await?;

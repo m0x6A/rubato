@@ -50,10 +50,17 @@ mod tests {
         );
         // ADR 0025: creating issues waits for the permission read, as the App.
         assert!(!installation.can_create_issues());
+        assert_eq!(installation.app_login(), None, "not read yet");
         assert!(installation.refresh_issue_permission().await.unwrap());
         assert!(installation.can_create_issues());
+        // Issue #165: the same read names the login the App's own issues carry.
+        assert_eq!(
+            installation.app_login().as_deref(),
+            Some("rubato-test[bot]")
+        );
         assert!(!token.can_create_issues());
         assert!(!token.refresh_issue_permission().await.unwrap());
+        assert_eq!(token.app_login(), None);
 
         // The tokenless fake cannot write until a test turns writes on.
         let fake = FakeGitHub::new();

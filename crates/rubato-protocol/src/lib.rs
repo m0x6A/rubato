@@ -7,6 +7,7 @@
 pub mod approve;
 pub mod auth;
 pub mod github;
+pub mod handoff;
 pub mod hook;
 pub mod ids;
 pub mod issue_body;
@@ -21,20 +22,32 @@ pub mod otel;
 pub mod pairing;
 pub mod pins;
 pub mod plan;
+pub mod plan_draft;
+pub mod plan_hash;
 pub mod progress;
 pub mod pulls;
 pub mod queue;
+pub mod room;
 pub mod schema;
 pub mod session;
+pub mod session_log;
+pub mod session_message;
 pub mod traffic;
 pub mod web_link;
 pub mod workspace;
 
-pub use approve::{ApproveRequest, ApproveResponse, ApproveState};
+pub use approve::{
+    ApproveRequest, ApproveResponse, ApproveState, DraftApproveRequest, DraftApproveResponse,
+};
 pub use auth::Me;
 pub use github::{
-    ApprovalBody, ApprovalRecord, ApprovalState, ApprovalVersion, ChecksStatus, DecisionBody,
-    DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, trusted_author,
+    ApprovalBody, ApprovalRecord, ApprovalSource, ApprovalState, ApprovalVersion, ChecksStatus,
+    DecisionBody, DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, comment_counts,
+    trusted_author,
+};
+pub use handoff::{
+    HandoffLine, HandoffOutcome, HandoffReport, PlanningMode, SKILL_HANDOFF_VERSION,
+    skill_has_handoff,
 };
 pub use hook::{HookEvent, HookEventKind};
 pub use ids::{IssueRef, MapRef, ParseIssueRefError};
@@ -52,11 +65,12 @@ pub use layout::{MapLayout, Position};
 pub use limits::Limits;
 pub use map::{
     Flow, FlowKind, MapNode, MapResponse, NodeKind, RepoRef, Scenario, ScenarioStep, Seam,
-    SystemMap,
+    ServiceId, SystemMap,
 };
 pub use map_draft::{DraftOp, DraftOpRequest, MapDraft, MapOp, Proposal, ProposalState};
 pub use message::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
+    capability,
 };
 pub use pairing::{
     PairApproveRequest, PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse,
@@ -65,7 +79,16 @@ pub use pairing::{
 pub use pins::{IssuePin, PinRequest};
 pub use plan::{
     AffectedPart, Assumption, AssumptionScope, DataModel, DataModelKind, FitReason, ModelChange,
-    ORow, PartStatus, Plan, PlanFit, PlanFlow, plan_fit,
+    ORow, PartStatus, Plan, PlanApprovalRecord, PlanDecision, PlanFit, PlanFlow, plan_fit,
+    seam_groups,
+};
+pub use plan_draft::{
+    DraftBundle, DraftFile, DraftRefusal, DraftRestore, DraftRevision, DraftRevisionInfo,
+    DraftSummary, DraftView, ImportRequest, ImportResponse, RestoreSkipped,
+};
+pub use plan_hash::{
+    APPROVAL_KEYS, AdrPin, adr_pins, approval_hash, approval_names, bundle_hash, bundle_paths,
+    clear_checkboxes, git_blob_sha, normalise_plan, strip_approval_record,
 };
 pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,
@@ -73,12 +96,25 @@ pub use progress::{
 };
 pub use pulls::{OpenPull, RepoPulls};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
+pub use room::{
+    CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer,
+    RequestAnswerBody, RequestState, RoomAgent, RoomAuthorKind, RoomKey, RoomMessage,
+    RoomPostRequest, RoomReply, RoomRequest, RoomView, SeamNotice, addressed_handles, agent_handle,
+};
 pub use session::{
-    BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
+    BlockCause, ClientKind, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource,
+    TmuxLocation,
+};
+pub use session_log::{LaunchLog, LogKind, LogRole, SessionLogEntry};
+pub use session_message::{
+    LaunchMessages, MessageRefusal, ROOM_TURN_PREAMBLE, RoomTurnMode, SessionMessage,
+    SessionMessageKind, SessionMessageOutcome, SessionMessageRequest, SessionMessageResult,
+    SessionMessageState, SessionMessageView, room_turn_text,
 };
 pub use traffic::{
-    ObservedTraffic, SeamTraffic, SourceStatus, TrafficEdge, TrafficReport, TrafficState,
+    DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, ObservedTraffic, SeamTraffic,
+    SourceStatus, TrafficDismissal, TrafficEdge, TrafficEnd, TrafficReport, TrafficState,
     UndeclaredEdge, derive_traffic,
 };
-pub use web_link::WebEvent;
+pub use web_link::{WebEvent, WebResource};
 pub use workspace::{DEFAULT_WORKSPACE, WorkspaceInfo, is_workspace_id};
