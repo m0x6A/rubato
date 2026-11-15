@@ -68,6 +68,8 @@ pub mod attr {
     pub const EXIT_CODE: &str = "rubato.exit_code";
     /// Which traffic source answered a fetch (ADR 0040): `dev_file` or `prometheus`.
     pub const TRAFFIC_SOURCE: &str = "rubato.traffic.source";
+    /// Which shared layout a write or clear touched (ADR 0068): `flat` or `grouped`.
+    pub const LAYOUT_ARRANGEMENT: &str = "rubato.layout.arrangement";
 }
 
 /// Metric instrument names.
@@ -330,6 +332,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SKILL_NAME,
         attr::SKILL_SUBCOMMAND,
         attr::TRAFFIC_SOURCE,
+        attr::LAYOUT_ARRANGEMENT,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,

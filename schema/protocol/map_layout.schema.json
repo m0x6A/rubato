@@ -1,10 +1,27 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MapLayout",
-  "description": "Positions by part id. In the overview it is the whole stored layout; as the body of\n`PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`\nit is what was removed, so a `PUT` of it undoes the removal.",
+  "description": "Positions by part id, for the flat map (ADR 0016) and for the By repo grouping (ADR 0068).\nIn the overview it is the whole stored layout; as the body of `PUT /api/layout` it holds only\nwhat moved; as the answer of `DELETE /api/layout` or `DELETE /api/layout/grouped` it is what\nwas removed, so a `PUT` of it undoes the removal.",
   "type": "object",
   "properties": {
+    "boxes": {
+      "description": "The By repo grouping: each repo box's top-left on the canvas, by `owner/name`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Position"
+      },
+      "default": {}
+    },
+    "grouped": {
+      "description": "The By repo grouping: each part's top-left relative to its repo's box, or on the canvas\nfor a part with no repo. Never read for the flat map, never written by it.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Position"
+      },
+      "default": {}
+    },
     "positions": {
+      "description": "The flat map: each part's top-left on the canvas.",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/Position"

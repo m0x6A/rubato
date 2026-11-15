@@ -1681,11 +1681,28 @@ session_stale_secs?: number
 team_poll_interval_secs?: number
 }
 /**
- * Positions by part id. In the overview it is the whole stored layout; as the body of
- * `PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`
- * it is what was removed, so a `PUT` of it undoes the removal.
+ * Positions by part id, for the flat map (ADR 0016) and for the By repo grouping (ADR 0068).
+ * In the overview it is the whole stored layout; as the body of `PUT /api/layout` it holds only
+ * what moved; as the answer of `DELETE /api/layout` or `DELETE /api/layout/grouped` it is what
+ * was removed, so a `PUT` of it undoes the removal.
  */
 export interface MapLayout {
+/**
+ * The By repo grouping: each repo box's top-left on the canvas, by `owner/name`.
+ */
+boxes?: {
+[k: string]: Position | undefined
+}
+/**
+ * The By repo grouping: each part's top-left relative to its repo's box, or on the canvas
+ * for a part with no repo. Never read for the flat map, never written by it.
+ */
+grouped?: {
+[k: string]: Position | undefined
+}
+/**
+ * The flat map: each part's top-left on the canvas.
+ */
 positions?: {
 [k: string]: Position | undefined
 }
@@ -2012,11 +2029,28 @@ state: ProposalState
 state_since: string
 }
 /**
- * Positions by part id. In the overview it is the whole stored layout; as the body of
- * `PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`
- * it is what was removed, so a `PUT` of it undoes the removal.
+ * Positions by part id, for the flat map (ADR 0016) and for the By repo grouping (ADR 0068).
+ * In the overview it is the whole stored layout; as the body of `PUT /api/layout` it holds only
+ * what moved; as the answer of `DELETE /api/layout` or `DELETE /api/layout/grouped` it is what
+ * was removed, so a `PUT` of it undoes the removal.
  */
 export interface MapLayout1 {
+/**
+ * The By repo grouping: each repo box's top-left on the canvas, by `owner/name`.
+ */
+boxes?: {
+[k: string]: Position | undefined
+}
+/**
+ * The By repo grouping: each part's top-left relative to its repo's box, or on the canvas
+ * for a part with no repo. Never read for the flat map, never written by it.
+ */
+grouped?: {
+[k: string]: Position | undefined
+}
+/**
+ * The flat map: each part's top-left on the canvas.
+ */
 positions?: {
 [k: string]: Position | undefined
 }

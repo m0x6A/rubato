@@ -858,6 +858,8 @@
     }
   ],
   "layout": {
+    "boxes": {},
+    "grouped": {},
     "positions": {
       "rubato-server": {
         "x": 100.0,

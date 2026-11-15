@@ -68,6 +68,10 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
             put(layout::put_layout).delete(layout::clear_layout),
         )
         .route(
+            &at(layout_routes::LAYOUT_GROUPED),
+            delete(layout::clear_grouped_layout),
+        )
+        .route(
             &at(traffic_routes::TRAFFIC_DISMISSALS),
             post(traffic::dismiss),
         )
@@ -212,6 +216,7 @@ mod tests {
             (Method::POST, approve_routes::PLAN_DRAFT_APPROVE.into()),
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
+            (Method::DELETE, layout_routes::LAYOUT_GROUPED.into()),
             (Method::POST, traffic_routes::TRAFFIC_DISMISSALS.into()),
             (
                 Method::DELETE,
@@ -417,6 +422,7 @@ mod tests {
         use rubato_protocol::layout::{MapLayout, Position};
         let layout = |id: &str, x: f64| MapLayout {
             positions: [(id.to_owned(), Position { x, y: 0.0 })].into(),
+            ..Default::default()
         };
         let put = |l: MapLayout| {
             http.put(format!("{base}{}", layout_routes::LAYOUT))
@@ -449,7 +455,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cleared.status(), 200);
-        assert_eq!(reader.points(metric::LAYOUT_WRITES)[0].value, 2);
+        let writes = |which: &str| {
+            reader
+                .points(metric::LAYOUT_WRITES)
+                .into_iter()
+                .find(|p| p.attrs.get(attr::LAYOUT_ARRANGEMENT).map(String::as_str) == Some(which))
+                .map(|p| p.value)
+        };
+        assert_eq!(writes("flat"), Some(2));
+        // The By repo grouping (ADR 0068) counts apart from the flat map.
+        let grouped = MapLayout {
+            grouped: [("web".to_owned(), Position { x: 30.0, y: 60.0 })].into(),
+            boxes: [("m0x6A/rubato".to_owned(), Position { x: 0.0, y: 0.0 })].into(),
+            ..Default::default()
+        };
+        assert_eq!(put(grouped).await.unwrap().status(), 204);
+        let cleared = http
+            .delete(format!("{base}{}", layout_routes::LAYOUT_GROUPED))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cleared.status(), 200);
+        assert_eq!(writes("grouped"), Some(2));
+        assert_eq!(writes("flat"), Some(2), "a grouped write is not a flat one");
+        // One body with both counts once in each arrangement.
+        let both = MapLayout {
+            grouped: [("web".to_owned(), Position { x: 1.0, y: 1.0 })].into(),
+            ..layout("web", 20.0)
+        };
+        assert_eq!(put(both).await.unwrap().status(), 204);
+        assert_eq!((writes("flat"), writes("grouped")), (Some(3), Some(3)));
+        {
+            let events = events.lock().unwrap();
+            assert!(
+                events.iter().any(|e| e.message == "layout written"
+                    && e.level == tracing::Level::INFO
+                    && e.fields
+                        .get("rubato.layout.arrangement")
+                        .map(String::as_str)
+                        == Some("grouped")),
+                "a write is logged at info with its arrangement"
+            );
+        }
         {
             let events = events.lock().unwrap();
             assert!(
