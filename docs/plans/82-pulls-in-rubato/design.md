@@ -1,7 +1,13 @@
 # Design: open pull requests and issues in Rubato; merge as the person (#82)
 
 Plan: [../82.md](../82.md) · ADRs 0033 (merge as the person) and 0034 (list every open pull request,
-detail on demand), both *proposed*. Choices Q1–Q4 answered by Mattias Jonsson 2026-11-12.
+detail on demand), both *accepted* 2026-11-12. Choices Q1–Q4 answered by Mattias Jonsson 2026-11-12.
+
+**Refreshed 2026-11-15** (plan Decisions 1–8), before PRs 2–4: approval now happens in Rubato
+(ADR 0054), so the merge gate reads the overview's derived `ApprovalState` instead of counting
+`Approved:` comments itself (§3 rule 7), and `approval_state` stays in `overview`; `pr_merges` is
+migration 0025; the view and the merge are map-scoped routes behind `same_origin` (ADR 0049, 0066);
+`merge_refusal` and `plan_gate` land with the view in PR 2. §1 shipped in PR 1 as written.
 
 Revised after the design review (two blockers: the plan gate failed open when the branch lacked the
 plan file; the open-issue view needed issue bodies that ADR 0026 keeps out of the browser; and eight
@@ -53,7 +59,7 @@ an unchanged head with `Green` costs 0 `check-runs` on the next full tick, with 
 
 ## 2. A pull request's view (ADR 0034)
 
-`GET /api/pulls/{owner}/{repo}/{number}` in a new slice `pulls`. The repo must be one the map names
+`GET /api/pulls/{owner}/{repo}/{number}` (map-scoped, also under `/api/w/{ws}`) in a new slice `pulls`. The repo must be one the workspace's map names
 and the installation covers; any pull request of such a repo can be viewed (open, merged or closed),
 so the issue detail's link works for a Done issue and after a merge. Other repos answer 404
 `unknown_repo`, so the route cannot read arbitrary repos through the installation. It reads, in
@@ -84,10 +90,13 @@ parallel:
 ## 3. The merge gate
 
 `merge_refusal(...)` is one pure function in `rubato-protocol`, used by both the view and the POST.
-The approval derivation it needs (`approval_state`, today private in `overview/build.rs:80-114`)
-moves next to `plan_fit` in `rubato-protocol` as a pure function, so `pulls` does not depend on the
-`overview` slice and `overview` stays a sink. Inputs: `PullFacts` (fresh pull, check runs, base
-check runs), `PersonFacts` (push, allowed methods) or none, `PlanAtHead`, and the request.
+Inputs: `PullFacts` (fresh pull, check runs, base check runs), `PersonFacts` (push, allowed methods)
+or none, the `PlanGate`, and the request. The `PlanGate` comes from a second pure function,
+`plan_gate(signal, head_hash, approval)`, over the approval the overview derives for the linked
+issue (`IssueSummary.approval`, built by `overview/build.rs` `approval_state` from counted comment
+approvals and approvals given in Rubato, ADR 0054). `pulls` reads that summary through
+`overview::issue_summary(app, ws, issue)`; `overview` names no `pulls`, so the slice graph stays
+acyclic, and nothing new is stored.
 
 Order, first match wins, each a `rubato_protocol::pulls::reason` constant:
 
@@ -101,18 +110,19 @@ Order, first match wins, each a `rubato_protocol::pulls::reason` constant:
    gate is the only one before CI has registered.)
 6. `not_mergeable` — `mergeable` is false, or still null (A5; the view says "GitHub is still
    checking").
-7. `plan_not_approved` — the issue named by the branch has a plan, and no counted approval names
-   the plan **at the head being merged**: the plan file is read at `head_sha`, its approval sha
-   computed (`plan-sha`, checkboxes normalised, ADR 0027), and an `Approved:` from a trusted author
-   must name that sha, with the plan fitting the map (ADR 0029). The issue "has a plan" when the file is at the head, **or** Rubato holds a plan row for it, **or**
-   it has a `Review:` or `Approved:` comment in `plan_signals` (kept even when `plans/fetch.rs:72` deletes
-   the plan row); only when none of these holds is the gate `NoPlan` and passes. A plan deleted from the
-   branch, or edited after approval, is refused.
+7. `plan_not_approved` — the issue named by the branch has a plan, and its derived approval does
+   not name the plan **at the head being merged**: the plan file is read at `head_sha` and its
+   `approval_hash` computed (ADR 0027, the approval record left out, ADR 0054); the summary's
+   `approval` must be `Current` (counted, of the plan Rubato holds, fitting the map, ADR 0029) and
+   its record's sha must name that hash. The issue "has a plan" when the file is at the head, **or**
+   its summary has a plan row (`plan_sha`), a draft (ADR 0053), a review or an approval; only when
+   none of these holds is the gate `NoPlan` and passes. A plan deleted from the branch, edited
+   after approval, approved only by a comment after the cutover, or not fitting, is refused.
 8. `needs_github_authorization` — no person facts (no token).
 9. `no_push_permission` — `permissions.push` is false.
 10. `method_not_allowed` — the requested method is not among the allowed ones (POST only).
 
-The view returns `MergeOffer{methods, default_method, can_merge, why_not, plan_gate}`; the button is
+The view returns `MergeOffer{methods, default_method, can_merge, why_not, plan_gate, stacked_above}` (`stacked_above`: open pull requests in the stored listing whose base is this head branch); the button is
 disabled with the reason text. The POST answers 409 with `{reason}` (502 for `github_refused`) and
 counts `rubato.web.rejected{rubato.route=/api/pulls/merge, rubato.reason}`.
 
@@ -128,7 +138,7 @@ counts `rubato.web.rejected{rubato.route=/api/pulls/merge, rubato.reason}`.
    `Failed` → 502 with `retry: true`.
 4. **Fresh** facts (bypass the cache; the result replaces the cache entry), including the person's
    repo read with the token, then `merge_refusal`. Any refusal: nothing sent.
-5. `INSERT OR IGNORE` the `opening` row (migration 0012: key `(repo, number, head_sha)`, `login`,
+5. `INSERT OR IGNORE` the `opening` row (migration 0025: key `(repo, number, head_sha)`, `login`,
    `method`, `state` `opening` | `merged`, `merge_sha`, `opened_at`, `updated_at`); losing the race
    answers with the winner's row. Two people or two tabs on the same head make one call.
 6. `merge_as(token, repo, number, head_sha, method)` inside span `rubato.pr.merge` (`rubato.repo`,
@@ -169,7 +179,7 @@ the POST's fresh reads (the same), 1 PUT as the person, and at most 1 reconcile 
   (text), check runs with links, team reviews (latest per reviewer) and the outside-team count, the
   files summary with "View diff on GitHub" (`{url}/files`), the linked issue with its fit and
   approval badges, and `MergeButton`.
-- `MergeButton`: a select of the allowed methods only (default squash when allowed), a primary
+- `MergeButton`: a select of the allowed methods only (default squash when allowed; when `MergeOffer.stacked_above` > 0, a note that a squash makes those pull requests conflict, plan Decision 7), a primary
   button, disabled with `why_not` text in a `.muted` line; one click, no confirm (A2); result in a
   `role="status"` element. New badge pairs (`checks-red`, `conflict`) use `-ink` tokens and join
   `PAIRS` in `styles.test.ts`.
@@ -200,4 +210,4 @@ the POST's fresh reads (the same), 1 PUT as the person, and at most 1 reconcile 
 | Budget | ADR 0034 numbers; call-count tests; "GitHub calls by endpoint" panel. |
 | Token | Only `pulls` (`repo_as`, `merge_as`) and `approve` call `auth::access_token`; the token-leak schema test is unchanged. |
 | Derived, not stored | `repo_pulls` stores GitHub's facts, not progress; `issue`, checks of tracked pull requests and the gate are derived. `pr_merges` is an intent record, like `plan_approvals`. |
-| Slices | `pulls` owns `pr_merges` and names `github_poll`, `auth`, `plans` through their roots; `approval_state` moves to `rubato-protocol`, so `pulls` does not name `overview`. `github_poll` owns `repo_pulls`. AGENTS.md blocks updated. |
+| Slices | `pulls` owns `pr_merges` and names `github_poll`, `auth`, `plans` and `overview` (for `issue_summary`) through their roots; `overview` names no `pulls`. `github_poll` owns `repo_pulls`. AGENTS.md blocks updated. |
