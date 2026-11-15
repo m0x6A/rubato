@@ -1,4 +1,5 @@
-import type { ConnectedRepo, Overview } from "../../protocol.ts";
+import type { ConnectedRepo, IssueRef, MapRef, Overview } from "../../protocol.ts";
+import { RepoWork } from "./RepoWork.tsx";
 import { type RepoFeatures, repoFeatures } from "./provides.ts";
 
 type Max = { open_issues: number; plans: number; sessions: number; open_pulls: number };
@@ -91,7 +92,7 @@ function Provides({ repo, f }: { repo: string; f: RepoFeatures }) {
 
 /** Connected repos (issue #80): each repo the map names, whether the App covers it, and its
  * open issues, plans and sessions; and the sessions Rubato cannot tie to an issue. */
-export function ConnectedRepos({ overview }: { overview: Overview }) {
+export function ConnectedRepos({ overview, onOpenIssue, onPin }: { overview: Overview; onOpenIssue?: ((i: IssueRef) => void) | undefined; onPin?: ((i: IssueRef, t: MapRef) => void) | undefined }) {
   const repos = overview.repos ?? [];
   const max = rackScale(repos);
   const loose = (overview.unpinned_sessions ?? []).filter((s) => s.status !== "ended");
@@ -102,6 +103,7 @@ export function ConnectedRepos({ overview }: { overview: Overview }) {
         {repos.map((r) => (
           <li key={r.repo}>
             <RackUnit repo={r} max={max} provides={repoFeatures(overview.map.map, r.repo)} />
+            {r.in_map && <RepoWork overview={overview} repo={r.repo} onOpenIssue={onOpenIssue} onPin={onPin} />}
           </li>
         ))}
         {repos.length === 0 && <li className="muted">The map names no repos.</li>}
