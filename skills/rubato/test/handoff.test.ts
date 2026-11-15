@@ -447,4 +447,20 @@ describe("plan.ts handoff keeps ADR paths in the decisions folder (#210)", () =>
     expect(rows.map(([, , abs]) => readFileSync(abs, "utf8"))).toEqual(before);
     console.log(`checked ${rows.length} escaping rows and one inside`);
   });
+
+  it("a row outside the folder never counts at its pinned blob: edited into accepted text after the approval, it is bundle_changed", async () => {
+    const w = await makeWorld();
+    const loose = join(w.work, "docs/0094-loose.md");
+    const text = ADR_TEXT.replace("# 0099. Try it", "# 0094. Loose");
+    writeFileSync(loose, text);
+    const plan = join(w.work, PLAN);
+    writeFileSync(plan, `${readFileSync(plan, "utf8")}| 0094 | docs/0094-loose.md | ${gitBlobSha(text)} |\n`);
+    const a = w.args();
+    // After the approval the file reads as accepted by it; inside the folder that counts at its pinned blob.
+    writeFileSync(loose, text.replace("- **Status:** proposed", "- **Status:** accepted").replace(/- \*\*Decided by:\*\*.*/, `- **Decided by:** m0x6A, accepted 2026-11-20, approved in Rubato ${URL} (self); drafted by agent (test)`));
+    const before = snapshot(w);
+    const r = await handoff(w.ws, w.work, a, quiet);
+    expect(r.code).toBe(HANDOFF_EXIT.bundle_changed);
+    expect(snapshot(w)).toBe(before);
+  });
 });
