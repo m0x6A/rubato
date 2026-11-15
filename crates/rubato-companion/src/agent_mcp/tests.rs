@@ -471,3 +471,30 @@ async fn hooks_keep_flowing_while_tools_are_called_in_a_flood() {
     }
     assert_eq!(hooks, 100);
 }
+
+/// Manual check (plan 220 §5), not run by CI: serve the real receiver with this slice for launch
+/// 7 and write its `mcp.json` to `$RUBATO_MANUAL_MCP_JSON`, then wait 90 s so real Claude Code can
+/// connect (`claude mcp list` in a directory whose `.mcp.json` is that file).
+/// `RUBATO_MANUAL_MCP_JSON=/tmp/x/.mcp.json cargo test -p rubato-companion --lib manual_real_claude -- --ignored --nocapture`
+#[tokio::test]
+#[ignore]
+async fn manual_real_claude_connects() {
+    let path = std::env::var("RUBATO_MANUAL_MCP_JSON").expect("RUBATO_MANUAL_MCP_JSON");
+    let w = world(Utc::now(), false).await;
+    // The shape `launch::render_mcp_config` writes, built here so this slice names no `launch`.
+    let v = json!({"mcpServers": {"rubato-companion": {
+        "type": "http",
+        "url": format!("{}/mcp", w.base),
+        "headers": {"Authorization": format!("Bearer {}", w.token), "X-Rubato-Launch": Uuid::from_u128(7).to_string()},
+    }}});
+    std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    println!("serving {} for launch 7; config at {path}", w.base);
+    tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+    for tool in ["initialize", "tools/list", "get_assignment"] {
+        println!(
+            "{tool}: ok={} refused={}",
+            w.calls(tool, "ok", ""),
+            w.calls(tool, "refused", "no_launch")
+        );
+    }
+}

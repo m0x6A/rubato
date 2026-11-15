@@ -4,7 +4,9 @@
 
 use super::apply::LiveSession;
 use super::restore::{Restored, restore};
-use super::script::{check_ref, launcher_script, sh_quote};
+use super::script::{
+    ALLOWED_TOOLS, MCP_CONFIG_FILE, check_ref, launcher_script, render_mcp_config, sh_quote,
+};
 use crate::hooks::{HOOKS_TEMPLATE, render_hooks};
 use crate::kernel::config::{HookEndpoint, Workspace, write_private};
 use crate::kernel::gitx::{Git, default_worktree_path};
@@ -210,6 +212,12 @@ impl Launcher {
             &hooks_path,
             render_hooks(HOOKS_TEMPLATE, self.hook_endpoint.port, &header_path)?.as_bytes(),
         )?;
+        // The agent-facing MCP server for this launch (ADR 0071, plan 220 §5): private, like the
+        // header file, since it holds the same token.
+        write_private(
+            &launch_dir.join(MCP_CONFIG_FILE),
+            render_mcp_config(&self.hook_endpoint, cmd.id).as_bytes(),
+        )?;
         let prompt_path = launch_dir.join("prompt.txt");
         write_private(&prompt_path, cmd.prompt.as_bytes())?;
         let script_path = launch_dir.join("launch.sh");
@@ -269,7 +277,52 @@ fn turn_script(launch_sh: &std::path::Path, claude: &str) -> String {
     format!(
         "#!/bin/sh\n# rubato headless turn; generated, do not edit\n\
          eval \"$(sed '$d' '{}')\"\n\
-         exec {claude} --settings \"$(dirname \"$0\")/hooks.json\" \"$@\"\n",
+         exec {claude} --mcp-config \"$(dirname \"$0\")/{MCP_CONFIG_FILE}\" --allowedTools {ALLOWED_TOOLS} --settings \"$(dirname \"$0\")/hooks.json\" \"$@\"\n",
         launch_sh.display()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Plan 220 §5: a headless turn gets the same MCP server, its flags before the turn's own.
+    #[test]
+    fn a_headless_turn_gets_the_mcp_flags_before_its_own() {
+        let d = tempfile::tempdir().unwrap();
+        let stand = d.path().join("claude.sh");
+        std::fs::write(&stand, "printf '%s\\n' \"$@\"\n").unwrap();
+        let claude = format!("sh {} --model x", stand.display());
+        let launch_sh = d.path().join("launch.sh");
+        std::fs::write(&launch_sh, "#!/bin/sh\nexport A=1\nexec never\n").unwrap();
+        let turn = d.path().join("turn.sh");
+        std::fs::write(&turn, turn_script(&launch_sh, &claude)).unwrap();
+        let out = std::process::Command::new("sh")
+            .arg(&turn)
+            .args(["-p", "hello"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let argv: Vec<String> = String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let dir = d.path().display().to_string();
+        assert_eq!(
+            argv,
+            [
+                "--model".to_owned(),
+                "x".into(),
+                "--mcp-config".into(),
+                format!("{dir}/{MCP_CONFIG_FILE}"),
+                "--allowedTools".into(),
+                ALLOWED_TOOLS.into(),
+                "--settings".into(),
+                format!("{dir}/hooks.json"),
+                "-p".into(),
+                "hello".into(),
+            ]
+        );
+    }
 }
