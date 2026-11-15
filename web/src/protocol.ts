@@ -1093,7 +1093,15 @@ claude_version?: (string | null)
 companion_id: string
 companion_version: string
 hostname: string
+/**
+ * Deprecated (ADR 0070): `tmux-ide --version` from a companion that still ran tmux-ide.
+ * Read, never sent by a current companion.
+ */
 tmux_ide_version?: (string | null)
+/**
+ * `tmux -V` at start, such as `3.8` (ADR 0070). None on a headless companion (ADR 0062).
+ */
+tmux_version?: (string | null)
 user: string
 }
 /**
@@ -1757,7 +1765,8 @@ session_message_max_chars?: number
  */
 session_stale_secs?: number
 /**
- * Reconciliation poll of `tmux-ide team --json`.
+ * Reconcile interval: `tmux list-panes` and identity, every this many seconds. The name is
+ * kept from the retired `tmux-ide team --json` poll (ADR 0070).
  */
 team_poll_interval_secs?: number
 }

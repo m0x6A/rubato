@@ -37,6 +37,8 @@ pub async fn heartbeat(
             hostname: hostname.clone(),
             companion_version: crate::kernel::VERSION.to_owned(),
             tmux_ide_version: tmux_ide_version.clone(),
+            // Named from tmux once tmux-ide is gone (plan 147, PR 2).
+            tmux_version: None,
             claude_version: None,
         }));
         metrics.heartbeat.record(
