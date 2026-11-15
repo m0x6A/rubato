@@ -1,6 +1,6 @@
 # 0027. Plan review and approval are issue comments that Rubato derives and shows
 
-- **Status:** accepted
+- **Status:** superseded by 0054
 - **Date:** 2026-11-12
 - **Decided by:** Mattias Jonsson, accepted 2026-11-12 (drafted by agent, Claude Code, claude-opus-5-5, issue #71)
 - **Seam:** server-github, server-plan-file, skill-plan-file
