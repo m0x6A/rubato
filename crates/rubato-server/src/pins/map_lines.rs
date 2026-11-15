@@ -9,7 +9,8 @@ use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
 use rubato_protocol::{IssuePin, IssueRef, MapRef, SystemMap};
 
-/// Why a target cannot be pinned: `unknown_id` or `kind_mismatch`, with a message naming it.
+/// Why an issue cannot be pinned there: `unknown_id`, `kind_mismatch` or `unknown_repo`, with a
+/// message naming it.
 pub type Refusal = (&'static str, String);
 
 /// Whether `target` is an id of `map` of the right kind. A node id pinned as a seam would never
@@ -31,6 +32,23 @@ pub fn check_target(map: &SystemMap, version: &str, target: &MapRef) -> Result<(
         ));
     }
     Ok(())
+}
+
+/// Whether `repo` is named by `map` (in `repos[]` or on a node), compared case-insensitively as
+/// GitHub does. An issue of any other repo would be read with the App's token and shown to every
+/// member (issue #163). Shared by the pin route, launch and `Map:` lines.
+pub fn check_repo(map: &SystemMap, version: &str, repo: &str) -> Result<(), Refusal> {
+    if map
+        .repos_named()
+        .iter()
+        .any(|r| r.eq_ignore_ascii_case(repo))
+    {
+        return Ok(());
+    }
+    Err((
+        "unknown_repo",
+        format!("{repo} is not a repo the map names (map {version})"),
+    ))
 }
 
 /// One `Map:` line to apply.
@@ -118,8 +136,10 @@ async fn apply_one(
     if store::map_line_applied(&app.db, ws, &line.issue, &line.target).await? {
         return Ok(None);
     }
-    if let Err((reason, msg)) = check_target(map, version, &line.target) {
-        // Not recorded: the line may name a part the map gains later.
+    if let Err((reason, msg)) = check_repo(map, version, &line.issue.repo)
+        .and_then(|()| check_target(map, version, &line.target))
+    {
+        // Not recorded: the line may name a repo or a part the map gains later.
         tracing::debug!(rubato.issue = %line.issue, reason, "{msg}");
         return Ok(Some(reason));
     }
@@ -322,6 +342,47 @@ mod tests {
                 &lines[..1]
             )
             .await,
+            1
+        );
+        println!("checked {} lines", lines.len() + 1);
+    }
+
+    /// Issue #163: a line for an issue of a repo the map does not name pins nothing, is counted
+    /// `unknown_repo` and not recorded, so it pins once the map names the repo. Without the
+    /// repo check in `apply_one` the first call pins it and this fails.
+    #[tokio::test]
+    async fn a_line_of_a_repo_the_map_does_not_name_pins_nothing() {
+        let (app, reader, _tmp) = app().await;
+        let m = map();
+        let lines = [
+            Line {
+                issue: IssueRef::new("elsewhere/secret", 1),
+                target: MapRef::node("web"),
+                author: "m0x6A".into(),
+            },
+            // The map's repo in other case is the same repo.
+            Line {
+                issue: IssueRef::new("O/R", 2),
+                target: MapRef::node("web"),
+                author: "m0x6A".into(),
+            },
+        ];
+        let ws = rubato_protocol::DEFAULT_WORKSPACE;
+        assert_eq!(apply_map_lines(&app, ws, &m, "v1", &lines).await, 1);
+        let pins = store::list_pins(&app.db, ws).await.unwrap();
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0].issue, IssueRef::new("O/R", 2));
+        assert_eq!(
+            outcomes(&reader),
+            [("pinned".to_string(), 1), ("unknown_repo".to_string(), 1)]
+        );
+        let mut bigger = m.clone();
+        bigger.repos.push(rubato_protocol::RepoRef {
+            name: "elsewhere/secret".into(),
+            plan_path: None,
+        });
+        assert_eq!(
+            apply_map_lines(&app, ws, &bigger, "v2", &lines[..1]).await,
             1
         );
         println!("checked {} lines", lines.len() + 1);

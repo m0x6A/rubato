@@ -310,8 +310,21 @@ pub fn issues_from_page(page: &serde_json::Value) -> Vec<OpenIssueInfo> {
         .collect()
 }
 
+/// `owner/name`, each half of `[A-Za-z0-9_.-]+` and neither `.` nor `..`, so no repo string
+/// can add a path segment or a query to a REST path (issue #163).
 fn split_repo(repo: &str) -> Result<(&str, &str)> {
-    repo.split_once('/').context("repo must be owner/name")
+    fn part(s: &str) -> bool {
+        !s.is_empty()
+            && s != "."
+            && s != ".."
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+    }
+    repo.split_once('/')
+        .filter(|(o, r)| part(o) && part(r))
+        .with_context(|| {
+            format!("repo must be owner/name of letters, digits, '_', '.' or '-', not {repo:?}")
+        })
 }
 
 // ----- octocrab ------------------------------------------------------------------------------
@@ -955,6 +968,25 @@ pub fn summarize_check_runs<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #163: a repo string reaches REST paths only as a plain `owner/name`. Without the
+    /// character check in `split_repo`, `o/r/../..` and friends split and this fails.
+    #[test]
+    fn split_repo_accepts_only_owner_slash_name() {
+        let good = ["m0x6A/rubato", "o/r.js", "o/a_b-c", "O-1/R_2.x"];
+        let bad = [
+            "", "o", "o/", "/r", "o/r/x", "o/..", "o/.", "../r", "./r", "o/r?x=1", "o/r#1",
+            "o/r%2F", "o r/x", "o/r\n", "o\\r/x", "ö/r",
+        ];
+        for repo in good {
+            assert!(split_repo(repo).is_ok(), "{repo:?} should be accepted");
+        }
+        for repo in bad {
+            assert!(split_repo(repo).is_err(), "{repo:?} should be refused");
+        }
+        assert_eq!(split_repo("m0x6A/rubato").unwrap(), ("m0x6A", "rubato"));
+        println!("checked {} repo strings", good.len() + bad.len());
+    }
 
     /// A listener that accepts and never answers: the call must end as an error, not hang.
     #[tokio::test(flavor = "current_thread")]

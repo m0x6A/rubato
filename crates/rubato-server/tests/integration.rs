@@ -1921,6 +1921,66 @@ async fn pin_kind_must_match_id() {
     println!("checked {} pin requests", cases.len());
 }
 
+/// Issue #163: a pin for an issue of a repo the map does not name is refused and writes no
+/// row, so the poll never reads it with the App's token; the map's repo in other case pins.
+/// A pin row for such a repo (written before the check) cannot start a session either.
+#[tokio::test]
+async fn issues_of_repos_the_map_does_not_name_are_not_pinned_or_launched() {
+    let h = harness().await;
+    let pin = |repo: &str, number: u64| {
+        h.http
+            .post(format!("{}{}", h.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: IssueRef::new(repo, number),
+                target: MapRef::node("web"),
+            })
+            .send()
+    };
+    let cases = [
+        ("elsewhere/secret", 1, 422),
+        ("m0x6A/rubato/../../elsewhere/secret", 2, 422),
+        ("M0X6A/Rubato", 3, 201),
+    ];
+    for (repo, number, status) in cases {
+        let r = pin(repo, number).await.unwrap();
+        assert_eq!(r.status(), status, "{repo}: {}", r.text().await.unwrap());
+    }
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(
+        ov.issues.iter().map(|i| i.issue.number).collect::<Vec<_>>(),
+        [3],
+        "only the map's repo is tracked"
+    );
+
+    // An old pin row for a repo the map does not name, and a connected companion.
+    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'elsewhere/secret', 9, 'node', 'web', 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let _ = send(
+        &mut ws,
+        &with_companion(Harness::fixture("companion_hello.json"), companion_id),
+    )
+    .await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": IssueRef::new("elsewhere/secret", 9), "slug": "x" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+    assert!(
+        r.text().await.unwrap().contains("not a repo the map names"),
+        "the refusal names why"
+    );
+    let next = tokio::time::timeout(std::time::Duration::from_millis(300), ws.next()).await;
+    assert!(next.is_err(), "no LaunchCommand was sent: {next:?}");
+    println!("checked {} pins and 1 launch", cases.len());
+}
+
 #[tokio::test]
 async fn old_mismatched_pin_still_listed() {
     let h = harness().await;

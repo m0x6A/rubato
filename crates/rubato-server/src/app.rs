@@ -271,6 +271,44 @@ mod tests {
             Some((1, pin_routes::PINS.to_owned()))
         );
         assert_eq!(count("unknown_id"), Some((1, pin_routes::PINS.to_owned())));
+        // Issue #163: an issue of a repo the map does not name is refused at the pin and at
+        // the launch, each counted on its own route.
+        let elsewhere = IssueRef::new("elsewhere/secret", 1);
+        let r = http
+            .post(format!("{base}{}", pin_routes::PINS))
+            .json(&PinRequest {
+                issue: elsewhere.clone(),
+                target: MapRef::node("web"),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 422);
+        assert!(
+            r.text()
+                .await
+                .unwrap()
+                .contains("elsewhere/secret is not a repo the map names")
+        );
+        let r = http
+            .post(format!("{base}{}", launch_routes::LAUNCH))
+            .json(&serde_json::json!({ "issue": elsewhere }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 422);
+        let unknown_repo = |route: &str| {
+            reader
+                .points(metric::WEB_REJECTED)
+                .into_iter()
+                .find(|p| {
+                    p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("unknown_repo")
+                        && p.attrs.get(attr::ROUTE).map(String::as_str) == Some(route)
+                })
+                .map(|p| p.value)
+        };
+        assert_eq!(unknown_repo(pin_routes::PINS), Some(1));
+        assert_eq!(unknown_repo(launch_routes::LAUNCH), Some(1));
         {
             let events = events.lock().unwrap();
             let line = events
