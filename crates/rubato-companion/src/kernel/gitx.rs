@@ -98,7 +98,7 @@ pub fn worktrees(repo: &Path) -> Result<Vec<(PathBuf, Option<String>)>> {
     Ok(list)
 }
 
-/// A worktree for `branch` at `path`, without tmux-ide (headless mode, ADR 0059): the branch when
+/// A worktree for `branch` at `path`, without tmux-ide (headless mode, ADR 0062): the branch when
 /// it exists, else a new one from `base_ref`.
 pub fn worktree_add(
     repo: &Path,

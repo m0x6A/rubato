@@ -444,7 +444,7 @@ async fn stop_as(h: &H, user: &str) -> Result<Uuid, (StatusCode, String)> {
     .map_err(|(s, Json(b))| (s, b["reason"].as_str().unwrap_or("").to_owned()))
 }
 
-/// ADR 0059: only the owner stops; a companion that cannot take it or is not live gets nothing,
+/// ADR 0062: only the owner stops; a companion that cannot take it or is not live gets nothing,
 /// so a stop never waits for a later Hello and never reaches a later session.
 #[tokio::test]
 async fn stop_is_owner_only_and_never_queued() {

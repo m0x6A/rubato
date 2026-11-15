@@ -72,7 +72,7 @@ pub async fn start(
     // twice, so it stops the companion with the path in the error.
     let deliveries = Deliveries::open(&cfg.state_dir)?;
     let (hook_tx, hook_rx) = mpsc::unbounded_channel::<HookEvent>();
-    // Headless turns send their own hooks into the same channel (ADR 0059).
+    // Headless turns send their own hooks into the same channel (ADR 0062).
     let synthetic_hooks = hook_tx.clone();
     let (dropped_tx, dropped_rx) = mpsc::unbounded_channel::<&'static str>();
     let previous = HookEndpoint::load(&cfg.state_dir);
@@ -416,7 +416,7 @@ struct Dispatch<'a> {
     session_input: &'a mpsc::UnboundedSender<SessionMessage>,
     /// The plan mirror task's queue: session ids of settle hooks (ADR 0053).
     plan_mirror: &'a mpsc::UnboundedSender<String>,
-    /// Headless mode: turns killed on a cap hit or a revoked pairing (ADR 0059).
+    /// Headless mode: turns killed on a cap hit or a revoked pairing (ADR 0062).
     headless: Option<&'a sessions::Headless>,
 }
 
@@ -454,7 +454,7 @@ impl Dispatch<'_> {
                     }
                     ServerMessage::Error { code, .. } if code == "auth" => {
                         tracing::error!("pairing token rejected; re-pair with `rubato-companion pair`");
-                        // The owner revoked this companion: nothing it started may go on (ADR 0059).
+                        // The owner revoked this companion: nothing it started may go on (ADR 0062).
                         if let Some(h) = self.headless {
                             let n = h.stop_all(crate::kernel::claude::KillReason::Revoke);
                             tracing::warn!(stopped = n, "pairing revoked: headless turns stopped");

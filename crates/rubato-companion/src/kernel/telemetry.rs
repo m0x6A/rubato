@@ -91,9 +91,9 @@ pub struct Metrics {
     pub session_input_failed: Counter<u64>,
     /// Handoff reports forwarded to the server, by `rubato.outcome` (ADR 0055).
     pub handoff_reports: Counter<u64>,
-    /// Headless turns ended, by `rubato.outcome` (ADR 0059).
+    /// Headless turns ended, by `rubato.outcome` (ADR 0062).
     pub headless_turns: Counter<u64>,
-    /// Headless turns the companion killed, by `rubato.reason` (ADR 0059).
+    /// Headless turns the companion killed, by `rubato.reason` (ADR 0062).
     pub headless_killed: Counter<u64>,
 }
 

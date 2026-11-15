@@ -24,7 +24,7 @@ pub struct PairingRow {
     pub last_seen: Option<DateTime<Utc>>,
     pub server_seq: u64,
     pub last_companion_seq: u64,
-    /// Interactive or headless, from its last Hello (ADR 0059, migration 0023).
+    /// Interactive or headless, from its last Hello (ADR 0062, migration 0023).
     pub client: rubato_protocol::ClientKind,
 }
 
@@ -180,7 +180,7 @@ pub async fn next_server_seq(db: &SqlitePool, companion_id: Uuid) -> Result<u64>
     Ok(r.get::<i64, _>("server_seq") as u64)
 }
 
-/// What kind of client the companion said it is in its Hello (ADR 0059).
+/// What kind of client the companion said it is in its Hello (ADR 0062).
 pub async fn set_client(
     db: &SqlitePool,
     companion_id: Uuid,

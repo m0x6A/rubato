@@ -1853,7 +1853,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Headless companions (agent-only clients, ADR 0059): turns ended per minute by outcome (ok, failed, no_result, timeout, killed) and turns the companion killed by reason (stop, cap, revoke, timeout, quiet, companion_restarted). A kill by timeout, quiet or companion_restarted fires HeadlessTurnsKilled; no_result rising means turns end without a stream-json result.",
+      "description": "Headless companions (agent-only clients, ADR 0062): turns ended per minute by outcome (ok, failed, no_result, timeout, killed) and turns the companion killed by reason (stop, cap, revoke, timeout, quiet, companion_restarted). A kill by timeout, quiet or companion_restarted fires HeadlessTurnsKilled; no_result rising means turns end without a stream-json result.",
       "targets": [
         {
           "refId": "A",

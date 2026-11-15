@@ -1,4 +1,4 @@
-//! Steps for `features/headless.feature` (ADR 0059). The headless stand-in `claude` writes
+//! Steps for `features/headless.feature` (ADR 0062). The headless stand-in `claude` writes
 //! stream-json, records its argv and pid beside itself, and posts no hooks: the companion's own
 //! child process handling is all that is under test.
 

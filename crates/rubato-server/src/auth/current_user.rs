@@ -70,7 +70,7 @@ mod tests {
         assert_eq!(cookie_value(&h, "zzz"), None);
     }
 
-    /// ADR 0059: a client, interactive or headless, never approves. A companion's pairing token
+    /// ADR 0062: a client, interactive or headless, never approves. A companion's pairing token
     /// is not a web session: every web route, the plan approval among them, answers 401.
     #[tokio::test]
     async fn a_companions_token_is_not_a_web_session() {

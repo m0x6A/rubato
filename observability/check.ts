@@ -28,7 +28,7 @@ const REQUIRED = [
   "ApprovalNoHandoff",
   "HandoffNoLinkComment",
   "ApprovalRecordMismatch",
-  // Issue #138 (ADR 0059).
+  // Issue #138 (ADR 0062).
   "HeadlessTurnsKilled",
 ];
 

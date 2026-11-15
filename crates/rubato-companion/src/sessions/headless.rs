@@ -1,4 +1,4 @@
-//! Headless sessions (ADR 0059, plan 122 §D14): at most one `claude -p` turn per launch, held as a
+//! Headless sessions (ADR 0062, plan 122 §D14): at most one `claude -p` turn per launch, held as a
 //! child process group. The child is the authority:
 //! - its start sets the session *working* (`source: headless`);
 //! - its stream events move `last_seen` (at most every 10 s) and, every 60 s, send a progress hook

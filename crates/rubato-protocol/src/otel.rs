@@ -177,7 +177,7 @@ pub mod metric {
     pub const COMPANIONS_BY_CAPABILITY: &str = "rubato.companions.by_capability";
     /// Companion: pastes that failed, by reason.
     pub const SESSION_INPUT_FAILED: &str = "rubato.session_input.failed";
-    /// Headless turns ended (ADR 0059), by `rubato.outcome`: `ok`, `failed`, `no_result`,
+    /// Headless turns ended (ADR 0062), by `rubato.outcome`: `ok`, `failed`, `no_result`,
     /// `timeout`, `killed`.
     pub const HEADLESS_TURNS: &str = "rubato.headless.turns";
     /// Headless turns the companion killed, by `rubato.reason`: `stop`, `cap`, `revoke`,

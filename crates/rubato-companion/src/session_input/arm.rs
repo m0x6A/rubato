@@ -38,7 +38,7 @@ pub struct SessionInputTask {
     /// The installed rubato skill, read for each `plan_approved` (`kernel::skill`), so an upgrade
     /// needs no companion restart.
     pub skill_dir: std::path::PathBuf,
-    /// Headless mode (ADR 0059): messages run as turns, `stop` kills the running one.
+    /// Headless mode (ADR 0062): messages run as turns, `stop` kills the running one.
     pub headless: Option<crate::sessions::Headless>,
     /// For `stop` on an interactive session: its tmux session is killed.
     pub tmux: Option<crate::kernel::tmux::Tmux>,
@@ -241,7 +241,7 @@ impl SessionInputTask {
         })
     }
 
-    /// A message to a headless session is one resume turn (ADR 0059). `typing` is recorded before
+    /// A message to a headless session is one resume turn (ADR 0062). `typing` is recorded before
     /// the spawn and `delivered` once the child runs, so it is never typed twice.
     async fn run_turn(
         &mut self,
@@ -309,7 +309,7 @@ impl SessionInputTask {
         }
     }
 
-    /// `stop` (ADR 0059): checks the paired user and the launch, skips only the idle check, kills
+    /// `stop` (ADR 0062): checks the paired user and the launch, skips only the idle check, kills
     /// the turn's process group (headless) or the tmux session (interactive), and ends the
     /// session. A repeat is answered from the delivery record without killing again.
     async fn stop(&mut self, msg: &SessionMessage) -> Handled {

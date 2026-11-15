@@ -4,7 +4,7 @@
   "type": "object",
   "properties": {
     "client": {
-      "description": "Interactive or headless (ADR 0059): what the web shows on the lane. Older servers omit it.",
+      "description": "Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.",
       "$ref": "#/$defs/ClientKind"
     },
     "companion_id": {
@@ -49,7 +49,7 @@
   ],
   "$defs": {
     "ClientKind": {
-      "description": "What kind of client a companion is (ADR 0059). Every client has one owner and never approves.",
+      "description": "What kind of client a companion is (ADR 0062). Every client has one owner and never approves.",
       "oneOf": [
         {
           "description": "Sessions in the developer's tmux, input pasted into the pane.",

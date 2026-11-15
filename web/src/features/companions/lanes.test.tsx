@@ -197,7 +197,7 @@ describe("the queue on a lane (S14 to S16)", () => {
   });
 });
 
-describe("agent-only clients (ADR 0059)", () => {
+describe("agent-only clients (ADR 0062)", () => {
   it("a headless companion is badged with its owner; an interactive one is not", () => {
     const BOT = "55555555-5555-5555-5555-555555555555";
     const bot = companion("alice", false, { companion_id: BOT, hostname: "ci-runner", client: "headless" });

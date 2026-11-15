@@ -421,7 +421,7 @@ describe("the session log (ADR 0052): what was said, for the whole team", () => 
   });
 });
 
-describe("stop your own session (ADR 0059)", () => {
+describe("stop your own session (ADR 0062)", () => {
   const stops = (fetch: ReturnType<typeof serve>["fetch"]) => fetch.mock.calls.filter((c) => c[1]?.method === "POST" && String(c[0]) === `/api/launches/${LAUNCH}/stop`);
 
   it("the owner stops only after confirming", async () => {

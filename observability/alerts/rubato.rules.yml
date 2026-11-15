@@ -143,7 +143,7 @@ groups:
           summary: "{{ $value }} plan(s) carry an approval record that differs from Rubato's"
           panel: Approval records that differ
 
-      # #138, ADR 0059: a headless turn was killed by its total or quiet bound, or was found still
+      # #138, ADR 0062: a headless turn was killed by its total or quiet bound, or was found still
       # running after a companion restart. A cap or a stop is already an event (CapHit, Ended),
       # so those reasons do not page.
       - alert: HeadlessTurnsKilled

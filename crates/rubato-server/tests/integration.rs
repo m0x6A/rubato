@@ -865,7 +865,7 @@ async fn bad_and_revoked_tokens_are_refused() {
     assert!(tokio_tungstenite::connect_async(revoked).await.is_err());
 }
 
-/// ADR 0059: a headless companion says so in its Hello; its lane keeps the badge offline, and an
+/// ADR 0062: a headless companion says so in its Hello; its lane keeps the badge offline, and an
 /// older Hello without `client` reads as interactive.
 #[tokio::test]
 async fn the_pairing_shows_a_headless_companion_even_offline() {
@@ -903,7 +903,7 @@ async fn the_pairing_shows_a_headless_companion_even_offline() {
     assert!(!got[0].connected, "offline, still headless");
 }
 
-/// ADR 0059: revoking a connected companion sends `Error { auth }` and closes its socket, so no
+/// ADR 0062: revoking a connected companion sends `Error { auth }` and closes its socket, so no
 /// envelope it sends afterwards is applied. Before, the socket stayed open (`ws.rs` only stopped
 /// sending), and this fails there.
 #[tokio::test]

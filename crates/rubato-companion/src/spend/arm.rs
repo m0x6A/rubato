@@ -43,7 +43,7 @@ pub async fn after_hook(
                 limit,
                 at: Utc::now(),
             }));
-            // A headless turn is a process group the companion holds (ADR 0059).
+            // A headless turn is a process group the companion holds (ADR 0062).
             let killed_turn = match (headless, entry.as_ref().and_then(|e| e.launch_id)) {
                 (Some(h), Some(launch)) => h.kill(launch, crate::kernel::claude::KillReason::Cap),
                 _ => false,

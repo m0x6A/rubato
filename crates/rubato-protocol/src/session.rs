@@ -29,13 +29,13 @@ pub enum StateSource {
     Scraped,
     /// The companion just launched it; no event yet.
     Launch,
-    /// A headless companion holds the session's turn as its own child process (ADR 0059): the
+    /// A headless companion holds the session's turn as its own child process (ADR 0062): the
     /// turn's end, reply and liveness come from that process, not from tmux or hooks. Sent only
     /// to a server that announced `session_stop`.
     Headless,
 }
 
-/// What kind of client a companion is (ADR 0059). Every client has one owner and never approves.
+/// What kind of client a companion is (ADR 0062). Every client has one owner and never approves.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientKind {

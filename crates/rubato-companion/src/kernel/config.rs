@@ -86,7 +86,7 @@ pub struct CompanionConfig {
     /// Where the rubato skill is installed; None means `~/.claude/skills/rubato`. Its version
     /// decides whether `plan_approved` can be typed (ADR 0055).
     pub skill_dir: Option<PathBuf>,
-    /// `interactive` (tmux, the default) or `headless` (ADR 0059, A18): one mode per companion.
+    /// `interactive` (tmux, the default) or `headless` (ADR 0062, A18): one mode per companion.
     pub mode: rubato_protocol::ClientKind,
     /// A headless turn running longer than this is killed, `failed { timeout }` (A19).
     pub headless_turn_max_secs: u64,

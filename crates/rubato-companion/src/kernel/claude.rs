@@ -4,7 +4,7 @@
 //! stream event (A19). A Drop guard kills the group on every exit path, a panic included.
 //!
 //! Two kinds of turn run on the same [`spawn`]:
-//! - headless sessions (ADR 0059, plan 122 §D14): the first turn ([`first_turn_args`]) and resume
+//! - headless sessions (ADR 0062, plan 122 §D14): the first turn ([`first_turn_args`]) and resume
 //!   turns ([`resume_args`]). At most one per session; the caller records `pgid` and
 //!   `started_at`, so that after a restart [`same_group_alive`] can tell a live turn of ours from
 //!   a reused pid;

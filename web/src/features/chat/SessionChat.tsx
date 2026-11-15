@@ -83,7 +83,7 @@ function Conversation({ launchId, hooksLost, me }: { launchId: string; hooksLost
     [launchId, live, load],
   );
 
-  /** Stops the session (ADR 0059): asks once more first, since a stop cannot be taken back. */
+  /** Stops the session (ADR 0062): asks once more first, since a stop cannot be taken back. */
   const [confirmStop, setConfirmStop] = useState(false);
   const stop = useCallback(async () => {
     if (!confirmStop) {

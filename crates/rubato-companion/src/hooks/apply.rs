@@ -71,7 +71,7 @@ impl Registry {
             // Its hooks evidently arrive.
             e.hooks_lost = false;
             // A headless session keeps its source: its turns come from the child process, and a
-            // hook (real or the companion's own) does not make it a tmux one (ADR 0059).
+            // hook (real or the companion's own) does not make it a tmux one (ADR 0062).
             if e.source != StateSource::Headless {
                 e.source = StateSource::Hook;
             }

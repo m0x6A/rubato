@@ -75,7 +75,7 @@ impl Forks {
         }
     }
 
-    /// Kill the fork turn running for `launch_id`, if one runs (`stop`, ADR 0059). Turns queued
+    /// Kill the fork turn running for `launch_id`, if one runs (`stop`, ADR 0062). Turns queued
     /// behind it find the session ended and do not run. Returns whether one was killed.
     pub fn stop(&self, launch_id: Uuid) -> bool {
         match self.ctx.running.lock().unwrap().get_mut(&launch_id) {
@@ -444,7 +444,7 @@ mod tests {
         );
     }
 
-    /// `stop` (ADR 0059) kills a running fork turn's group too: the turn ends `killed: stop` and
+    /// `stop` (ADR 0062) kills a running fork turn's group too: the turn ends `killed: stop` and
     /// says so in its reply.
     #[tokio::test(flavor = "current_thread")]
     async fn stop_kills_a_running_fork_turn() {

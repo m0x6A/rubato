@@ -79,7 +79,7 @@ pub enum SessionMessageKind {
         /// Rubato's link to the approval, written into accepted ADRs.
         url: String,
     },
-    /// The owner stops their own session (ADR 0059): the companion kills the running turn's
+    /// The owner stops their own session (ADR 0062): the companion kills the running turn's
     /// process group (headless) or the tmux session (interactive). Never queued, not held
     /// behind an in-flight message, and not waiting for idle. Sent only to a companion that
     /// announced `session_stop`.
@@ -158,7 +158,7 @@ impl SessionMessageKind {
         }
     }
 
-    /// `stop` skips the idle check and the in-flight rule (ADR 0059).
+    /// `stop` skips the idle check and the in-flight rule (ADR 0062).
     pub fn is_stop(&self) -> bool {
         matches!(self, Self::Stop { .. })
     }
@@ -350,7 +350,7 @@ pub struct LaunchMessages {
 pub mod routes {
     /// `GET` the launch's messages; `POST` a `SessionMessageRequest` (owner only).
     pub const LAUNCH_MESSAGES: &str = "/api/launches/{launch_id}/messages";
-    /// `POST` with no body: the owner stops their own session (ADR 0059). 403 for anyone else,
+    /// `POST` with no body: the owner stops their own session (ADR 0062). 403 for anyone else,
     /// 409 `companion_offline` when its companion is not live: a stop is never queued.
     pub const LAUNCH_STOP: &str = "/api/launches/{launch_id}/stop";
 }

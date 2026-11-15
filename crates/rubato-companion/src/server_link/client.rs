@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
-/// The server answered 401 to this companion's token: its pairing was revoked (ADR 0059).
+/// The server answered 401 to this companion's token: its pairing was revoked (ADR 0062).
 #[derive(Debug, thiserror::Error)]
 #[error("pairing revoked: the server refused this companion's token")]
 pub struct Revoked;
@@ -29,7 +29,7 @@ pub struct Identity {
     pub token: String,
     /// What this companion announces in Hello (`rubato_protocol::capability`).
     pub capabilities: Vec<String>,
-    /// Interactive or headless (ADR 0059), sent in Hello.
+    /// Interactive or headless (ADR 0062), sent in Hello.
     pub client: rubato_protocol::ClientKind,
 }
 
@@ -145,7 +145,7 @@ impl Client {
         );
         let (ws, _) = match tokio_tungstenite::connect_async(req).await {
             Ok(ok) => ok,
-            // The server refuses a revoked pairing's token (ADR 0059): not a lost connection.
+            // The server refuses a revoked pairing's token (ADR 0062): not a lost connection.
             Err(tokio_tungstenite::tungstenite::Error::Http(r)) if r.status() == 401 => {
                 return Err(Revoked.into());
             }
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(reservation.path, seq_path);
     }
 
-    /// ADR 0059: a 401 at connect means the pairing was revoked. The client ends with `Revoked`
+    /// ADR 0062: a 401 at connect means the pairing was revoked. The client ends with `Revoked`
     /// instead of retrying forever, so the companion stops and its turns with it.
     #[tokio::test(flavor = "current_thread")]
     async fn a_401_at_connect_ends_the_client_as_revoked() {

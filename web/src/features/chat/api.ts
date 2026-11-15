@@ -17,7 +17,7 @@ export const chatApi = {
   log: (launchId: string) => request<LaunchLog>("GET", logPath(launchId)),
   /** Always a new message: "Send again" posts the text, never an old id (ADR 0051). */
   send: (launchId: string, text: string) => request<SessionMessageView>("POST", messagesPath(launchId), { text } satisfies SessionMessageRequest),
-  /** The owner stops their own session (ADR 0059): never queued, refused when the companion is away. */
+  /** The owner stops their own session (ADR 0062): never queued, refused when the companion is away. */
   stop: (launchId: string) => request<SessionMessageView>("POST", stopPath(launchId)),
 };
 

@@ -24,13 +24,13 @@ pub mod reason {
     pub const UNKNOWN_LAUNCH: &str = "unknown_launch";
     pub const EMPTY: &str = "empty";
     pub const TOO_LONG: &str = "too_long";
-    /// A stop for a companion that is not live: never queued (ADR 0059).
+    /// A stop for a companion that is not live: never queued (ADR 0062).
     pub const COMPANION_OFFLINE: &str = "companion_offline";
     /// A stop for a companion that did not announce `session_stop`.
     pub const CANNOT_STOP: &str = "companion_cannot_stop";
 }
 
-/// `POST /api/launches/{launch_id}/stop` (ADR 0059, plan 122 §D14). Only the owner; never queued
+/// `POST /api/launches/{launch_id}/stop` (ADR 0062, plan 122 §D14). Only the owner; never queued
 /// (409 when the companion is not live, so a stop never reaches a later session); pushed at once,
 /// past any message in flight; the companion skips only its idle check.
 pub async fn stop(

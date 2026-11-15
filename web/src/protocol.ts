@@ -30,7 +30,7 @@ export type CompanionMessage = ({
  */
 capabilities?: string[]
 /**
- * Interactive (tmux) or headless (ADR 0059). An older companion is interactive.
+ * Interactive (tmux) or headless (ADR 0062). An older companion is interactive.
  */
 client?: ("interactive" | "headless")
 companion_id: string
@@ -1971,7 +1971,7 @@ truncated?: boolean
 }
 export interface PairingInfo {
 /**
- * Interactive or headless (ADR 0059): what the web shows on the lane. Older servers omit it.
+ * Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.
  */
 client?: ("interactive" | "headless")
 companion_id: string

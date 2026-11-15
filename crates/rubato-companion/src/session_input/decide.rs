@@ -25,7 +25,7 @@ pub enum Decision {
         session_id: String,
         text: String,
     },
-    /// Run `text` as a headless turn of the session (ADR 0059): no pane, the turn is a child.
+    /// Run `text` as a headless turn of the session (ADR 0062): no pane, the turn is a child.
     Turn {
         session_id: String,
         worktree: std::path::PathBuf,

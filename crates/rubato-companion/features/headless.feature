@@ -1,4 +1,4 @@
-Feature: A headless companion runs each turn as a claude -p child (ADR 0059)
+Feature: A headless companion runs each turn as a claude -p child (ADR 0062)
   An agent-only client is a companion in headless mode: no tmux, no tmux-ide. Each turn is one
   `claude -p` child that the companion holds. The child's exit and stream-json `result` end the
   turn and carry the reply. The stand-in claude here posts no hooks, so nothing below depends

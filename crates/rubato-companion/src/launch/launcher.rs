@@ -33,7 +33,7 @@ pub struct Started {
     pub worktree: PathBuf,
     /// What happened to the command's draft (plan 122 §D5); default when it carried none.
     pub draft: Restored,
-    /// No pane: the launch task starts the first turn as a child process (ADR 0059).
+    /// No pane: the launch task starts the first turn as a child process (ADR 0062).
     pub headless: bool,
 }
 
@@ -92,7 +92,7 @@ impl Launcher {
                 None,
             );
         }
-        // A headless companion needs neither tmux nor tmux-ide (ADR 0059).
+        // A headless companion needs neither tmux nor tmux-ide (ADR 0062).
         let headless = self.workspace.companion.is_headless();
         match self.tmux_ide.version() {
             _ if headless => {}

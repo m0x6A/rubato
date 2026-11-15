@@ -73,7 +73,7 @@ pub async fn on_command(
             reg.apply_launch(cmd, &s.pane_id, &s.tmux_session, &s.worktree, Utc::now());
             reg.set_restored_hash(cmd.id, s.draft.bundle_hash.clone());
             if s.headless {
-                // No pane to type into or to find again after a restart (ADR 0059).
+                // No pane to type into or to find again after a restart (ADR 0062).
                 if let Some(e) = reg.find_by_launch(cmd.id) {
                     e.pane_id = None;
                     e.tmux_session = None;

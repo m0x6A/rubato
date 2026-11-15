@@ -557,7 +557,7 @@
           ]
         },
         {
-          "description": "The owner stops their own session (ADR 0059): the companion kills the running turn's\nprocess group (headless) or the tmux session (interactive). Never queued, not held\nbehind an in-flight message, and not waiting for idle. Sent only to a companion that\nannounced `session_stop`.",
+          "description": "The owner stops their own session (ADR 0062): the companion kills the running turn's\nprocess group (headless) or the tmux session (interactive). Never queued, not held\nbehind an in-flight message, and not waiting for idle. Sent only to a companion that\nannounced `session_stop`.",
           "type": "object",
           "properties": {
             "kind": {

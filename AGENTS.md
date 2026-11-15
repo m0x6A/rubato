@@ -125,7 +125,7 @@ web_link        websocket fan-out to browsers                   (none)
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
 state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline,
 the `SessionInput` port whose first adapter is the tmux paste, `claude` for headless `claude -p` turns as
-process groups, ADR 0059);
+process groups, ADR 0062);
 slices:
 
 ```text
