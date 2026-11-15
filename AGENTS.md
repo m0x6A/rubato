@@ -112,7 +112,7 @@ queue           issues queued on your own companions, in order  companion_queue
 session_messages  messages to your own launched session, at most once  session_messages
 session_log     prompts and last replies of launched sessions   session_log_entries
 github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, issue_suggestions, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
-pulls           a pull request's view, the merge gate           (none)
+pulls           a pull request's view, merging as the person    pr_merges
 import          a plan written outside Rubato becomes your draft  (none)
 rooms           a plan's room: messages, seam notices, agents called in, turns  room_messages, room_agents, room_requests
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
@@ -190,7 +190,7 @@ plan       Plan and its affected parts, O-rows, assumptions, decisions, the appr
 plan_hash  approval_hash (the record left out), bundle_paths, bundle_hash, adr_pins; shared fixtures with plan-check and the skill
 github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord and its source, ApprovalState, comment_counts
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
-pulls      OpenPull, RepoPulls, PullDetail, MergeOffer, PlanGate, plan_gate, merge_refusal, reasons; PULL
+pulls      OpenPull, RepoPulls, PullDetail, MergeOffer, PlanGate, plan_gate, merge_refusal, MergeRequest, MergeResponse, reasons; PULL, PULLS_MERGE
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 web_link   WebEvent; WEB_WS
