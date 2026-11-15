@@ -16,6 +16,44 @@ use rubato_protocol::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+/// The other workspaces an issue of this overview may also belong to (ADR 0045). Empty, and
+/// `here` absent, with one workspace: the overview is then as it was before workspaces.
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceInputs {
+    /// This overview's workspace, id and name, when there are several.
+    pub here: Option<(String, String)>,
+    /// Issues launched from this workspace.
+    pub launched_here: HashSet<IssueRef>,
+    pub others: Vec<OtherWorkspace>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OtherWorkspace {
+    pub id: String,
+    pub name: String,
+    /// Absent until its map has loaded once.
+    pub map: Option<rubato_protocol::SystemMap>,
+    pub pinned: HashSet<IssueRef>,
+    pub launched: HashSet<IssueRef>,
+}
+
+impl OtherWorkspace {
+    /// An issue belongs to a workspace whose map names its repo, or where it is pinned or
+    /// launched (ADR 0045).
+    pub fn holds(&self, issue: &IssueRef) -> bool {
+        self.pinned.contains(issue)
+            || self.launched.contains(issue)
+            || self
+                .map
+                .as_ref()
+                .is_some_and(|m| names_repo(m, &issue.repo))
+    }
+}
+
+fn names_repo(m: &rubato_protocol::SystemMap, repo: &str) -> bool {
+    m.repos_named().iter().any(|r| r.eq_ignore_ascii_case(repo))
+}
+
 pub struct OverviewInputs {
     pub pins: Vec<IssuePin>,
     pub sessions: Vec<SessionState>,
@@ -46,6 +84,8 @@ pub struct OverviewInputs {
     pub traffic: TrafficLatest,
     /// Each issue's spend over time, downsampled (ADR 0037). Copied onto its summary only.
     pub spend: HashMap<IssueRef, Vec<SpendPoint>>,
+    /// The other workspaces, for an issue's workspaces and where its plan fits (ADR 0045).
+    pub workspaces: WorkspaceInputs,
 }
 
 pub struct Built {
@@ -135,6 +175,30 @@ pub fn build(
     issues.extend(inputs.launched.iter().cloned());
     issues.extend(inputs.plans.iter().map(|p| p.issue.clone()));
     issues.extend(inputs.sessions.iter().filter_map(|s| s.issue.clone()));
+    // With several workspaces, only the issues this one holds: pinned or launched here, or in a
+    // repo its map names. An issue no workspace holds shows in `default`, so none is lost.
+    let ws = &inputs.workspaces;
+    if let Some((here_id, _)) = &ws.here {
+        // Pinned in another workspace, in a repo this map names: shown here with "pinned in".
+        if let Some(m) = map {
+            for o in &ws.others {
+                issues.extend(
+                    o.pinned
+                        .iter()
+                        .filter(|i| names_repo(&m.map, &i.repo))
+                        .cloned(),
+                );
+            }
+        }
+        let pinned_here: HashSet<&IssueRef> = inputs.pins.iter().map(|p| &p.issue).collect();
+        issues.retain(|i| {
+            pinned_here.contains(i)
+                || ws.launched_here.contains(i)
+                || map.is_some_and(|m| names_repo(&m.map, &i.repo))
+                || (here_id == rubato_protocol::DEFAULT_WORKSPACE
+                    && !ws.others.iter().any(|o| o.holds(i)))
+        });
+    }
 
     let mut out = Vec::new();
     let mut findings = Vec::new();
@@ -190,7 +254,38 @@ pub fn build(
             )
             .max()
             .unwrap_or(now);
-        if let (Some(p), Some(m)) = (&plan, map) {
+        // Where else the plan fits (ADR 0045): an approval counts when it fits any of the
+        // issue's workspaces, and unknown ids are a finding only when it fits none.
+        let mut fits_in: Vec<String> = Vec::new();
+        let mut fit_elsewhere: Option<rubato_protocol::PlanFit> = None;
+        if let (Some((_, here_name)), Some(row)) = (&ws.here, plan_row) {
+            if map
+                .and_then(|m| plan_fit(plan.as_ref(), row.parse_error.as_deref(), &m.map))
+                .is_some_and(|f| f.fits)
+            {
+                fits_in.push(here_name.clone());
+            }
+            for o in ws.others.iter().filter(|o| o.holds(issue)) {
+                if let Some(f) = o
+                    .map
+                    .as_ref()
+                    .and_then(|m| plan_fit(plan.as_ref(), row.parse_error.as_deref(), m))
+                    .filter(|f| f.fits)
+                {
+                    fits_in.push(o.name.clone());
+                    fit_elsewhere.get_or_insert(f);
+                }
+            }
+        }
+        let pinned_in: Vec<String> = ws
+            .others
+            .iter()
+            .filter(|o| o.pinned.contains(issue))
+            .map(|o| o.name.clone())
+            .collect();
+        if let (Some(p), Some(m), true) =
+            (&plan, map, fits_in.is_empty() || fit_elsewhere.is_none())
+        {
             let unknown: Vec<String> = p
                 .unknown_ids(&m.map)
                 .into_iter()
@@ -211,7 +306,14 @@ pub fn build(
                 });
             }
         }
-        if let Some(m) = map {
+        // Only while the issue is open on GitHub (#135): a closed issue whose work merged elsewhere
+        // never reaches Done, and its old launch would be flagged forever. Unknown is not closed.
+        let closed = inputs
+            .meta
+            .get(issue)
+            .and_then(|m| m.github_state.as_deref())
+            == Some("closed");
+        if let (Some(m), false) = (map, closed) {
             for (i, v) in &inputs.launch_map_versions {
                 if i == issue && *v != m.version && state != ProgressState::Done {
                     findings.push(Finding::MapVersionMismatch {
@@ -237,6 +339,11 @@ pub fn build(
         let fit = match (plan_row, map) {
             (Some(row), Some(m)) => plan_fit(plan.as_ref(), row.parse_error.as_deref(), &m.map),
             _ => None,
+        };
+        // Not fitting here but in another of its workspaces: that fit is shown and counts there.
+        let fit = match (fit, fit_elsewhere) {
+            (Some(here), Some(there)) if !here.fits => Some(there),
+            (here, _) => here,
         };
         let approval = approval_state(&approvals, plan_row, fit.as_ref().map(|f| f.fits));
         if approval
@@ -298,6 +405,8 @@ pub fn build(
             plan_sha: plan_row.and_then(|p| p.approval_sha.clone()),
             spend_usd: spend,
             spend_history: inputs.spend.get(issue).cloned().unwrap_or_default(),
+            fits_in,
+            pinned_in,
         });
     }
     for s in &mut out {
@@ -649,6 +758,10 @@ mod tests {
         }
     }
 
+    pub(super) fn empty_inputs() -> OverviewInputs {
+        empty()
+    }
+
     fn empty() -> OverviewInputs {
         OverviewInputs {
             pins: vec![],
@@ -672,6 +785,7 @@ mod tests {
                 source: rubato_protocol::SourceStatus::NotConfigured,
             },
             spend: HashMap::new(),
+            workspaces: Default::default(),
         }
     }
 
@@ -697,6 +811,8 @@ mod tests {
             server: server.into(),
             calls,
             errors: 0,
+            client_namespace: None,
+            server_namespace: None,
         };
         inputs.traffic = TrafficLatest {
             report: Some(TrafficReport {
@@ -1289,5 +1405,181 @@ mod tests {
         let one = built.issues.iter().find(|i| i.issue == a).unwrap();
         assert_eq!(one.review.as_ref().unwrap().outcome, "passed after fixes");
         assert!(one.approval.is_none());
+    }
+}
+
+/// Findings about a repo two workspaces' maps name (ADR 0045), for the overview of `here`: the
+/// maps give it different plan paths, or an id that both name is a part with a different repo in
+/// each. `maps` is every workspace's map by name, in config order. Shown, never refused.
+pub fn cross_workspace_findings(
+    here: &str,
+    maps: &[(String, rubato_protocol::SystemMap)],
+) -> Vec<Finding> {
+    let Some((_, mine)) = maps.iter().find(|(n, _)| n == here) else {
+        return vec![];
+    };
+    let mut out = Vec::new();
+    for repo in mine.repos_named() {
+        let sharing: Vec<&(String, rubato_protocol::SystemMap)> =
+            maps.iter().filter(|(_, m)| names_repo(m, repo)).collect();
+        if sharing.len() < 2 {
+            continue;
+        }
+        let path = |m: &rubato_protocol::SystemMap| m.plan_path_for(repo, 0, "x");
+        if sharing.iter().any(|(_, m)| path(m) != path(mine)) {
+            out.push(Finding::PlanPathConflict {
+                repo: repo.to_string(),
+                workspaces: sharing.iter().map(|(n, _)| n.clone()).collect(),
+            });
+        }
+        for node in mine.nodes.iter().filter(|n| {
+            n.repo
+                .as_deref()
+                .is_some_and(|r| r.eq_ignore_ascii_case(repo))
+        }) {
+            let differs: Vec<String> = sharing
+                .iter()
+                .filter(|(_, m)| {
+                    m.node(&node.id).is_some_and(|o| {
+                        !o.repo
+                            .as_deref()
+                            .unwrap_or("")
+                            .eq_ignore_ascii_case(node.repo.as_deref().unwrap_or(""))
+                    })
+                })
+                .map(|(n, _)| n.clone())
+                .collect();
+            if !differs.is_empty() {
+                let mut workspaces = vec![here.to_string()];
+                workspaces.extend(differs);
+                out.push(Finding::IdCollision {
+                    id: node.id.clone(),
+                    workspaces,
+                });
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod cross_workspace_tests {
+    use super::*;
+    use rubato_protocol::{MapNode, NodeKind, RepoRef, SystemMap};
+
+    fn map(plan_path: Option<&str>, nodes: &[(&str, &str)]) -> SystemMap {
+        SystemMap {
+            version: 1,
+            name: "m".into(),
+            owner_rule: None,
+            repos: vec![RepoRef {
+                name: "acme/auth".into(),
+                plan_path: plan_path.map(str::to_string),
+            }],
+            nodes: nodes
+                .iter()
+                .map(|(id, repo)| MapNode {
+                    id: (*id).into(),
+                    kind: NodeKind::Context,
+                    repo: Some((*repo).into()),
+                    path: None,
+                    description: None,
+                })
+                .collect(),
+            seams: vec![],
+            scenarios: vec![],
+        }
+    }
+
+    #[test]
+    fn a_shared_repo_with_two_plan_paths_or_an_id_meaning_two_parts_is_a_finding() {
+        let maps = vec![
+            ("admin".to_string(), map(None, &[("auth-api", "acme/auth")])),
+            (
+                "shop".to_string(),
+                map(
+                    Some("plans/{issue}.md"),
+                    &[("auth-api", "acme/billing"), ("x", "acme/auth")],
+                ),
+            ),
+        ];
+        let f = cross_workspace_findings("admin", &maps);
+        assert!(
+            f.contains(&Finding::PlanPathConflict {
+                repo: "acme/auth".into(),
+                workspaces: vec!["admin".into(), "shop".into()]
+            }),
+            "{f:?}"
+        );
+        assert!(
+            f.contains(&Finding::IdCollision {
+                id: "auth-api".into(),
+                workspaces: vec!["admin".into(), "shop".into()]
+            }),
+            "{f:?}"
+        );
+        // The same plan path and the same part: nothing to say.
+        let quiet = vec![
+            ("admin".to_string(), map(None, &[("auth-api", "acme/auth")])),
+            ("shop".to_string(), map(None, &[("auth-api", "acme/auth")])),
+        ];
+        assert!(cross_workspace_findings("admin", &quiet).is_empty());
+        // One workspace: never.
+        assert!(cross_workspace_findings("admin", &maps[..1]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod closed_mismatch_tests {
+    //! #135: a launch at an older map version is a finding only while its issue is open.
+    use super::*;
+    use rubato_protocol::Limits;
+
+    #[test]
+    fn a_closed_issue_raises_no_map_version_mismatch_and_an_open_or_unknown_one_does() {
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/design/rubato-map.yml"
+        ))
+        .unwrap();
+        let map = LoadedMap {
+            map: serde_yaml_ng::from_str(&text).unwrap(),
+            version: "new".into(),
+            loaded_at: Utc::now(),
+            yaml: text,
+        };
+        let closed = IssueRef::new("m0x6A/rubato", 47);
+        let open = IssueRef::new("m0x6A/rubato", 48);
+        let unknown = IssueRef::new("m0x6A/rubato", 49);
+        let mut inputs = tests::empty_inputs();
+        for i in [&closed, &open, &unknown] {
+            inputs.launched.insert(i.clone());
+            inputs.launch_map_versions.push((i.clone(), "old".into()));
+        }
+        for (i, state) in [(&closed, "closed"), (&open, "open")] {
+            inputs.meta.insert(
+                i.clone(),
+                IssueMeta {
+                    title: None,
+                    url: None,
+                    github_state: Some(state.into()),
+                },
+            );
+        }
+        let built = build(&inputs, Some(&map), &Limits::default(), Utc::now());
+        let mut flagged: Vec<u64> = built
+            .findings
+            .iter()
+            .filter_map(|f| match f {
+                Finding::MapVersionMismatch { issue, .. } => Some(issue.number),
+                _ => None,
+            })
+            .collect();
+        flagged.sort();
+        assert_eq!(
+            flagged,
+            [48, 49],
+            "closed #47 is not flagged; open #48 and unread #49 are"
+        );
     }
 }

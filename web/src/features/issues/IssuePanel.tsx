@@ -47,6 +47,8 @@ const ORDER = ["blocked", "unknown", "building", "designing", "designed", "start
 
 export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice }: Props) {
   const own = ownConnectedCompanions(overview, me);
+  // The name of this workspace, when there are several: what "counts in" is told apart from.
+  const hereName = (overview.workspaces ?? []).find((w) => w.id === overview.workspace)?.name;
   const lanes = onQueue ? ownLanes(overview, me) : [];
   // The list gives way to the detail, and a row that was just pinned leaves "Not pinned" with the
   // button that had focus: put focus on the detail's heading when an issue opens.
@@ -196,7 +198,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
               </span>
               <span className="row-end">
                 <span className={`badge ${i.progress.state}`}>{STATE_LABEL[i.progress.state]}</span>
-                <SignalBadges issue={i} />
+                <SignalBadges issue={i} here={hereName} />
                 <PinMenu map={overview.map.map} issue={i.issue} pinned={i.pins} onPin={onPin} />
                 {onQueue && <QueueMenu issue={i.issue} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />}
               </span>

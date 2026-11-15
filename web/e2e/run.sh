@@ -43,10 +43,23 @@ done
 g switch -q main
 git clone -q --bare "$SEED" "$TMP/rubato.git"
 
+# Two workspaces (issue #89): default reads the map from the seeded repository, as before;
+# shop is a second, small map from a file. The app server keeps the legacy single-map variables.
+cat > "$TMP/workspaces.yml" <<YAML
+workspaces:
+  - id: default
+    map_repo: m0x6A/rubato
+    map_path: docs/design/rubato-map.yml
+    map_ref: main
+  - id: shop
+    name: Shop
+    map_repo: acme/shop-map
+    map_path: system-map.yml
+    map_file: $PWD/e2e/fixtures/shop-map.yml
+YAML
 RUBATO_BIND=127.0.0.1:18090 RUBATO_PUBLIC_URL=http://127.0.0.1:18090 RUBATO_DEV_USER=m0x6A \
   RUBATO_DATABASE_URL="sqlite://$TMP/e2e.db?mode=rwc" \
-  RUBATO_LOCAL_REPOS="m0x6A/rubato=$TMP/rubato.git" RUBATO_MAP_REPO=m0x6A/rubato \
-  RUBATO_MAP_PATH=docs/design/rubato-map.yml RUBATO_MAP_REF=main \
+  RUBATO_LOCAL_REPOS="m0x6A/rubato=$TMP/rubato.git" RUBATO_WORKSPACES_FILE="$TMP/workspaces.yml" \
   RUBATO_DEV_ISSUES="$PWD/e2e/fixtures/issues.json" \
   RUBATO_WEB_DIST="$PWD/dist" RUBATO_GITHUB_POLL_SECS=5 RUST_LOG=info \
   "$BIN" > "$TMP/server.log" 2>&1 &

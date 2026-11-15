@@ -107,10 +107,54 @@ bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
 `RUBATO_DEV_USER=<login>` skips OAuth and must never be set where others
 can reach the server.
 
-Observed traffic on the map's seams (ADR 0039) has no production source yet (#107). For
-development, `RUBATO_DEV_TRAFFIC=<file.json>` reads a traffic report from a file every
-`RUBATO_TRAFFIC_FETCH_SECS` (15–300, default 60). Each edge names a client and a server by
-their map part id (the OTel `service.name`); a name that matches no part is counted as
+Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
+setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`
+(15–300, default 60).
+
+**Production: the service graph (ADR 0040).** The server reads the OpenTelemetry servicegraph
+connector's `traces_service_graph_request_total` and `…_request_failed_total` through any
+Prometheus-compatible query API (`POST /api/v1/query`). Rubato never receives the traces
+themselves.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RUBATO_TRAFFIC_PROMETHEUS_URL` | unset | base URL of the query API; unset means this source is off |
+| `RUBATO_TRAFFIC_PROMETHEUS_HEADERS` | unset | `Name=value,…` sent with every query, for example `Authorization=Bearer …`; never logged |
+| `RUBATO_TRAFFIC_WINDOW_SECS` | 3600 | how far back the counts reach, 60–86 400 |
+| `RUBATO_TRAFFIC_PROMETHEUS_TIMEOUT_SECS` | 10 | per query, at most half the fetch interval |
+| `RUBATO_TRAFFIC_PROMETHEUS_METRIC_PREFIX` | `traces_service_graph_` | for a generator that names them differently |
+| `RUBATO_TRAFFIC_PROMETHEUS_NAMESPACE_LABELS` | `client_service_namespace,server_service_namespace` | the two namespace labels, client first |
+
+The team's side of the setup:
+
+1. **Every service emits its identity.** Each one sets `service.namespace` and `service.name`
+   (`OTEL_RESOURCE_ATTRIBUTES` / `OTEL_SERVICE_NAME`). Rubato sets no namespace for anyone,
+   including itself: give `rubato-server` and the companions theirs in their environment.
+2. **The connector carries the namespace.** It drops it unless asked. In the Collector or Alloy,
+   set it as a dimension:
+
+   ```yaml
+   connectors:
+     servicegraph:
+       dimensions: [service.namespace]
+   ```
+
+   Tempo's metrics-generator takes the same as `service_graphs.dimensions`.
+3. **Calls to parts that emit nothing get `peer.service`.** For GitHub or a file, the caller sets
+   `peer.service` on its client span. The connector then draws a virtual node, which has no
+   namespace.
+
+A failing query API makes the state `failing` (log `traffic source failing`). A malformed answer
+is rejected and the previous report kept. A source set up wrong (a bad URL, window or label)
+is failing from the start, and the log line says which variable. None of them is ever read as
+quiet.
+
+The namespaces travel in the report. Until a part can say which service it is (#140, ADR 0059),
+an end still matches the part whose id equals its `service.name`.
+
+**Development: a file.** `RUBATO_DEV_TRAFFIC=<file.json>` reads a traffic report from a file.
+Each edge names a client and a server by their map part id (the OTel `service.name`), and may
+add `client_namespace` and `server_namespace`. A name that matches no part is counted as
 unmapped:
 
 ```json
@@ -138,17 +182,20 @@ node --experimental-strip-types skills/rubato/scripts/install.ts
 This puts the skill at `~/.claude/skills/rubato` with the plan-check code and the schemas
 vendored, and runs `npm install` there. Claude Code picks it up in every project.
 
-## 5. Describe your workspace
+## 5. Describe your machine
 
-Create `~/.config/rubato/workspace.yml` from `skills/rubato/workspace.example.yml`:
+Create `~/.config/rubato/local.yml` from `skills/rubato/local.example.yml`. (It was called
+`workspace.yml`; that name is still read, with a warning. Rename it only after upgrading the
+companion, since an older companion reads only `workspace.yml`.) A *workspace* is now one
+application's map on the server (ADR 0044); list each map you plan against under `maps:`.
 
 ```yaml
 server_url: http://127.0.0.1:8080
-map:
-  repo: m0x6A/rubato
-  path: docs/design/rubato-map.yml
-  local: /home/you/develop/rubato        # your clone; the skill reads the map from here
-  decisions: docs/decisions
+maps:
+  - repo: m0x6A/rubato
+    path: docs/design/rubato-map.yml
+    local: /home/you/develop/rubato      # your clone; the skill reads the map from here
+    decisions: docs/decisions
 repos:
   - name: m0x6A/rubato
     local: /home/you/develop/rubato
@@ -167,6 +214,26 @@ companion:
 Fill the prices from your plan's current price list; with zeros the companion still counts
 tokens but reports no cost. The companion only launches into repositories listed under
 `repos`, and the clone must have `origin` pointing at GitHub.
+
+### Several workspaces on one server
+
+A server holds one map by default (`RUBATO_MAP_*`). To hold several, list them in a file and
+set `RUBATO_WORKSPACES_FILE` instead (ADR 0044). One entry must be `default`: it keeps the rows
+from before and serves the plain `/api/...` routes.
+
+```yaml
+workspaces:
+  - id: default
+    map_repo: m0x6A/rubato
+    map_path: docs/design/rubato-map.yml
+  - id: shop
+    name: Shop
+    map_repo: acme/shop-map
+    map_path: system-map.yml
+```
+
+Migration 0013 is not additive: copy the database file before upgrading, so the previous
+version can be restored.
 
 ## 6. Pair and run the companion
 
@@ -238,7 +305,7 @@ appear in their title and body.
 ## 8. If it does not move
 
 - Nothing happens after *Start session*: read the companion log. A launch for the wrong user
-  is refused and reported; a missing repo in `workspace.yml` or a tmux-ide below 2.9 fails
+  is refused and reported; a missing repo in `local.yml` or a tmux-ide below 2.9 fails
   the launch with the reason.
 - The issue stays **Started**: no hook event has arrived. `rubato-companion status` prints the
   hook endpoint; `curl` it from the worktree with the token to prove the path, and check the
@@ -251,7 +318,7 @@ appear in their title and body.
 ## Observability
 
 Point `OTEL_EXPORTER_OTLP_ENDPOINT` at your collector for both binaries and set the same
-endpoint under `otel` in `workspace.yml` so launched sessions export too. The rules in
+endpoint under `otel` in `local.yml` so launched sessions export too. The rules in
 `observability/alerts/rubato.rules.yml` cover the "never silent" list from `AGENTS.md`;
 `promtool test rules observability/alerts/tests/rubato.test.yml` fires each on purpose.
 

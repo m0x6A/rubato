@@ -66,7 +66,7 @@ async fn finish(app: &App, c: &store::Creation, f: &Found) -> bool {
             return false;
         }
     }
-    if let Err(e) = pins::pin_created(app, &f.issue, &c.target, &c.created_by).await {
+    if let Err(e) = pins::pin_created(app, &c.workspace, &f.issue, &c.target, &c.created_by).await {
         tracing::error!(rubato.issue = %f.issue, error = %e, "pinning a found issue failed");
     }
     count(app, "found");

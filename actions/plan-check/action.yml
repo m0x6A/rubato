@@ -4,6 +4,10 @@ inputs:
   map:
     description: Path to system-map.yml
     required: true
+  maps:
+    description: More maps, one per line, for a repo several workspaces name (ADR 0045). A plan passes when it fits any of them.
+    required: false
+    default: ""
   plans:
     description: Glob of plan files to check
     required: false
@@ -23,4 +27,9 @@ runs:
       run: cd "${{ github.action_path }}" && npm install --no-audit --no-fund --omit=dev
     - name: Check plans
       shell: bash
-      run: node --experimental-strip-types "${{ github.action_path }}/src/cli.ts" --map "${{ inputs.map }}" --schema-dir "${{ github.action_path }}/../../schema" --plans "${{ inputs.plans }}"
+      env:
+        MAPS: ${{ inputs.maps }}
+      run: |
+        extra=()
+        while IFS= read -r m; do [ -n "$m" ] && extra+=(--map "$m"); done <<< "$MAPS"
+        node --experimental-strip-types "${{ github.action_path }}/src/cli.ts" --map "${{ inputs.map }}" "${extra[@]}" --schema-dir "${{ github.action_path }}/../../schema" --plans "${{ inputs.plans }}"

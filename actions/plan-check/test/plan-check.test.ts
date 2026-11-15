@@ -240,3 +240,41 @@ describe("cli args", () => {
     expect(() => parseArgs([])).toThrow(/--map/);
   });
 });
+
+describe("several maps (issue #89, ADR 0045)", () => {
+  it("passes a plan that fits any map naming the repo, and says which", async () => {
+    const { main } = await import("../src/cli.ts");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(resolve(tmpdir(), "plan-check-"));
+    // A second map for the same repo with a part the team's map lacks.
+    const own = readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8");
+    const shop = own.replace("nodes:\n", "nodes:\n  - id: rubato-orchestrator\n    kind: context\n    repo: m0x6A/rubato\n");
+    writeFileSync(resolve(dir, "shop.yml"), shop);
+    const plan = readFileSync(resolve(root, "docs/plans/89.md"), "utf8").replace("| rubato-protocol | affected |", "| rubato-orchestrator | affected | orchestrates | web-server |\n| rubato-protocol | affected |");
+    writeFileSync(resolve(dir, "89.md"), plan);
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (s: string) => lines.push(s);
+    try {
+      expect(main(["--map", resolve(root, "docs/design/rubato-map.yml"), "--map", resolve(dir, "shop.yml"), "--repo", "m0x6A/rubato", "--plans", resolve(dir, "89.md")])).toBe(0);
+      const line = JSON.parse(lines[0] as string);
+      expect(line.maps_checked).toBe(2);
+      expect(line.fits).toEqual([resolve(dir, "shop.yml")]);
+      expect(lines[1]).toContain("and 1 other map(s)");
+      // The on-purpose failure: the team's map alone does not have the part.
+      lines.length = 0;
+      expect(main(["--map", resolve(root, "docs/design/rubato-map.yml"), "--plans", resolve(dir, "89.md")])).toBe(1);
+      expect(JSON.parse(lines[0] as string).maps_checked).toBeUndefined();
+    } finally {
+      console.log = log;
+    }
+  });
+
+  it("takes --map more than once and --repo", () => {
+    const a = parseArgs(["--map", "a.yml", "--map", "b.yml", "--repo", "acme/auth"]);
+    expect(a.map).toBe("a.yml");
+    expect(a.maps).toEqual(["a.yml", "b.yml"]);
+    expect(a.repo).toBe("acme/auth");
+  });
+});

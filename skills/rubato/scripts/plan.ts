@@ -13,7 +13,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { currentBranch, issueFromBranch, originRepo } from "./lib/git.ts";
 import { planSha } from "./lib/plan-sha.ts";
 import { planCheck, schemaDir } from "./lib/vendor.ts";
-import { loadWorkspace, mapFile, repoForCwd, type Workspace } from "./lib/workspace.ts";
+import { loadWorkspace, matchedMaps, repoForCwd, type Workspace } from "./lib/local.ts";
 
 export interface InitOptions {
   issue: string;
@@ -32,13 +32,12 @@ export const FRONT_MATTER_KEYS = ["issue", "title", "map_version", "spend_cap_us
 /** The spec headings, the same as the in-app issue form's (ADR 0028). */
 export const SPEC_HEADINGS = ["What the change does", "How we'll know it works", "What it must not break", "How we'll debug it at 3 am"] as const;
 
-export function planTemplate(o: InitOptions, mapVersion: string): string {
+export function planTemplate(o: InitOptions, mapVersion: string | null): string {
   const title = o.title ?? `Issue ${o.issue}`;
   return `---
 issue: ${o.issue}
-title: ${title}
-map_version: ${mapVersion}
-spend_cap_usd: ${o.spendCapUsd ?? 25}
+title: ${yamlScalar(title)}
+${mapVersion === null ? "" : `map_version: ${mapVersion}\n`}spend_cap_usd: ${o.spendCapUsd ?? 25}
 attempt_limit: ${o.attemptLimit ?? 3}
 ---
 
@@ -132,14 +131,33 @@ None.
 `;
 }
 
-async function resolvePlanPath(ws: Workspace, cwd: string, issueNumber: number, slug: string): Promise<{ repo: string; path: string }> {
+/** A YAML scalar that reads back as `s`: quoted when it would not. */
+export function yamlScalar(s: string): string {
+  return /^[\w][\w .,()/-]*$/.test(s) && !/: |\s#/.test(s) ? s : JSON.stringify(s);
+}
+
+/** The maps this session plans against: every listed map that names the repo (ADR 0045). */
+export async function sessionMaps(ws: Workspace, cwd: string) {
   const { map: mapMod } = await planCheck();
-  const map = mapMod.loadMap(mapFile(ws), schemaDir());
   const repo = repoForCwd(ws, cwd)?.name ?? originRepo(cwd);
+  const matched = matchedMaps(ws, repo, (file) => mapMod.loadMap(file, schemaDir()));
+  if (matched.length === 0) {
+    throw new Error(`no map in local.yml names ${repo ?? cwd}; listed: ${ws.maps.map((m) => m.repo).join(", ")}`);
+  }
+  return { repo, matched };
+}
+
+async function resolvePlanPath(ws: Workspace, cwd: string, issueNumber: number, slug: string): Promise<{ repo: string; path: string }> {
+  const { repo, matched } = await sessionMaps(ws, cwd);
   if (!repo) {
     throw new Error(`${cwd} is not a connected repo and has no origin`);
   }
-  const template = map.repos?.find((r) => r.name === repo)?.plan_path ?? "docs/plans/{issue}.md";
+  const templates = [...new Set(matched.map((m) => m.map.repos?.find((r) => r.name === repo)?.plan_path ?? "docs/plans/{issue}.md"))];
+  if (templates.length > 1) {
+    // The server takes the first workspace's; the skill refuses rather than guess (ADR 0045).
+    throw new Error(`the maps for ${repo} give different plan paths (${templates.join(", ")}); make them agree`);
+  }
+  const template = templates[0] as string;
   return { repo, path: template.replace("{issue}", String(issueNumber)).replace("{slug}", slug) };
 }
 
@@ -159,14 +177,16 @@ export async function init(ws: Workspace, cwd: string, o: InitOptions): Promise<
     throw new Error(`${path} already exists; edit it or run plan.ts check`);
   }
   const { headSha } = await import("./lib/git.ts");
+  const { matched } = await sessionMaps(ws, cwd);
+  // One map: its version. Several: none, which ADR 0027 allows; the plan fits whichever it fits.
+  const version = matched.length === 1 ? headSha((matched[0] as (typeof matched)[number]).clone.local) : null;
+  console.error(JSON.stringify({ event: "rubato.plan.init", map_version: version === null ? "omitted_several_maps" : "written" }));
   mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, planTemplate(o, headSha(ws.map.local)));
+  writeFileSync(abs, planTemplate(o, version));
   return path;
 }
 
 export async function check(ws: Workspace, cwd: string, planPath?: string): Promise<{ ok: boolean; line: Record<string, unknown> }> {
-  const { check: checkMod, map: mapMod } = await planCheck();
-  const map = mapMod.loadMap(mapFile(ws), schemaDir());
   let path = planPath;
   if (!path) {
     const n = issueFromBranch(currentBranch(cwd));
@@ -178,8 +198,7 @@ export async function check(ws: Workspace, cwd: string, planPath?: string): Prom
   }
   const abs = resolve(cwd, path);
   const rel = relative(cwd, abs);
-  const result = checkMod.checkPlanText(readFileSync(abs, "utf8"), rel, map, schemaDir());
-  return { ok: result.ok, line: checkMod.logLine(result) };
+  return fitsAny(ws, cwd, readFileSync(abs, "utf8"), rel);
 }
 
 /** The sha a person's `Approved: plan <sha>` comment names for the plan at `planPath`. */
@@ -205,10 +224,25 @@ export async function planPathFromBranch(ws: Workspace, cwd: string): Promise<st
 }
 
 /** Whether the plan text fits the map (ADR 0029), with the `rubato.plan.check` line. */
-export async function fits(ws: Workspace, text: string, rel: string): Promise<{ ok: boolean; line: Record<string, unknown> }> {
-  const { check: checkMod, map: mapMod } = await planCheck();
-  const result = checkMod.checkPlanText(text, rel, mapMod.loadMap(mapFile(ws), schemaDir()), schemaDir());
-  return { ok: result.ok, line: checkMod.logLine(result) };
+export async function fits(ws: Workspace, text: string, rel: string, cwd: string = process.cwd()): Promise<{ ok: boolean; line: Record<string, unknown> }> {
+  return fitsAny(ws, cwd, text, rel);
+}
+
+/**
+ * The plan fits when it fits any map the session plans against: the server's rule (ADR 0045).
+ * The line is that map's; with several maps it also says how many were checked and which fit.
+ */
+async function fitsAny(ws: Workspace, cwd: string, text: string, rel: string): Promise<{ ok: boolean; line: Record<string, unknown> }> {
+  const { check: checkMod } = await planCheck();
+  const { matched } = await sessionMaps(ws, cwd);
+  const results = matched.map((m) => ({ m, result: checkMod.checkPlanText(text, rel, m.map, schemaDir()) }));
+  const first = results.find((x) => x.result.ok) ?? (results[0] as (typeof results)[number]);
+  const line: Record<string, unknown> = checkMod.logLine(first.result);
+  if (results.length > 1) {
+    line["maps_checked"] = results.length;
+    line["fits"] = results.filter((x) => x.result.ok).map((x) => x.m.clone.repo);
+  }
+  return { ok: first.result.ok, line };
 }
 
 /** Exit codes of `plan.ts wait`: one per reason, so a caller can act on it. */
@@ -252,7 +286,7 @@ export async function wait(ws: Workspace, cwd: string, planPath: string | undefi
   }
   const ref = `${issue.repo}#${issue.number}`;
   const sha = planSha(pushed.text);
-  const fit = await fits(ws, pushed.text, rel);
+  const fit = await fits(ws, pushed.text, rel, cwd);
   if (!fit.ok) {
     return exit("does_not_fit", { "rubato.issue": ref, sha, check: fit.line });
   }

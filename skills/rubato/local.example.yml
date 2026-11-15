@@ -1,0 +1,17 @@
+# ~/.config/rubato/local.yml — one per developer machine. Read by the skill and the companion.
+# (Once workspace.yml; that name is still read, with a warning. Rename it after upgrading the
+# companion: an older companion reads only workspace.yml.)
+server_url: https://rubato.example.test
+# One entry per workspace map you plan against (ADR 0044). The skill uses the maps that name the
+# repo you are in; a single `map:` entry is read as a list of one.
+maps:
+  - repo: m0x6A/rubato              # a repo that holds a system-map.yml (ADR 0010)
+    path: docs/design/rubato-map.yml
+    local: /home/me/develop/rubato  # local clone; the skill reads the map from here
+    decisions: docs/decisions       # accepted ADRs, read before planning
+repos:
+  - name: m0x6A/rubato
+    local: /home/me/develop/rubato
+otel:
+  endpoint: http://127.0.0.1:4318
+  protocol: http/protobuf

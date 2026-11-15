@@ -32,8 +32,22 @@
         }
       ]
     },
+    "fits_in": {
+      "description": "Names of the workspaces whose map the plan fits (ADR 0045). The approval counts when this\nis not empty; in a workspace not named here the issue reads \"counts in <name>\".",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "issue": {
       "$ref": "#/$defs/IssueRef"
+    },
+    "pinned_in": {
+      "description": "Names of the other workspaces where the issue is pinned (ADR 0047): \"pinned in <name>\".",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "pins": {
       "type": "array",

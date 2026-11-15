@@ -239,8 +239,10 @@ async fn on_envelope(
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Sessions { mut sessions } => {
-                if let Some(map) = app.map.read().await.as_ref() {
-                    let named: Vec<&str> = map.map.repos_named().into_iter().collect();
+                // Against every workspace's repos (ADR 0048): a session's repo is named by some map.
+                let union = app.union_repos().await;
+                if !union.is_empty() {
+                    let named: Vec<&str> = union.iter().map(String::as_str).collect();
                     canonicalise_repos(&mut sessions, &named);
                 }
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {

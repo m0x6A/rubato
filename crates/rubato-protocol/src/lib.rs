@@ -28,6 +28,7 @@ pub mod schema;
 pub mod session;
 pub mod traffic;
 pub mod web_link;
+pub mod workspace;
 
 pub use approve::{ApproveRequest, ApproveResponse, ApproveState};
 pub use auth::Me;
@@ -37,7 +38,9 @@ pub use github::{
 };
 pub use hook::{HookEvent, HookEventKind};
 pub use ids::{IssueRef, MapRef, ParseIssueRefError};
-pub use issue_body::{PinSuggestion, map_line, parse_map_line};
+pub use issue_body::{
+    MapPlacement, PinSuggestion, map_line, map_line_in, parse_map_line, parse_map_placement,
+};
 pub use issue_new::{
     CreationState, NewIssueRequest, NewIssueResponse, parse_request_line, render_issue,
     request_line,
@@ -78,3 +81,4 @@ pub use traffic::{
     UndeclaredEdge, derive_traffic,
 };
 pub use web_link::WebEvent;
+pub use workspace::{DEFAULT_WORKSPACE, WorkspaceInfo, is_workspace_id};

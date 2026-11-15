@@ -1,0 +1,12 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "matrix",
+    "result": [
+      {
+        "metric": { "client": "web", "server": "rubato-server" },
+        "values": [[1794657540, "10"], [1794657600, "12"]]
+      }
+    ]
+  }
+}

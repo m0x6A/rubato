@@ -5,5 +5,5 @@ mod handlers;
 mod load;
 mod store;
 
-pub use handlers::{map, map_reload};
-pub use load::{reload, warm};
+pub use handlers::{list as list_workspaces, map, map_reload, workspaces};
+pub use load::{reload, reload_ws, warm};

@@ -1,5 +1,6 @@
 import type { NewIssueRequest, NewIssueResponse } from "../../protocol.ts";
 import { ApiError, request } from "../../shared/api.ts";
+import { scoped } from "../../shared/workspace.ts";
 
 export const newIssueApi = {
   /**
@@ -9,7 +10,7 @@ export const newIssueApi = {
    */
   create: async (req: NewIssueRequest): Promise<NewIssueResponse> => {
     try {
-      return await request<NewIssueResponse>("POST", "/api/issues", req);
+      return await request<NewIssueResponse>("POST", scoped("/api/issues"), req);
     } catch (e) {
       if (e instanceof ApiError) {
         try {

@@ -4,12 +4,16 @@
  * git sha (`rubato.map.version`), and the plan path for the current repo. Validates the map
  * against the schema first; a map that fails is refused, not offered.
  *
+ * With several maps in local.yml (ADR 0045), every map that names the session's repo is printed,
+ * each in its own section, and the plan may name ids from any of them. A `rubato.map.select`
+ * line on stderr says which.
+ *
  *   map.ts [--json] [--cwd <dir>]
  */
 import { existsSync } from "node:fs";
 import { planCheck, schemaDir } from "./lib/vendor.ts";
 import { headSha, originRepo } from "./lib/git.ts";
-import { loadWorkspace, mapFile, repoForCwd, type Workspace } from "./lib/workspace.ts";
+import { loadWorkspace, type MapClone, mapFile, matchedMaps, repoForCwd, selectLine, type Workspace } from "./lib/local.ts";
 
 export interface MapSummary {
   map_file: string;
@@ -22,18 +26,18 @@ export interface MapSummary {
   plan_path_template: string;
 }
 
-export async function summarize(ws: Workspace, cwd: string): Promise<MapSummary> {
+export async function summarize(ws: Workspace, cwd: string, m: MapClone = ws.map): Promise<MapSummary> {
   const { map: mapMod } = await planCheck();
-  const file = mapFile(ws);
+  const file = mapFile(ws, m);
   if (!existsSync(file)) {
-    throw new Error(`map file ${file} not found; is ${ws.map.repo} cloned at ${ws.map.local}?`);
+    throw new Error(`map file ${file} not found; is ${m.repo} cloned at ${m.local}?`);
   }
   const map = mapMod.loadMap(file, schemaDir());
   const repo = repoForCwd(ws, cwd)?.name ?? originRepo(cwd);
   const override = repo ? map.repos?.find((r) => r.name === repo)?.plan_path : undefined;
   return {
     map_file: file,
-    map_version: headSha(ws.map.local),
+    map_version: headSha(m.local),
     name: map.name,
     nodes: map.nodes.map((n) => {
       const out: MapSummary["nodes"][number] = { id: n.id, kind: n.kind };
@@ -123,8 +127,29 @@ async function main(argv: string[]): Promise<number> {
   const cwdIdx = argv.indexOf("--cwd");
   const cwd = cwdIdx >= 0 ? (argv[cwdIdx + 1] ?? process.cwd()) : process.cwd();
   try {
-    const s = await summarize(loadWorkspace(), cwd);
-    console.log(json ? JSON.stringify(s, null, 2) : render(s));
+    const ws = loadWorkspace();
+    const { map: mapMod } = await planCheck();
+    const repo = repoForCwd(ws, cwd)?.name ?? originRepo(cwd);
+    const matched = matchedMaps(ws, repo, (file) => {
+      if (!existsSync(file)) {
+        throw new Error(`map file ${file} not found; is its repo cloned?`);
+      }
+      return mapMod.loadMap(file, schemaDir());
+    });
+    console.error(selectLine(repo, matched.length, ws.maps.length));
+    if (matched.length === 0) {
+      console.error(`no map in local.yml names ${repo ?? "this repo"}; listed: ${ws.maps.map((m) => m.repo).join(", ")}`);
+      return 3;
+    }
+    const all: MapSummary[] = [];
+    for (const m of matched) {
+      all.push(await summarize(ws, cwd, m.clone));
+    }
+    if (json) {
+      console.log(JSON.stringify(all.length === 1 ? all[0] : all, null, 2));
+    } else {
+      console.log(all.length === 1 ? render(all[0] as MapSummary) : all.map((s, i) => `<!-- map ${i + 1} of ${all.length} -->\n${render(s)}`).join("\n\n"));
+    }
     return 0;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));

@@ -83,6 +83,7 @@ async fn main() -> Result<()> {
     };
     let bind = config.bind;
     let state = AppState::new(pool, config, github);
+    rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let background = tasks::spawn(state.clone(), shutdown_rx.clone());

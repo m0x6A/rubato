@@ -15,7 +15,7 @@ export function install(target: string, runNpm: boolean): string {
   const repoRoot = resolve(skillRoot, "..", "..");
   rmSync(target, { recursive: true, force: true });
   mkdirSync(target, { recursive: true });
-  for (const f of ["SKILL.md", "hooks.json", "prompt.md", "decision-template.md", "review-template.md", "review-checklist.md", "workspace.example.yml", "scripts"]) {
+  for (const f of ["SKILL.md", "hooks.json", "prompt.md", "decision-template.md", "review-template.md", "review-checklist.md", "local.example.yml", "scripts"]) {
     cpSync(join(skillRoot, f), join(target, f), { recursive: true });
   }
   cpSync(join(repoRoot, "actions", "plan-check", "src"), join(target, "vendor", "plan-check"), { recursive: true });

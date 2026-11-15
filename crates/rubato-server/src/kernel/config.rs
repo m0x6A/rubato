@@ -14,6 +14,44 @@ pub const TRAFFIC_FETCH_SECS: (u32, u32, u32) = (15, 60, 300);
 /// companion and empty every freshness bar.
 pub const MIN_COMPANION_SILENT_SECS: u64 = 60;
 
+/// The traffic adapter's own settings, `RUBATO_TRAFFIC_PROMETHEUS_*` and
+/// `RUBATO_TRAFFIC_WINDOW_SECS`, kept as text for the slice to read (ADR 0040): what they mean,
+/// and which are credentials, is the adapter's business. Debug prints the names only.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct TrafficEnv(pub std::collections::BTreeMap<String, String>);
+
+impl TrafficEnv {
+    /// The names read into it: these prefixes.
+    pub const PREFIXES: [&str; 2] = ["RUBATO_TRAFFIC_PROMETHEUS_", "RUBATO_TRAFFIC_WINDOW_SECS"];
+
+    pub fn from_vars(vars: impl Iterator<Item = (String, String)>) -> Self {
+        Self(
+            vars.filter(|(k, v)| !v.is_empty() && Self::PREFIXES.iter().any(|p| k.starts_with(p)))
+                .collect(),
+        )
+    }
+
+    pub fn get(&self, name: &str) -> Option<String> {
+        self.0.get(name).cloned()
+    }
+}
+
+impl std::fmt::Debug for TrafficEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.0.keys()).finish()
+    }
+}
+
+/// One traffic source at most (ADR 0040): both is a startup error, not a silent choice.
+fn one_traffic_source(dev_file: bool, traffic: &TrafficEnv) -> Result<()> {
+    if dev_file && traffic.get("RUBATO_TRAFFIC_PROMETHEUS_URL").is_some() {
+        anyhow::bail!(
+            "RUBATO_DEV_TRAFFIC and RUBATO_TRAFFIC_PROMETHEUS_URL are both set; a server reads one traffic source"
+        );
+    }
+    Ok(())
+}
+
 /// The GitHub App the server acts as (ADR 0022). All three settings or none.
 #[derive(Clone, PartialEq, Eq)]
 pub struct GitHubApp {
@@ -119,12 +157,18 @@ pub struct Config {
     pub dev_traffic: Option<PathBuf>,
     /// Seconds between traffic fetches (`RUBATO_TRAFFIC_FETCH_SECS`, 15–300, default 60).
     pub traffic_fetch_secs: u32,
+    /// The production source's settings (ADR 0040); configured when
+    /// `RUBATO_TRAFFIC_PROMETHEUS_URL` is among them.
+    pub traffic_env: TrafficEnv,
     /// `owner/name` of the repo holding `system-map.yml` (ADR 0010).
     pub map_repo: String,
     pub map_path: String,
     pub map_ref: String,
     /// Local file to load the map from instead of GitHub (local runs and e2e tests).
     pub map_file: Option<PathBuf>,
+    /// The workspaces from `RUBATO_WORKSPACES_FILE` (ADR 0044). Empty: the `map_*` fields above
+    /// are the one workspace `default`. Set: they are copied from its `default` entry.
+    pub workspaces: Vec<crate::kernel::workspaces::WorkspaceEntry>,
     pub session_secret: String,
     /// Development only: every request is this login, no OAuth. Never set in production.
     pub dev_user: Option<String>,
@@ -162,6 +206,32 @@ impl Config {
         if let Some(v) = env("RUBATO_GITHUB_POLL_SECS").and_then(|v| v.parse().ok()) {
             limits.github_poll_interval_secs = clamp_poll_secs(v, &mut warnings);
         }
+        let workspaces = match env("RUBATO_WORKSPACES_FILE") {
+            Some(path) => {
+                let legacy: Vec<&str> = [
+                    "RUBATO_MAP_REPO",
+                    "RUBATO_MAP_PATH",
+                    "RUBATO_MAP_REF",
+                    "RUBATO_MAP_FILE",
+                ]
+                .into_iter()
+                .filter(|k| env(k).is_some())
+                .collect();
+                let path = PathBuf::from(path);
+                let text = std::fs::read_to_string(&path).with_context(|| {
+                    format!("reading RUBATO_WORKSPACES_FILE {}", path.display())
+                })?;
+                crate::kernel::workspaces::from_file(&text, &path, &legacy)?
+            }
+            None => vec![],
+        };
+        let default_entry = workspaces
+            .iter()
+            .find(|w| w.id == rubato_protocol::DEFAULT_WORKSPACE)
+            .cloned();
+        let dev_traffic = env("RUBATO_DEV_TRAFFIC").map(PathBuf::from);
+        let traffic_env = TrafficEnv::from_vars(std::env::vars());
+        one_traffic_source(dev_traffic.is_some(), &traffic_env)?;
         let session_secret = env("RUBATO_SESSION_SECRET").unwrap_or_else(|| {
             warnings.push(
                 "RUBATO_SESSION_SECRET unset; web sessions will not survive a restart".into(),
@@ -189,15 +259,32 @@ impl Config {
             github_web_url: env("RUBATO_GITHUB_WEB_URL").map(trim_slash),
             dev_issues: env("RUBATO_DEV_ISSUES").map(PathBuf::from),
             local_repos: env("RUBATO_LOCAL_REPOS"),
-            dev_traffic: env("RUBATO_DEV_TRAFFIC").map(PathBuf::from),
+            dev_traffic,
             traffic_fetch_secs: traffic_fetch_secs(
                 env("RUBATO_TRAFFIC_FETCH_SECS").as_deref(),
                 &mut warnings,
             ),
-            map_repo: env("RUBATO_MAP_REPO").unwrap_or_else(|| "m0x6A/rubato".into()),
-            map_path: env("RUBATO_MAP_PATH").unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
-            map_ref: env("RUBATO_MAP_REF").unwrap_or_else(|| "main".into()),
-            map_file: env("RUBATO_MAP_FILE").map(PathBuf::from),
+            traffic_env,
+            map_repo: default_entry
+                .as_ref()
+                .map(|w| w.map_repo.clone())
+                .or_else(|| env("RUBATO_MAP_REPO"))
+                .unwrap_or_else(|| "m0x6A/rubato".into()),
+            map_path: default_entry
+                .as_ref()
+                .map(|w| w.map_path.clone())
+                .or_else(|| env("RUBATO_MAP_PATH"))
+                .unwrap_or_else(|| "docs/design/rubato-map.yml".into()),
+            map_ref: default_entry
+                .as_ref()
+                .map(|w| w.map_ref.clone())
+                .or_else(|| env("RUBATO_MAP_REF"))
+                .unwrap_or_else(|| "main".into()),
+            map_file: match &default_entry {
+                Some(w) => w.map_file.clone(),
+                None => env("RUBATO_MAP_FILE").map(PathBuf::from),
+            },
+            workspaces,
             session_secret,
             dev_user: env("RUBATO_DEV_USER"),
             web_dist: env("RUBATO_WEB_DIST")
@@ -216,7 +303,40 @@ impl Config {
         })
     }
 
+    /// Whether a traffic source is configured: the development file or the production one.
+    pub fn traffic_configured(&self) -> bool {
+        self.dev_traffic.is_some()
+            || self
+                .traffic_env
+                .get("RUBATO_TRAFFIC_PROMETHEUS_URL")
+                .is_some()
+    }
+
     /// The REST API root, without a trailing slash.
+    /// The configured workspaces, in switcher order, and where they came from: the file, or
+    /// the `map_*` fields as the one workspace `default`.
+    pub fn workspace_entries(
+        &self,
+    ) -> (
+        Vec<crate::kernel::workspaces::WorkspaceEntry>,
+        crate::kernel::workspaces::Source,
+    ) {
+        use crate::kernel::workspaces::{Source, WorkspaceEntry};
+        if self.workspaces.is_empty() {
+            let w = WorkspaceEntry {
+                id: rubato_protocol::DEFAULT_WORKSPACE.to_string(),
+                name: None,
+                map_repo: self.map_repo.clone(),
+                map_path: self.map_path.clone(),
+                map_ref: self.map_ref.clone(),
+                map_file: self.map_file.clone(),
+            };
+            (vec![w], Source::LegacyEnv)
+        } else {
+            (self.workspaces.clone(), Source::File)
+        }
+    }
+
     pub fn github_api(&self) -> &str {
         self.github_api_url
             .as_deref()
@@ -247,10 +367,12 @@ impl Config {
             local_repos: None,
             dev_traffic: None,
             traffic_fetch_secs: TRAFFIC_FETCH_SECS.1,
+            traffic_env: TrafficEnv::default(),
             map_repo: "m0x6A/rubato".into(),
             map_path: "docs/design/rubato-map.yml".into(),
             map_ref: "main".into(),
             map_file: None,
+            workspaces: vec![],
             session_secret: "test-secret".into(),
             dev_user: Some(dev_user.into()),
             web_dist: PathBuf::from("web/dist"),
@@ -319,6 +441,29 @@ fn floor_companion_silent_secs(v: u64, warnings: &mut Vec<String>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_traffic_sources_are_a_startup_error_and_settings_never_print() {
+        let prom = TrafficEnv::from_vars(
+            [
+                ("RUBATO_TRAFFIC_PROMETHEUS_URL", "http://prom:9090"),
+                (
+                    "RUBATO_TRAFFIC_PROMETHEUS_HEADERS",
+                    "Authorization=Bearer s3cret",
+                ),
+                ("RUBATO_TRAFFIC_WINDOW_SECS", "600"),
+                ("RUBATO_TRAFFIC_FETCH_SECS", "60"),
+                ("RUBATO_OTHER", "x"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned())),
+        );
+        assert_eq!(prom.0.len(), 3, "{prom:?}");
+        assert!(!format!("{prom:?}").contains("s3cret"));
+        assert!(one_traffic_source(true, &prom).is_err());
+        assert!(one_traffic_source(false, &prom).is_ok());
+        assert!(one_traffic_source(true, &TrafficEnv::default()).is_ok());
+    }
 
     #[test]
     fn traffic_fetch_interval_is_clamped_with_a_warning() {

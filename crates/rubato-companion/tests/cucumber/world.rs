@@ -220,12 +220,13 @@ impl RubatoWorld {
             .unwrap();
         let workspace = Workspace {
             server_url: None,
-            map: MapLocation {
+            map: Some(MapLocation {
                 repo: "m0x6A/rubato".into(),
                 path: "docs/design/rubato-map.yml".into(),
                 local: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
                 decisions: None,
-            },
+            }),
+            maps: vec![],
             repos: vec![],
             otel: Some(OtelConfig {
                 endpoint: "http://127.0.0.1:4318".into(),

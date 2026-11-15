@@ -39,7 +39,7 @@ groups:
           seam: server-plan-file
           owner: plan-file
         annotations:
-          summary: "{{ $value }} plan id(s) are not in the map"
+          summary: "{{ $value }} plan id(s) are not in the map of workspace {{ $labels.rubato_workspace }}"
           panel: Plan checks
 
       - alert: SeamCollision
@@ -49,7 +49,7 @@ groups:
           severity: ticket
           owner: rubato-server
         annotations:
-          summary: "{{ $value }} open plans touch seam {{ $labels.rubato_seam }}"
+          summary: "{{ $value }} open plans touch seam {{ $labels.rubato_seam }} in workspace {{ $labels.rubato_workspace }}"
           panel: Map
 
       - alert: GitHubRateLimitLow

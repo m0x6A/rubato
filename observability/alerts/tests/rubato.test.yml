@@ -153,8 +153,11 @@ tests:
 
   - interval: 1m
     input_series:
-      - series: 'rubato_plan_unknown_id_count'
+      # Per workspace (ADR 0044): shop has an unknown id, default has none, so one alert fires.
+      - series: 'rubato_plan_unknown_id_count{rubato_workspace="shop"}'
         values: "0 0 1 1"
+      - series: 'rubato_plan_unknown_id_count{rubato_workspace="default"}'
+        values: "0 0 0 0"
     alert_rule_test:
       - eval_time: 1m
         alertname: PlanUnknownNodes
@@ -166,15 +169,16 @@ tests:
               severity: ticket
               seam: server-plan-file
               owner: plan-file
+              rubato_workspace: shop
             exp_annotations:
-              summary: "1 plan id(s) are not in the map"
+              summary: "1 plan id(s) are not in the map of workspace shop"
               panel: Plan checks
 
   - interval: 1m
     input_series:
-      - series: 'rubato_seam_open_plans{rubato_seam="companion-server"}'
+      - series: 'rubato_seam_open_plans{rubato_seam="companion-server",rubato_workspace="default"}'
         values: "2x5"
-      - series: 'rubato_seam_open_plans{rubato_seam="web-server"}'
+      - series: 'rubato_seam_open_plans{rubato_seam="web-server",rubato_workspace="default"}'
         values: "1x5"
     alert_rule_test:
       - eval_time: 2m
@@ -184,8 +188,9 @@ tests:
               severity: ticket
               owner: rubato-server
               rubato_seam: companion-server
+              rubato_workspace: default
             exp_annotations:
-              summary: "2 open plans touch seam companion-server"
+              summary: "2 open plans touch seam companion-server in workspace default"
               panel: Map
 
   - interval: 1m

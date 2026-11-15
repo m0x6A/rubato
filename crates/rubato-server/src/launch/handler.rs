@@ -1,6 +1,6 @@
 //! `POST /api/launch`: start a session on an issue through one of the caller's own companions.
 
-use super::prompt::{PROMPT_TEMPLATE, render_prompt, slugify};
+use super::prompt::{PROMPT_TEMPLATE, is_slug, render_prompt, slugify};
 use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
@@ -49,14 +49,13 @@ async fn refuse_past_attempt_limit(
 /// Start a session on an issue through one of the caller's own companions (ADR 0004).
 pub async fn launch(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
     Json(req): Json<LaunchRequest>,
 ) -> Result<Json<LaunchResponse>, (StatusCode, String)> {
     let map = app
-        .map
-        .read()
+        .map_of(ws.as_str())
         .await
-        .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     let mine: Vec<pairing::PairingRow> = pairing::list_pairings(&app.db, Some(&user))
         .await
@@ -94,7 +93,7 @@ pub async fn launch(
             }
         },
     };
-    let pins: Vec<String> = pins::list(&app.db)
+    let pins: Vec<String> = pins::list(&app.db, ws.as_str())
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
@@ -117,6 +116,12 @@ pub async fn launch(
         .into_iter()
         .find(|p| p.issue == req.issue)
         .and_then(|p| p.plan);
+    if req.slug.as_deref().is_some_and(|s| !is_slug(s)) {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "slug: letters, digits and single hyphens only".into(),
+        ));
+    }
     let slug = req
         .slug
         .clone()
@@ -180,7 +185,7 @@ pub async fn launch(
         otel_resource: otel,
         map_version: Some(map.version.clone()),
     };
-    store::store_launch(&app.db, companion.companion_id, &command)
+    store::store_launch(&app.db, ws.as_str(), companion.companion_id, &command)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?;
     if !app.send_to_companion(

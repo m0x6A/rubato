@@ -91,9 +91,9 @@ capability.
 Each deployable's block appears here with the PR that slices it:
 
 <!-- slices: rubato-server -->
-`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, 404 for
-unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, telemetry, db connection, `AppState`, signer, `http::internal`, GitHub port); slices:
+`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
+`/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
+(config, workspaces, telemetry, db connection, `AppState` with a map per workspace, signer, `http::internal` and `http::Ws`, GitHub port); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -102,13 +102,13 @@ companion_link  companion websocket, envelopes, acks            companion_events
 pins            pin an issue to a node or seam, Map: lines      pins, map_line_pins
 launch          start a session through your own companion      launches, cap_hits
 layout          where each part sits on the shared map          map_layout
-map             load, validate, cache and serve the map         map_cache
+map             load and serve each workspace's map, the list    map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal
 new_issue       create an issue as the App, pinned where begun  issue_creations
 plans           parse and keep plan files from issue branches   plans
 approve         accept a plan as yourself, posted once          plan_approvals
 queue           issues queued on your own companions, in order  companion_queue
-github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
+github_poll     issue reads, open issues and pulls, placement   pull_requests, decisions, issue_meta, open_issues, issue_suggestions, backlog_repos, uncovered_repos, plan_signals, repo_pulls, repo_pulls_status
 traffic         observed calls per seam from a traffic report   (none; latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
@@ -133,7 +133,8 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 <!-- /slices -->
 <!-- slices: web -->
 `web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, selection, handlers);
-`shared/` (`api.ts` request, `ApiError` and needs-login; `format.ts`; `dnd.ts` the dragged issue;
+`shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
+`scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
 `features/features.test.ts`:
@@ -141,7 +142,7 @@ stale        heartbeat, stale sessions                           heartbeat, swee
 ```text
 live        the overview, kept current over /ws/web              GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
-map         the system map: graph, shared layout over ELK, MapView, scenario player  PUT, DELETE /api/layout
+map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player  PUT, DELETE /api/layout
 issues      issue list, not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, queue), revoke     POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
@@ -151,7 +152,8 @@ drafts      edit the map as one shared draft, propose it         POST /api/map/d
 findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 plans       proposed and open plans, where they fit, Accept plan  POST /api/plans/approve
-repos       connected repos, sessions not tied to an issue       (none)
+repos       connected repos, what each provides, loose sessions  (none)
+workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->
@@ -166,7 +168,7 @@ pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PA
 session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
 hook       HookEvent
 pins       IssuePin, PinRequest; PINS
-issue_body the Map: line (parse_map_line, map_line), PinSuggestion
+issue_body the Map: line (parse_map_line, parse_map_placement, map_line_in), MapPlacement, PinSuggestion
 issue_new  NewIssueRequest, NewIssueResponse, render_issue, the Rubato-Request: line; ISSUES
 launch     LaunchCommand, LaunchResult, CapHit, LaunchRequest, LaunchResponse; LAUNCH
 layout     MapLayout, Position; LAYOUT
@@ -178,6 +180,7 @@ progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, derive_traffic, limits
 web_link   WebEvent; WEB_WS
+workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
 ```
 
 The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).

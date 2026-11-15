@@ -96,11 +96,12 @@ pub async fn poll_once(app: &App) -> Result<()> {
 impl Poller {
     /// One tick over every issue of interest.
     pub async fn tick(&mut self, app: &App, lane: Lane) -> Result<()> {
-        let Some(map) = app.map.read().await.clone() else {
+        let Some(map) = app.default_map().await else {
             tracing::warn!("no map loaded; skipping poll");
             return Ok(());
         };
-        let mut issues: BTreeSet<IssueRef> = pins::list(&app.db)
+        // Pinned in any workspace: each issue is read once, whatever views show it (ADR 0048).
+        let mut issues: BTreeSet<IssueRef> = pins::list_all(&app.db)
             .await?
             .into_iter()
             .map(|p| p.issue)
@@ -117,7 +118,19 @@ impl Poller {
 
         // Before the per-issue reads: every open issue of the map's repos (one listing per
         // repo), then, as an installation only, which repos it covers.
-        let listed = github_poll::list_open_issues(app, &map.map).await;
+        // Every loaded workspace map, in id order: the listing is over their union (ADR 0048).
+        let maps: Vec<(String, crate::kernel::state::LoadedMap)> = app
+            .maps
+            .read()
+            .await
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let systems: Vec<(String, rubato_protocol::SystemMap)> = maps
+            .iter()
+            .map(|(k, v)| (k.clone(), v.map.clone()))
+            .collect();
+        let listed = github_poll::list_open_issues(app, &systems).await;
         // Creations GitHub did not confirm, found by their `Rubato-Request:` line (ADR 0025).
         let found: Vec<new_issue::Found> = listed
             .requests()
@@ -131,22 +144,21 @@ impl Poller {
         new_issue::reconcile(app, &found, listed.fresh_repos()).await;
         // `Map:` lines of trusted authors pin their issues (ADR 0026). No GitHub call: the
         // bodies came with the listing. A newly pinned issue is read from the next tick on.
-        let lines: Vec<pins::Line> = listed
-            .map_lines()
-            .iter()
-            .map(|l| pins::Line {
-                issue: l.issue.clone(),
-                target: l.target.clone(),
-                author: l.author.clone(),
-            })
-            .collect();
-        pins::apply_map_lines(app, &map.map, &map.version, &lines).await;
-        let mut repos: BTreeSet<String> = map
-            .map
-            .repos_named()
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+        for (ws, m) in &maps {
+            let lines: Vec<pins::Line> = listed
+                .map_lines()
+                .iter()
+                .filter(|l| &l.workspace == ws)
+                .map(|l| pins::Line {
+                    issue: l.issue.clone(),
+                    target: l.target.clone(),
+                    author: l.author.clone(),
+                })
+                .collect();
+            pins::apply_map_lines(app, ws, &m.map, &m.version, &lines).await;
+        }
+        // Every distinct repo of every workspace, once (ADR 0048), and the repos of tracked work.
+        let mut repos: BTreeSet<String> = app.union_repos().await.into_iter().collect();
         repos.extend(issues.iter().map(|i| i.repo.clone()));
         github_poll::check_coverage(app, &repos).await;
         // As an installation, on the full lane: whether Issues: write is granted (ADR 0025), so a
@@ -243,7 +255,7 @@ impl Poller {
         map_draft::record_gauges(app).await;
         queue::record_depth(app).await;
         github_poll::record_rate_limit(app).await;
-        overview::refresh_gauges(app, &map).await?;
+        overview::refresh_gauges(app).await?;
         app.notify("poll");
         Ok(())
     }
@@ -335,7 +347,8 @@ impl Poller {
             .collect();
         untracked.sort();
         let mut found = 0;
-        for repo in map.map.repos_named() {
+        let union = app.union_repos().await;
+        for repo in union.iter().map(String::as_str) {
             let heads = view.heads(app, repo).await;
             for issue in untracked.iter().filter(|i| i.repo == repo) {
                 if !heads
@@ -406,7 +419,7 @@ pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) {
 /// is configured, best-effort (a dead fetch makes the report stale, and the map says unknown).
 pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
     let mut tasks = Tasks::default();
-    if app.config.dev_traffic.is_some() {
+    if app.config.traffic_configured() {
         tasks.spawn(
             "traffic",
             Kind::BestEffort,

@@ -35,6 +35,31 @@ test("the map renders every node id from system-map.yml", async ({ page }) => {
   await expect(page.getByText("map rubato @")).toBeVisible();
 });
 
+test("By repo boxes each repo's parts, and the Repos tab says what each repo provides (issue #89)", async ({ page }) => {
+  const nodes = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; repo?: string }[] }).nodes;
+  const owned = nodes.filter((n) => n.repo);
+  await page.goto("/");
+  await expect(page.getByTestId(`node-${owned[0]!.id}`)).toBeVisible();
+  await page.getByRole("button", { name: "By repo" }).click();
+  const box = page.getByTestId("repo-box-m0x6A/rubato");
+  await expect(box).toBeVisible();
+  // Every part with a repo is drawn inside its box; the externals outside it.
+  const b = (await box.boundingBox())!;
+  for (const n of nodes) {
+    const p = (await page.getByTestId(`node-${n.id}`).boundingBox())!;
+    const inside = p.x >= b.x && p.y >= b.y && p.x + p.width <= b.x + b.width + 1 && p.y + p.height <= b.y + b.height + 1;
+    expect(inside, n.id).toBe(Boolean(n.repo));
+  }
+  await page.getByRole("button", { name: "By repo" }).click();
+  await expect(box).toHaveCount(0);
+
+  await page.getByTestId("tab-repos").click();
+  const provides = page.getByTestId("provides-m0x6A/rubato");
+  await expect(provides).toContainText(`${owned.length} parts`);
+  await provides.locator("summary").click();
+  await expect(provides).toContainText(owned[0]!.id);
+});
+
 test("a member's Map: line places an issue without a drag; a stranger's only suggests", async ({ page }) => {
   // fixtures/issues.json: #912 by the owner names seam companion-server; #913 by someone
   // outside the team names part plan-check (ADR 0026).

@@ -93,6 +93,16 @@ pub struct Metrics {
     /// series to `rubato_map_loaded_at_seconds` and empty the "Map age" panel.
     pub map_loaded_at: Gauge<u64>,
     pub map_load_failures: Counter<u64>,
+    /// Workspaces configured (ADR 0044), recorded at start.
+    pub workspaces_configured: Gauge<u64>,
+    /// Rows whose workspace is no longer configured (ADR 0047), counted at start.
+    pub workspace_orphan_rows: Gauge<u64>,
+    /// Repos more than one workspace's map names (ADR 0048), every poll tick.
+    pub workspace_shared_repos: Gauge<u64>,
+    /// Tracked plans that fit none of their issue's workspaces (ADR 0045), per workspace.
+    pub plans_fit_none: Gauge<u64>,
+    /// Ids naming two parts across workspaces sharing a repo (finding `IdCollision`), per workspace.
+    pub workspace_id_collisions: Gauge<u64>,
     pub ws_clients: Gauge<u64>,
     pub companion_heartbeat: Gauge<u64>,
     pub poll_ticks: Counter<u64>,
@@ -147,6 +157,11 @@ impl Metrics {
             map_loaded: m.u64_gauge(otel::metric::MAP_LOADED).build(),
             map_loaded_at: m.u64_gauge(otel::metric::MAP_LOADED_AT).build(),
             map_load_failures: m.u64_counter(otel::metric::MAP_LOAD_FAILURES).build(),
+            workspaces_configured: m.u64_gauge(otel::metric::WORKSPACES_CONFIGURED).build(),
+            workspace_orphan_rows: m.u64_gauge(otel::metric::WORKSPACE_ORPHAN_ROWS).build(),
+            workspace_shared_repos: m.u64_gauge(otel::metric::WORKSPACE_SHARED_REPOS).build(),
+            plans_fit_none: m.u64_gauge(otel::metric::PLANS_FIT_NONE).build(),
+            workspace_id_collisions: m.u64_gauge(otel::metric::WORKSPACE_ID_COLLISIONS).build(),
             ws_clients: m.u64_gauge(otel::metric::WS_CLIENTS).build(),
             companion_heartbeat: m.u64_gauge(otel::metric::COMPANION_HEARTBEAT).build(),
             poll_ticks: m.u64_counter(otel::metric::POLL_TICKS).build(),

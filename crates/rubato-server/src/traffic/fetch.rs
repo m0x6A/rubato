@@ -2,7 +2,8 @@
 //! `AppState::traffic`, its gauges recorded, and the browsers told only when the derived
 //! summary changed (design §4).
 
-use super::source::{DevFileSource, Source, SourceError};
+use super::prometheus::{PrometheusConfig, PrometheusSource};
+use super::source::{ConfiguredSource, DevFileSource, Source, SourceError};
 use crate::kernel::state::{App, TrafficLatest};
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
@@ -12,7 +13,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tracing::Instrument;
 
-/// A fetch that has not answered by then has failed; the previous report stays.
+/// A fetch that has not answered by then has failed; the previous report stays. The task uses
+/// the fetch interval less a second instead, so a fetch never overlaps the next.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How one fetch ended, as counted on `rubato.traffic.fetches`.
@@ -40,6 +42,7 @@ pub struct Fetcher<S> {
     source: S,
     started: DateTime<Utc>,
     told: Option<ObservedTraffic>,
+    timeout: Duration,
 }
 
 fn set_error(latest: &mut TrafficLatest, error: Option<String>) {
@@ -54,18 +57,26 @@ impl<S: Source> Fetcher<S> {
             source,
             started: now,
             told: None,
+            timeout: FETCH_TIMEOUT,
         }
+    }
+
+    /// The same fetcher, giving a fetch `timeout` before it counts as failed.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     /// Fetch once, keep or reject the report, record the gauges and notify on a change.
     pub async fn tick(&mut self, app: &App, now: DateTime<Utc>) -> Outcome {
         let span = tracing::info_span!(
             span::TRAFFIC_FETCH,
+            rubato.traffic.source = self.source.name(),
             rubato.outcome = tracing::field::Empty,
             edges = tracing::field::Empty,
             error = tracing::field::Empty,
         );
-        let fetched = tokio::time::timeout(FETCH_TIMEOUT, self.source.fetch())
+        let fetched = tokio::time::timeout(self.timeout, self.source.fetch())
             .instrument(span.clone())
             .await
             .unwrap_or_else(|_| Err(SourceError::Failed("traffic source timed out".into())));
@@ -111,9 +122,13 @@ impl<S: Source> Fetcher<S> {
             span.record(attr::OUTCOME, outcome.as_str());
             outcome
         };
-        app.metrics
-            .traffic_fetches
-            .add(1, &[KeyValue::new(attr::OUTCOME, outcome.as_str())]);
+        app.metrics.traffic_fetches.add(
+            1,
+            &[
+                KeyValue::new(attr::OUTCOME, outcome.as_str()),
+                KeyValue::new(attr::TRAFFIC_SOURCE, self.source.name()),
+            ],
+        );
         self.record(app, now).await;
         outcome
     }
@@ -130,7 +145,41 @@ impl<S: Source> Fetcher<S> {
         app.metrics
             .traffic_report_age
             .record(u64::try_from(age).unwrap_or(0), &[]);
-        let Some(map) = app.map.read().await.clone() else {
+        // Judged against each workspace's map (ADR 0039 per workspace); the browsers are told
+        // once, from `default`'s, which unprefixed overviews show.
+        let maps: Vec<(String, crate::kernel::state::LoadedMap)> = app
+            .maps
+            .read()
+            .await
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        for (ws, m) in maps
+            .iter()
+            .filter(|(w, _)| w != rubato_protocol::DEFAULT_WORKSPACE)
+        {
+            let (t, f) = derive_traffic(&m.map, latest.report.as_ref(), &latest.source, now);
+            let w = [KeyValue::new(
+                rubato_protocol::otel::attr::WORKSPACE,
+                ws.clone(),
+            )];
+            let quiet = f
+                .iter()
+                .filter(|f| matches!(f, Finding::SeamQuiet { .. }))
+                .count();
+            app.metrics.traffic_seams_quiet.record(quiet as u64, &w);
+            app.metrics
+                .traffic_undeclared_edges
+                .record(t.undeclared.len() as u64, &w);
+            app.metrics
+                .traffic_unmapped_services
+                .record(u64::from(t.unmapped_services), &w);
+        }
+        let Some(map) = maps
+            .iter()
+            .find(|(w, _)| w == rubato_protocol::DEFAULT_WORKSPACE)
+            .map(|(_, m)| m.clone())
+        else {
             return;
         };
         let (traffic, findings) =
@@ -160,14 +209,31 @@ impl<S: Source> Fetcher<S> {
 /// The traffic task: runs only when a source is configured. Best-effort: if it ends, the
 /// report goes stale and the map says *unknown*.
 pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) -> anyhow::Result<()> {
-    let Some(path) = app.config.dev_traffic.clone() else {
-        return Ok(());
+    let fetch_secs = app.config.traffic_fetch_secs;
+    let source = if let Some(path) = app.config.dev_traffic.clone() {
+        tracing::warn!(
+            "RUBATO_DEV_TRAFFIC is set: observed traffic comes from that file; development and tests only"
+        );
+        ConfiguredSource::DevFile(DevFileSource::new(path))
+    } else {
+        match PrometheusConfig::from_env(|k| app.config.traffic_env.get(k), fetch_secs) {
+            Ok(Some(c)) => {
+                tracing::info!(url = %c.url, window_secs = c.window_secs, "traffic from the service graph");
+                ConfiguredSource::Prometheus(PrometheusSource::new(c))
+            }
+            Ok(None) => return Ok(()),
+            Err(e) => {
+                // A source set up wrong is a failing source, shown as unknown, never as quiet.
+                tracing::error!(error = %e, "traffic source failing");
+                set_error(&mut *app.traffic.write().await, Some(e));
+                return Ok(());
+            }
+        }
     };
-    tracing::warn!(
-        "RUBATO_DEV_TRAFFIC is set: observed traffic comes from that file; development and tests only"
-    );
-    let mut fetcher = Fetcher::new(DevFileSource::new(path), Utc::now());
-    let secs = u64::from(app.config.traffic_fetch_secs);
+    let mut fetcher = Fetcher::new(source, Utc::now()).with_timeout(Duration::from_secs(
+        u64::from(fetch_secs.saturating_sub(1).max(1)),
+    ));
+    let secs = u64::from(fetch_secs);
     loop {
         fetcher.tick(&app, Utc::now()).await;
         tokio::select! {

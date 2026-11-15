@@ -16,14 +16,13 @@ const SLICE: &str = "pins";
 
 pub async fn add_pin(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
     Json(req): Json<PinRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let map = app
-        .map
-        .read()
+        .map_of(ws.as_str())
         .await
-        .clone()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     if let Err((reason, msg)) = check_target(&map.map, &map.version, &req.target) {
         app.reject(routes::PINS, reason, &user);
@@ -31,6 +30,7 @@ pub async fn add_pin(
     }
     store::add_pin(
         &app.db,
+        ws.as_str(),
         &IssuePin {
             issue: req.issue,
             target: req.target,
@@ -46,10 +46,11 @@ pub async fn add_pin(
 
 pub async fn remove_pin(
     State(app): State<App>,
+    ws: crate::kernel::http::Ws,
     _user: CurrentUser,
     Json(req): Json<PinRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    let removed = store::remove_pin(&app.db, &req.issue, &req.target)
+    let removed = store::remove_pin(&app.db, ws.as_str(), &req.issue, &req.target)
         .await
         .map_err(|e| internal(SLICE, e))?;
     app.notify("pin");

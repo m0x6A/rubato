@@ -1,5 +1,6 @@
 import type { ApproveRequest, ApproveResponse } from "../../protocol.ts";
 import { ApiError, request } from "../../shared/api.ts";
+import { scoped } from "../../shared/workspace.ts";
 
 /** Why an approval was refused, from the server's JSON answer (ADR 0030). */
 export function refusalReason(e: unknown): string | null {
@@ -15,7 +16,7 @@ export function refusalReason(e: unknown): string | null {
 }
 
 export const plansApi = {
-  approve: (req: ApproveRequest) => request<ApproveResponse>("POST", "/api/plans/approve", req),
+  approve: (req: ApproveRequest) => request<ApproveResponse>("POST", scoped("/api/plans/approve"), req),
 };
 
 /** What a refused approval tells the person. */
