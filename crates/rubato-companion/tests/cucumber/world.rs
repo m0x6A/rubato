@@ -43,6 +43,11 @@ pub struct TestServer {
 
 impl TestServer {
     pub async fn start(user: &str) -> Self {
+        Self::start_on(user, std::net::Ipv4Addr::LOCALHOST.into()).await
+    }
+
+    /// The same test server listening on `ip`, for a URL that is not loopback.
+    pub async fn start_on(user: &str, ip: std::net::IpAddr) -> Self {
         use axum::extract::State as AxState;
         use axum::extract::ws::{Message, WebSocketUpgrade};
         use axum::http::HeaderMap;
@@ -115,9 +120,7 @@ impl TestServer {
             }))
             .with_state(st);
         use axum::response::IntoResponse;
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind((ip, 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
