@@ -440,6 +440,37 @@ pub struct PullDetail {
     pub read_at: DateTime<Utc>,
 }
 
+/// Merge a pull request as yourself (`POST /api/pulls/merge`, ADR 0033): at the head the person
+/// saw, with the method they picked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MergeRequest {
+    pub repo: String,
+    pub number: u64,
+    pub head_sha: String,
+    pub method: MergeMethod,
+}
+
+/// Where a merge is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    /// GitHub merged it.
+    Merged,
+    /// Sent, and GitHub did not answer: the poll confirms it, or it is dropped within 10 minutes.
+    Opening,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MergeResponse {
+    pub state: MergeState,
+    /// Who pressed Merge for this head: a retry or a second tab gets the first press's row.
+    pub login: String,
+    pub method: MergeMethod,
+    /// The merge commit GitHub made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_sha: Option<String>,
+}
+
 /// Why Rubato will not merge, in the order [`merge_refusal`] checks them: the `reason` of a 409
 /// or 502 answer, `MergeOffer.why_not` and `rubato.reason` on `rubato.web.rejected`.
 pub mod reason {
@@ -459,6 +490,8 @@ pub mod reason {
     pub const GITHUB_REFUSED: &str = "github_refused";
     /// The repo is not one the workspace's map names and the installation covers.
     pub const UNKNOWN_REPO: &str = "unknown_repo";
+    /// A read the merge needs failed (GitHub, or the derived state): nothing was sent.
+    pub const GITHUB_FAILED: &str = "github_failed";
     /// Every reason [`super::merge_refusal`] returns, in its order.
     pub const ORDER: [&str; 10] = [
         NOT_OPEN,
@@ -478,6 +511,8 @@ pub mod reason {
 pub mod routes {
     /// `GET`: a pull request's view.
     pub const PULL: &str = "/api/pulls/{owner}/{repo}/{number}";
+    /// `POST` a [`super::MergeRequest`].
+    pub const PULLS_MERGE: &str = "/api/pulls/merge";
 }
 
 #[cfg(test)]

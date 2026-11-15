@@ -13,7 +13,7 @@
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
     approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview,
-    pairing, pins, plans, queue, rooms, session_messages, traffic, webhooks,
+    pairing, pins, plans, pulls, queue, rooms, session_messages, traffic, webhooks,
 };
 use anyhow::{Result, anyhow};
 use chrono::Utc;
@@ -557,6 +557,9 @@ impl Poller {
             )
             .await
         };
+        // Merges sent from Rubato that GitHub did not confirm, against the listings just made in
+        // full (ADR 0033, plan 82 Decision 12). A delivery-scoped pass lists some repos whole.
+        pulls::reconcile(app, &pulls.complete).await;
         // Every pass: info on the full lane (every 300 s) and for catch-ups, debug otherwise.
         let (tracked, repos) = (issues.len(), view.repos());
         let scope_name = if targets.is_some() { "targets" } else { "all" };

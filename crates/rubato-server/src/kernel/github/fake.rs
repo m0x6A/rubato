@@ -82,6 +82,14 @@ pub struct FakeInner {
     pub check_runs: HashMap<String, Vec<CheckRun>>,
     /// What `repo_as` answers per (login, repo); without a row, push and every method.
     pub access: HashMap<(String, String), RepoAccess>,
+    /// `merge_as` answers with this (status, message) and merges nothing.
+    pub merge_refused: Option<(u16, String)>,
+    /// `merge_as` fails as a timeout does; `true` merges first (the request reached GitHub).
+    pub merge_times_out: Option<bool>,
+    /// `merge_as` waits this long before answering, so two requests can overlap.
+    pub merge_delay: Option<std::time::Duration>,
+    /// Every merge made, as (login, repo, number, sha, method): GitHub's `merged_by`.
+    pub merged: Vec<(String, String, u64, String, &'static str)>,
     /// Every call in order, as (method, args); the guard for the poll order (design D4).
     pub calls: Vec<(&'static str, String)>,
 }
@@ -316,6 +324,80 @@ impl GitHubApi for FakeGitHub {
                 push: true,
                 methods: vec![MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase],
             }))
+    }
+
+    /// A token `tok-<login>` merges as `<login>`; a head other than `sha` is GitHub's 409.
+    async fn merge_as(
+        &self,
+        token: &str,
+        repo: &str,
+        number: u64,
+        sha: &str,
+        method: MergeMethod,
+    ) -> std::result::Result<String, super::MergeError> {
+        let delay = {
+            let mut g = self.inner.lock().unwrap();
+            g.calls.push((
+                "merge_as",
+                format!("{repo}#{number} {sha} {}", method.as_str()),
+            ));
+            g.merge_delay
+        };
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
+        let mut g = self.inner.lock().unwrap();
+        let refused = |status: u16, message: &str| super::MergeError::Refused {
+            status,
+            message: message.into(),
+        };
+        if let Some((status, message)) = g.merge_refused.clone() {
+            return Err(refused(status, &message));
+        }
+        let Some(login) = token.strip_prefix("tok-").map(str::to_owned) else {
+            return Err(refused(401, "Bad credentials"));
+        };
+        let times_out = g.merge_times_out;
+        if times_out == Some(false) {
+            return Err(super::MergeError::Unknown("operation timed out".into()));
+        }
+        let now = chrono::Utc::now();
+        let mut found = false;
+        for ((r, _), p) in g.pulls.iter_mut() {
+            if r == repo && p.number == number {
+                if !p.open {
+                    return Err(refused(405, "Pull Request is not mergeable"));
+                }
+                if p.head_sha != sha {
+                    return Err(refused(
+                        409,
+                        "Head branch was modified. Review and try the merge again.",
+                    ));
+                }
+                p.open = false;
+                p.merged_at = Some(now);
+                found = true;
+            }
+        }
+        if let Some(p) = g.pull_details.get_mut(&(repo.to_owned(), number)) {
+            p.info.open = false;
+            p.info.merged_at = Some(now);
+            found = true;
+        }
+        if !found {
+            return Err(refused(404, "Not Found"));
+        }
+        g.merged.push((
+            login,
+            repo.to_owned(),
+            number,
+            sha.to_owned(),
+            method.as_str(),
+        ));
+        if times_out == Some(true) {
+            return Err(super::MergeError::Unknown("operation timed out".into()));
+        }
+        Ok(format!("merge-{number}"))
     }
 
     async fn rate_limit(&self) -> Result<(u64, u64)> {

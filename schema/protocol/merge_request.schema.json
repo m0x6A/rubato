@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MergeRequest",
+  "description": "Merge a pull request as yourself (`POST /api/pulls/merge`, ADR 0033): at the head the person\nsaw, with the method they picked.",
+  "type": "object",
+  "properties": {
+    "head_sha": {
+      "type": "string"
+    },
+    "method": {
+      "$ref": "#/$defs/MergeMethod"
+    },
+    "number": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "repo": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "repo",
+    "number",
+    "head_sha",
+    "method"
+  ],
+  "$defs": {
+    "MergeMethod": {
+      "description": "How a pull request is merged: `merge_method` on GitHub's merge call.",
+      "type": "string",
+      "enum": [
+        "merge",
+        "squash",
+        "rebase"
+      ]
+    }
+  }
+}

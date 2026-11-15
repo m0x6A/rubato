@@ -5,6 +5,8 @@
 pub mod attr {
     pub const REPO: &str = "rubato.repo";
     pub const ISSUE: &str = "rubato.issue";
+    /// A pull request's number, beside `rubato.repo` (issue #82).
+    pub const PR: &str = "rubato.pr";
     pub const BRANCH: &str = "rubato.branch";
     pub const NODE: &str = "rubato.node";
     pub const SEAM: &str = "rubato.seam";
@@ -242,6 +244,8 @@ pub mod metric {
     pub const GITHUB_CATCHUP_LAST_CHANGE_AT: &str = "rubato.github.catchup.last_change_at";
     /// Pull request views by outcome (`cached`, `fetched`, `failed`), issue #82, ADR 0034.
     pub const PULLS_VIEW_FETCHES: &str = "rubato.pulls.view_fetches";
+    /// Merges sent and not confirmed for more than 120 s (ADR 0033), every poll tick.
+    pub const PULLS_MERGES_OPENING: &str = "rubato.pulls.merges_opening";
 }
 
 /// Span names.
@@ -255,6 +259,8 @@ pub mod span {
     pub const HANDOFF: &str = "rubato.handoff";
     /// An approval posted from Rubato as the person (ADR 0030).
     pub const PLAN_APPROVE: &str = "rubato.plan.approve";
+    /// A merge as the person, wrapping its GitHub call (ADR 0033).
+    pub const PR_MERGE: &str = "rubato.pr.merge";
     /// One fetch of the traffic report (ADR 0039), with `rubato.outcome`.
     pub const TRAFFIC_FETCH: &str = "rubato.traffic.fetch";
     /// Server: one dispatch of a launch's queue (ADR 0051).
@@ -315,6 +321,7 @@ pub fn all_names() -> Vec<&'static str> {
     vec![
         attr::REPO,
         attr::ISSUE,
+        attr::PR,
         attr::BRANCH,
         attr::NODE,
         attr::SEAM,
@@ -410,6 +417,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GITHUB_CATCHUP_CHANGES,
         metric::GITHUB_CATCHUP_LAST_CHANGE_AT,
         metric::PULLS_VIEW_FETCHES,
+        metric::PULLS_MERGES_OPENING,
         metric::SESSION_MESSAGES,
         metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
         metric::COMPANIONS_BY_CAPABILITY,
@@ -435,6 +443,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::WS_FANOUT,
         span::HANDOFF,
         span::PLAN_APPROVE,
+        span::PR_MERGE,
         span::TRAFFIC_FETCH,
         span::SESSION_MESSAGE_DISPATCH,
         span::SESSION_INPUT_DELIVER,

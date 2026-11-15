@@ -1250,6 +1250,11 @@
           "refId": "C",
           "expr": "max(rubato_plans_approvals_opening)",
           "legendFormat": "approvals opening > 2 min"
+        },
+        {
+          "refId": "D",
+          "expr": "max(rubato_pulls_merges_opening)",
+          "legendFormat": "merges opening > 2 min"
         }
       ],
       "fieldConfig": {
