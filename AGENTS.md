@@ -241,7 +241,8 @@ All telemetry is OpenTelemetry over OTLP, vendor-neutral. The team's stack is LG
 | Claude Code sessions | its own OTel export (already in place), launched with resource attributes `rubato.repo`, `rubato.issue`, `rubato.branch`, `rubato.node` | cost, duration and tool calls per issue and per map node come free |
 | `rubato-companion` | a heartbeat metric per machine; a span per launch, per hook forwarded, per `team --json` poll; a `rubato.session.stale` event when a session goes quiet | the trust check: is the signal still flowing? |
 | `rubato-server` | a span per inbound event with the session and issue as attributes; a span per GitHub call; metrics for sessions by state, issues by state, events dropped, GitHub rate-limit remaining | the derived progress model must be explainable from traces |
-| plan check | a log line per plan checked: node ids found, unknown ids, O-rows present | every check reports what it checked |
+| plan check | a log line per plan checked: node ids found, unknown ids, O-rows present; with an OTLP endpoint set, also a `rubato.skill.command` span with `service.name` `plan-check` | every check reports what it checked |
+| skills (`otel-emit.ts`) | a `rubato.skill.command` span per script run, with `rubato.skill.subcommand` and `rubato.exit_code`; a `rubato.skill.call` client span with `peer.service` per call to GitHub, the map or the plan file; `service.name` is the skill, `service.namespace` only from the environment (ADR 0061) | skills are parts of the system and must show on the observed map |
 | handoffs | a span that starts when a plan touches a seam and ends when the other side's PR merges, linking both traces | cross-agent handoffs are where orchestration breaks without an error |
 
 Follow the OpenTelemetry GenAI semantic conventions for anything model-related; use the `rubato.*` namespace for ours and keep the list in `crates/rubato-protocol/src/otel.rs` so companion and server agree.

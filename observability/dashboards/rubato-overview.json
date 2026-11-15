@@ -1522,6 +1522,59 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 84,
+      "type": "row",
+      "title": "Skills",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 97
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 85,
+      "title": "Skills emitting",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 98
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Calls from skills and plan-check to other parts per hour, from the OTel servicegraph connector metrics the traffic source reads (ADR 0040, 0061). Each rubato.skill.call span with peer.service makes one edge: rubato → github, plan-file, system-map. A launched session (rubato.launch) whose skill draws nothing here means the RUBATO_OTEL_* mirror did not reach the session (seam companion-claude-code): check the launch script exports and that the developer environment has an OTLP endpoint and service.namespace. Empty everywhere: no endpoint is configured, or the connector does not run.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (client, server) (increase(traces_service_graph_request_total{client=~\"rubato|plan-check\"}[1h]))",
+          "legendFormat": "{{client}} → {{server}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (client, server) (increase(traces_service_graph_request_failed_total{client=~\"rubato|plan-check\"}[1h]))",
+          "legendFormat": "{{client}} → {{server}} failed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ]
 }
