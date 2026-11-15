@@ -5,6 +5,7 @@ mod build;
 mod gauges;
 mod handler;
 mod inputs;
+mod issue;
 #[cfg(test)]
 mod traffic_tests;
 
@@ -12,3 +13,4 @@ pub use build::{Built, OverviewInputs, build, counts};
 pub use gauges::refresh_gauges;
 pub use handler::overview;
 pub use inputs::build_overview_inputs;
+pub use issue::issue_summary;

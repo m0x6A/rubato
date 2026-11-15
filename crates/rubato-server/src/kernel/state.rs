@@ -94,6 +94,25 @@ pub struct AppState {
     /// (approval's "is the owner's session working", plan 122 §D6). `companion_link` writes it
     /// on every snapshot; the composition root fills it once at start.
     pub sessions: Mutex<HashMap<Uuid, Vec<SessionState>>>,
+    /// In-memory state a slice keeps for this server, one value per type (the pull request view
+    /// cache, issue #82). Never a table; gone on restart.
+    pub slots: Slots,
+}
+
+/// One value per type, made on first use: lets a slice keep in-memory state on the `App`
+/// without the kernel naming the slice.
+#[derive(Default)]
+pub struct Slots(Mutex<HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>);
+
+impl Slots {
+    pub fn get<T: Default + Send + Sync + 'static>(&self) -> Arc<T> {
+        let mut m = self.0.lock().unwrap();
+        let v = m
+            .entry(std::any::TypeId::of::<T>())
+            .or_insert_with(|| Arc::new(T::default()))
+            .clone();
+        v.downcast::<T>().expect("one value per type")
+    }
 }
 
 pub type App = Arc<AppState>;
@@ -126,6 +145,7 @@ impl AppState {
             traffic: RwLock::new(traffic),
             clock: Clock::default(),
             sessions: Mutex::new(HashMap::new()),
+            slots: Slots::default(),
         })
     }
 

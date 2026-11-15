@@ -220,6 +220,8 @@ pub mod metric {
     pub const WORKSPACE_ID_COLLISIONS: &str = "rubato.workspace.id_collisions";
     /// Tracked plans that fit none of their issue's workspaces (ADR 0045), every poll tick.
     pub const PLANS_FIT_NONE: &str = "rubato.plans.fit_none";
+    /// Pull request views by outcome (`cached`, `fetched`, `failed`), issue #82, ADR 0034.
+    pub const PULLS_VIEW_FETCHES: &str = "rubato.pulls.view_fetches";
 }
 
 /// Span names.
@@ -378,6 +380,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::WORKSPACE_ORPHAN_ROWS,
         metric::WORKSPACE_ID_COLLISIONS,
         metric::PLANS_FIT_NONE,
+        metric::PULLS_VIEW_FETCHES,
         metric::SESSION_MESSAGES,
         metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
         metric::COMPANIONS_BY_CAPABILITY,
