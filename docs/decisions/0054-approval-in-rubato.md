@@ -1,8 +1,8 @@
 # 0054. Approve plans in Rubato; the approval record goes into the plan's front matter, and comment approvals count only before a cutover
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #122), choices answered by Mattias Jonsson 2026-11-14 (cutover for comment approvals; approval only in Rubato after it); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/122#issuecomment-6891477242 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #122), choices answered by Mattias Jonsson 2026-11-14 (cutover for comment approvals; approval only in Rubato after it)
 - **Seam:** server-plan-file, skill-plan-file, plan-check-plan-file, web-server, skill-github
 - **Issue:** m0x6A/rubato#122
 
