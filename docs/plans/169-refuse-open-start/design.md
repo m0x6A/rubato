@@ -1,6 +1,6 @@
 # #169: refuse to start open to anyone off loopback (design)
 
-Plan: [../169.md](../169.md) · ADR 0062 (*proposed*, partly supersedes 0022) · Issue: m0x6A/rubato#169
+Plan: [../169.md](../169.md) · ADR 0064 (*proposed*, partly supersedes 0022) · Issue: m0x6A/rubato#169
 
 ## The two open doors, as the code stands (ed20a6c)
 

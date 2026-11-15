@@ -1,4 +1,4 @@
-# 0062. Refuse to start open to anyone unless the server is local or the operator opts in
+# 0064. Refuse to start open to anyone unless the server is local or the operator opts in
 
 - **Status:** proposed
 - **Date:** 2026-11-15
@@ -55,4 +55,4 @@ the `web-server` O-row of plan #169 (the start-up error text, the container heal
 
 0022, in part: the sentence "A server without the App configuration (a personal token, or none,
 or the development user) behaves as before". The rest of 0022 stands. On acceptance, 0022's status
-line gains "; open login without the App superseded by 0062".
+line gains "; open login without the App superseded by 0064".

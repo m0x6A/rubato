@@ -2062,7 +2062,7 @@ async fn without_the_app_login_stays_open() {
     );
 }
 
-/// #169 (ADR 0062): without the App a session still ends on the server, after the cookie's 30 days.
+/// #169 (ADR 0064): without the App a session still ends on the server, after the cookie's 30 days.
 #[tokio::test]
 async fn a_session_ends_after_thirty_days() {
     let (url, app, _tmp) = app_harness(false).await;

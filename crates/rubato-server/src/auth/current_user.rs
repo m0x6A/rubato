@@ -51,7 +51,7 @@ impl FromRequestParts<App> for CurrentUser {
             app.reject(parts.uri.path(), reason::TEAM_RECORD_STALE, &session.login);
             return Err(StatusCode::UNAUTHORIZED);
         }
-        // In every mode a session ends with its cookie, after 30 days (ADR 0062); without the
+        // In every mode a session ends with its cookie, after 30 days (ADR 0064); without the
         // App this is the only limit on the server.
         if !team::session_is_current(session.created_at, now) {
             app.reject(parts.uri.path(), reason::SESSION_EXPIRED, &session.login);

@@ -52,7 +52,7 @@ Without the App settings the server still runs the old way, for a first look: an
 login and `RUBATO_GITHUB_TOKEN` (read-only) for reads. Login is then open to any GitHub
 account, and the server cannot propose map changes. It starts that way only when it is local
 (`RUBATO_BIND` a loopback address and `RUBATO_PUBLIC_URL` a loopback host); anywhere else it
-refuses to start unless you set `RUBATO_OPEN_LOGIN=1`, and it warns at start either way (ADR 0062).
+refuses to start unless you set `RUBATO_OPEN_LOGIN=1`, and it warns at start either way (ADR 0064).
 
 ## 3. Run the server
 
@@ -108,7 +108,7 @@ and `RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git` reads branches and plans f
 bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
 `RUBATO_DEV_USER=<login>` skips OAuth: every request is that login, and the
 `x-rubato-dev-user` header names any other. The server refuses to start with it unless it is
-local (a loopback `RUBATO_BIND` and `RUBATO_PUBLIC_URL`; ADR 0062).
+local (a loopback `RUBATO_BIND` and `RUBATO_PUBLIC_URL`; ADR 0064).
 
 Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
 setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`

@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 pub const TEAM_RECORD_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
 
 /// A web session counts for this long from its creation, in every mode: the session cookie's own
-/// `Max-Age` (ADR 0062). Without the App it is the only limit on the server.
+/// `Max-Age` (ADR 0064). Without the App it is the only limit on the server.
 pub const SESSION_MAX_AGE_SECS: i64 = 30 * 24 * 60 * 60;
 
 /// Reasons a session or login is refused, as `rubato.reason` on `rubato.web.rejected`.
@@ -37,7 +37,7 @@ pub fn record_is_fresh(checked_at: Option<DateTime<Utc>>, now: DateTime<Utc>) ->
     checked_at.is_some_and(|at| now - at <= Duration::seconds(TEAM_RECORD_MAX_AGE_SECS))
 }
 
-/// Whether a session created at `created_at` still counts at `now` (ADR 0062).
+/// Whether a session created at `created_at` still counts at `now` (ADR 0064).
 pub fn session_is_current(created_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     now - created_at <= Duration::seconds(SESSION_MAX_AGE_SECS)
 }

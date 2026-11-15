@@ -52,7 +52,7 @@ fn one_traffic_source(dev_file: bool, traffic: &TrafficEnv) -> Result<()> {
     Ok(())
 }
 
-/// Whether only this machine can reach the server (ADR 0062): it binds a loopback address and
+/// Whether only this machine can reach the server (ADR 0064): it binds a loopback address and
 /// its public URL names a loopback host. A URL whose host does not parse is not local.
 pub fn is_local(bind: SocketAddr, public_url: &str) -> bool {
     let url_is_loopback = url::Url::parse(public_url).ok().is_some_and(|u| {
@@ -65,7 +65,7 @@ pub fn is_local(bind: SocketAddr, public_url: &str) -> bool {
     bind.ip().is_loopback() && url_is_loopback
 }
 
-/// Refuse a server open to anyone unless it is local (ADR 0062): `RUBATO_DEV_USER` always,
+/// Refuse a server open to anyone unless it is local (ADR 0064): `RUBATO_DEV_USER` always,
 /// OAuth without the App unless `RUBATO_OPEN_LOGIN=1`. Returns the warnings of a server that
 /// starts open.
 fn exposure(
@@ -87,7 +87,7 @@ fn exposure(
             local,
             "RUBATO_DEV_USER is set and the server is not local (bind {bind}, public URL {public_url}): \
              any client could act as anyone. Bind a loopback address with a loopback RUBATO_PUBLIC_URL, \
-             or unset RUBATO_DEV_USER (ADR 0062)"
+             or unset RUBATO_DEV_USER (ADR 0064)"
         );
         warnings.push(
             "RUBATO_DEV_USER is set: every request is that user, and x-rubato-dev-user names any other; local only".into(),
@@ -97,7 +97,7 @@ fn exposure(
             local || opted_in,
             "OAuth is configured without the GitHub App and the server is not local (bind {bind}, \
              public URL {public_url}): any GitHub account could log in. Configure the App \
-             (RUBATO_GITHUB_APP_*), or set RUBATO_OPEN_LOGIN=1 to run open (ADR 0062)"
+             (RUBATO_GITHUB_APP_*), or set RUBATO_OPEN_LOGIN=1 to run open (ADR 0064)"
         );
         warnings.push(if opted_in {
             "no GitHub App configured: login is open to any GitHub account (RUBATO_OPEN_LOGIN=1)"
@@ -376,7 +376,7 @@ impl Config {
     }
 
     /// Whether people log in through OAuth with no team check: an OAuth client without the
-    /// GitHub App (ADR 0062).
+    /// GitHub App (ADR 0064).
     pub fn oauth_without_app(&self) -> bool {
         self.github_client_id.is_some()
             && self.github_client_secret.is_some()
