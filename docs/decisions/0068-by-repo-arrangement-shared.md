@@ -2,7 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, issue #144 design session), on Mattias Jonsson's answer to the issue's question 1; a human accepts
+- **Decided by:** agent (Claude Code, issue #144 design session), best effort under Mattias's delegation for this run (2026-11-15); a human accepts
 - **Seam:** web-server
 - **Issue:** m0x6A/rubato#144
 
