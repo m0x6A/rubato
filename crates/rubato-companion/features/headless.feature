@@ -16,6 +16,7 @@ Feature: A headless companion runs each turn as a claude -p child (ADR 0062)
     Then the server receives a launch result "started"
     And the headless stand-in ran 1 turn, the first with the launch's prompt and session id
     And the server receives a hook event "Stop" for the launched session with the reply "PONG"
+    And the launched session's UserPromptSubmit and Stop share one prompt id
     And the server receives a sessions snapshot for the launched session from source "headless" with status "idle"
 
   Scenario: A message is one resume turn, and a message during a turn waits
