@@ -295,17 +295,17 @@ own ADR. The transport rules it must keep:
 
 | # | Slice | What |
 | --- | --- | --- |
-| 1 | `rubato-protocol` (`session`, `plan_draft`, `message`, `otel`) | `AgentReport`, `PlanStatus`, capability `agent_mcp`, otel names, schemas, `protocol.ts`, an `AgentReport` fixture |
-| 2 | companion `agent_mcp` (new) | the MCP subset (§9), three tools, identity check, throttle, the not-initialized count, the tool guard; AGENTS.md companion block |
-| 3 | companion `hooks` | mount `/mcp` on the receiver behind the same token check, with a body limit and the flood test |
-| 4 | companion `launch` | write `mcp.json`, pass `--mcp-config` and `--allowedTools` first in `launch.sh` and the headless turn script; the argv test |
-| 5 | companion `sessions` | `LaunchRecord` gains the assignment fields; lookup by launch id |
-| 6 | companion `server_link` | send `AgentReport` when the server announced `agent_mcp`; receive `PlanStatus` into the slice's cache; the `pairing` slice's what-leaves-the-machine text (`pairing/mod.rs`) names the report |
-| 7 | server `companion_link` | accept `AgentReport` only for this pairing's launches; empty payload in `companion_events`; delete stale `agent_reports` rows on `Sessions`; the every-fixture approval test |
-| 8 | server `agent_reports` (new) | the table and its migration, the overview field; AGENTS.md server block |
-| 9 | server `approve` | derive `PlanStatus` per live launch from `approvals()`, the review, drafts and the branch; send after Welcome and on change |
-| 10 | web `companions` | show the line and its age on the session in the lane and in the issue detail |
-| 11 | skill `rubato` | SKILL.md: call `get_assignment` first, `report_status` at phase changes, `plan_status` instead of guessing; hooks.ts unchanged |
+| 1 (#220) | `rubato-protocol` (`session`, `plan_draft`, `message`, `otel`) | `AgentReport`, `PlanStatus`, capability `agent_mcp`, otel names, schemas, `protocol.ts`, an `AgentReport` fixture |
+| 2 (#221) | companion `agent_mcp` (new) | the MCP subset (§9), three tools, identity check, throttle, the not-initialized count, the tool guard; AGENTS.md companion block |
+| 3 (#222) | companion `hooks` | mount `/mcp` on the receiver behind the same token check, with a body limit and the flood test |
+| 4 (#223) | companion `launch` | write `mcp.json`, pass `--mcp-config` and `--allowedTools` first in `launch.sh` and the headless turn script; the argv test |
+| 5 (#224) | companion `sessions` | `LaunchRecord` gains the assignment fields; lookup by launch id |
+| 6 (#225) | companion `server_link` | send `AgentReport` when the server announced `agent_mcp`; receive `PlanStatus` into the slice's cache; the `pairing` slice's what-leaves-the-machine text (`pairing/mod.rs`) names the report |
+| 7 (#226) | server `companion_link` | accept `AgentReport` only for this pairing's launches; empty payload in `companion_events`; delete stale `agent_reports` rows on `Sessions`; the every-fixture approval test |
+| 8 (#227) | server `agent_reports` (new) | the table and its migration, the overview field; AGENTS.md server block |
+| 9 (#228) | server `approve` | derive `PlanStatus` per live launch from `approvals()`, the review, drafts and the branch; send after Welcome and on change |
+| 10 (#229) | web `companions` | show the line and its age on the session in the lane and in the issue detail |
+| 11 (#230) | skill `rubato` | SKILL.md: call `get_assignment` first, `report_status` at phase changes, `plan_status` instead of guessing; hooks.ts unchanged |
 
 Order: 1, then 5 and 3, then 2 and 4, then 6–9, then 10 and 11. Open PRs touch the same files and
 land first: #147's companion PR and #199 (`launch/launcher.rs`, `runtime.rs`,
