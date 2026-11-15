@@ -2,7 +2,7 @@
 //! without building a whole payload (the merge gate, plan 82 Decision 1).
 
 use super::build;
-use super::inputs::build_overview_inputs;
+use super::inputs::{Maps, build_overview_inputs};
 use crate::kernel::state::App;
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -15,7 +15,9 @@ pub async fn issue_summary(app: &App, ws: &str, issue: &IssueRef) -> Result<Opti
         .map_of(ws)
         .await
         .with_context(|| format!("no map loaded for workspace {ws}"))?;
-    let inputs = build_overview_inputs(app, ws).await?;
-    let built = build::build(&inputs, Some(&map), &app.config.limits, Utc::now());
+    let all = crate::map::list_workspaces(app).await;
+    let maps = Maps::read(app).await;
+    let inputs = build_overview_inputs(app, ws, &all, &maps).await?;
+    let built = build::build(inputs, Some(&map), &app.config.limits, Utc::now());
     Ok(built.issues.into_iter().find(|i| &i.issue == issue))
 }
