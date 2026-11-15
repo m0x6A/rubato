@@ -42,6 +42,7 @@ const SLICES: &[&str] = &[
     "pulls",
     "import",
     "rooms",
+    "voice",
     "traffic",
     "spend_history",
     "overview",
