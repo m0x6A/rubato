@@ -23,6 +23,165 @@
     "message"
   ],
   "$defs": {
+    "ApprovalRecord": {
+      "description": "A person's approval of a plan (ADR 0054): an issue comment whose first line is\n`Approved: plan <sha>` or `Approved: plan <sha> on <branch>` (ADR 0027), from a trusted\nauthor only; or an approval given in Rubato, with its `approval_id` and no comment.",
+      "type": "object",
+      "properties": {
+        "approval_id": {
+          "description": "The `rubato_approvals` row, for an approval given in Rubato.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "author": {
+          "type": "string"
+        },
+        "branch": {
+          "description": "The branch the approval names; else the branch Rubato reads the plan from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundle_hash": {
+          "description": "The bundle an approval given in Rubato covers (the plan, its design note, its ADRs).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comment_id": {
+          "description": "The comment's id, for a comment approval.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha": {
+          "description": "The plan hash approved (checkboxes cleared, git blob sha). Absent when the comment names\nnone: the approval then shows as \"version not named\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Absent for a comment, which is all an approval was before ADR 0054.",
+          "$ref": "#/$defs/ApprovalSource"
+        },
+        "url": {
+          "description": "The comment's URL; empty for an approval given in Rubato.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "author",
+        "created_at",
+        "url"
+      ]
+    },
+    "ApprovalSource": {
+      "description": "Where an approval was given (ADR 0054).",
+      "oneOf": [
+        {
+          "description": "An `Approved:` comment on the issue (ADR 0027). Counted only when posted before the\ncutover, `RUBATO_COMMENT_APPROVALS_UNTIL`.",
+          "type": "string",
+          "const": "comment"
+        },
+        {
+          "description": "An approval given in Rubato, recorded in `rubato_approvals`.",
+          "type": "string",
+          "const": "rubato"
+        }
+      ]
+    },
+    "ApprovalState": {
+      "description": "The newest counted approval of an issue's plan, and whether it is of the current version.",
+      "type": "object",
+      "properties": {
+        "current_sha": {
+          "description": "The hash of the plan compared with, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record": {
+          "$ref": "#/$defs/ApprovalRecord"
+        },
+        "version": {
+          "$ref": "#/$defs/ApprovalVersion"
+        }
+      },
+      "required": [
+        "record",
+        "version"
+      ]
+    },
+    "ApprovalVersion": {
+      "description": "How an approval relates to the plan Rubato holds now.",
+      "oneOf": [
+        {
+          "description": "The approved hash is the plan's hash now.",
+          "type": "string",
+          "const": "current"
+        },
+        {
+          "description": "The plan changed after the approval (finding `ApprovalStale`).",
+          "type": "string",
+          "const": "earlier"
+        },
+        {
+          "description": "The comment names no hash.",
+          "type": "string",
+          "const": "not_named"
+        },
+        {
+          "description": "No plan file to compare with on that branch.",
+          "type": "string",
+          "const": "no_plan"
+        },
+        {
+          "description": "The approval names the plan as it is now, but the plan does not fit the map, so the\napproval does not count (ADR 0029, finding `ApprovedWithoutFit`).",
+          "type": "string",
+          "const": "does_not_fit"
+        }
+      ]
+    },
+    "BranchStatus": {
+      "type": "object",
+      "properties": {
+        "carries_approval": {
+          "description": "Whether the plan on the branch carries the approval record (ADR 0054).",
+          "type": "boolean"
+        },
+        "sha": {
+          "description": "The plan's hash at the branch head.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha",
+        "carries_approval"
+      ]
+    },
     "DraftFile": {
       "description": "One file of a bundle, as it is in the worktree.",
       "type": "object",
@@ -65,6 +224,36 @@
         "draft_id",
         "rev",
         "files"
+      ]
+    },
+    "DraftStatus": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "When the revision settled.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "fits": {
+          "description": "Whether the revision's plan fits the map.",
+          "type": "boolean"
+        },
+        "plan_sha": {
+          "description": "The revision's plan hash, as an approval names it.",
+          "type": "string"
+        },
+        "rev": {
+          "description": "Revision number, 1-based.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "rev",
+        "at",
+        "plan_sha",
+        "fits"
       ]
     },
     "IssueRef": {
@@ -292,12 +481,129 @@
         }
       }
     },
+    "PlanStatus": {
+      "description": "Where the plan of one launched session stands, as the server derives it (ADR 0071). The\ncompanion keeps the newest per launch and answers `plan_status` from it.",
+      "type": "object",
+      "properties": {
+        "approval": {
+          "description": "The newest counted approval and whether it is of the current version; an approval whose\nversion is not `current` does not cover the plan as it is.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "as_of": {
+          "description": "When the server derived it.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "branch": {
+          "description": "The plan on the issue branch, when there is one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BranchStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "draft": {
+          "description": "The newest settled revision of the launch's draft (ADR 0053).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "review": {
+          "description": "The issue's newest counted design review.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "launch_id",
+        "as_of"
+      ]
+    },
     "PlanningMode": {
       "description": "How a launched session plans (ADR 0053): `git` is today's flow (commit, push, `Review:` and\n`Approved:` comments); `rubato` drafts in Rubato and hands off at approval. The server sends\n`rubato` only after the cutover and to a companion and skill that can carry it.",
       "type": "string",
       "enum": [
         "git",
         "rubato"
+      ]
+    },
+    "ReviewRecord": {
+      "description": "A design review posted as an issue comment, first line `Review: <track> — <outcome>`\n(ADR 0027). Only a trusted author's review is kept.",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "comment_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "left_open": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "description": "The rest of the first line, e.g. `passed after fixes`.",
+          "type": "string"
+        },
+        "plan_sha": {
+          "description": "The plan version the review read, when its `Plan` section names one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "track": {
+          "description": "`trivial`, `small` or `full`, as written.",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "comment_id",
+        "author",
+        "track",
+        "outcome",
+        "created_at",
+        "url"
       ]
     },
     "RoomKey": {
@@ -404,6 +710,20 @@
             }
           },
           "$ref": "#/$defs/SessionMessage",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Where the plan of one session this companion launched stands (ADR 0071). Sent only to a\ncompanion that announced `agent_mcp`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "plan_status"
+            }
+          },
+          "$ref": "#/$defs/PlanStatus",
           "required": [
             "type"
           ]

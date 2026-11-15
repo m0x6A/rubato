@@ -83,6 +83,10 @@ pub mod attr {
     pub const VOICE_PROVIDER: &str = "rubato.voice.provider";
     /// Bytes sent to or read from the speech provider in one call.
     pub const VOICE_BYTES: &str = "rubato.voice.bytes";
+    /// The MCP tool or method a companion's `rubato.mcp.call` served (ADR 0071): `get_assignment`,
+    /// `report_status`, `plan_status`, `initialize`, `ping`, `tools/list`, `discovery` or
+    /// `unknown`. Never a client-chosen string.
+    pub const MCP_TOOL: &str = "rubato.mcp.tool";
 }
 
 /// Metric instrument names.
@@ -263,6 +267,17 @@ pub mod metric {
     pub const VOICE_TOKENS: &str = "rubato.voice.tokens";
     /// Failed voice joins the browser reported, by `rubato.reason`.
     pub const VOICE_JOIN_FAILED: &str = "rubato.voice.join_failed";
+    /// Companion: MCP requests from launched sessions (ADR 0071), by `rubato.mcp.tool`,
+    /// `rubato.outcome` (`ok`, `refused`, `coalesced`, `error`) and `rubato.reason`.
+    pub const MCP_CALLS: &str = "rubato.mcp.calls";
+    /// Companion: agent reports drained, by `rubato.outcome` (`sent`, `not_sent`) and
+    /// `rubato.reason` (`server_too_old`).
+    pub const MCP_REPORTS: &str = "rubato.mcp.reports";
+    /// Companion: launches with no MCP request 5 minutes after they started, once each.
+    pub const MCP_NOT_INITIALIZED: &str = "rubato.mcp.not_initialized";
+    /// Server: `PlanStatus` pushes, by `rubato.reason` (`welcome`, `change`) and
+    /// `rubato.outcome` (`sent`, `offline`).
+    pub const PLAN_STATUS_SENT: &str = "rubato.plan_status.sent";
 }
 
 /// Span names.
@@ -302,6 +317,9 @@ pub mod span {
     pub const VOICE_STT: &str = "rubato.voice.stt";
     /// Server: one synthesis call to the speech provider.
     pub const VOICE_TTS: &str = "rubato.voice.tts";
+    /// Companion: one MCP request on `/mcp` (ADR 0071), with `rubato.mcp.tool`,
+    /// `rubato.launch_id`, `rubato.issue`, `rubato.outcome` and `rubato.reason`.
+    pub const MCP_CALL: &str = "rubato.mcp.call";
 }
 
 /// Event (log record) names.
@@ -390,6 +408,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::VOICE_OP,
         attr::VOICE_PROVIDER,
         attr::VOICE_BYTES,
+        attr::MCP_TOOL,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -445,6 +464,10 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GITHUB_CATCHUP_LAST_CHANGE_AT,
         metric::PULLS_VIEW_FETCHES,
         metric::PULLS_MERGES_OPENING,
+        metric::MCP_CALLS,
+        metric::MCP_REPORTS,
+        metric::MCP_NOT_INITIALIZED,
+        metric::PLAN_STATUS_SENT,
         metric::SESSION_MESSAGES,
         metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
         metric::COMPANIONS_BY_CAPABILITY,
@@ -486,6 +509,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::VOICE_TOKEN,
         span::VOICE_STT,
         span::VOICE_TTS,
+        span::MCP_CALL,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,

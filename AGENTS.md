@@ -179,6 +179,7 @@ Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; 
 modules, each with the types and `routes` its seam uses (every type re-exported at the root):
 
 ```text
+agent      AgentReport, PlanStatus, DraftStatus, BranchStatus (ADR 0071; capability agent_mcp)
 approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
 auth       Me; ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE

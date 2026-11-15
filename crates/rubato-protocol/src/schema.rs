@@ -77,5 +77,7 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::voice::VoiceJoinFailed>("voice_join_failed"),
         one::<crate::traffic::TrafficReport>("traffic_report"),
         one::<crate::traffic::DismissRequest>("dismiss_request"),
+        one::<crate::agent::AgentReport>("agent_report"),
+        one::<crate::agent::PlanStatus>("plan_status"),
     ]
 }
