@@ -1,8 +1,8 @@
 # 0051. Send messages to your own launched session, queued on the server, typed once when it waits for input
 
-- **Status:** proposed
+- **Status:** accepted; superseded in part by 0062
 - **Date:** 2026-11-14
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #122), choices answered by Mattias Jonsson 2026-11-14 (launched sessions only; tmux paste as the first adapter); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/122#issuecomment-6891477242 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #122), choices answered by Mattias Jonsson 2026-11-14 (launched sessions only; tmux paste as the first adapter)
 - **Seam:** companion-server, companion-claude-code
 - **Issue:** m0x6A/rubato#122
 

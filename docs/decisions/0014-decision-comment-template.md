@@ -1,6 +1,6 @@
 # 0014. Record decisions as issue comments starting with `Decision:`
 
-- **Status:** accepted
+- **Status:** accepted; during planning decisions are a plan section (0056)
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (drafted by agent, Claude Code v0 planning session)
 - **Seam:** server-github
