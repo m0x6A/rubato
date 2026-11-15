@@ -14,6 +14,30 @@ pub const TRAFFIC_FETCH_SECS: (u32, u32, u32) = (15, 60, 300);
 /// The shortest companion stale threshold N (#105): below it a typo would page for every
 /// companion and empty every freshness bar.
 pub const MIN_COMPANION_SILENT_SECS: u64 = 60;
+/// The catch-up interval's range and default with webhooks on (ADR 0074).
+pub const CATCHUP_SECS: (u64, u64, u64) = (300, 900, 3600);
+
+/// The GitHub App's webhook secret (`RUBATO_GITHUB_WEBHOOK_SECRET`, ADR 0074). Read once into the
+/// config; `Debug` never prints it, and nothing logs, stores or sends it.
+#[derive(Clone)]
+pub struct WebhookSecret(String);
+
+impl WebhookSecret {
+    /// Unset or empty is `None`: webhooks are off.
+    pub fn from_env_value(v: Option<String>) -> Option<Self> {
+        v.filter(|s| !s.is_empty()).map(Self)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+impl std::fmt::Debug for WebhookSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[redacted]")
+    }
+}
 
 /// The traffic adapter's own settings, `RUBATO_TRAFFIC_PROMETHEUS_*` and
 /// `RUBATO_TRAFFIC_WINDOW_SECS`, kept as text for the slice to read (ADR 0040): what they mean,
@@ -252,6 +276,11 @@ pub struct Config {
     /// count only when posted before it, *Accept plan* refuses after it, and approval in Rubato
     /// is on once it is set. Unset: comments count as before and approval in Rubato is refused.
     pub comment_approvals_until: Option<DateTime<Utc>>,
+    /// The App's webhook secret; `Some` turns `POST /webhooks/github` on (ADR 0074).
+    pub github_webhook_secret: Option<WebhookSecret>,
+    /// With webhooks on, seconds between catch-up polls (`RUBATO_GITHUB_CATCHUP_SECS`, 300–3600,
+    /// default 900). Unused with webhooks off.
+    pub github_catchup_secs: u64,
     /// Problems found while reading the environment. `main` logs each as `warn!` once the
     /// subscriber exists, since `from_env` runs before it does (design D14).
     pub warnings: Vec<String>,
@@ -378,6 +407,13 @@ impl Config {
             comment_approvals_until: comment_approvals_until(
                 env("RUBATO_COMMENT_APPROVALS_UNTIL").as_deref(),
             )?,
+            github_webhook_secret: WebhookSecret::from_env_value(env(
+                "RUBATO_GITHUB_WEBHOOK_SECRET",
+            )),
+            github_catchup_secs: catchup_secs(
+                env("RUBATO_GITHUB_CATCHUP_SECS").as_deref(),
+                &mut warnings,
+            ),
             warnings,
         };
         let open = exposure(
@@ -412,6 +448,28 @@ impl Config {
                 means = "approval comments count; approval in Rubato is off",
                 "cutover"
             ),
+        }
+    }
+
+    /// Whether `POST /webhooks/github` is on (ADR 0074).
+    pub fn webhooks_on(&self) -> bool {
+        self.github_webhook_secret.is_some()
+    }
+
+    /// One line at start: webhooks off (the poll as before), or on with the path and catch-up.
+    pub fn report_webhooks(&self) {
+        if self.webhooks_on() {
+            tracing::info!(
+                path = "/webhooks/github",
+                catchup_secs = self.github_catchup_secs,
+                "github webhooks on"
+            );
+        } else {
+            tracing::info!(
+                poll_secs = self.limits.github_poll_interval_secs,
+                means = "RUBATO_GITHUB_WEBHOOK_SECRET unset: /webhooks/github answers 404 and the poll reads every tick",
+                "github webhooks off"
+            );
         }
     }
 
@@ -496,6 +554,8 @@ impl Config {
             pairing_ttl_secs: 900,
             pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,
             comment_approvals_until: None,
+            github_webhook_secret: None,
+            github_catchup_secs: CATCHUP_SECS.1,
             warnings: Vec::new(),
         }
     }
@@ -517,6 +577,28 @@ fn comment_approvals_until(v: Option<&str>) -> Result<Option<DateTime<Utc>>> {
 
 fn trim_slash(url: String) -> String {
     url.trim_end_matches('/').to_owned()
+}
+
+/// `RUBATO_GITHUB_CATCHUP_SECS`, clamped to 300–3600; unset or unreadable is 900.
+fn catchup_secs(v: Option<&str>, warnings: &mut Vec<String>) -> u64 {
+    let (min, default, max) = CATCHUP_SECS;
+    let Some(v) = v else { return default };
+    match v.parse::<u64>() {
+        Ok(n) if (min..=max).contains(&n) => n,
+        Ok(n) => {
+            let c = n.clamp(min, max);
+            warnings.push(format!(
+                "RUBATO_GITHUB_CATCHUP_SECS={n} is outside {min}–{max}; catching up every {c} s"
+            ));
+            c
+        }
+        Err(_) => {
+            warnings.push(format!(
+                "RUBATO_GITHUB_CATCHUP_SECS={v:?} is not a number; catching up every {default} s"
+            ));
+            default
+        }
+    }
 }
 
 /// Clamp the poll interval to `MAX_POLL_SECS`, noting it once in `warnings`.
@@ -860,5 +942,34 @@ mod tests {
         assert_eq!(floor_companion_silent_secs(300, &mut w), 300);
         assert_eq!(floor_companion_silent_secs(60, &mut w), 60);
         assert!(w.is_empty(), "{w:?}");
+    }
+    /// ADR 0074: the secret turns webhooks on and never prints; the catch-up is clamped.
+    #[test]
+    fn webhook_secret_and_catchup_from_env() {
+        assert!(WebhookSecret::from_env_value(None).is_none());
+        assert!(WebhookSecret::from_env_value(Some(String::new())).is_none());
+        let s = WebhookSecret::from_env_value(Some("hunter2".into())).unwrap();
+        assert_eq!(s.as_bytes(), b"hunter2");
+        assert_eq!(format!("{s:?}"), "[redacted]");
+        let mut cfg = Config::for_tests("sqlite::memory:".into(), "m0x6A");
+        cfg.github_webhook_secret = Some(s);
+        assert!(
+            !format!("{cfg:?}").contains("hunter2"),
+            "Config's Debug hides it"
+        );
+        let cases: [(Option<&str>, u64, bool); 6] = [
+            (None, 900, false),
+            (Some("900"), 900, false),
+            (Some("300"), 300, false),
+            (Some("10"), 300, true),
+            (Some("99999"), 3600, true),
+            (Some("soon"), 900, true),
+        ];
+        for (v, want, warns) in cases {
+            let mut w = Vec::new();
+            assert_eq!(catchup_secs(v, &mut w), want, "{v:?}");
+            assert_eq!(!w.is_empty(), warns, "{v:?}: {w:?}");
+        }
+        println!("checked {} catch-up values", cases.len());
     }
 }

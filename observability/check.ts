@@ -31,6 +31,9 @@ const REQUIRED = [
   "ApprovalRecordMismatch",
   // Issue #138 (ADR 0062).
   "HeadlessTurnsKilled",
+  // Issue #208 (ADR 0074).
+  "GitHubWebhooksSilent",
+  "GitHubWebhooksStuck",
 ];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
