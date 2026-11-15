@@ -37,7 +37,7 @@ Choices answered by Mattias in the planning session, on 2026-11-14:
 | Q8 | Discussion summary | the agent's `Summary:` reply, edited in the approval view, posted only in the link comment |
 | Q9 | Delivery adapter | tmux paste through `kernel/tmux.rs`, not tmux-ide `send` (§D1, §Spike) |
 | Q10 | Session log source | hook payloads, not a transcript reader |
-| Q11 | Hook payloads already stored | purged in migration 0014 |
+| Q11 | Hook payloads already stored | purged in migration 0015 |
 | Q12 | ADRs proposed from connected repos | stay *proposed*, with a finding |
 
 This plan is itself planned and approved the old way, with a `Review:` comment and `Approved: plan
@@ -247,10 +247,10 @@ New envelope kinds (results, drafts, room replies, handoff reports) are stored w
 The column is `TEXT NOT NULL` (`0001_init.sql:66`) and deduplication needs only `(companion_id,
 seq)`.
 
-**The purge.** Migration 0014 removes `payload` from the hook events already stored in
+**The purge.** Migration 0015 removes `payload` from the hook events already stored in
 `companion_events`, which nothing reads (`companion_link/store.rs:3-5`). An UPDATE leaves the old
 bytes in free pages, and VACUUM cannot run in sqlx's migration transaction. So `kernel/db.rs` runs
-`VACUUM` once, right after it applied migration 0014, and logs `vacuum after hook payload purge` at
+`VACUUM` once, right after it applied migration 0015, and logs `vacuum after hook payload purge` at
 info. The database copy taken before that deploy holds exactly the purged data: the deploy record
 says to destroy it once the deploy is checked, within 7 days.
 
@@ -697,7 +697,7 @@ the other GitHub facts (ADR 0047). Only approve's route is map-scoped.
 - PRs 6 and 7 merge dark, since the cutover is unset.
 - The flow starts when the cutover is set, after every companion and skill shows the new
   capabilities.
-- Migration 0014's purge cannot be undone. A database copy is taken before that deploy, and every
+- Migration 0015's purge cannot be undone. A database copy is taken before that deploy, and every
   later migration only adds.
 
 ## D12. Delivery
@@ -705,17 +705,17 @@ the other GitHub facts (ADR 0047). Only approve's route is map-scoped.
 | PR | Branch | Behaviour change | Migration |
 | --- | --- | --- | --- |
 | 0 | `issue/122-plan-in-rubato` | none: plan, design, ADRs 0050–0058, map flows and scenario | |
-| 1 | `issue/122-hook-trim` | hook payloads trimmed; the server stores none; stored ones purged and vacuumed; `pair` says what leaves; `all_names()` completed | 0014 |
+| 1 | `issue/122-hook-trim` | hook payloads trimmed; the server stores none; stored ones purged and vacuumed; `pair` says what leaves; `all_names()` completed | 0015 |
 | 2 | `issue/122-plan-form` | approval keys and hash, `## Decisions`, `bundle_paths`, plan-check approval rule; no runtime change | |
-| 3 | `issue/122-session-messages` | capabilities both ways; chat to your own launched session, delivered at idle, at most once, pushed again on reconnect; the companion keeps its launches and hook port across restarts; dashboard row "Planning in Rubato" | 0015 |
-| 4 | `issue/122-session-log` | prompts and replies of launched sessions shown to the team; reviews and summaries recognised | 0016 |
-| 5 | `issue/122-drafts` | drafts mirrored at settle points, revisions and diff; progress split; SeamCollision on drafts | 0017 |
-| 6 | `issue/122-approve` | approval in Rubato and the merged approval list, dark until the cutover | 0018 |
-| 7 | `issue/122-handoff` | `LaunchCommand.planning` and SKILL.md Rubato mode; `plan.ts handoff` and its report; typed `plan_approved`; link comment; findings; four alerts | 0019 |
+| 3 | `issue/122-session-messages` | capabilities both ways; chat to your own launched session, delivered at idle, at most once, pushed again on reconnect; the companion keeps its launches and hook port across restarts; dashboard row "Planning in Rubato" | 0016 |
+| 4 | `issue/122-session-log` | prompts and replies of launched sessions shown to the team; reviews and summaries recognised | 0017 |
+| 5 | `issue/122-drafts` | drafts mirrored at settle points, revisions and diff; progress split; SeamCollision on drafts | 0018 |
+| 6 | `issue/122-approve` | approval in Rubato and the merged approval list, dark until the cutover | 0019 |
+| 7 | `issue/122-handoff` | `LaunchCommand.planning` and SKILL.md Rubato mode; `plan.ts handoff` and its report; typed `plan_approved`; link comment; findings; four alerts | 0020 |
 | 8 | `issue/122-parked` | launch on the draft's branch, restore into a fresh worktree | |
 | 9 | `issue/122-import` | outside Rubato, Import (slice `import`) | |
-| 10 | `issue/122-room` | the room for people, seam notices | 0020 |
-| 11 | `issue/122-call-in` | call-in and requests, addressed turns, fork turns, turn limit, timeout | 0021 |
+| 10 | `issue/122-room` | the room for people, seam notices | 0021 |
+| 11 | `issue/122-call-in` | call-in and requests, addressed turns, fork turns, turn limit, timeout | 0022 |
 | 12 | `issue/122-cutover` | AGENTS.md, README, QUICKSTART, SKILL.md without the comment path; `plan.ts wait` and `adrs.ts accept --comment` retired; deploy record with the cutover | |
 
 ## D13. Risks
