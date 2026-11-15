@@ -242,10 +242,16 @@ async function main() {
   // hooks. Wait for the sessions to finish too, or the checks below race the Stop hook.
   const standinGlob = `${T}/repos/*-worktrees/**/.claude-standin.log`;
   const finished = () => globSync(standinGlob).filter((f) => /^(DONE|ERROR)/m.test(readFileSync(f, "utf8"))).length;
-  const final = await waitFor("all three issues Designed and all three sessions finished", 150_000, async () => {
+  // Designed can come from the draft (ADR 0053) before the server's next poll reads the plan on
+  // the branch; launches without tmux-ide (ADR 0070) start fast enough for that to show, so the
+  // wait is for both.
+  const final = await waitFor("all three issues Designed with their plans read and all three sessions finished", 150_000, async () => {
     const ov = await overview();
     record(ov);
-    const done = issues.every((i) => ov.issues.find((s) => s.issue.repo === i.repo && s.issue.number === i.number)?.progress.state === "designed");
+    const done = issues.every((i) => {
+      const s = ov.issues.find((x) => x.issue.repo === i.repo && x.issue.number === i.number);
+      return s?.progress.state === "designed" && s.plan;
+    });
     return done && finished() === issues.length ? ov : null;
   });
 
