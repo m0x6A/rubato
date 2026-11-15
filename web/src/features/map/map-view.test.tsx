@@ -44,7 +44,7 @@ describe("MapView", () => {
     const view = render(<MapView graph={buildGraph(overview())} selected={null} onSelect={() => {}} />);
     await view.findByTestId("node-rubato-server", undefined, { timeout: 5000 });
     expect(view.queryByRole("group", { name: "Scenario player" })).toBeNull();
-    fireEvent.click(view.getByRole("radio", { name: "Scenarios (3)" }));
+    fireEvent.click(view.getByRole("radio", { name: "Scenarios (4)" }));
     const player = view.getByRole("group", { name: "Scenario player" });
     expect(within(player).getByRole("combobox", { name: "Scenario" })).toHaveValue("start-a-session");
     const live = view.getByTestId("scenario-caption");

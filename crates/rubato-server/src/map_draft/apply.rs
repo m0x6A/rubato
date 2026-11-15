@@ -91,6 +91,12 @@ pub fn apply(map: &SystemMap, op: &MapOp) -> Result<SystemMap, String> {
     Ok(next)
 }
 
+/// Whether a refusal from `apply` is a second part naming a service another part names
+/// (`MapError::DuplicateService`), so it is counted under its own reason.
+pub fn is_duplicate_service(why: &str) -> bool {
+    why.contains("a service is one part")
+}
+
 /// Apply the draft to `base` in order. An operation that no longer applies is marked stale with
 /// its reason and skipped, so the rest still show.
 pub fn replay(base: &SystemMap, ops: &mut [DraftOp]) -> SystemMap {
@@ -123,6 +129,7 @@ mod tests {
             repo: None,
             path: None,
             description: None,
+            service: None,
         }
     }
 
@@ -137,6 +144,25 @@ mod tests {
             description: None,
             flows: vec![],
         }
+    }
+
+    /// A part taken from a ghost names the service it was seen as; a second part naming the same
+    /// one is refused as `duplicate_service` (ADR 0059), and an update may keep its own.
+    #[test]
+    fn a_second_part_with_the_same_service_is_refused() {
+        use rubato_protocol::ServiceId;
+        let svc = Some(ServiceId::new(Some("shop"), "checkout"));
+        let mut a = node("checkout");
+        a.service = svc.clone();
+        let map = apply(&base(), &MapOp::AddNode { node: a.clone() }).unwrap();
+        let mut b = node("checkout-v2");
+        b.service = svc;
+        let why = apply(&map, &MapOp::AddNode { node: b }).unwrap_err();
+        assert!(is_duplicate_service(&why), "{why}");
+        a.description = Some("the shop's checkout".into());
+        assert!(apply(&map, &MapOp::UpdateNode { node: a }).is_ok());
+        let off = apply(&base(), &MapOp::RemoveNode { id: "nope".into() }).unwrap_err();
+        assert!(!is_duplicate_service(&off), "{off}");
     }
 
     #[test]

@@ -93,6 +93,7 @@ pub async fn overview(
         pulls: built.pulls,
         traffic: built.traffic,
         companion_silent_secs: app.config.limits.companion_silent_secs,
+        comment_approvals_until: app.config.comment_approvals_until,
         workspace: ws.as_str().to_string(),
         // Only when there is a choice: one workspace shows no switcher, and its overview stays as
         // it was before workspaces (the golden test).

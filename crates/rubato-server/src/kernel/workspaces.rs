@@ -111,8 +111,9 @@ pub fn check(entries: &[WorkspaceEntry]) -> Result<()> {
 }
 
 /// Tables that hold a workspace id (ADR 0047), for the orphan count.
-pub const SCOPED_TABLES: [&str; 9] = [
+pub const SCOPED_TABLES: [&str; 10] = [
     "map_layout",
+    "traffic_dismissals",
     "map_cache",
     "map_proposal",
     "pins",

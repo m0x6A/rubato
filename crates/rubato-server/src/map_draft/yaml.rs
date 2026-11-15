@@ -22,7 +22,9 @@ const TOP: &[&str] = &[
     "scenarios",
 ];
 const REPO: &[&str] = &["name", "plan_path"];
-const NODE: &[&str] = &["id", "kind", "repo", "path", "description"];
+const NODE: &[&str] = &["id", "kind", "repo", "path", "description", "service"];
+/// A part's service as its telemetry emits it (ADR 0059).
+const SERVICE: &[&str] = &["namespace", "name"];
 const SEAM: &[&str] = &[
     "id",
     "from",
@@ -71,6 +73,9 @@ pub fn unknown_keys(text: &str) -> Result<Vec<String>> {
     }
     for (i, n) in each(&doc, "nodes") {
         extra(n, NODE, &format!("nodes[{i}]"), &mut out);
+        if let Some(s) = n.get("service") {
+            extra(s, SERVICE, &format!("nodes[{i}].service"), &mut out);
+        }
     }
     for (i, s) in each(&doc, "seams") {
         extra(s, SEAM, &format!("seams[{i}]"), &mut out);
@@ -95,6 +100,7 @@ mod tests {
     const TEAM: &str = include_str!("../../../../e2e/fixtures/team-map.yml");
     const FLOWS: &str = include_str!("../../../../schema/fixtures/maps/flows.yml");
     const SCENARIOS: &str = include_str!("../../../../schema/fixtures/maps/scenarios.yml");
+    const SERVICES: &str = include_str!("../../../../schema/fixtures/maps/services.yml");
 
     #[test]
     fn round_trip_keeps_the_committed_maps() {
@@ -103,6 +109,7 @@ mod tests {
             ("team-map.yml", TEAM),
             ("flows.yml", FLOWS),
             ("scenarios.yml", SCENARIOS),
+            ("services.yml", SERVICES),
         ] {
             let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
             let written = render(&map).unwrap();
@@ -120,7 +127,7 @@ mod tests {
                 "{name}"
             );
         }
-        println!("checked 4 map files");
+        println!("checked 5 map files");
     }
 
     #[test]
@@ -143,6 +150,9 @@ mod tests {
             unknown_keys(&with_scenarios).unwrap()[5..],
             ["scenarios[0].audience", "scenarios[0].steps[0].at_ms"]
         );
+        // Inside a part's service too (ADR 0059): a typo there would be dropped on rewrite.
+        let typo = "version: 1\nname: x\nnodes:\n  - id: a\n    kind: context\n    service: {name: a, team: x}\n";
+        assert_eq!(unknown_keys(typo).unwrap(), ["nodes[0].service.team"]);
         // The file still loads: unknown keys are ignored by the model, which is why a rewrite
         // would lose them.
         let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();

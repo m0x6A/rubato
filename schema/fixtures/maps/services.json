@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "name": "services",
+  "nodes": [
+    { "id": "checkout", "kind": "context", "service": { "namespace": "shop", "name": "checkout" } },
+    { "id": "checkout-test", "kind": "context", "service": { "namespace": "shop-test", "name": "checkout" } },
+    { "id": "github", "kind": "external", "service": { "name": "github" } },
+    { "id": "notes", "kind": "context" }
+  ],
+  "seams": [
+    { "id": "checkout-github", "from": "checkout", "to": "github", "owner": "checkout" }
+  ]
+}

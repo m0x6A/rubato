@@ -17,6 +17,12 @@ import { fileURLToPath } from "node:url";
 import { checkPlanFile, logLine } from "./check.ts";
 import { loadMap, MapError } from "./map.ts";
 
+/**
+ * A call to another part, as a client span once `otel-emit.ts` is loaded (ADR 0061); until then,
+ * or when it is missing from the checkout, it only runs `fn`.
+ */
+let call: <T>(peer: string, fn: () => T) => T = (_peer, fn) => fn();
+
 interface Args {
   /** The first `--map`, as before workspaces. */
   map: string;
@@ -71,9 +77,9 @@ export function main(argv: string[]): number {
   let map;
   const others: { file: string; map: ReturnType<typeof loadMap> }[] = [];
   try {
-    map = loadMap(args.map, args.schemaDir);
+    map = call("system-map", () => loadMap(args.map, args.schemaDir));
     for (const file of args.maps.slice(1)) {
-      others.push({ file, map: loadMap(file, args.schemaDir) });
+      others.push({ file, map: call("system-map", () => loadMap(file, args.schemaDir)) });
     }
   } catch (e) {
     if (e instanceof MapError) {
@@ -90,14 +96,15 @@ export function main(argv: string[]): number {
   let models = 0;
   let legacy = 0;
   let legacyPlans = 0;
+  let approvals = 0;
   for (const f of files) {
-    let r = checkPlanFile(f, map, args.schemaDir);
+    let r = call("plan-file", () => checkPlanFile(f, map, args.schemaDir));
     let extra: Record<string, unknown> = {};
     if (others.length) {
       // Several maps: those naming the repo; a plan passes when it fits any of them.
       const names = (m: typeof map) => !args.repo || (m.repos ?? []).some((x) => x.name.toLowerCase() === args.repo?.toLowerCase()) || m.nodes.some((n) => (n.repo ?? "").toLowerCase() === args.repo?.toLowerCase());
       const candidates = [{ file: args.map, map }, ...others].filter((m) => names(m.map));
-      const results = candidates.map((m) => ({ file: m.file, r: checkPlanFile(f, m.map, args.schemaDir) }));
+      const results = candidates.map((m) => ({ file: m.file, r: call("plan-file", () => checkPlanFile(f, m.map, args.schemaDir)) }));
       const fit = results.filter((x) => x.r.ok);
       r = (fit[0] ?? results[0])?.r ?? r;
       extra = { maps_checked: results.length, fits: fit.map((x) => x.file) };
@@ -107,18 +114,27 @@ export function main(argv: string[]): number {
     models += r.dataModelsChecked;
     legacy += r.legacyKeys.length;
     legacyPlans += r.legacyKeys.length > 0 ? 1 : 0;
+    approvals += r.approval === "none" ? 0 : 1;
     if (!r.ok) {
       failed++;
     }
     console.log(JSON.stringify({ ...logLine(r), ...extra }));
   }
-  console.log(`plan-check: checked ${files.length} plan(s), ${ids} id(s), ${flows} flow(s) and ${models} data model(s) against ${map.nodes.length} nodes and ${(map.seams ?? []).length} seams in ${args.map}${others.length ? ` and ${others.length} other map(s)` : ""}; ${legacy} legacy front-matter key(s) in ${legacyPlans} plan(s), not failed; ${failed} failed`);
+  console.log(`plan-check: checked ${files.length} plan(s), ${ids} id(s), ${flows} flow(s) and ${models} data model(s) against ${map.nodes.length} nodes and ${(map.seams ?? []).length} seams in ${args.map}${others.length ? ` and ${others.length} other map(s)` : ""}; ${approvals} approval record(s); ${legacy} legacy front-matter key(s) in ${legacyPlans} plan(s), not failed; ${failed} failed`);
   return failed === 0 ? 0 : 1;
 }
 
 const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
-  process.exitCode = main(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  // One span per run, sent only when an OTLP endpoint is set; the output never changes.
+  const otel = await import("../../../skills/rubato/scripts/otel-emit.ts").catch(() => null);
+  if (otel && otel.config()) {
+    call = otel.call;
+    process.exitCode = await otel.runCommand("plan-check", "plan-check", () => main(argv));
+  } else {
+    process.exitCode = main(argv);
+  }
 }
 
 export const schemaDirDefault = join(dirname(fileURLToPath(import.meta.url)), "../../../schema");

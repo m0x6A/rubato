@@ -52,6 +52,127 @@
       ]
     },
     {
+      "description": "Another person's launched session wrote a plan bundle on a branch whose draft someone\nelse owns; it was not stored (ADR 0053). Taking a draft over is Import.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "draft_owner_conflict"
+        },
+        "other": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "branch",
+        "owner",
+        "other"
+      ]
+    },
+    {
+      "description": "The plan on the branch carries an approval record Rubato did not make, or one that differs\nfrom its own, or a hash that is not the approved one (ADR 0054, ADR 0055). No link\ncomment is posted for it.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "approval_record_mismatch"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "branch",
+        "reason"
+      ]
+    },
+    {
+      "description": "The link comment's outcome is unknown and the comments pass has not found it for 30\nminutes; a person may post it again (ADR 0055).",
+      "type": "object",
+      "properties": {
+        "approval_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "link_comment_waiting"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "approval_id"
+      ]
+    },
+    {
+      "description": "Rubato holds no usable token for the approver, so the link comment waits (ADR 0055).",
+      "type": "object",
+      "properties": {
+        "approver": {
+          "type": "string"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "link_waiting_for_approver"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "approver"
+      ]
+    },
+    {
+      "description": "The approval covers ADRs that live in the map repo, which this repo's handoff could not\naccept (ADR 0055, Q12).",
+      "type": "object",
+      "properties": {
+        "adrs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "adrs_not_accepted"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "adrs"
+      ]
+    },
+    {
       "description": "A plan file exists but does not parse.",
       "type": "object",
       "properties": {
@@ -190,6 +311,32 @@
       ]
     },
     {
+      "description": "An `Approved:` comment posted at or after the cutover: not counted, since plans are\napproved in Rubato (ADR 0054).",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "kind": {
+          "type": "string",
+          "const": "comment_approval_ignored"
+        }
+      },
+      "required": [
+        "kind",
+        "issue",
+        "author",
+        "created_at"
+      ]
+    },
+    {
       "description": "A live session Rubato cannot tie to an issue: its branch is not `issue/<n>-…`, or its\nrepo is unknown.",
       "type": "object",
       "properties": {
@@ -270,6 +417,29 @@
       ]
     },
     {
+      "description": "Map versus territory (ADR 0059): a service in a fresh report, emitting a namespace, that\nno part names. A person may take it into the map draft or dismiss it (plan #140).",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "const": "observed_only_part"
+        },
+        "service": {
+          "$ref": "#/$defs/ServiceId"
+        }
+      },
+      "required": [
+        "kind",
+        "service",
+        "calls"
+      ]
+    },
+    {
       "description": "Two workspaces whose maps name a repo give it different plan paths (ADR 0045). The\nfirst in config order is used.",
       "type": "object",
       "properties": {
@@ -337,6 +507,27 @@
       "required": [
         "repo",
         "number"
+      ]
+    },
+    "ServiceId": {
+      "description": "A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`\n(ADR 0059). The namespace is absent only where the emitter has none, as for a servicegraph\nvirtual node built from a caller's `peer.service`. Rubato never sets or derives it.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "`service.name`.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "`service.namespace`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
       ]
     }
   }

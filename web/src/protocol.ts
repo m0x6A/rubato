@@ -5,11 +5,34 @@
  * Where the approval is.
  */
 export type ApproveState = ("posted" | "opening")
+/**
+ * What a call-in did.
+ */
+export type CallInResponse = ({
+agent: RoomAgent
+outcome: "joined"
+} | {
+outcome: "requested"
+request: RoomRequest
+})
+/**
+ * Why an agent left a room.
+ */
+export type LeftReason = ("dismissed" | "timed_out" | "session_ended")
+export type RequestState = ("pending" | "accepted" | "declined" | "withdrawn")
 export type CapKind = ("spend" | "attempts")
 /**
  * Companion → server.
  */
 export type CompanionMessage = ({
+/**
+ * What this companion can take (`capability`). Absent from an older companion.
+ */
+capabilities?: string[]
+/**
+ * Interactive (tmux) or headless (ADR 0062). An older companion is interactive.
+ */
+client?: ("interactive" | "headless")
 companion_id: string
 companion_version: string
 /**
@@ -22,7 +45,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | {
 seq: number
 type: "ack"
 })
@@ -34,7 +57,7 @@ export type BlockCause = ("permission_prompt" | "idle_prompt" | "stop_failure")
 /**
  * Where a status came from. Anything not hook-derived is rendered *unknown* (A10).
  */
-export type StateSource = ("hook" | "tmux_ide" | "scraped" | "launch")
+export type StateSource = ("hook" | "tmux_ide" | "scraped" | "launch" | "headless")
 export type SessionStatus = (("working" | "idle" | "blocked" | "ended") | "unknown")
 /**
  * Companion → server: what happened to a launch command.
@@ -42,7 +65,15 @@ export type SessionStatus = (("working" | "idle" | "blocked" | "ended") | "unkno
 export type LaunchResult = ({
 at: string
 command_id: string
+/**
+ * The command's `draft` was written into the new worktree (ADR 0053).
+ */
+draft_restored?: boolean
 outcome: "started"
+/**
+ * Why the command's `draft` was not written, when it was not.
+ */
+restore_skipped?: (RestoreSkipped | null)
 session_id: string
 tmux_session: string
 worktree: string
@@ -58,7 +89,57 @@ command_id: string
 error: string
 outcome: "failed"
 })
+/**
+ * Why a companion did not write a launch's draft (ADR 0053, plan 122 §D5).
+ */
+export type RestoreSkipped = ("worktree_differs" | "path_outside")
 export type RefusalReason = ("attempt_limit_reached" | "not_paired_user" | "already_running" | "missing_dependency")
+/**
+ * The answer to one `SessionMessage` (ADR 0051).
+ */
+export type SessionMessageResult = ({
+type: "session_message_result"
+} & ({
+outcome: "delivered"
+} | {
+outcome: "not_idle"
+} | {
+outcome: "refused"
+reason: MessageRefusal
+} | {
+outcome: "interrupted"
+} | {
+error: string
+outcome: "failed"
+}))
+/**
+ * Why the companion did not type a message.
+ */
+export type MessageRefusal = ("not_paired_user" | "not_launched_here" | "unknown_session" | "too_long" | "no_pane" | "skill_outdated")
+/**
+ * What a person can dismiss on the overlay (ADR 0060).
+ */
+export type DiscrepancyKey = ({
+kind: "ghost"
+service: ServiceId
+} | {
+from: TrafficEnd
+kind: "edge"
+to: TrafficEnd
+} | {
+kind: "quiet_seam"
+seam: string
+})
+/**
+ * One end of an observed edge on the overlay: a declared part, or a ghost (ADR 0059).
+ */
+export type TrafficEnd = ({
+id: string
+kind: "part"
+} | {
+kind: "ghost"
+service: ServiceId
+})
 /**
  * Body of `POST /api/map/draft/ops`. `op_id` is made by the browser, so a retry of the same
  * request does not add the operation twice.
@@ -99,6 +180,29 @@ issues: IssueRef[]
 kind: "seam_collision"
 seam: string
 } | {
+branch: string
+issue: IssueRef
+kind: "draft_owner_conflict"
+other: string
+owner: string
+} | {
+branch: string
+issue: IssueRef
+kind: "approval_record_mismatch"
+reason: string
+} | {
+approval_id: string
+issue: IssueRef
+kind: "link_comment_waiting"
+} | {
+approver: string
+issue: IssueRef
+kind: "link_waiting_for_approver"
+} | {
+adrs: string[]
+issue: IssueRef
+kind: "adrs_not_accepted"
+} | {
 error: string
 issue: IssueRef
 kind: "plan_parse_error"
@@ -126,6 +230,11 @@ kind: "approval_stale"
 issue: IssueRef
 kind: "approved_without_fit"
 } | {
+author: string
+created_at: string
+issue: IssueRef
+kind: "comment_approval_ignored"
+} | {
 branch?: (string | null)
 companion: string
 kind: "unattributed_session"
@@ -140,6 +249,10 @@ from: string
 kind: "undeclared_traffic"
 to: string
 } | {
+calls: number
+kind: "observed_only_part"
+service: ServiceId
+} | {
 kind: "plan_path_conflict"
 repo: string
 workspaces: string[]
@@ -152,6 +265,19 @@ workspaces: string[]
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
  */
 export type HookEventKind = ("SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "Notification" | "Stop" | "StopFailure" | "SessionEnd" | "Unknown")
+/**
+ * What Import did.
+ */
+export type ImportResponse = ({
+draft_id: string
+original_author?: (string | null)
+outcome: "imported"
+rev: number
+} | {
+branch: string
+launch_id: string
+outcome: "rewriting"
+})
 /**
  * A reference into the system map: a node or a seam. Ids come from `system-map.yml` (ADR 0007).
  */
@@ -199,12 +325,34 @@ export type DataModelKind = ("table" | "type" | "schema" | "event" | "file")
 export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
 export type ChecksStatus = (("green" | "red" | "pending") | "none")
 /**
+ * What a reply is, by its first line (ADR 0056): the design review, the discussion summary, or
+ * any other reply.
+ */
+export type LogKind = (("prompt" | "reply") | "review" | "summary")
+/**
+ * Who said it.
+ */
+export type LogRole = ("user" | "assistant")
+/**
+ * Where a message is, as the server holds it. Derived from what happened; a row is never
+ * pushed again once it is `delivery_unknown`.
+ */
+export type SessionMessageState = (("delivered" | "refused" | "failed") | "queued" | "sent" | "delivery_unknown")
+/**
  * Companion → server: what happened to a launch command.
  */
 export type LaunchResult1 = ({
 at: string
 command_id: string
+/**
+ * The command's `draft` was written into the new worktree (ADR 0053).
+ */
+draft_restored?: boolean
 outcome: "started"
+/**
+ * Why the command's `draft` was not written, when it was not.
+ */
+restore_skipped?: (RestoreSkipped | null)
 session_id: string
 tmux_session: string
 worktree: string
@@ -294,9 +442,21 @@ status: "denied"
 status: "expired"
 })
 /**
+ * The owner answers a request (`POST` `routes::ROOM_REQUEST`), or its asker withdraws it.
+ */
+export type RequestAnswer = ("accept" | "decline" | "withdraw")
+/**
+ * Who wrote a room message.
+ */
+export type RoomAuthorKind = ("person" | "agent" | "system")
+/**
  * Server → companion.
  */
 export type ServerMessage = ({
+/**
+ * What this server can take (`capability`). Absent from an older server.
+ */
+capabilities?: string[]
 /**
  * Last companion sequence the server has; the companion replays newer events.
  */
@@ -305,7 +465,7 @@ limits: Limits
 protocol_version: number
 server_version: string
 type: "welcome"
-} | LaunchCommand1 | {
+} | LaunchCommand1 | SessionMessage | {
 seq: number
 type: "ack"
 } | {
@@ -314,9 +474,61 @@ message: string
 type: "error"
 })
 /**
+ * Text for one session the paired user launched (ADR 0051).
+ */
+export type SessionMessage = ({
+type: "session_message"
+} & ({
+author: string
+kind: "chat"
+text: string
+} | {
+approval_id: string
+approved_at: string
+approved_by: string
+approved_sha: string
+branch: string
+bundle_hash: string
+kind: "plan_approved"
+plan_path: string
+/**
+ * The approver owns the draft.
+ */
+self_approved: boolean
+/**
+ * Rubato's link to the approval, written into accepted ADRs.
+ */
+url: string
+} | {
+kind: "stop"
+requested_by: string
+} | {
+/**
+ * The person whose message made the turn.
+ */
+addressed_by: string
+/**
+ * The fork's session id from an earlier turn: `--resume` it without `--fork-session`.
+ */
+fork_session_id?: (string | null)
+kind: "room_turn"
+mode: RoomTurnMode
+room: RoomKey
+/**
+ * The room since the agent's last turn, framed as quoted discussion with each author
+ * (`room_turn_text`), cut to `Limits.room_context_max_chars`.
+ */
+text: string
+turn_id: string
+}))
+/**
+ * Where a room turn runs (plan 122 §D8).
+ */
+export type RoomTurnMode = ("session" | "fork")
+/**
  * Pushed to browsers over `/ws/web`. Clients refetch the overview on `Changed`.
  */
-export type WebEvent = {
+export type WebEvent = ({
 at: string
 reason: string
 type: "changed"
@@ -325,22 +537,56 @@ type: "changed"
  * load; ADR 0049). Absent: every workspace may have changed, so every client refetches.
  */
 workspace?: (string | null)
-}
+} | {
+at: string
+resource: WebResource
+type: "updated"
+})
+/**
+ * A resource a view can refetch on its own.
+ */
+export type WebResource = ({
+kind: "launch_messages"
+launch_id: string
+} | {
+kind: "launch_log"
+launch_id: string
+} | {
+draft_id: string
+kind: "draft"
+} | {
+branch: string
+kind: "room"
+number: number
+repo: string
+})
 
 export interface RubatoProtocol {
 ApproveRequest?: ApproveRequest
 ApproveResponse?: ApproveResponse
+CallInRequest?: CallInRequest
+CallInResponse?: CallInResponse
 CapHit?: CapHit
 CompanionEnvelope?: CompanionEnvelope
 DecisionRecord?: DecisionRecord
+DismissAgentRequest?: DismissAgentRequest
+DismissRequest?: DismissRequest
+DraftApproveRequest?: DraftApproveRequest
+DraftApproveResponse?: DraftApproveResponse
 DraftOpRequest?: DraftOpRequest
+DraftRevision?: DraftRevision
+DraftView?: DraftView
 Finding?: Finding
 Heartbeat?: Heartbeat1
 HookEvent?: HookEvent1
+ImportRequest?: ImportRequest
+ImportResponse?: ImportResponse
 IssuePin?: IssuePin
 IssueRef?: IssueRef
 IssueSummary?: IssueSummary
 LaunchCommand?: LaunchCommand
+LaunchLog?: LaunchLog
+LaunchMessages?: LaunchMessages
 LaunchRequest?: LaunchRequest
 LaunchResponse?: LaunchResponse
 LaunchResult?: LaunchResult1
@@ -365,7 +611,13 @@ ProposeResponse?: ProposeResponse
 PullRequestState?: PullRequestState
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
+RequestAnswerBody?: RequestAnswerBody
+RoomMessage?: RoomMessage
+RoomPostRequest?: RoomPostRequest
+RoomView?: RoomView
 ServerEnvelope?: ServerEnvelope
+SessionMessageRequest?: SessionMessageRequest
+SessionMessageView?: SessionMessageView
 SessionState?: SessionState
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
@@ -400,6 +652,44 @@ export interface ApproveResponse {
 body: string
 comment_url?: (string | null)
 state: ApproveState
+}
+/**
+ * Call an agent in (`POST` `routes::ROOM_AGENTS`): the owner's own launch joins at once; anyone
+ * else's call is a request the owner answers.
+ */
+export interface CallInRequest {
+branch: string
+launch_id: string
+number: number
+repo: string
+}
+/**
+ * An agent called into a room (ADR 0057): who is in, called by whom, since when.
+ */
+export interface RoomAgent {
+called_by: string
+/**
+ * `<owner>-agent`, what a message names to address it.
+ */
+handle: string
+joined_at: string
+last_turn_at?: (string | null)
+launch_id: string
+left_at?: (string | null)
+left_reason?: (LeftReason | null)
+owner: string
+}
+/**
+ * A teammate's request to call someone else's agent in, pending until the owner answers.
+ */
+export interface RoomRequest {
+answered_at?: (string | null)
+at: string
+id: string
+launch_id: string
+owner: string
+requested_by: string
+state: RequestState
 }
 /**
  * A cap was hit. An event, not a log line; the issue becomes *Blocked*.
@@ -450,10 +740,19 @@ branch_drift?: (string | null)
 companion_id: string
 cwd: string
 /**
+ * The companion restarted and could not take its old hook port back, so this launched
+ * session's hooks go nowhere: chat and mirroring need a relaunch (plan 122 §D1).
+ */
+hooks_lost?: boolean
+/**
  * Resolved from the branch, or from the launch when the branch does not follow the convention.
  */
 issue?: (IssueRef | null)
 last_seen: string
+/**
+ * The Rubato launch this session belongs to, when Rubato launched it (ADR 0051).
+ */
+launch_id?: (string | null)
 /**
  * `owner/name` from `origin`.
  */
@@ -502,6 +801,24 @@ export interface StaleSession {
 type: "stale"
 }
 /**
+ * A launched session's plan bundle at a settle point (ADR 0053).
+ */
+export interface DraftBundle {
+type: "draft"
+}
+/**
+ * What `plan.ts handoff` reported to the loopback endpoint (ADR 0055).
+ */
+export interface HandoffReport {
+type: "handoff_report"
+}
+/**
+ * An agent's answer to a room turn (ADR 0057).
+ */
+export interface RoomReply {
+type: "room_reply"
+}
+/**
  * A decision recorded as an issue comment with the `Decision:` template (ADR 0014).
  */
 export interface DecisionRecord {
@@ -516,6 +833,71 @@ title: string
 url: string
 why?: (string | null)
 }
+/**
+ * Dismiss an agent (`DELETE` `routes::ROOM_AGENTS`): its owner, or whoever called it in.
+ */
+export interface DismissAgentRequest {
+branch: string
+handle: string
+number: number
+repo: string
+}
+/**
+ * `POST /api/traffic/dismissals`: dismiss one discrepancy as yourself.
+ */
+export interface DismissRequest {
+target: DiscrepancyKey
+}
+/**
+ * A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`
+ * (ADR 0059). The namespace is absent only where the emitter has none, as for a servicegraph
+ * virtual node built from a caller's `peer.service`. Rubato never sets or derives it.
+ */
+export interface ServiceId {
+/**
+ * `service.name`.
+ */
+name: string
+/**
+ * `service.namespace`.
+ */
+namespace?: (string | null)
+}
+/**
+ * Approve one version of a draft (ADR 0054): the newest revision of the draft on `branch`,
+ * named by its plan's approval hash, and by its number when the person saw one. `summary` is
+ * the discussion summary as the person edited it, kept with the approval (ADR 0055).
+ */
+export interface DraftApproveRequest {
+branch: string
+number: number
+plan_sha: string
+repo: string
+rev?: (number | null)
+summary?: string
+}
+/**
+ * A recorded approval. A second press of the same version answers the first one, with
+ * `created: false`.
+ */
+export interface DraftApproveResponse {
+approval_id: string
+approved_at: string
+approved_by: string
+/**
+ * The hash of the whole bundle approved: the plan, its design note, its ADRs (§D3).
+ */
+bundle_hash: string
+/**
+ * False when this press found an approval of the same version already recorded.
+ */
+created: boolean
+plan_sha: string
+/**
+ * The person approved their own agent's plan: allowed, and said (ADR 0054).
+ */
+self_approved: boolean
+}
 export interface MapNode {
 description?: (string | null)
 id: string
@@ -528,6 +910,11 @@ path?: (string | null)
  * `owner/name` of the repository holding the code, if any.
  */
 repo?: (string | null)
+/**
+ * The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No
+ * default: a part without it is never matched to observed traffic.
+ */
+service?: (ServiceId | null)
 }
 /**
  * A seam between two nodes. The owner side is woken when it breaks.
@@ -569,6 +956,54 @@ kind: FlowKind
 to: string
 }
 /**
+ * One revision with its files (`GET /api/drafts/{draft_id}/revisions/{rev}`).
+ */
+export interface DraftRevision {
+at: string
+bundle_hash: string
+draft_id: string
+files: DraftFile[]
+missing?: string[]
+parse_error?: (string | null)
+plan_sha: string
+rev: number
+session_id?: (string | null)
+}
+/**
+ * One file of a bundle, as it is in the worktree.
+ */
+export interface DraftFile {
+/**
+ * Repository path, as `bundle_paths` gives it.
+ */
+path: string
+text: string
+}
+/**
+ * A draft and its revisions, oldest first (`GET /api/drafts/{draft_id}`).
+ */
+export interface DraftView {
+branch: string
+draft_id: string
+imported_from?: (string | null)
+issue: IssueRef
+original_author?: (string | null)
+owner: string
+revisions: DraftRevisionInfo[]
+}
+/**
+ * One settled revision, without its files.
+ */
+export interface DraftRevisionInfo {
+at: string
+bundle_hash: string
+missing?: string[]
+parse_error?: (string | null)
+plan_sha: string
+rev: number
+session_id?: (string | null)
+}
+/**
  * The companion's liveness signal.
  */
 export interface Heartbeat1 {
@@ -590,6 +1025,21 @@ export interface HookEvent1 {
 cwd: string
 hook_event_name: HookEventKind
 /**
+ * The launch the hook came from, from the `X-Rubato-Launch` header the launched session's
+ * hook command sends (plan 122 §D1). Keeps a launch across a `/clear` that changes the
+ * session id. Absent for a session not launched from Rubato and from an older companion.
+ */
+launch_id?: (string | null)
+/**
+ * On `UserPromptSubmit`: the session message this prompt carried, matched by the companion
+ * because the prompt ends with the message it pasted (ADR 0051, plan 122 PR 4).
+ */
+message_id?: (string | null)
+/**
+ * With `message_id`: the prompt holds text before the message (someone was typing).
+ */
+mixed?: boolean
+/**
  * `notification_type` for `Notification` events, such as `permission_prompt` or `idle_prompt`.
  */
 notification_type?: (string | null)
@@ -610,6 +1060,18 @@ received_at: string
 session_id: string
 tool_name?: (string | null)
 transcript_path?: (string | null)
+/**
+ * The prompt or reply text in `payload` was cut to `Limits.session_log_max_chars`.
+ */
+truncated?: boolean
+}
+/**
+ * Import a plan written outside Rubato (ADR 0058): the plan on `branch` of the issue.
+ */
+export interface ImportRequest {
+branch: string
+number: number
+repo: string
 }
 /**
  * An issue pinned to a node or seam. The one piece of state GitHub does not hold (ADR 0008).
@@ -634,6 +1096,11 @@ export interface IssueSummary {
 approval?: (ApprovalState | null)
 decisions?: DecisionRecord[]
 /**
+ * The issue's plan draft in Rubato, its newest settled revision (ADR 0053). Absent when the
+ * issue has none.
+ */
+draft?: (DraftSummary | null)
+/**
  * Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.
  */
 fit?: (PlanFit | null)
@@ -643,6 +1110,12 @@ fit?: (PlanFit | null)
  */
 fits_in?: string[]
 issue: IssueRef
+/**
+ * The plan on the issue's branch was written outside Rubato (ADR 0058): the branch has no
+ * draft and no approval counts. It is shown with its fit, cannot be approved as it stands,
+ * and can be imported. Only once the cutover is set; before it, plans are approved by comment.
+ */
+outside_rubato?: boolean
 /**
  * Names of the other workspaces where the issue is pinned (ADR 0047): "pinned in <name>".
  */
@@ -685,16 +1158,28 @@ record: ApprovalRecord
 version: ApprovalVersion
 }
 /**
- * A person's approval of a plan, first line `Approved: plan <sha>` or
- * `Approved: plan <sha> on <branch>` (ADR 0027). Only a trusted author's approval counts.
+ * A person's approval of a plan (ADR 0054): an issue comment whose first line is
+ * `Approved: plan <sha>` or `Approved: plan <sha> on <branch>` (ADR 0027), from a trusted
+ * author only; or an approval given in Rubato, with its `approval_id` and no comment.
  */
 export interface ApprovalRecord {
+/**
+ * The `rubato_approvals` row, for an approval given in Rubato.
+ */
+approval_id?: (string | null)
 author: string
 /**
  * The branch the approval names; else the branch Rubato reads the plan from.
  */
 branch?: (string | null)
-comment_id: number
+/**
+ * The bundle an approval given in Rubato covers (the plan, its design note, its ADRs).
+ */
+bundle_hash?: (string | null)
+/**
+ * The comment's id, for a comment approval.
+ */
+comment_id?: (number | null)
 created_at: string
 issue: IssueRef
 note?: (string | null)
@@ -703,7 +1188,53 @@ note?: (string | null)
  * none: the approval then shows as "version not named".
  */
 sha?: (string | null)
+/**
+ * Absent for a comment, which is all an approval was before ADR 0054.
+ */
+source?: ("comment" | "rubato")
+/**
+ * The comment's URL; empty for an approval given in Rubato.
+ */
 url: string
+}
+/**
+ * A draft as the overview carries it, per issue: its newest settled revision.
+ */
+export interface DraftSummary {
+at: string
+branch: string
+bundle_hash: string
+draft_id: string
+/**
+ * The branch an imported plan was found on (ADR 0058).
+ */
+imported_from?: (string | null)
+/**
+ * The owner's launched session for this branch is live: the draft is being worked on.
+ * Otherwise it is parked. Derived on each overview build.
+ */
+live: boolean
+missing?: string[]
+/**
+ * Who last committed the imported plan file, kept with the draft the importer owns.
+ */
+original_author?: (string | null)
+/**
+ * The paired user whose launch first mirrored to this branch.
+ */
+owner: string
+/**
+ * Why the plan in that revision does not parse, when it does not.
+ */
+parse_error?: (string | null)
+/**
+ * The approval hash of the plan in that revision (ADR 0054).
+ */
+plan_sha: string
+/**
+ * The newest settled revision, 1-based.
+ */
+rev: number
 }
 /**
  * Where a plan fits the map, and whether it does (ADR 0029). An approval counts only while
@@ -715,6 +1246,12 @@ reasons?: FitReason[]
 }
 export interface Plan {
 affected_parts: AffectedPart[]
+/**
+ * The approval record in the front matter, written at handoff (ADR 0054). Absent when the
+ * plan has none of its keys; a record with a key missing is kept as it is, so the check can
+ * report it.
+ */
+approval?: (PlanApprovalRecord | null)
 assumed?: Assumption[]
 attempt_limit?: (number | null)
 /**
@@ -722,6 +1259,11 @@ attempt_limit?: (number | null)
  * from its `## Data models` table (ADR 0031). Optional; empty when absent or "None."
  */
 data_models?: DataModel[]
+/**
+ * The decisions recorded while the plan was drafted, from its `## Decisions` table
+ * (ADR 0056). Optional; empty when absent or "None."
+ */
+decisions?: PlanDecision[]
 /**
  * What the plan will send across seams, from its `## Flows` table (ADR 0021). Optional.
  */
@@ -758,6 +1300,15 @@ seams?: string[]
 status: PartStatus
 }
 /**
+ * The approval record a handoff writes into the front matter (ADR 0054): who approved, when, and
+ * the approval hash of the plan they approved. Left out of that hash.
+ */
+export interface PlanApprovalRecord {
+approved_at?: (string | null)
+approved_by?: (string | null)
+approved_sha?: (string | null)
+}
+/**
  * A decision the plan had to make that nothing settled.
  */
 export interface Assumption {
@@ -787,6 +1338,16 @@ note?: (string | null)
  * Node id of the part that owns the model. Must be in Affected parts.
  */
 part: string
+}
+/**
+ * One row of the plan's `## Decisions` table (ADR 0056).
+ */
+export interface PlanDecision {
+chosen: string
+decided_by?: (string | null)
+decision: string
+id: string
+why?: (string | null)
 }
 /**
  * One row of the plan's Flows table: something the change sends from one part to another over
@@ -902,6 +1463,12 @@ base_ref: string
  * `issue/<n>-<slug>`.
  */
 branch: string
+/**
+ * The newest settled revision of the launcher's parked draft on this branch, for the
+ * companion to write into a worktree this launch creates (ADR 0053, plan 122 §D5). Sent
+ * only to a companion that announced `draft_restore`, and only while no plan is on the branch.
+ */
+draft?: (DraftRestore | null)
 id: string
 issue: IssueRef
 /**
@@ -918,6 +1485,15 @@ node_ids?: string[]
 otel_resource?: {
 [k: string]: string | undefined
 }
+/**
+ * Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion
+ * mirrors, with the bundle it names (ADR 0053). Absent from an older server.
+ */
+plan_path?: (string | null)
+/**
+ * How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.
+ */
+planning?: ("git" | "rubato")
 /**
  * Initial prompt for the session.
  */
@@ -937,10 +1513,101 @@ spend_cap_usd: number
 user: string
 }
 /**
+ * Server → companion, in `LaunchCommand.draft`: a parked draft's newest settled revision.
+ */
+export interface DraftRestore {
+draft_id: string
+/**
+ * Repository paths, relative, as `bundle_paths` gives them; the plan first.
+ */
+files: DraftFile[]
+rev: number
+}
+/**
+ * A launch's log, oldest first.
+ */
+export interface LaunchLog {
+entries: SessionLogEntry[]
+launch_id: string
+}
+/**
+ * One line of a launched session's log.
+ */
+export interface SessionLogEntry {
+at: string
+kind: LogKind
+/**
+ * The session message this prompt carried, when it was one (ADR 0051).
+ */
+message_id?: (string | null)
+/**
+ * The prompt held text before the message: a person was typing in the terminal when it was
+ * pasted.
+ */
+mixed?: boolean
+/**
+ * Claude Code's `prompt_id`: the prompt and the reply of one turn share it.
+ */
+prompt_id: string
+role: LogRole
+session_id: string
+text: string
+/**
+ * The text was cut to `Limits.session_log_max_chars` on the machine.
+ */
+truncated?: boolean
+}
+/**
+ * The messages of one launch, newest last, and whether its companion can take them.
+ */
+export interface LaunchMessages {
+/**
+ * The companion announced `session_input` the last time it said Hello. False for an older
+ * companion: the web says "upgrade the companion".
+ */
+companion_can_receive: boolean
+/**
+ * The companion is connected and heard from within two heartbeats.
+ */
+companion_live: boolean
+launch_id: string
+messages: SessionMessageView[]
+/**
+ * The launch's paired user: only they may send.
+ */
+owner: string
+}
+/**
+ * One message as the web shows it.
+ */
+export interface SessionMessageView {
+author: string
+created_at: string
+/**
+ * The refusal reason or the error, when there is one.
+ */
+detail?: (string | null)
+id: string
+/**
+ * `chat` for now.
+ */
+kind: string
+launch_id: string
+outcome_at?: (string | null)
+pushed_at?: (string | null)
+state: SessionMessageState
+text: string
+}
+/**
  * Start a session on an issue. Only the caller's own companions are eligible (ADR 0004).
  */
 export interface LaunchRequest {
 attempt_limit?: (number | null)
+/**
+ * The branch to launch on, `issue/<n>-<slug>`: one of the caller's drafts of the issue
+ * when they own several (ADR 0053); otherwise the only one, or a slug.
+ */
+branch?: (string | null)
 /**
  * One of the caller's companions; the only connected one when omitted.
  */
@@ -963,6 +1630,11 @@ export interface Limits {
  */
 companion_silent_secs?: number
 /**
+ * The largest plan bundle the companion mirrors (ADR 0053); a larger one is sent without
+ * its files, refused as too large.
+ */
+draft_max_bytes?: number
+/**
  * How often the server polls GitHub for PRs, checks and decision comments per live issue.
  */
 github_poll_interval_secs?: number
@@ -974,6 +1646,31 @@ heartbeat_interval_secs?: number
  * How often the server looks for a plan file on a live branch.
  */
 plan_poll_interval_secs?: number
+/**
+ * An agent not addressed for this long leaves the room (ADR 0057).
+ */
+room_agent_idle_secs?: number
+/**
+ * Turns made by agents' messages in a row, with no person posting, before Rubato stops.
+ */
+room_agent_turn_limit?: number
+/**
+ * The room context a turn carries, in characters (A9).
+ */
+room_context_max_chars?: number
+/**
+ * The longest room message a person may post, in characters (ADR 0057).
+ */
+room_message_max_chars?: number
+/**
+ * The longest prompt or reply the companion forwards for the session log (ADR 0052); longer
+ * text is cut and marked truncated.
+ */
+session_log_max_chars?: number
+/**
+ * The longest session message the companion types (ADR 0051); longer ones are refused.
+ */
+session_message_max_chars?: number
 /**
  * A *working* session with no hook event for longer than this renders *unknown*.
  */
@@ -1161,6 +1858,12 @@ backlog?: Backlog
  */
 can_create_issues?: boolean
 /**
+ * The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, ADR 0054), when one is configured: plans are
+ * approved in Rubato, and an `Approved:` comment posted at or after it does not count. Absent
+ * before the cutover is set, and from an older server: *Accept plan* as before.
+ */
+comment_approvals_until?: (string | null)
+/**
  * The companion stale threshold N in seconds, from the server's config
  * (`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and
  * `CompanionSilent` fires past it (#105). An older server's overview reads as 600.
@@ -1267,6 +1970,10 @@ repo: string
 truncated?: boolean
 }
 export interface PairingInfo {
+/**
+ * Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.
+ */
+client?: ("interactive" | "headless")
 companion_id: string
 /**
  * A websocket is open right now.
@@ -1431,9 +2138,26 @@ unattributed: number
  */
 export interface ObservedTraffic {
 /**
+ * Every dismissal in the workspace, whatever the state, so each can be undone.
+ */
+dismissed?: TrafficDismissal[]
+/**
  * Why the last fetch failed, when `failing`.
  */
 error?: (string | null)
+/**
+ * Calls to or from a ghost. Empty unless `fresh`.
+ */
+ghost_edges?: GhostEdge[]
+/**
+ * Services seen that no part names and that emit a namespace, busiest first. Empty unless
+ * `fresh`; dismissed ones left out.
+ */
+ghosts?: GhostPart[]
+/**
+ * More ghosts or ghost edges were seen than the overview carries.
+ */
+ghosts_truncated?: boolean
 /**
  * When the last good report's window ended.
  */
@@ -1460,13 +2184,54 @@ undeclared?: UndeclaredEdge[]
  */
 unmapped_sample?: string[]
 /**
- * Services in the report that name no map part.
+ * Edge ends in the report with no identity to match: no part names them and they emit no
+ * namespace (ADR 0059).
  */
 unmapped_services?: number
 /**
  * The last good report's window.
  */
 window_secs?: (number | null)
+}
+/**
+ * One dismissal: who dismissed what, and when (ADR 0060). Undo deletes it.
+ */
+export interface TrafficDismissal {
+at: string
+/**
+ * GitHub login.
+ */
+author: string
+id: number
+target: DiscrepancyKey
+}
+/**
+ * Calls with a ghost at one end or both. `from` calls `to`.
+ */
+export interface GhostEdge {
+calls: number
+errors: number
+from: TrafficEnd
+to: TrafficEnd
+}
+/**
+ * A service seen in a fresh report, emitting a namespace, that no part names: drawn on the
+ * overlay until a person takes it into the map draft (plan #140). Never a map part.
+ */
+export interface GhostPart {
+/**
+ * Calls it received in the window.
+ */
+calls_in: number
+/**
+ * Calls it made.
+ */
+calls_out: number
+/**
+ * Failed calls either way.
+ */
+errors: number
+service: ServiceId
 }
 /**
  * Calls on one declared seam in the report's window, each way.
@@ -1572,6 +2337,68 @@ export interface QueueRequest {
 companion_id: string
 issue: IssueRef
 }
+export interface RequestAnswerBody {
+answer: RequestAnswer
+}
+/**
+ * One message of a room, oldest first in a `RoomView`.
+ */
+export interface RoomMessage {
+/**
+ * Agent handles this message addresses (`@<owner>-agent`), PR 11.
+ */
+addressed?: string[]
+at: string
+/**
+ * The person's login, the agent's handle (`<owner>-agent`), or `rubato`.
+ */
+author: string
+author_kind: RoomAuthorKind
+id: string
+/**
+ * For a seam notice: the other issue and the seam both plans touch.
+ */
+notice?: (SeamNotice | null)
+text: string
+/**
+ * The turn this message made, or the turn an agent's message answers.
+ */
+turn_id?: (string | null)
+}
+/**
+ * What a system seam notice is about (ADR 0057, Q6): posted once per pair of issue and seam.
+ */
+export interface SeamNotice {
+other: IssueRef
+other_branch: string
+seam: string
+}
+/**
+ * A person's message to a room (`POST` `routes::ROOM_MESSAGES`).
+ */
+export interface RoomPostRequest {
+branch: string
+number: number
+repo: string
+text: string
+}
+/**
+ * A room and its messages (`GET` `routes::ROOM`).
+ */
+export interface RoomView {
+/**
+ * Agents called in, present ones first (PR 11).
+ */
+agents?: RoomAgent[]
+branch: string
+messages: RoomMessage[]
+number: number
+repo: string
+/**
+ * Requests to call an agent in, pending ones first.
+ */
+requests?: RoomRequest[]
+}
 export interface ServerEnvelope {
 message: ServerMessage
 sent_at: string
@@ -1598,6 +2425,12 @@ base_ref: string
  * `issue/<n>-<slug>`.
  */
 branch: string
+/**
+ * The newest settled revision of the launcher's parked draft on this branch, for the
+ * companion to write into a worktree this launch creates (ADR 0053, plan 122 §D5). Sent
+ * only to a companion that announced `draft_restore`, and only while no plan is on the branch.
+ */
+draft?: (DraftRestore | null)
 id: string
 issue: IssueRef
 /**
@@ -1615,6 +2448,15 @@ otel_resource?: {
 [k: string]: string | undefined
 }
 /**
+ * Where the plan lives in the worktree, by the map's rule (ADR 0009): what the companion
+ * mirrors, with the bundle it names (ADR 0053). Absent from an older server.
+ */
+plan_path?: (string | null)
+/**
+ * How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.
+ */
+planning?: ("git" | "rubato")
+/**
  * Initial prompt for the session.
  */
 prompt: string
@@ -1631,6 +2473,20 @@ spend_cap_usd: number
  * GitHub login the command is addressed to.
  */
 user: string
+}
+/**
+ * Which room: the query of `GET` `routes::ROOM`, and the key of a post.
+ */
+export interface RoomKey {
+branch: string
+number: number
+repo: string
+}
+/**
+ * Web → server: send this text to the launch's session.
+ */
+export interface SessionMessageRequest {
+text: string
 }
 /**
  * Emitted once when a *working* session goes quiet for longer than the stale threshold.

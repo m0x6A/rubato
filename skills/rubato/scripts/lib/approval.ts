@@ -6,6 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { currentBranch, git } from "./git.ts";
 import type { GhComment } from "./comments.ts";
+import { call } from "../otel-emit.ts";
 
 /** One `rubato.plan.wait` or `rubato.adrs.accept` line, printed as JSON (names in otel.rs). */
 export function line(event: "rubato.plan.wait" | "rubato.adrs.accept", fields: Record<string, unknown>): string {
@@ -30,7 +31,7 @@ export function pushedPlan(cwd: string, path: string, local: string): Pushed {
   const branch = currentBranch(cwd);
   let text: string;
   try {
-    git(cwd, "fetch", "-q", "origin", branch);
+    call("github", () => git(cwd, "fetch", "-q", "origin", branch));
     text = execFileSync("git", ["-C", cwd, "show", `origin/${branch}:${path}`], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -45,7 +46,7 @@ export function pushedPlan(cwd: string, path: string, local: string): Pushed {
 }
 
 function gh(args: string[]): string {
-  return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return call("github", () => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
 }
 
 /** Every comment on the issue, all pages (`--paginate`), one JSON object per line. */
