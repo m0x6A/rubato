@@ -32,12 +32,9 @@ pub fn slugify(title: &str) -> String {
 
 /// A branch slug of the shape `slugify` makes: words of letters and digits joined by single
 /// hyphens. A slug passed in a launch request must have it; it becomes the branch, the
-/// worktree folder and part of the companion's launch script.
-pub fn is_slug(s: &str) -> bool {
-    s.chars().count() <= 100
-        && s.split('-')
-            .all(|w| !w.is_empty() && w.chars().all(char::is_alphanumeric))
-}
+/// worktree folder and part of the companion's launch script. The rule lives in the protocol so
+/// the companion checks the same one (issue #155).
+pub use rubato_protocol::is_branch_slug as is_slug;
 
 pub fn render_prompt(template: &str, vars: &BTreeMap<&str, String>) -> String {
     let mut out = template.to_owned();

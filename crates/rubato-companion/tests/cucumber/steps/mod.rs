@@ -4,6 +4,7 @@ mod fork;
 mod handoff;
 mod headless;
 mod hooks;
+mod launch_branch;
 mod launch_refusal;
 mod launch_timeout;
 mod pairing;

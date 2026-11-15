@@ -46,6 +46,20 @@ pub fn check_ref(what: &str, r: &str) -> Result<()> {
     Ok(())
 }
 
+/// Refuse a launch whose branch is not the issue's own `issue/<n>-<slug>` (ADR 0006, issue #155).
+/// The branch names the worktree folder and goes to tmux-ide and into the script.
+pub fn check_branch(cmd: &LaunchCommand) -> Result<()> {
+    if !cmd.issue.is_branch_for(&cmd.branch) {
+        bail!(
+            "branch {:?} is not issue/{}-<slug> for {}",
+            cmd.branch,
+            cmd.issue.number,
+            cmd.issue
+        );
+    }
+    Ok(())
+}
+
 pub fn launcher_script(
     workspace: &Workspace,
     cmd: &LaunchCommand,
@@ -87,11 +101,18 @@ pub fn launcher_script(
         .otel_resource
         .iter()
         .map(|(k, v)| {
-            format!(
-                "{}={}",
-                k.replace([',', ' ', '='], "_"),
-                v.replace([',', ' '], "_")
-            )
+            // A key keeps only `[A-Za-z0-9._-]`, so it can never break the `k=v,k=v` format.
+            let key: String = k
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            format!("{key}={}", v.replace([',', ' '], "_"))
         })
         .collect();
     if !attrs.is_empty() {
@@ -109,7 +130,8 @@ pub fn launcher_script(
         "cd {} || exit 1\n",
         q(&worktree.display().to_string())
     ));
-    // `claude_command` is the developer's own config and may carry arguments: left as written.
+    // `claude_command` is the developer's own `local.yml`, never a server value, and may carry
+    // arguments (`claude --model …`): written as is, so it is the one unquoted word here.
     s.push_str(&format!(
         "exec {} --session-id {} --settings {} --permission-mode {} \"$(cat {})\"\n",
         workspace.companion.claude_command,
@@ -307,6 +329,105 @@ mod tests {
                 .unwrap();
             assert_eq!(String::from_utf8(out.stdout).unwrap(), v, "value {v:?}");
         }
+    }
+
+    fn command_with_otel(otel: &[(&str, &str)]) -> LaunchCommand {
+        LaunchCommand {
+            id: uuid::Uuid::from_u128(155),
+            user: "m0x6A".into(),
+            issue: rubato_protocol::IssueRef::new("acme/pantry", 7),
+            repo_url: String::new(),
+            branch: "issue/7-restock".into(),
+            base_ref: "origin/main".into(),
+            node_ids: vec![],
+            spend_cap_usd: 1.0,
+            attempt_limit: 1,
+            attempt: 1,
+            session_id: uuid::Uuid::from_u128(1),
+            prompt: String::new(),
+            otel_resource: otel
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            map_version: None,
+            plan_path: None,
+            draft: None,
+            planning: PlanningMode::Git,
+        }
+    }
+
+    /// The #155 regression: a node id that ends the quoted word and runs `touch` if the quoting
+    /// is wrong. The script must parse (`sh -n`) and, run with `claude_command` stubbed to print
+    /// the attributes, print the id as text and leave no marker file.
+    #[test]
+    fn a_node_id_with_a_quote_stays_text() {
+        let d = tempfile::tempdir().unwrap();
+        let marker = d.path().join("p");
+        let node = format!("a'$(touch${{IFS}}{})'", marker.display());
+        let worktree = d.path().join("wt");
+        std::fs::create_dir(&worktree).unwrap();
+        let prompt = d.path().join("prompt.txt");
+        std::fs::write(&prompt, "hi").unwrap();
+        let mut ws = Workspace::parse("{}").unwrap();
+        ws.companion.claude_command = "sh -c 'printf %s \"$OTEL_RESOURCE_ATTRIBUTES\"' stub".into();
+        let cmd = command_with_otel(&[("rubato.node", node.as_str())]);
+        let script = launcher_script(
+            &ws,
+            &cmd,
+            &worktree,
+            &d.path().join("hooks.json"),
+            &prompt,
+            &endpoint(),
+        );
+        let path = d.path().join("launch.sh");
+        std::fs::write(&path, &script).unwrap();
+
+        let parsed = std::process::Command::new("sh")
+            .arg("-n")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(parsed.status.success(), "sh -n: {parsed:?}\n{script}");
+        let out = std::process::Command::new("sh")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}\n{script}");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            format!("rubato.node={node}")
+        );
+        assert!(!marker.exists(), "the id ran as a command:\n{script}");
+    }
+
+    #[test]
+    fn only_the_issues_own_branch_is_launched() {
+        let mut cmd = command_with_otel(&[]);
+        assert!(check_branch(&cmd).is_ok());
+        for bad in [
+            "issue/9-other",
+            "main",
+            "issue/7-../../escape",
+            "issue/7-a/b",
+        ] {
+            cmd.branch = bad.into();
+            let e = check_branch(&cmd).unwrap_err().to_string();
+            assert!(e.contains("is not issue/7-<slug> for acme/pantry#7"), "{e}");
+        }
+    }
+
+    #[test]
+    fn attribute_keys_keep_only_safe_characters() {
+        let ws = Workspace::parse("{}").unwrap();
+        let cmd = command_with_otel(&[("a b,c=d'e", "v"), ("rubato.issue", "acme/pantry#7")]);
+        let p = Path::new("/x");
+        let script = launcher_script(&ws, &cmd, p, p, p, &endpoint());
+        assert!(
+            script.contains(
+                "export OTEL_RESOURCE_ATTRIBUTES=\"${OTEL_RESOURCE_ATTRIBUTES:+$OTEL_RESOURCE_ATTRIBUTES,}\"'a_b_c_d_e=v,rubato.issue=acme/pantry#7'\n"
+            ),
+            "{script}"
+        );
     }
 
     #[test]

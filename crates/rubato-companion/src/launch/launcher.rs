@@ -157,7 +157,7 @@ impl Launcher {
     }
 
     fn start(&self, cmd: &LaunchCommand) -> Result<Started> {
-        check_ref("branch", &cmd.branch)?;
+        super::script::check_branch(cmd)?;
         check_ref("base ref", &cmd.base_ref)?;
         let repo = self
             .workspace
