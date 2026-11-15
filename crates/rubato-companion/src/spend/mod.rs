@@ -1,5 +1,5 @@
 //! Slice `spend`: cost is a signal. Sum a session's transcript against the workspace pricing and
-//! enforce the launch's spend cap, in its own task off the dispatch loop.
+//! enforce the launch's spend cap.
 
 mod apply;
 mod arm;
