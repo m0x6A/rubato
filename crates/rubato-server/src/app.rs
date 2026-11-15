@@ -6,7 +6,8 @@
 
 use crate::kernel::state::App;
 use crate::{
-    approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview, pairing, pins, plan_drafts, queue, session_log, session_messages, traffic, web_link,
+    approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
+    pairing, pins, plan_drafts, queue, session_log, session_messages, traffic, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
