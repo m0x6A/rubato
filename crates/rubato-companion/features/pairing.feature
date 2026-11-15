@@ -35,3 +35,25 @@ Feature: Pairing a companion with a GitHub login
     When the companion is shut down and started again
     Then the second hello has a sequence number above every one the server saw before it
     And the reservation in the state dir covers every sequence number the server saw
+
+  # The pairing token and launch commands would cross the network in clear text (ADR 0067).
+  Scenario: Pairing refuses a plain-http server off loopback
+    Given no state file
+    When the companion pairs with "http://rubato.example.test"
+    Then it fails with an error mentioning "https"
+    And no state file exists
+
+  Scenario: A companion paired with a plain-http server off loopback refuses to start
+    Given a companion paired with "http://rubato.example.test" for user "m0x6A"
+    When the companion daemon starts
+    Then the daemon returns an error mentioning "--insecure" within 5 seconds
+
+  # The developer's explicit opt-in, kept in companion.json and warned about each time.
+  Scenario: Pairing with --insecure to a plain-http LAN server succeeds and the daemon starts
+    Given a test server on this machine's LAN address that approves pairing for user "m0x6A"
+    When the companion pairs with the server using --insecure
+    Then the state file allows plain http to the server
+    And the companion has logged 1 warning mentioning "travel unencrypted"
+    When the companion daemon starts
+    Then the server receives a hello for user "m0x6A" with protocol version 1
+    And the companion has logged 2 warnings mentioning "travel unencrypted"
