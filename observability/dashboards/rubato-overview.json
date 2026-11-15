@@ -1411,7 +1411,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Seconds since the latest good traffic report was observed (ADR 0039). The first question at 3 am: is it fresh? Past 3 × RUBATO_TRAFFIC_FETCH_SECS (default 180 s) the overview says stale and the Traffic lens draws unknown; alert TrafficReportStale fires past 600 s. No value means no source is configured (RUBATO_DEV_TRAFFIC unset), which is not a fault. If it climbs, look for the log lines 'traffic source failing' and 'traffic report rejected' (with rubato.reason) and the span rubato.traffic.fetch.",
+      "description": "Seconds since the latest good traffic report was observed (ADR 0039). The first question at 3 am: is it fresh? Past 3 × RUBATO_TRAFFIC_FETCH_SECS (default 180 s) the overview says stale and the Traffic lens draws unknown; alert TrafficReportStale fires past 600 s. No value means no source is configured (neither RUBATO_TRAFFIC_PROMETHEUS_URL nor RUBATO_DEV_TRAFFIC set), which is not a fault. If it climbs, look for the log lines 'traffic source failing' and 'traffic report rejected' (with rubato.reason) and the span rubato.traffic.fetch.",
       "targets": [
         {
           "refId": "A",
@@ -1507,12 +1507,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Traffic report fetches per hour by outcome: ok, rejected (outside the limits: too_many_edges, bad_window, name_too_long, parse; the previous report is kept) and failed (the source did not answer; the state turns failing). One fetch every RUBATO_TRAFFIC_FETCH_SECS.",
+      "description": "Traffic report fetches per hour by outcome: ok, rejected (outside the limits: too_many_edges, bad_window, name_too_long, parse; the previous report is kept) and failed (the source did not answer; the state turns failing). One fetch every RUBATO_TRAFFIC_FETCH_SECS. Split by rubato_traffic_source (prometheus or dev_file, ADR 0040). For prometheus, failed means the query API did not answer, answered non-2xx or status error; the log line traffic source failing carries which.",
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (rubato_outcome) (increase(rubato_traffic_fetches_total[1h]))",
-          "legendFormat": "{{rubato_outcome}}"
+          "expr": "sum by (rubato_outcome, rubato_traffic_source) (increase(rubato_traffic_fetches_total[1h]))",
+          "legendFormat": "{{rubato_traffic_source}} {{rubato_outcome}}"
         }
       ],
       "fieldConfig": {

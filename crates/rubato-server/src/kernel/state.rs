@@ -78,7 +78,7 @@ impl AppState {
         let signer = Signer::new(config.session_secret.as_bytes());
         let traffic = TrafficLatest {
             report: None,
-            source: if config.dev_traffic.is_some() {
+            source: if config.traffic_configured() {
                 SourceStatus::Configured {
                     fetch_secs: config.traffic_fetch_secs,
                     error: None,
