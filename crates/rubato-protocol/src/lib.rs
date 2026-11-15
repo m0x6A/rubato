@@ -52,7 +52,7 @@ pub use layout::{MapLayout, Position};
 pub use limits::Limits;
 pub use map::{
     Flow, FlowKind, MapNode, MapResponse, NodeKind, RepoRef, Scenario, ScenarioStep, Seam,
-    SystemMap,
+    ServiceId, SystemMap,
 };
 pub use map_draft::{DraftOp, DraftOpRequest, MapDraft, MapOp, Proposal, ProposalState};
 pub use message::{
@@ -77,7 +77,8 @@ pub use session::{
     BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
 };
 pub use traffic::{
-    ObservedTraffic, SeamTraffic, SourceStatus, TrafficEdge, TrafficReport, TrafficState,
+    DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, ObservedTraffic, SeamTraffic,
+    SourceStatus, TrafficDismissal, TrafficEdge, TrafficEnd, TrafficReport, TrafficState,
     UndeclaredEdge, derive_traffic,
 };
 pub use web_link::WebEvent;

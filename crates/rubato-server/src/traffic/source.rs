@@ -15,9 +15,35 @@ pub enum SourceError {
     Parse(String),
 }
 
-/// Anything that can produce a `TrafficReport` (ADR 0039). One fetch per interval.
+/// Anything that can produce a `TrafficReport` (ADR 0039). One fetch per interval. Each backend
+/// is one adapter behind this port (ADR 0040).
 pub trait Source: Send + Sync {
+    /// The adapter, as `rubato.traffic.source` names it.
+    fn name(&self) -> &'static str;
     fn fetch(&self) -> impl Future<Output = Result<TrafficReport, SourceError>> + Send;
+}
+
+/// The source config selects: one adapter or the other, never both (ADR 0040).
+#[derive(Debug, Clone)]
+pub enum ConfiguredSource {
+    DevFile(DevFileSource),
+    Prometheus(super::prometheus::PrometheusSource),
+}
+
+impl Source for ConfiguredSource {
+    fn name(&self) -> &'static str {
+        match self {
+            ConfiguredSource::DevFile(s) => s.name(),
+            ConfiguredSource::Prometheus(s) => s.name(),
+        }
+    }
+
+    async fn fetch(&self) -> Result<TrafficReport, SourceError> {
+        match self {
+            ConfiguredSource::DevFile(s) => s.fetch().await,
+            ConfiguredSource::Prometheus(s) => s.fetch().await,
+        }
+    }
 }
 
 /// `RUBATO_DEV_TRAFFIC`: a JSON `TrafficReport` on disk. `observed_at` may be left out, and is
@@ -35,6 +61,10 @@ impl DevFileSource {
 }
 
 impl Source for DevFileSource {
+    fn name(&self) -> &'static str {
+        "dev_file"
+    }
+
     async fn fetch(&self) -> Result<TrafficReport, SourceError> {
         let failed = |e: std::io::Error| SourceError::Failed(format!("dev traffic file: {e}"));
         let text = tokio::fs::read_to_string(&self.path)

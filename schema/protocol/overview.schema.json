@@ -83,6 +83,7 @@
       "description": "Observed calls per seam from the latest traffic report (ADR 0039). Absent from an older\nserver: not configured. Never an input to progress.",
       "$ref": "#/$defs/ObservedTraffic",
       "default": {
+        "ghosts_truncated": false,
         "state": "not_configured",
         "truncated": false,
         "unmapped_services": 0
@@ -547,6 +548,66 @@
         "url"
       ]
     },
+    "DiscrepancyKey": {
+      "description": "What a person can dismiss on the overlay (ADR 0060).",
+      "oneOf": [
+        {
+          "description": "A ghost part, and with it every edge to or from it.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ghost"
+            },
+            "service": {
+              "$ref": "#/$defs/ServiceId"
+            }
+          },
+          "required": [
+            "kind",
+            "service"
+          ]
+        },
+        {
+          "description": "An observed edge no seam declares, between parts or with a ghost end.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/TrafficEnd"
+            },
+            "kind": {
+              "type": "string",
+              "const": "edge"
+            },
+            "to": {
+              "$ref": "#/$defs/TrafficEnd"
+            }
+          },
+          "required": [
+            "kind",
+            "from",
+            "to"
+          ]
+        },
+        {
+          "description": "A declared seam that carried no calls.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "quiet_seam"
+            },
+            "seam": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "seam"
+          ]
+        }
+      ]
+    },
     "DraftOp": {
       "description": "An operation in the draft, with who made it and when.",
       "type": "object",
@@ -951,6 +1012,29 @@
           ]
         },
         {
+          "description": "Map versus territory (ADR 0059): a service in a fresh report, emitting a namespace, that\nno part names. A person may take it into the map draft or dismiss it (plan #140).",
+          "type": "object",
+          "properties": {
+            "calls": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "observed_only_part"
+            },
+            "service": {
+              "$ref": "#/$defs/ServiceId"
+            }
+          },
+          "required": [
+            "kind",
+            "service",
+            "calls"
+          ]
+        },
+        {
           "description": "Two workspaces whose maps name a repo give it different plan paths (ADR 0045). The\nfirst in config order is used.",
           "type": "object",
           "properties": {
@@ -1157,6 +1241,67 @@
       "enum": [
         "data",
         "control"
+      ]
+    },
+    "GhostEdge": {
+      "description": "Calls with a ghost at one end or both. `from` calls `to`.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "from": {
+          "$ref": "#/$defs/TrafficEnd"
+        },
+        "to": {
+          "$ref": "#/$defs/TrafficEnd"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "calls",
+        "errors"
+      ]
+    },
+    "GhostPart": {
+      "description": "A service seen in a fresh report, emitting a namespace, that no part names: drawn on the\noverlay until a person takes it into the map draft (plan #140). Never a map part.",
+      "type": "object",
+      "properties": {
+        "calls_in": {
+          "description": "Calls it received in the window.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "calls_out": {
+          "description": "Calls it made.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "errors": {
+          "description": "Failed calls either way.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "service": {
+          "$ref": "#/$defs/ServiceId"
+        }
+      },
+      "required": [
+        "service",
+        "calls_in",
+        "calls_out",
+        "errors"
       ]
     },
     "IssueRef": {
@@ -1393,6 +1538,17 @@
             "string",
             "null"
           ]
+        },
+        "service": {
+          "description": "The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No\ndefault: a part without it is never matched to observed traffic.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1569,12 +1725,38 @@
       "description": "Observed traffic as the overview carries it (`Overview.traffic`, ADR 0039). Never an input\nto progress, pins, plans or approvals.",
       "type": "object",
       "properties": {
+        "dismissed": {
+          "description": "Every dismissal in the workspace, whatever the state, so each can be undone.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrafficDismissal"
+          }
+        },
         "error": {
           "description": "Why the last fetch failed, when `failing`.",
           "type": [
             "string",
             "null"
           ]
+        },
+        "ghost_edges": {
+          "description": "Calls to or from a ghost. Empty unless `fresh`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GhostEdge"
+          }
+        },
+        "ghosts": {
+          "description": "Services seen that no part names and that emit a namespace, busiest first. Empty unless\n`fresh`; dismissed ones left out.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GhostPart"
+          }
+        },
+        "ghosts_truncated": {
+          "description": "More ghosts or ghost edges were seen than the overview carries.",
+          "type": "boolean",
+          "default": false
         },
         "observed_at": {
           "description": "When the last good report's window ended.",
@@ -1621,7 +1803,7 @@
           }
         },
         "unmapped_services": {
-          "description": "Services in the report that name no map part.",
+          "description": "Edge ends in the report with no identity to match: no part names them and they emit no\nnamespace (ADR 0059).",
           "type": "integer",
           "format": "uint32",
           "default": 0,
@@ -2506,6 +2688,27 @@
         "errors"
       ]
     },
+    "ServiceId": {
+      "description": "A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`\n(ADR 0059). The namespace is absent only where the emitter has none, as for a servicegraph\nvirtual node built from a caller's `peer.service`. Rubato never sets or derives it.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "`service.name`.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "`service.namespace`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
     "SessionState": {
       "description": "One session as the companion sees it. Identity comes from the branch (ADR 0006).",
       "type": "object",
@@ -2759,6 +2962,70 @@
       },
       "required": [
         "session"
+      ]
+    },
+    "TrafficDismissal": {
+      "description": "One dismissal: who dismissed what, and when (ADR 0060). Undo deletes it.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "author": {
+          "description": "GitHub login.",
+          "type": "string"
+        },
+        "id": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "target": {
+          "$ref": "#/$defs/DiscrepancyKey"
+        }
+      },
+      "required": [
+        "id",
+        "target",
+        "author",
+        "at"
+      ]
+    },
+    "TrafficEnd": {
+      "description": "One end of an observed edge on the overlay: a declared part, or a ghost (ADR 0059).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "part"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ghost"
+            },
+            "service": {
+              "$ref": "#/$defs/ServiceId"
+            }
+          },
+          "required": [
+            "kind",
+            "service"
+          ]
+        }
       ]
     },
     "TrafficState": {

@@ -1,6 +1,6 @@
 //! `POST /api/launch`: start a session on an issue through one of the caller's own companions.
 
-use super::prompt::{PROMPT_TEMPLATE, render_prompt, slugify};
+use super::prompt::{PROMPT_TEMPLATE, is_slug, render_prompt, slugify};
 use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
@@ -116,6 +116,12 @@ pub async fn launch(
         .into_iter()
         .find(|p| p.issue == req.issue)
         .and_then(|p| p.plan);
+    if req.slug.as_deref().is_some_and(|s| !is_slug(s)) {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "slug: letters, digits and single hyphens only".into(),
+        ));
+    }
     let slug = req
         .slug
         .clone()
