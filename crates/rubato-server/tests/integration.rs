@@ -744,6 +744,48 @@ async fn an_approval_on_another_branch_is_compared_with_that_branch() {
     );
 }
 
+/// Plan 122 §D6: at start the composition root fills the kernel's session cache from the stored
+/// snapshots, so approval sees the owner's working session before its companion reconnects.
+#[tokio::test]
+async fn the_session_cache_starts_from_the_stored_snapshots() {
+    let h = harness().await;
+    let companion = Uuid::new_v4();
+    let session = rubato_protocol::SessionState {
+        session_id: Some("s1".into()),
+        companion_id: companion,
+        user: "m0x6A".into(),
+        tmux: None,
+        cwd: "/w".into(),
+        worktree: None,
+        branch: Some("issue/122-x".into()),
+        repo: Some("m0x6A/rubato".into()),
+        issue: Some(IssueRef::new("m0x6A/rubato", 122)),
+        status: rubato_protocol::SessionStatus::Working,
+        source: rubato_protocol::StateSource::Hook,
+        last_seen: chrono::Utc::now(),
+        spend_usd: None,
+        branch_drift: None,
+        blocked_by: None,
+        launch_id: None,
+        hooks_lost: false,
+    };
+    sqlx::query(
+        "INSERT INTO session_snapshots (companion_id, sessions, updated_at) VALUES (?, ?, ?)",
+    )
+    .bind(companion.to_string())
+    .bind(serde_json::to_string(&vec![session.clone()]).unwrap())
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(&h.app.db)
+    .await
+    .unwrap();
+    assert!(
+        h.app.latest_sessions().is_empty(),
+        "nothing before the start"
+    );
+    tasks::warm_sessions(&h.app).await.unwrap();
+    assert_eq!(h.app.latest_sessions(), vec![session]);
+}
+
 #[tokio::test]
 async fn derived_state_is_never_stored() {
     let h = harness().await;
@@ -4211,6 +4253,138 @@ async fn a_stack_reads_the_plan_from_the_bottom_then_from_the_approved_branch() 
         read_from(&h.overview("m0x6A").await).as_deref(),
         Some("issue/92-a-top")
     );
+}
+
+/// ADR 0054: the poll's `BranchPrefs` come from the merged list `tasks.rs` builds, and prefer
+/// the branch of the newest Rubato approval: over the bottom of the stack, and over a newer
+/// counted comment naming the bottom. Without the approval both of those say the bottom.
+#[tokio::test]
+async fn the_poll_reads_the_plan_from_the_branch_approved_in_rubato() {
+    // The cutover is set (approval in Rubato on) and an hour away (comments still count).
+    let h = harness_with(|c| {
+        c.comment_approvals_until = Some(chrono::Utc::now() + chrono::Duration::hours(1));
+    })
+    .await;
+    let plan = |title: &str| {
+        PLAN_49.replace("#1", "#93").replace(
+            "---\n## Affected",
+            &format!("title: {title}\n---\n## Affected"),
+        )
+    };
+    let (top, bottom) = ("issue/93-a-top", "issue/93-z-bottom");
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.push((top.into(), "top".into()));
+        b.push((bottom.into(), "bottom".into()));
+        for (branch, title) in [(top, "top"), (bottom, "bottom")] {
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    "docs/plans/93.md".into(),
+                    branch.into(),
+                ),
+                plan(title),
+            );
+        }
+        let mut t = open_pull(1, "top");
+        t.base = Some(bottom.into());
+        let mut b = open_pull(2, "bottom");
+        b.base = Some("main".into());
+        g.pulls.insert(("m0x6A/rubato".into(), top.into()), t);
+        g.pulls.insert(("m0x6A/rubato".into(), bottom.into()), b);
+        g.comments.insert(
+            ("m0x6A/rubato".into(), 93),
+            vec![comment(
+                600,
+                "m0x6A",
+                "OWNER",
+                false,
+                &format!("Approved: plan 0123456789 on {bottom}"),
+            )],
+        );
+    });
+    h.pin_issue(93).await;
+    // The draft on the top branch, approved in Rubato before the comment was posted.
+    let text = plan("top");
+    let files = vec![rubato_protocol::DraftFile {
+        path: "docs/plans/93.md".into(),
+        text: text.clone(),
+    }];
+    rubato_server::plan_drafts::on_draft(
+        &h.app,
+        &rubato_protocol::DraftBundle {
+            launch_id: Uuid::from_u128(1),
+            session_id: None,
+            issue: IssueRef::new("m0x6A/rubato", 93),
+            branch: top.into(),
+            bundle_hash: rubato_protocol::bundle_hash(
+                "docs/plans/93.md",
+                &[("docs/plans/93.md".into(), text.clone())],
+            ),
+            files,
+            missing: vec![],
+            refused: None,
+            at: chrono::Utc::now(),
+        },
+        "m0x6A",
+    )
+    .await;
+    let r = h
+        .http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::approve::routes::PLAN_DRAFT_APPROVE
+        ))
+        .header("x-rubato-dev-user", "teammate")
+        .json(&rubato_protocol::DraftApproveRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 93,
+            branch: top.into(),
+            plan_sha: rubato_server::plans::approval_hash(&text),
+            rev: None,
+            summary: String::new(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{:?}", r.text().await);
+    // The first tick reads the comment after choosing the branch; the second has it stored.
+    for tick in ["first", "second"] {
+        tasks::poll_once(&h.app).await.unwrap();
+        let ov = h.overview("m0x6A").await;
+        let one = ov.issues.iter().find(|i| i.issue.number == 93).unwrap();
+        assert_eq!(
+            one.plan.as_ref().and_then(|p| p.git_ref.as_deref()),
+            Some(top),
+            "{tick} tick: the bottom of the stack and the newer comment both name {bottom}"
+        );
+    }
+    let approval = rubato_server::approve::approvals(&h.app).await.unwrap();
+    assert_eq!(
+        approval.counted.len(),
+        2,
+        "the comment counts: before the cutover"
+    );
+}
+
+/// ADR 0054: the overview says whether plans are approved in Rubato, so the web offers Approve
+/// on the draft only where the server takes it, and Accept plan only where it posts.
+#[tokio::test]
+async fn the_overview_carries_the_cutover_only_when_one_is_set() {
+    let h = harness().await;
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(ov.comment_approvals_until, None);
+    let v = serde_json::to_value(&ov).unwrap();
+    assert!(
+        v.get("comment_approvals_until").is_none(),
+        "unset, the field is not on the wire: the golden overview is unchanged"
+    );
+    let at = chrono::DateTime::parse_from_rfc3339("2026-11-20T10:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let h = harness_with(|c| c.comment_approvals_until = Some(at)).await;
+    assert_eq!(h.overview("m0x6A").await.comment_approvals_until, Some(at));
 }
 
 /// ADR 0029: an approval of the current plan counts only while the plan fits the map.

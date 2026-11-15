@@ -221,27 +221,57 @@ fn normalise_path(path: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-/// The File column of the `## ADRs proposed` table, backticks removed.
-fn adr_files(text: &str) -> Vec<String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let Some(start) = lines.iter().position(|l| {
-        let h = l.trim_start_matches('#');
-        h.len() < l.len()
-            && h.starts_with(' ')
-            && h.trim().to_ascii_lowercase().starts_with("adrs proposed")
-    }) else {
+/// One row of a plan's `## ADRs proposed` table: the ADR, its file, and the blob the plan pins
+/// it at (ADR 0035, ADR 0054). The TypeScript twin is `pinnedAdrs` in `skills/rubato/scripts/adrs.ts`,
+/// held equal by `schema/fixtures/plans/adr-pins/`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AdrPin {
+    /// The four-digit number.
+    pub adr: String,
+    pub file: String,
+    /// Lower-case; `None` when the Blob cell is empty or the table has no Blob column.
+    pub blob: Option<String>,
+}
+
+/// The rows of `## ADRs proposed` whose ADR cell is a four-digit number, in order, backticks
+/// removed. Empty when the section is absent or says None.
+pub fn adr_pins(plan_text: &str) -> Vec<AdrPin> {
+    let Some((header, rows)) = adrs_table(plan_text) else {
         return vec![];
     };
-    let mut i = start + 1;
-    while i < lines.len() && !lines[i].starts_with('#') && !lines[i].trim_start().starts_with('|') {
-        i += 1;
-    }
-    let rows: Vec<Vec<String>> = lines[i..]
-        .iter()
-        .take_while(|l| l.trim_start().starts_with('|'))
-        .map(|l| split_row(l))
-        .collect();
-    let Some(header) = rows.first() else {
+    let col = |name: &str| {
+        header
+            .iter()
+            .position(|h| h.to_ascii_lowercase().starts_with(name))
+    };
+    let (Some(adr), Some(file)) = (col("adr"), col("file")) else {
+        return vec![];
+    };
+    let blob = col("blob");
+    let cell = |r: &[String], i: usize| {
+        r.get(i)
+            .map(|c| c.replace('`', "").trim().to_owned())
+            .unwrap_or_default()
+    };
+    rows.iter()
+        .filter_map(|r| {
+            let number = cell(r, adr);
+            if number.len() != 4 || !number.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let b = blob.map(|i| cell(r, i).to_ascii_lowercase());
+            Some(AdrPin {
+                adr: number,
+                file: cell(r, file),
+                blob: b.filter(|b| !b.is_empty()),
+            })
+        })
+        .collect()
+}
+
+/// The File column of the `## ADRs proposed` table, backticks removed.
+fn adr_files(text: &str) -> Vec<String> {
+    let Some((header, rows)) = adrs_table(text) else {
         return vec![];
     };
     let Some(col) = header
@@ -251,11 +281,35 @@ fn adr_files(text: &str) -> Vec<String> {
         return vec![];
     };
     rows.iter()
-        .skip(2)
         .filter_map(|r| r.get(col))
         .map(|c| c.replace('`', "").trim().to_owned())
         .filter(|c| !c.is_empty())
         .collect()
+}
+
+/// The first table under the `ADRs proposed` heading: its header cells and its body rows.
+fn adrs_table(text: &str) -> Option<(Vec<String>, Vec<Vec<String>>)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.iter().position(|l| {
+        let h = l.trim_start_matches('#');
+        h.len() < l.len()
+            && h.starts_with(' ')
+            && h.trim().to_ascii_lowercase().starts_with("adrs proposed")
+    })?;
+    let mut i = start + 1;
+    while i < lines.len() && !lines[i].starts_with('#') && !lines[i].trim_start().starts_with('|') {
+        i += 1;
+    }
+    let mut rows: Vec<Vec<String>> = lines[i..]
+        .iter()
+        .take_while(|l| l.trim_start().starts_with('|'))
+        .map(|l| split_row(l))
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let header = rows.remove(0);
+    Some((header, rows.into_iter().skip(1).collect()))
 }
 
 fn split_row(line: &str) -> Vec<String> {
@@ -411,6 +465,50 @@ mod tests {
             "checked {} bundle paths and {} files",
             case.paths.len(),
             case.files.len()
+        );
+    }
+
+    /// `adr-pins/<name>.md` gives the rows of `<name>.json`, in Rust as in TypeScript
+    /// (`pinnedAdrs`), an empty Blob being `""` there and `None` here.
+    #[test]
+    fn matches_the_shared_adr_pin_fixtures() {
+        #[derive(serde::Deserialize)]
+        struct Row {
+            adr: String,
+            file: String,
+            blob: String,
+        }
+        let dir = fixtures("adr-pins");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "md") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let want: Vec<Row> = serde_json::from_str(
+                &std::fs::read_to_string(path.with_extension("json")).unwrap(),
+            )
+            .unwrap();
+            let want: Vec<AdrPin> = want
+                .into_iter()
+                .map(|r| AdrPin {
+                    adr: r.adr,
+                    file: r.file,
+                    blob: (!r.blob.is_empty()).then_some(r.blob),
+                })
+                .collect();
+            assert_eq!(adr_pins(&text), want, "{}", path.display());
+            checked += 1;
+        }
+        assert_eq!(checked, 2, "fixtures checked");
+        println!("checked {checked} adr-pin fixtures");
+        // The bundle fixture's table: one row unpinned, one pinned.
+        let bundle = std::fs::read_to_string(fixtures("bundle").join("plan.md")).unwrap();
+        let pins = adr_pins(&bundle);
+        assert_eq!(
+            pins.iter().map(|p| p.blob.is_some()).collect::<Vec<_>>(),
+            [false, true]
         );
     }
 

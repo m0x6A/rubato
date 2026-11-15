@@ -182,6 +182,11 @@ kind: "approval_stale"
 issue: IssueRef
 kind: "approved_without_fit"
 } | {
+author: string
+created_at: string
+issue: IssueRef
+kind: "comment_approval_ignored"
+} | {
 branch?: (string | null)
 companion: string
 kind: "unattributed_session"
@@ -439,6 +444,8 @@ CapHit?: CapHit
 CompanionEnvelope?: CompanionEnvelope
 DecisionRecord?: DecisionRecord
 DismissRequest?: DismissRequest
+DraftApproveRequest?: DraftApproveRequest
+DraftApproveResponse?: DraftApproveResponse
 DraftOpRequest?: DraftOpRequest
 DraftRevision?: DraftRevision
 DraftView?: DraftView
@@ -663,6 +670,41 @@ name: string
  * `service.namespace`.
  */
 namespace?: (string | null)
+}
+/**
+ * Approve one version of a draft (ADR 0054): the newest revision of the draft on `branch`,
+ * named by its plan's approval hash, and by its number when the person saw one. `summary` is
+ * the discussion summary as the person edited it, kept with the approval (ADR 0055).
+ */
+export interface DraftApproveRequest {
+branch: string
+number: number
+plan_sha: string
+repo: string
+rev?: (number | null)
+summary?: string
+}
+/**
+ * A recorded approval. A second press of the same version answers the first one, with
+ * `created: false`.
+ */
+export interface DraftApproveResponse {
+approval_id: string
+approved_at: string
+approved_by: string
+/**
+ * The hash of the whole bundle approved: the plan, its design note, its ADRs (§D3).
+ */
+bundle_hash: string
+/**
+ * False when this press found an approval of the same version already recorded.
+ */
+created: boolean
+plan_sha: string
+/**
+ * The person approved their own agent's plan: allowed, and said (ADR 0054).
+ */
+self_approved: boolean
 }
 export interface MapNode {
 description?: (string | null)
@@ -908,16 +950,28 @@ record: ApprovalRecord
 version: ApprovalVersion
 }
 /**
- * A person's approval of a plan, first line `Approved: plan <sha>` or
- * `Approved: plan <sha> on <branch>` (ADR 0027). Only a trusted author's approval counts.
+ * A person's approval of a plan (ADR 0054): an issue comment whose first line is
+ * `Approved: plan <sha>` or `Approved: plan <sha> on <branch>` (ADR 0027), from a trusted
+ * author only; or an approval given in Rubato, with its `approval_id` and no comment.
  */
 export interface ApprovalRecord {
+/**
+ * The `rubato_approvals` row, for an approval given in Rubato.
+ */
+approval_id?: (string | null)
 author: string
 /**
  * The branch the approval names; else the branch Rubato reads the plan from.
  */
 branch?: (string | null)
-comment_id: number
+/**
+ * The bundle an approval given in Rubato covers (the plan, its design note, its ADRs).
+ */
+bundle_hash?: (string | null)
+/**
+ * The comment's id, for a comment approval.
+ */
+comment_id?: (number | null)
 created_at: string
 issue: IssueRef
 note?: (string | null)
@@ -926,6 +980,13 @@ note?: (string | null)
  * none: the approval then shows as "version not named".
  */
 sha?: (string | null)
+/**
+ * Absent for a comment, which is all an approval was before ADR 0054.
+ */
+source?: ("comment" | "rubato")
+/**
+ * The comment's URL; empty for an approval given in Rubato.
+ */
 url: string
 }
 /**
@@ -1538,6 +1599,12 @@ backlog?: Backlog
  * Issues: write, or the server runs on the local stand-in (ADR 0025).
  */
 can_create_issues?: boolean
+/**
+ * The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, ADR 0054), when one is configured: plans are
+ * approved in Rubato, and an `Approved:` comment posted at or after it does not count. Absent
+ * before the cutover is set, and from an older server: *Accept plan* as before.
+ */
+comment_approvals_until?: (string | null)
 /**
  * The companion stale threshold N in seconds, from the server's config
  * (`RUBATO_COMPANION_SILENT_SECS`). A companion lane's freshness bar drains over it, and

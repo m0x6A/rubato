@@ -20,6 +20,19 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::task::{Id, JoinSet};
 
+/// Fill the kernel's session cache from the stored snapshots, once at start, so a slice that
+/// reads it (approval's "is the owner's session working") sees what the overview sees before
+/// any companion reconnects.
+pub async fn warm_sessions(app: &App) -> Result<()> {
+    let snapshots = companion_link::session_snapshots(&app.db).await?;
+    let n = snapshots.len();
+    for (companion_id, sessions) in snapshots {
+        app.set_sessions(companion_id, sessions);
+    }
+    tracing::info!(companions = n, "session snapshots loaded");
+    Ok(())
+}
+
 /// The map is refetched every this many seconds of poll intervals.
 const MAP_RELOAD_SECS: u64 = 300;
 
@@ -171,7 +184,10 @@ impl Poller {
         }
 
         let mut view = github_poll::RepoView::default();
-        let approved = github_poll::approved_branches(&app.db).await?;
+        // One list of counted approvals, comments under the cutover and Rubato approvals
+        // (ADR 0054), built here so `github_poll` never names `approve`.
+        let approvals = approve::approvals(app).await?;
+        let approved = github_poll::approved_branches(&approvals.counted);
         let stored: HashMap<IssueRef, String> = plans::all(&app.db)
             .await?
             .into_iter()
@@ -320,7 +336,9 @@ impl Poller {
                 && read_from.as_deref() != Some(branch)
             {
                 let sha = plans::hash_on_branch(app, map, issue, branch).await?;
-                github_poll::set_target_sha(&app.db, issue, a.comment_id, sha.as_deref()).await?;
+                if let Some(id) = a.comment_id {
+                    github_poll::set_target_sha(&app.db, issue, id, sha.as_deref()).await?;
+                }
             }
         }
         self.seen.insert(issue.clone());

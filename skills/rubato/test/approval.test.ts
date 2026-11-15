@@ -40,6 +40,17 @@ describe("comments.ts reads approvals as the server does", () => {
     expect(trustedAuthor("OWNER", true)).not.toBe(true);
   });
 
+  it("reads the shared ADR pin fixtures as rubato_protocol::adr_pins does", () => {
+    // The server refuses approval with `adrs_unpinned` from the same rows (ADR 0054).
+    const dir = join(root, "schema/fixtures/plans/adr-pins");
+    const cases = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    expect(cases.length).toBe(2);
+    for (const f of cases) {
+      const want = JSON.parse(readFileSync(join(dir, f.replace(/\.md$/, ".json")), "utf8"));
+      expect(pinnedAdrs(readFileSync(join(dir, f), "utf8")), f).toEqual(want);
+    }
+  });
+
   it("counts the newest trusted approval, unedited, naming the sha", () => {
     const sha = "1e29c8fac8411763ac280e957033f587924db5c5";
     const c = (id: number, at: string, body: string, extra: Partial<GhComment> = {}): GhComment => ({

@@ -357,6 +357,13 @@ pub enum Finding {
     /// An approval names the current plan, but the plan does not fit the map, so it does not
     /// count (ADR 0029).
     ApprovedWithoutFit { issue: IssueRef },
+    /// An `Approved:` comment posted at or after the cutover: not counted, since plans are
+    /// approved in Rubato (ADR 0054).
+    CommentApprovalIgnored {
+        issue: IssueRef,
+        author: String,
+        created_at: DateTime<Utc>,
+    },
     /// A live session Rubato cannot tie to an issue: its branch is not `issue/<n>-…`, or its
     /// repo is unknown.
     UnattributedSession {
@@ -459,6 +466,11 @@ pub struct Overview {
     /// `CompanionSilent` fires past it (#105). An older server's overview reads as 600.
     #[serde(default = "default_companion_silent_secs")]
     pub companion_silent_secs: u64,
+    /// The cutover (`RUBATO_COMMENT_APPROVALS_UNTIL`, ADR 0054), when one is configured: plans are
+    /// approved in Rubato, and an `Approved:` comment posted at or after it does not count. Absent
+    /// before the cutover is set, and from an older server: *Accept plan* as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_approvals_until: Option<DateTime<Utc>>,
     /// The workspace this overview is of (ADR 0049). An older server's overview reads as `default`.
     #[serde(default = "default_workspace")]
     pub workspace: String,

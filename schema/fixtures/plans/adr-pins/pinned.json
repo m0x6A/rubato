@@ -1,0 +1,5 @@
+[
+  { "adr": "0050", "file": "docs/decisions/0050-a.md", "blob": "a6480de5bea299e329d6459ea4a578cce3c3058e" },
+  { "adr": "0051", "file": "docs/decisions/0051-b.md", "blob": "" },
+  { "adr": "0052", "file": "docs/decisions/0052-c.md", "blob": "55a50754142ca6b9657ae3705c6d73ae0ea9be01" }
+]

@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
 use rubato_protocol::{
-    ServerMessage, SourceStatus, SystemMap, TrafficReport, WebEvent, WebResource,
+    ServerMessage, SessionState, SourceStatus, SystemMap, TrafficReport, WebEvent, WebResource,
 };
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -82,6 +82,11 @@ pub struct AppState {
     pub signer: Signer,
     pub traffic: RwLock<TrafficLatest>,
     pub clock: Clock,
+    /// Each companion's latest session snapshot, by the pairing's companion id: what
+    /// `session_snapshots` holds, kept in memory for slices that may not name `companion_link`
+    /// (approval's "is the owner's session working", plan 122 §D6). `companion_link` writes it
+    /// on every snapshot; the composition root fills it once at start.
+    pub sessions: Mutex<HashMap<Uuid, Vec<SessionState>>>,
 }
 
 pub type App = Arc<AppState>;
@@ -113,7 +118,24 @@ impl AppState {
             signer,
             traffic: RwLock::new(traffic),
             clock: Clock::default(),
+            sessions: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// A companion's latest snapshot replaces its earlier one.
+    pub fn set_sessions(&self, companion_id: Uuid, sessions: Vec<SessionState>) {
+        self.sessions.lock().unwrap().insert(companion_id, sessions);
+    }
+
+    /// Every session of every companion's latest snapshot.
+    pub fn latest_sessions(&self) -> Vec<SessionState> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .flatten()
+            .cloned()
+            .collect()
     }
 
     /// The loaded map of workspace `default`: what every route served before workspaces, and

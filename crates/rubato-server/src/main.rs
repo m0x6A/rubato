@@ -16,6 +16,7 @@ async fn main() -> Result<()> {
     for w in &config.warnings {
         tracing::warn!("{w}");
     }
+    config.report_cutover();
     if config.dev_user.is_some() {
         tracing::warn!(
             "RUBATO_DEV_USER is set: every request is that user; never run like this in production"
@@ -85,6 +86,7 @@ async fn main() -> Result<()> {
     let state = AppState::new(pool, config, github);
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
+    tasks::warm_sessions(&state).await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let background = tasks::spawn(state.clone(), shutdown_rx.clone());
     let listener = tokio::net::TcpListener::bind(bind).await?;

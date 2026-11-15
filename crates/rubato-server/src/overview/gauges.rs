@@ -127,3 +127,137 @@ async fn refresh_one(app: &App, ws: &str, map: &LoadedMap) -> Result<()> {
     app.metrics.plans_fit_none.record(fit_none as u64, &[w()]);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::CurrentUser;
+    use crate::kernel::config::Config;
+    use crate::kernel::github::{Comment, FakeGitHub};
+    use crate::kernel::http::Ws;
+    use crate::kernel::state::AppState;
+    use crate::kernel::telemetry::metric_reader;
+    use crate::{approve, github_poll, plan_drafts, plans};
+    use axum::Json;
+    use axum::extract::State;
+    use chrono::Duration;
+    use rubato_protocol::otel::metric;
+    use rubato_protocol::{
+        DraftApproveRequest, DraftBundle, DraftFile, IssueRef, approval_hash, bundle_hash,
+    };
+    use std::sync::Arc;
+
+    fn plan_text(issue: u64, change: &str) -> String {
+        format!(
+            "---\nissue: m0x6A/rubato#{issue}\n---\n## Affected parts\n| Node | Status | What changes | Seams |\n| --- | --- | --- | --- |\n| rubato-server | affected | {change} | web-server |\n## O-rows\n| Seam | Breaks like | Signal | Panel | Owner |\n| --- | --- | --- | --- | --- |\n| web-server | x | y | z | rubato-server |\n"
+        )
+    }
+
+    fn bundle(text: &str) -> DraftBundle {
+        let files = vec![DraftFile {
+            path: "docs/plans/122.md".into(),
+            text: text.into(),
+        }];
+        DraftBundle {
+            launch_id: uuid::Uuid::from_u128(1),
+            session_id: None,
+            issue: IssueRef::new("m0x6A/rubato", 122),
+            branch: "issue/122-x".into(),
+            bundle_hash: bundle_hash(
+                "docs/plans/122.md",
+                &[("docs/plans/122.md".into(), text.into())],
+            ),
+            files,
+            missing: vec![],
+            refused: None,
+            at: Utc::now(),
+        }
+    }
+
+    fn comment(id: u64, at: chrono::DateTime<Utc>, sha: &str) -> Comment {
+        Comment {
+            id,
+            author: "teammate".into(),
+            author_association: "MEMBER".into(),
+            author_is_bot: false,
+            body: format!("Approved: plan {sha}"),
+            created_at: at,
+            url: "u".into(),
+        }
+    }
+
+    /// ADR 0054: `rubato.plans.approval_stale` reads the merged list. Issue 71's counted comment
+    /// names an earlier plan (a later comment of the current one, after the cutover, does not
+    /// count, so it stays stale); issue 122's Rubato approval names a revision a newer one
+    /// replaced. Two, one from each source.
+    #[tokio::test]
+    async fn the_stale_gauge_counts_comment_and_rubato_approvals() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let (reader, metrics) = metric_reader::start();
+        let cutover = Utc::now() - Duration::hours(1);
+        let mut cfg = Config::for_tests(url, "m0x6A");
+        cfg.comment_approvals_until = Some(cutover);
+        let github = Arc::new(FakeGitHub::new());
+        let mut app = AppState::new(pool, cfg, github.clone());
+        Arc::get_mut(&mut app).unwrap().metrics = metrics;
+        let text = include_str!("../../../../docs/design/rubato-map.yml");
+        let map = LoadedMap {
+            map: serde_yaml_ng::from_str(text).unwrap(),
+            version: "v".into(),
+            loaded_at: Utc::now(),
+            yaml: text.into(),
+        };
+        app.set_map(rubato_protocol::DEFAULT_WORKSPACE, map.clone())
+            .await;
+
+        let i71 = IssueRef::new("m0x6A/rubato", 71);
+        let (v1, v2) = (plan_text(71, "one"), plan_text(71, "two"));
+        let path = plans::plan_path(&map, &i71, "issue/71-plan");
+        github.with(|g| {
+            g.files.insert(
+                ("m0x6A/rubato".into(), path, "issue/71-plan".into()),
+                v2.clone(),
+            );
+            g.comments.insert(
+                ("m0x6A/rubato".into(), 71),
+                vec![
+                    comment(1, cutover - Duration::hours(1), &approval_hash(&v1)),
+                    comment(2, cutover + Duration::minutes(1), &approval_hash(&v2)),
+                ],
+            );
+        });
+        plans::fetch_and_store(&app, &map, &i71, "issue/71-plan")
+            .await
+            .unwrap();
+        github_poll::poll_comments(&app, &i71).await.unwrap();
+
+        let (r1, r2) = (plan_text(122, "one"), plan_text(122, "two"));
+        plan_drafts::on_draft(&app, &bundle(&r1), "m0x6A").await;
+        let pressed = approve::approve_draft(
+            State(app.clone()),
+            Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+            CurrentUser("teammate".into()),
+            Json(DraftApproveRequest {
+                repo: "m0x6A/rubato".into(),
+                number: 122,
+                branch: "issue/122-x".into(),
+                plan_sha: approval_hash(&r1),
+                rev: Some(1),
+                summary: String::new(),
+            }),
+        )
+        .await;
+        assert!(pressed.is_ok(), "{:?}", pressed.err());
+        plan_drafts::on_draft(&app, &bundle(&r2), "m0x6A").await;
+
+        refresh_gauges(&app).await.unwrap();
+        let stale: Vec<u64> = reader
+            .points(metric::PLANS_APPROVAL_STALE)
+            .iter()
+            .map(|p| p.value)
+            .collect();
+        assert_eq!(stale, [2], "one comment approval and one Rubato approval");
+    }
+}
