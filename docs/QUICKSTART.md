@@ -149,13 +149,36 @@ is rejected and the previous report kept. A source set up wrong (a bad URL, wind
 is failing from the start, and the log line says which variable. None of them is ever read as
 quiet.
 
-The namespaces travel in the report. Until a part can say which service it is (#140, ADR 0059),
-an end still matches the part whose id equals its `service.name`.
+**Which part a service is (ADR 0059).** A part says which service it is in the map, exactly as
+that service emits itself. Change it through the map draft like any other field:
+
+```yaml
+nodes:
+  - id: rubato-server
+    kind: context
+    service: { namespace: rubato, name: rubato-server }
+  - id: github
+    kind: external
+    service: { name: github }   # a virtual node from callers' peer.service: no namespace
+```
+
+How an edge end is read:
+
+- **It matches a part** only when namespace and name are both equal. A missing namespace equals
+  only a missing one. There is no match by id and none by name alone. A part without `service`
+  is never matched, and never shown as quiet.
+- **It becomes a ghost** when it emits a namespace but no part names it. The Traffic lens draws it
+  in a band right of the map, with its calls. Under *Map versus territory* it can be taken into
+  the draft, filled in from the telemetry, or dismissed for the workspace (ADR 0060).
+- **It is only counted** when it emits no namespace and no part matches it, as "with no namespace
+  and no part to match".
 
 **Development: a file.** `RUBATO_DEV_TRAFFIC=<file.json>` reads a traffic report from a file.
-Each edge names a client and a server by their map part id (the OTel `service.name`), and may
-add `client_namespace` and `server_namespace`. A name that matches no part is counted as
-unmapped:
+
+- **Names.** Each edge names a client and a server by their OTel `service.name`, and may add
+  `client_namespace` and `server_namespace`.
+- **Matching.** An edge without namespaces matches parts that declare `service: { name: … }`
+  with no namespace. A name with neither a namespace nor such a part is counted as unmapped:
 
 ```json
 {
@@ -252,6 +275,23 @@ code and approve. The companion stores its pairing token in
 ```
 
 The *Companions* tab shows your machine as connected. Leave it running; it reconnects by itself.
+
+**What leaves your machine** (ADR 0052), which `pair` also prints:
+- the sessions the companion sees: repo, branch, issue, status and spend;
+- heartbeats and launch results;
+- each hook's event name and metadata: session, cwd, tool name;
+- for sessions started from Rubato only, your prompts and the agent's replies, cut to
+  `Limits.session_log_max_chars`. The whole team reads them in the session's log;
+- for sessions started from Rubato only, the plan the session writes: the plan file at its
+  path, the design note it links and the ADRs it proposes, up to `Limits.draft_max_bytes`, as a
+  draft the team reads in Rubato (ADR 0053). Nothing else in the worktree is read.
+- for sessions started from Rubato only, the agent's answers to turns in the plan's room, when
+  you called it in: typed into the session while planning, or from a read-only fork while
+  building, with the fork's cost. Everyone who reads the room reads them (ADR 0057).
+
+Tool input and output stay on your machine, and so do the prompts and replies of sessions you
+start yourself. The companion cuts every hook payload to an allowlist before it leaves, and the
+server keeps only the log text, never a hook payload.
 
 ## 7. Put an issue through the flow
 

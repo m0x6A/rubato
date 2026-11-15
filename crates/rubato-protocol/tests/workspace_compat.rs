@@ -39,6 +39,9 @@ fn an_old_changed_event_concerns_every_workspace() {
             .unwrap();
     let WebEvent::Changed {
         workspace, reason, ..
-    } = ev;
+    } = ev
+    else {
+        panic!("not a Changed event")
+    };
     assert_eq!((workspace, reason.as_str()), (None, "pin"));
 }

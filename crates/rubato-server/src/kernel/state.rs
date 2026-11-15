@@ -8,7 +8,9 @@ use crate::kernel::telemetry::Metrics;
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
-use rubato_protocol::{ServerMessage, SourceStatus, SystemMap, TrafficReport, WebEvent};
+use rubato_protocol::{
+    ServerMessage, SessionState, SourceStatus, SystemMap, TrafficReport, WebEvent, WebResource,
+};
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
@@ -17,6 +19,22 @@ use uuid::Uuid;
 
 pub struct CompanionConn {
     pub tx: mpsc::UnboundedSender<ServerMessage>,
+    /// New per socket: only the socket that inserted the entry removes it (#161).
+    pub conn: Uuid,
+    /// When this connection last sent an envelope: a socket left open by a laptop that went to
+    /// sleep looks connected, so "live" also needs a recent envelope (ADR 0051).
+    pub last_seen: DateTime<Utc>,
+}
+
+impl CompanionConn {
+    /// A connection entry with a fresh per-socket id (#161).
+    pub fn new(tx: mpsc::UnboundedSender<ServerMessage>, now: DateTime<Utc>) -> Self {
+        Self {
+            tx,
+            conn: Uuid::new_v4(),
+            last_seen: now,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +78,9 @@ pub struct AppState {
     pub github: Arc<dyn GitHubApi>,
     /// Companions with a websocket open right now.
     pub companions: Mutex<HashMap<Uuid, CompanionConn>>,
+    /// What each companion announced in its last Hello (ADR 0051), kept after it disconnects so
+    /// the web can say "upgrade the companion" while it is away. In memory only.
+    pub companion_caps: Mutex<HashMap<Uuid, Vec<String>>>,
     pub web_tx: broadcast::Sender<WebEvent>,
     /// The loaded map of each workspace, by workspace id (ADR 0044). A workspace whose map has
     /// never loaded has no entry.
@@ -68,6 +89,11 @@ pub struct AppState {
     pub signer: Signer,
     pub traffic: RwLock<TrafficLatest>,
     pub clock: Clock,
+    /// Each companion's latest session snapshot, by the pairing's companion id: what
+    /// `session_snapshots` holds, kept in memory for slices that may not name `companion_link`
+    /// (approval's "is the owner's session working", plan 122 §D6). `companion_link` writes it
+    /// on every snapshot; the composition root fills it once at start.
+    pub sessions: Mutex<HashMap<Uuid, Vec<SessionState>>>,
 }
 
 pub type App = Arc<AppState>;
@@ -92,13 +118,31 @@ impl AppState {
             config: Arc::new(config),
             github,
             companions: Mutex::new(HashMap::new()),
+            companion_caps: Mutex::new(HashMap::new()),
             web_tx,
             maps: RwLock::new(BTreeMap::new()),
             metrics: Metrics::new(),
             signer,
             traffic: RwLock::new(traffic),
             clock: Clock::default(),
+            sessions: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// A companion's latest snapshot replaces its earlier one.
+    pub fn set_sessions(&self, companion_id: Uuid, sessions: Vec<SessionState>) {
+        self.sessions.lock().unwrap().insert(companion_id, sessions);
+    }
+
+    /// Every session of every companion's latest snapshot.
+    pub fn latest_sessions(&self) -> Vec<SessionState> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .flatten()
+            .cloned()
+            .collect()
     }
 
     /// The loaded map of workspace `default`: what every route served before workspaces, and
@@ -179,6 +223,80 @@ impl AppState {
 
     pub fn connected_companions(&self) -> Vec<Uuid> {
         self.companions.lock().unwrap().keys().copied().collect()
+    }
+
+    /// Record what a companion announced in its Hello.
+    pub fn set_capabilities(&self, companion_id: Uuid, caps: Vec<String>) {
+        self.companion_caps
+            .lock()
+            .unwrap()
+            .insert(companion_id, caps);
+    }
+
+    /// Everything the companion announced the last time it said Hello.
+    pub fn capabilities(&self, companion_id: Uuid) -> Vec<String> {
+        self.companion_caps
+            .lock()
+            .unwrap()
+            .get(&companion_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The companion announced `cap` the last time it said Hello.
+    pub fn announced(&self, companion_id: Uuid, cap: &str) -> bool {
+        self.companion_caps
+            .lock()
+            .unwrap()
+            .get(&companion_id)
+            .is_some_and(|c| c.iter().any(|x| x == cap))
+    }
+
+    /// An envelope arrived from this companion.
+    pub fn touch_companion(&self, companion_id: Uuid, now: DateTime<Utc>) {
+        if let Some(c) = self.companions.lock().unwrap().get_mut(&companion_id) {
+            c.last_seen = now;
+        }
+    }
+
+    /// Connected, announcing `cap`, and heard from within two heartbeat intervals (ADR 0051).
+    pub fn companion_live(&self, companion_id: Uuid, cap: &str, now: DateTime<Utc>) -> bool {
+        let window =
+            chrono::Duration::seconds(2 * self.config.limits.heartbeat_interval_secs as i64);
+        let recent = self
+            .companions
+            .lock()
+            .unwrap()
+            .get(&companion_id)
+            .is_some_and(|c| now.signed_duration_since(c.last_seen) <= window);
+        recent && self.announced(companion_id, cap)
+    }
+
+    /// Connected companions per announced capability (`rubato.companions.by_capability`).
+    pub fn capability_counts(&self, known: &[&str]) -> BTreeMap<String, u64> {
+        let connected: Vec<Uuid> = self.connected_companions();
+        let caps = self.companion_caps.lock().unwrap();
+        known
+            .iter()
+            .map(|k| {
+                let n = connected
+                    .iter()
+                    .filter(|id| caps.get(id).is_some_and(|c| c.iter().any(|x| x == k)))
+                    .count() as u64;
+                ((*k).to_owned(), n)
+            })
+            .collect()
+    }
+
+    /// Tell browsers one resource the overview does not carry changed: only a view showing it
+    /// refetches it (plan 122).
+    pub fn notify_resource(&self, resource: WebResource) {
+        let subscribers = self.web_tx.receiver_count();
+        tracing::info!(?resource, rubato.subscribers = subscribers, "web fan-out");
+        let _ = self.web_tx.send(WebEvent::Updated {
+            at: Utc::now(),
+            resource,
+        });
     }
 
     pub fn send_to_companion(&self, companion_id: Uuid, msg: ServerMessage) -> bool {

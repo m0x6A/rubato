@@ -10,9 +10,9 @@ use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
     ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
     DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, ObservedTraffic,
-    OpenIssue, Plan, Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls,
-    ReviewRecord, SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress,
-    derive_traffic, plan_fit,
+    OpenIssue, Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls, ReviewRecord,
+    SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress, derive_traffic,
+    plan_fit,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -58,13 +58,25 @@ pub struct OverviewInputs {
     pub pins: Vec<IssuePin>,
     pub sessions: Vec<SessionState>,
     pub plans: Vec<PlanRow>,
+    /// Each draft's newest settled revision (ADR 0053).
+    pub drafts: Vec<crate::plan_drafts::LatestDraft>,
     pub prs: HashMap<IssueRef, PullRequestState>,
     pub decisions: Vec<DecisionRecord>,
     /// `Review:` comments from members (ADR 0027).
     pub reviews: Vec<ReviewRecord>,
-    /// `Approved:` comments from members, each with the plan hash of the branch it names when
-    /// that is not the branch the plan is read from.
+    /// Counted approvals (ADR 0054): `Approved:` comments from members posted before the
+    /// cutover and approvals given in Rubato, each with the plan hash of the branch it names
+    /// when that is not the branch the plan is read from (for a Rubato approval, its draft's
+    /// newest revision).
     pub approvals: Vec<(ApprovalRecord, Option<String>)>,
+    /// `Approved:` comments posted at or after the cutover: findings, never counted.
+    pub ignored_approvals: Vec<ApprovalRecord>,
+    /// The cutover is set: plans are approved in Rubato, so one with no draft and no counted
+    /// approval is outside Rubato (ADR 0058).
+    pub approvals_in_rubato: bool,
+    /// What the handoffs of Rubato approvals left (ADR 0055): record mismatches, link comments
+    /// waiting, ADRs not accepted. Shown for the issues this overview holds.
+    pub approval_findings: Vec<Finding>,
     pub launched: HashSet<IssueRef>,
     /// The live cap hit per issue, by kind.
     pub cap_hits: HashMap<IssueRef, CapKind>,
@@ -82,6 +94,8 @@ pub struct OverviewInputs {
     pub queue: Vec<QueuedIssue>,
     /// The latest traffic report and its source (ADR 0039). Never an input to progress.
     pub traffic: TrafficLatest,
+    /// This workspace's dismissed discrepancies (ADR 0060). Never an input to progress.
+    pub dismissals: Vec<rubato_protocol::TrafficDismissal>,
     /// Each issue's spend over time, downsampled (ADR 0037). Copied onto its summary only.
     pub spend: HashMap<IssueRef, Vec<SpendPoint>>,
     /// The other workspaces, for an issue's workspaces and where its plan fits (ADR 0045).
@@ -103,14 +117,6 @@ pub struct Built {
     pub traffic: ObservedTraffic,
 }
 
-fn seams_touched(plan: &Plan) -> BTreeSet<&str> {
-    plan.affected_parts
-        .iter()
-        .flat_map(|p| p.seams.iter().map(String::as_str))
-        .chain(plan.o_rows.iter().map(|o| o.seam.as_str()))
-        .collect()
-}
-
 /// Whether the live cap hit blocks the issue. A spend hit always does (its session is being
 /// killed). An attempts hit is a refused *Start*: while a session for the issue is live, the
 /// state stays what that session says.
@@ -122,9 +128,12 @@ fn cap_hit_blocks(kind: Option<CapKind>, sessions: &[SessionState]) -> bool {
     }
 }
 
-/// The newest approval of an issue and whether it names the plan as it is now (ADR 0027). An
-/// approval that names a branch other than the one the plan is read from is compared with the
-/// plan on that branch (`target_sha`, read on the full lane); otherwise with the plan as read.
+/// The newest counted approval of an issue and whether it names the plan as it is now (ADR
+/// 0027, ADR 0054). `approvals` holds counted ones only: a comment after the cutover never
+/// hides a current approval. An approval that names a branch other than the one the plan is
+/// read from is compared with the plan on that branch (`target_sha`: read on the full lane for
+/// a comment, the draft's newest revision for a Rubato approval); otherwise with the plan as
+/// read.
 ///
 /// An approval of the current plan counts only while the plan fits the map (ADR 0029): with
 /// `fits == Some(false)` its version is `DoesNotFit`.
@@ -135,7 +144,7 @@ pub fn approval_state(
 ) -> Option<ApprovalState> {
     let (record, target_sha) = approvals
         .iter()
-        .max_by_key(|(a, _)| (a.created_at, a.comment_id))?;
+        .max_by_key(|(a, _)| (a.created_at, a.comment_id, a.approval_id))?;
     let elsewhere = record
         .branch
         .as_deref()
@@ -164,6 +173,17 @@ pub fn approval_state(
     })
 }
 
+/// The issue a handoff finding is about.
+fn handoff_issue(f: &Finding) -> Option<&IssueRef> {
+    match f {
+        Finding::ApprovalRecordMismatch { issue, .. }
+        | Finding::LinkCommentWaiting { issue, .. }
+        | Finding::LinkWaitingForApprover { issue, .. }
+        | Finding::AdrsNotAccepted { issue, .. } => Some(issue),
+        _ => None,
+    }
+}
+
 pub fn build(
     inputs: &OverviewInputs,
     map: Option<&LoadedMap>,
@@ -174,6 +194,7 @@ pub fn build(
     let mut issues: BTreeSet<IssueRef> = inputs.pins.iter().map(|p| p.issue.clone()).collect();
     issues.extend(inputs.launched.iter().cloned());
     issues.extend(inputs.plans.iter().map(|p| p.issue.clone()));
+    issues.extend(inputs.drafts.iter().map(|d| d.issue.clone()));
     issues.extend(inputs.sessions.iter().filter_map(|s| s.issue.clone()));
     // With several workspaces, only the issues this one holds: pinned or launched here, or in a
     // repo its map names. An issue no workspace holds shows in `default`, so none is lost.
@@ -202,6 +223,8 @@ pub fn build(
 
     let mut out = Vec::new();
     let mut findings = Vec::new();
+    // Plans written as drafts and not on a branch: they count on seams too (ADR 0053).
+    let mut draft_plans: Vec<(IssueRef, rubato_protocol::Plan)> = Vec::new();
     for issue in &issues {
         let pins: Vec<MapRef> = inputs
             .pins
@@ -217,6 +240,34 @@ pub fn build(
             .collect();
         let plan_row = inputs.plans.iter().find(|p| &p.issue == issue);
         let plan = plan_row.and_then(|p| p.plan.clone());
+        // The newest draft of the issue (ADR 0053); with several branches, the newest revision.
+        let latest_draft = inputs
+            .drafts
+            .iter()
+            .filter(|d| &d.issue == issue)
+            .max_by_key(|d| d.summary.at);
+        let draft = latest_draft.map(|d| {
+            let mut summary = d.summary.clone();
+            summary.live = sessions.iter().any(|s| {
+                s.status != SessionStatus::Ended
+                    && s.branch.as_deref() == Some(d.summary.branch.as_str())
+                    && s.user.eq_ignore_ascii_case(&d.summary.owner)
+            });
+            summary
+        });
+        if let Some(d) = latest_draft
+            && let Some((other, at)) = &d.conflict
+            && now.signed_duration_since(*at) < chrono::Duration::hours(24)
+        {
+            findings.push(Finding::DraftOwnerConflict {
+                issue: issue.clone(),
+                branch: d.summary.branch.clone(),
+                owner: d.summary.owner.clone(),
+                other: other.clone(),
+            });
+        }
+        let draft_plan = latest_draft.and_then(|d| d.plan.clone());
+        let plan_on_branch = plan.is_some();
         if let Some(row) = plan_row
             && let Some(err) = &row.parse_error
         {
@@ -232,7 +283,8 @@ pub fn build(
             pins: &pins,
             launched: inputs.launched.contains(issue),
             sessions: &sessions,
-            has_plan: plan.is_some(),
+            plan_on_branch,
+            draft_plan: draft_plan.is_some(),
             cap_hit: cap_kind.filter(|_| cap_hit_blocks(cap_kind, &sessions)),
             pr,
             now,
@@ -345,6 +397,17 @@ pub fn build(
             (Some(here), Some(there)) if !here.fits => Some(there),
             (here, _) => here,
         };
+        for a in inputs
+            .ignored_approvals
+            .iter()
+            .filter(|a| &a.issue == issue)
+        {
+            findings.push(Finding::CommentApprovalIgnored {
+                issue: issue.clone(),
+                author: a.author.clone(),
+                created_at: a.created_at,
+            });
+        }
         let approval = approval_state(&approvals, plan_row, fit.as_ref().map(|f| f.fits));
         if approval
             .as_ref()
@@ -373,6 +436,11 @@ pub fn build(
                 Some(v.iter().sum())
             }
         };
+        // ADR 0058: a plan on a branch with no draft and no counted approval, once plans are
+        // approved in Rubato.
+        let outside_rubato = inputs.approvals_in_rubato
+            && approval.is_none()
+            && plan_row.is_some_and(|p| draft.as_ref().is_none_or(|d| d.branch != p.branch));
         out.push(IssueSummary {
             issue: issue.clone(),
             title: meta.and_then(|m| m.title.clone()),
@@ -407,25 +475,41 @@ pub fn build(
             spend_history: inputs.spend.get(issue).cloned().unwrap_or_default(),
             fits_in,
             pinned_in,
+            outside_rubato,
+            draft,
         });
+        if !plan_on_branch && let Some(p) = draft_plan {
+            draft_plans.push((issue.clone(), p));
+        }
     }
     for s in &mut out {
         s.progress.pinned_to = s.pins.clone();
     }
+    // The handoffs' findings, for the issues this overview holds (ADR 0055).
+    findings.extend(
+        inputs
+            .approval_findings
+            .iter()
+            .filter(|f| handoff_issue(f).is_some_and(|i| issues.contains(i)))
+            .cloned(),
+    );
 
-    // Two or more open plans on one seam.
-    let mut by_seam: BTreeMap<&str, Vec<IssueRef>> = BTreeMap::new();
-    for s in &out {
-        if s.progress.state == ProgressState::Done {
-            continue;
-        }
-        if let Some(p) = &s.plan {
-            for seam in seams_touched(p) {
-                by_seam.entry(seam).or_default().push(s.issue.clone());
-            }
-        }
-    }
-    for (seam, issues) in by_seam {
+    // Two or more open plans on one seam: plans on a branch, then drafts not on one (the same
+    // grouping a room's seam notices read, `seam_groups`).
+    let done: HashSet<&IssueRef> = out
+        .iter()
+        .filter(|s| s.progress.state == ProgressState::Done)
+        .map(|s| &s.issue)
+        .collect();
+    let open_plans = out
+        .iter()
+        .filter(|s| s.progress.state != ProgressState::Done)
+        .filter_map(|s| s.plan.as_ref().map(|p| (s.issue.clone(), p)));
+    let open_drafts = draft_plans
+        .iter()
+        .filter(|(issue, _)| !done.contains(issue))
+        .map(|(issue, p)| (issue.clone(), p));
+    for (seam, issues) in rubato_protocol::seam_groups(open_plans.chain(open_drafts)) {
         if issues.len() > 1 {
             findings.push(Finding::SeamCollision {
                 seam: seam.to_owned(),
@@ -465,6 +549,7 @@ pub fn build(
                 &m.map,
                 inputs.traffic.report.as_ref(),
                 &inputs.traffic.source,
+                &inputs.dismissals,
                 now,
             );
             findings.extend(f);
@@ -639,7 +724,7 @@ pub fn counts(built: &Built) -> (BTreeMap<ProgressState, usize>, BTreeMap<String
             continue;
         }
         if let Some(p) = &i.plan {
-            for s in seams_touched(p) {
+            for s in p.seams_touched() {
                 *by_seam.entry(s.to_owned()).or_insert(0) += 1;
             }
         }
@@ -682,7 +767,9 @@ fn blocked_from_label(at: Option<ProgressState>) -> &'static str {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use rubato_protocol::{AffectedPart, BlockCause, ORow, PartStatus, StateSource, SystemMap};
+    use rubato_protocol::{
+        AffectedPart, BlockCause, ORow, PartStatus, Plan, StateSource, SystemMap,
+    };
     use uuid::Uuid;
 
     fn now() -> DateTime<Utc> {
@@ -732,9 +819,12 @@ mod tests {
                 assumed: vec![],
                 flows: vec![],
                 data_models: vec![],
+                decisions: vec![],
+                approval: None,
             }),
             parse_error: None,
             approval_sha: Some("f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9".into()),
+            head_sha: None,
         }
     }
 
@@ -755,6 +845,8 @@ mod tests {
             spend_usd: Some(1.5),
             branch_drift: None,
             blocked_by: None,
+            launch_id: None,
+            hooks_lost: false,
         }
     }
 
@@ -767,10 +859,14 @@ mod tests {
             pins: vec![],
             sessions: vec![],
             plans: vec![],
+            drafts: vec![],
             prs: HashMap::new(),
             decisions: vec![],
             reviews: vec![],
             approvals: vec![],
+            ignored_approvals: vec![],
+            approvals_in_rubato: false,
+            approval_findings: vec![],
             launched: HashSet::new(),
             cap_hits: HashMap::new(),
             meta: HashMap::new(),
@@ -784,6 +880,7 @@ mod tests {
                 report: None,
                 source: rubato_protocol::SourceStatus::NotConfigured,
             },
+            dismissals: vec![],
             spend: HashMap::new(),
             workspaces: Default::default(),
         }
@@ -805,7 +902,13 @@ mod tests {
             pinned_by: "m0x6A".into(),
             pinned_at: now(),
         }];
-        let without = build(&inputs, Some(&map()), &Limits::default(), now());
+        // Each part declares the namespaceless service it is (ADR 0059), so the report matches.
+        let mut map = map();
+        for n in &mut map.map.nodes {
+            n.service = Some(rubato_protocol::ServiceId::new(None, &n.id));
+        }
+        let map = &map;
+        let without = build(&inputs, Some(map), &Limits::default(), now());
         let edge = |client: &str, server: &str, calls| TrafficEdge {
             client: client.into(),
             server: server.into(),
@@ -821,6 +924,10 @@ mod tests {
                 edges: vec![
                     edge("web", "rubato-server", 100),
                     edge("rubato-companion", "github", 3),
+                    TrafficEdge {
+                        client_namespace: Some("shop".into()),
+                        ..edge("checkout", "rubato-server", 4)
+                    },
                 ],
                 truncated: false,
             }),
@@ -829,7 +936,18 @@ mod tests {
                 error: None,
             },
         };
-        let with = build(&inputs, Some(&map()), &Limits::default(), now());
+        // A dismissal is no input to progress either (ADR 0060).
+        inputs.dismissals = vec![rubato_protocol::TrafficDismissal {
+            id: 1,
+            target: rubato_protocol::DiscrepancyKey::QuietSeam {
+                seam: "server-github".into(),
+            },
+            author: "m0x6A".into(),
+            at: now(),
+        }];
+        let with = build(&inputs, Some(map), &Limits::default(), now());
+        assert_eq!(with.traffic.ghosts.len(), 1, "{:?}", with.traffic);
+        assert_eq!(with.traffic.dismissed.len(), 1);
         assert_eq!(with.traffic.state, TrafficState::Fresh);
         assert_eq!(without.traffic.state, TrafficState::NotConfigured);
         assert!(!with.issues.is_empty());
@@ -902,6 +1020,54 @@ mod tests {
                 .issues
                 .iter()
                 .all(|i| i.progress.state == ProgressState::Designed)
+        );
+    }
+
+    /// ADR 0053: drafts not on a branch count on seams, an idle session with a draft is Designed,
+    /// and another person's refused bundle is a finding.
+    #[test]
+    fn drafts_count_on_seams_and_as_written_plans() {
+        let a = IssueRef::new("o/r", 1);
+        let b = IssueRef::new("o/r", 2);
+        let draft = |issue: &IssueRef, conflict: bool| crate::plan_drafts::LatestDraft {
+            issue: issue.clone(),
+            summary: rubato_protocol::DraftSummary {
+                draft_id: uuid::Uuid::new_v4(),
+                branch: format!("issue/{}-x", issue.number),
+                owner: "m0x6A".into(),
+                rev: 1,
+                at: now(),
+                plan_sha: "s".into(),
+                bundle_hash: "h".into(),
+                missing: vec![],
+                parse_error: None,
+                live: false,
+                imported_from: None,
+                original_author: None,
+            },
+            plan: plan(issue, "companion-server", "rubato-companion").plan,
+            conflict: conflict.then(|| ("alice".to_owned(), now())),
+        };
+        let mut inputs = empty();
+        inputs.drafts = vec![draft(&a, false), draft(&b, true)];
+        let mut s = session(&a, SessionStatus::Idle, StateSource::Hook);
+        s.branch = Some("issue/1-x".into());
+        inputs.sessions = vec![s];
+        let built = build(&inputs, Some(&map()), &Limits::default(), now());
+        assert!(built.findings.iter().any(|f| matches!(f, Finding::SeamCollision { seam, issues } if seam == "companion-server" && issues.len() == 2)), "two drafts on one seam");
+        assert!(built.findings.iter().any(|f| matches!(f, Finding::DraftOwnerConflict { issue, other, .. } if *issue == b && other == "alice")));
+        let ia = built.issues.iter().find(|i| i.issue == a).unwrap();
+        assert_eq!(ia.progress.state, ProgressState::Designed);
+        assert!(
+            ia.draft.as_ref().unwrap().live,
+            "the owner's session is on the draft's branch"
+        );
+        let ib = built.issues.iter().find(|i| i.issue == b).unwrap();
+        assert!(!ib.draft.as_ref().unwrap().live, "parked");
+        assert_eq!(
+            ib.progress.state,
+            ProgressState::Designed,
+            "a parked draft is written"
         );
     }
 
@@ -1291,7 +1457,10 @@ mod tests {
     ) -> ApprovalRecord {
         ApprovalRecord {
             issue: issue.clone(),
-            comment_id: id,
+            source: rubato_protocol::ApprovalSource::Comment,
+            comment_id: Some(id),
+            approval_id: None,
+            bundle_hash: None,
             author: "m0x6A".into(),
             sha: sha.map(str::to_owned),
             branch: branch.map(str::to_owned),
@@ -1369,6 +1538,146 @@ mod tests {
         assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::NoPlan);
         // Naming the branch the plan is read from compares with the plan as read.
         inputs.approvals[0].0.branch = Some("issue/71-create-issue".into());
+        assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::Current);
+    }
+
+    /// A Rubato approval of a draft not on a branch yet (ADR 0054), as `approve::approvals`
+    /// gives it: compared with the draft's newest revision.
+    fn rubato_approval(
+        issue: &IssueRef,
+        at_secs: i64,
+        sha: &str,
+        newest: &str,
+    ) -> (crate::approve::RubatoApproval, Option<String>) {
+        (
+            crate::approve::RubatoApproval {
+                id: Uuid::from_u128(at_secs as u128),
+                issue: issue.clone(),
+                branch: format!("issue/{}-x", issue.number),
+                draft_id: Uuid::from_u128(99),
+                rev: 1,
+                plan_sha: sha.into(),
+                bundle_hash: "h".into(),
+                approved_by: "teammate".into(),
+                approved_at: now() + chrono::Duration::seconds(at_secs),
+                self_approved: false,
+                summary: String::new(),
+                handoff: None,
+            },
+            Some(newest.into()),
+        )
+    }
+
+    /// The draft that puts an issue with no plan on a branch in the overview.
+    fn draft_of(issue: &IssueRef, sha: &str) -> crate::plan_drafts::LatestDraft {
+        crate::plan_drafts::LatestDraft {
+            issue: issue.clone(),
+            summary: rubato_protocol::DraftSummary {
+                draft_id: Uuid::from_u128(99),
+                branch: format!("issue/{}-x", issue.number),
+                owner: "m0x6A".into(),
+                rev: 1,
+                at: now(),
+                plan_sha: sha.into(),
+                bundle_hash: "h".into(),
+                missing: vec![],
+                parse_error: None,
+                live: false,
+                imported_from: None,
+                original_author: None,
+            },
+            plan: None,
+            conflict: None,
+        }
+    }
+
+    /// ADR 0054: one list, the newest counted approval decides. A comment posted after the
+    /// cutover is newer than the Rubato approval but never hides it, and is a finding; without a
+    /// cutover the same comment wins, so the check cannot pass by accident.
+    #[test]
+    fn a_comment_after_the_cutover_never_hides_a_current_rubato_approval() {
+        let a = IssueRef::new("o/r", 71);
+        let comment = (approval(&a, 30, Some(EARLIER), None), None);
+        let rubato = rubato_approval(&a, 10, CURRENT, CURRENT);
+        let cutover = Some(now() + chrono::Duration::seconds(20));
+        let merged = crate::approve::merge(vec![comment.clone()], vec![rubato.clone()], cutover);
+        let mut inputs = empty();
+        inputs.drafts = vec![draft_of(&a, CURRENT)];
+        inputs.approvals = merged.counted;
+        inputs.ignored_approvals = merged.ignored;
+        let built = build(&inputs, None, &Limits::default(), now());
+        let one = built
+            .issues
+            .iter()
+            .find(|i| i.issue == a)
+            .expect("issue 71");
+        let state = one.approval.as_ref().unwrap();
+        assert_eq!(state.version, ApprovalVersion::Current);
+        assert_eq!(state.record.source, rubato_protocol::ApprovalSource::Rubato);
+        assert_eq!(state.record.approval_id, Some(Uuid::from_u128(10)));
+        assert_eq!(
+            built
+                .findings
+                .iter()
+                .filter(|f| matches!(f, Finding::CommentApprovalIgnored { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![Finding::CommentApprovalIgnored {
+                issue: a.clone(),
+                author: "m0x6A".into(),
+                created_at: now() + chrono::Duration::seconds(30),
+            }]
+        );
+        // No cutover: the later comment counts and decides.
+        let merged = crate::approve::merge(vec![comment], vec![rubato], None);
+        let mut inputs = empty();
+        inputs.drafts = vec![draft_of(&a, CURRENT)];
+        inputs.approvals = merged.counted;
+        inputs.ignored_approvals = merged.ignored;
+        let built = build(&inputs, None, &Limits::default(), now());
+        let one = built.issues.iter().find(|i| i.issue == a).unwrap();
+        assert_eq!(
+            one.approval.as_ref().unwrap().record.source,
+            rubato_protocol::ApprovalSource::Comment
+        );
+        assert!(
+            !built
+                .findings
+                .iter()
+                .any(|f| matches!(f, Finding::CommentApprovalIgnored { .. }))
+        );
+    }
+
+    /// Before handoff a Rubato approval is current while its plan sha is the newest revision's;
+    /// a newer revision makes it stale, with the finding the gauge counts. Once the plan is on
+    /// the branch it names, the plan as read decides.
+    #[test]
+    fn a_rubato_approval_follows_the_newest_revision_then_the_plan_on_the_branch() {
+        let a = IssueRef::new("o/r", 71);
+        let mut inputs = empty();
+        inputs.drafts = vec![draft_of(&a, CURRENT)];
+        inputs.approvals =
+            crate::approve::merge(vec![], vec![rubato_approval(&a, 1, CURRENT, CURRENT)], None)
+                .counted;
+        assert_eq!(approval_of(&inputs, &a), (ApprovalVersion::Current, vec![]));
+        inputs.approvals =
+            crate::approve::merge(vec![], vec![rubato_approval(&a, 1, EARLIER, CURRENT)], None)
+                .counted;
+        assert_eq!(
+            approval_of(&inputs, &a),
+            (
+                ApprovalVersion::Earlier,
+                vec![Finding::ApprovalStale {
+                    issue: a.clone(),
+                    approved_sha: EARLIER.into(),
+                    current_sha: CURRENT.into(),
+                }]
+            )
+        );
+        // Handed off: the plan on `issue/71-x` is read, and it hashes to the approved sha.
+        let mut row = plan(&a, "companion-server", "rubato-companion");
+        row.approval_sha = Some(EARLIER.into());
+        inputs.plans = vec![row];
         assert_eq!(approval_of(&inputs, &a).0, ApprovalVersion::Current);
     }
 
@@ -1484,6 +1793,7 @@ mod cross_workspace_tests {
                     repo: Some((*repo).into()),
                     path: None,
                     description: None,
+                    service: None,
                 })
                 .collect(),
             seams: vec![],

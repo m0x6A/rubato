@@ -73,8 +73,14 @@ export function scoped(path: string): string {
   return `/api/w/${encodeURIComponent(ws)}/${path.slice("/api/".length)}`;
 }
 
-/** Whether a change concerns this page: one for every workspace, or for ours. */
+/**
+ * Whether a change means refetching the overview: one for every workspace, or for ours. An
+ * `updated` event names one resource the overview does not carry, so only its view refetches.
+ */
 export function concernsUs(ev: WebEvent): boolean {
+  if (ev.type !== "changed") {
+    return false;
+  }
   return !ev.workspace || ev.workspace === (currentWorkspace() ?? DEFAULT_WORKSPACE);
 }
 

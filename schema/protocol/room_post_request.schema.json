@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RoomPostRequest",
+  "description": "A person's message to a room (`POST` `routes::ROOM_MESSAGES`).",
+  "type": "object",
+  "properties": {
+    "branch": {
+      "type": "string"
+    },
+    "number": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "repo": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "repo",
+    "number",
+    "branch",
+    "text"
+  ]
+}

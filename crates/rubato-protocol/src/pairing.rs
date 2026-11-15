@@ -74,6 +74,12 @@ pub struct PairingInfo {
     pub revoked_at: Option<DateTime<Utc>>,
     /// A websocket is open right now.
     pub connected: bool,
+    /// Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::session::ClientKind::is_interactive"
+    )]
+    pub client: crate::session::ClientKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

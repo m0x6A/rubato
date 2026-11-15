@@ -24,6 +24,8 @@ pub struct PairingRow {
     pub last_seen: Option<DateTime<Utc>>,
     pub server_seq: u64,
     pub last_companion_seq: u64,
+    /// Interactive or headless, from its last Hello (ADR 0062, migration 0023).
+    pub client: rubato_protocol::ClientKind,
 }
 
 fn pairing_row(r: &sqlx::sqlite::SqliteRow) -> PairingRow {
@@ -40,6 +42,11 @@ fn pairing_row(r: &sqlx::sqlite::SqliteRow) -> PairingRow {
             .map(|s| parse_ts(&s)),
         server_seq: r.get::<i64, _>("server_seq") as u64,
         last_companion_seq: r.get::<i64, _>("last_companion_seq") as u64,
+        client: if r.try_get::<String, _>("client").ok().as_deref() == Some("headless") {
+            rubato_protocol::ClientKind::Headless
+        } else {
+            rubato_protocol::ClientKind::Interactive
+        },
     }
 }
 
@@ -96,33 +103,63 @@ async fn claim_code(
     Ok(r.rows_affected() == 1)
 }
 
-/// The human approved a code. Creates (or replaces) the pairing and parks the token for one poll.
+/// What an approval did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Approval {
+    /// The pairing was created, or the approver's own pairing replaced.
+    Approved(Uuid),
+    /// No pending, unexpired code with that user code.
+    NotFound,
+    /// The companion id is paired to another person (live or revoked). Nothing about that
+    /// pairing changed, and the code is now `denied` (#160).
+    Taken(Uuid),
+}
+
+/// The human approved a code. Creates the pairing, or replaces the approver's own, and parks the
+/// token for one poll. A companion id stays with the user who first paired it (ADR 0011).
 pub async fn approve_pairing_code(
     db: &SqlitePool,
     user_code: &str,
     user: &str,
     token: &str,
-) -> Result<Option<Uuid>> {
+) -> Result<Approval> {
     let Some(row) = sqlx::query("SELECT device_code, companion_id, hostname, expires_at, status FROM pairing_codes WHERE user_code = ?").bind(user_code).fetch_optional(db).await? else {
-        return Ok(None);
+        return Ok(Approval::NotFound);
     };
     let status: String = row.get("status");
     let expires = parse_ts(&row.get::<String, _>("expires_at"));
     if status != "pending" || expires < Utc::now() {
-        return Ok(None);
+        return Ok(Approval::NotFound);
     }
     let companion_id: String = row.get("companion_id");
+    let Ok(id) = Uuid::parse_str(&companion_id) else {
+        return Ok(Approval::NotFound);
+    };
     let hostname: String = row.get("hostname");
     let device_code: String = row.get("device_code");
     let mut tx = db.begin().await?;
     if !claim_code(&mut tx, &device_code, user, token).await? {
-        // Another approval claimed it first, or it expired since the read.
-        return Ok(None);
+        // Another approval claimed it first, or it expired since the read (#168).
+        return Ok(Approval::NotFound);
     }
-    sqlx::query("INSERT INTO pairings (companion_id, user, token_hash, hostname, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(companion_id) DO UPDATE SET user = excluded.user, token_hash = excluded.token_hash, hostname = excluded.hostname, revoked_at = NULL")
+    // One statement decides ownership: the update applies only to a row of the same user, so
+    // two approvals cannot both pass a read and then write.
+    let upsert = sqlx::query("INSERT INTO pairings (companion_id, user, token_hash, hostname, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(companion_id) DO UPDATE SET token_hash = excluded.token_hash, hostname = excluded.hostname, revoked_at = NULL WHERE pairings.user = excluded.user")
         .bind(&companion_id).bind(user).bind(token_hash(token)).bind(&hostname).bind(ts(Utc::now())).execute(&mut *tx).await?;
+    if upsert.rows_affected() == 0 {
+        // Taken (#160): the claim above parked a token; a denied code keeps none.
+        sqlx::query(
+            "UPDATE pairing_codes SET status = 'denied', user = ?, token = NULL WHERE device_code = ?",
+        )
+        .bind(user)
+        .bind(&device_code)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        return Ok(Approval::Taken(id));
+    }
     tx.commit().await?;
-    Ok(Uuid::parse_str(&companion_id).ok())
+    Ok(Approval::Approved(id))
 }
 
 pub async fn poll_pairing_code(db: &SqlitePool, device_code: &str) -> Result<PairPollResponse> {
@@ -206,6 +243,20 @@ pub async fn touch_pairing(db: &SqlitePool, companion_id: Uuid, at: DateTime<Utc
 pub async fn next_server_seq(db: &SqlitePool, companion_id: Uuid) -> Result<u64> {
     let r = sqlx::query("UPDATE pairings SET server_seq = server_seq + 1 WHERE companion_id = ? RETURNING server_seq").bind(companion_id.to_string()).fetch_one(db).await?;
     Ok(r.get::<i64, _>("server_seq") as u64)
+}
+
+/// What kind of client the companion said it is in its Hello (ADR 0062).
+pub async fn set_client(
+    db: &SqlitePool,
+    companion_id: Uuid,
+    client: rubato_protocol::ClientKind,
+) -> Result<()> {
+    sqlx::query("UPDATE pairings SET client = ? WHERE companion_id = ?")
+        .bind(client.name())
+        .bind(companion_id.to_string())
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 pub async fn set_last_companion_seq(db: &SqlitePool, companion_id: Uuid, seq: u64) -> Result<()> {

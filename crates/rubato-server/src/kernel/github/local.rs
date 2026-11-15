@@ -118,6 +118,19 @@ impl GitHubApi for LocalGit {
             .await
     }
 
+    async fn last_commit_author(
+        &self,
+        repo: &str,
+        path: &str,
+        sha: &str,
+    ) -> Result<Option<String>> {
+        Ok(self
+            .git(repo, &["log", "-1", "--format=%an", sha, "--", path])
+            .await?
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty()))
+    }
+
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>> {
         Ok(self
             .git(
