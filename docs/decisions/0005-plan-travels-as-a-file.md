@@ -1,6 +1,6 @@
 # 0005. The plan travels as a file in the repo, not through an API
 
-- **Status:** accepted
+- **Status:** accepted; planning phase superseded by 0053
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (recorded in AGENTS.md)
 - **Seam:** skill-plan-file, server-plan-file

@@ -1,8 +1,8 @@
 # 0053. A plan lives in Rubato as a draft until it is approved; the companion mirrors it from the worktree at settle points
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's decisions in #122 ("drafts live in Rubato", "custody moves one way") and his answers of 2026-11-14; a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/122#issuecomment-6891477242 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's decisions in #122 ("drafts live in Rubato", "custody moves one way") and his answers of 2026-11-14
 - **Seam:** companion-server, server-plan-file, web-server
 - **Issue:** m0x6A/rubato#122
 
