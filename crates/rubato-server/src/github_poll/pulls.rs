@@ -35,16 +35,16 @@ pub async fn list_repo_pulls(
     let mut pass = PullsPass::default();
     let named: BTreeSet<&str> = map.repos_named();
     for repo in &named {
-        let listing = view.pull_listing(app, repo).await.clone();
-        let result = match listing {
+        // Borrowed from the tick's view, not copied (#171).
+        let result = match view.pull_listing(app, repo).await {
             Ok(l) => {
                 pass.listed += 1;
-                replace(app, repo, &l, tracked, full, &mut pass).await
+                replace(app, repo, l, tracked, full, &mut pass).await
             }
             Err(e) => {
                 pass.failed += 1;
                 tracing::warn!(rubato.repo = %repo, error = %e, "pulls listing failed");
-                record_error(&app.db, repo, &e).await
+                record_error(&app.db, repo, e).await
             }
         };
         if let Err(e) = result {

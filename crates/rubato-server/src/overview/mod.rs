@@ -3,6 +3,8 @@
 
 mod build;
 mod gauges;
+#[cfg(test)]
+mod golden_tests;
 mod handler;
 mod inputs;
 #[cfg(test)]

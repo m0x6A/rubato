@@ -52,7 +52,7 @@ pub(super) fn log_state(from: &str, to: &str, row: &ProposalRow, pr: Option<u64>
     );
 }
 
-async fn loaded(app: &App, ws: &str) -> Result<LoadedMap, Refusal> {
+async fn loaded(app: &App, ws: &str) -> Result<std::sync::Arc<LoadedMap>, Refusal> {
     app.map_of(ws)
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))
