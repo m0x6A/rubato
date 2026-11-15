@@ -606,6 +606,65 @@ async fn reviews_and_approvals_count_only_from_members() {
     assert_eq!(approval.current_sha.as_deref(), Some(sha.as_str()));
 }
 
+/// Issue #164, ADR 0062: `Decision:` counts only from members, like `Review:` and `Approved:`.
+/// The repo is public, so a stranger's, a contributor's and a Bot's decision must not show, and
+/// a row an older server stored for an outsider's comment goes.
+#[tokio::test]
+async fn decisions_count_only_from_members() {
+    let decision = |t: &str| format!("Decision: {t}\n\n## Chosen\nyes");
+    let (_h, one) = issue_71_with(vec![
+        comment(1, "stranger", "NONE", false, &decision("From a stranger")),
+        comment(
+            2,
+            "drive-by",
+            "CONTRIBUTOR",
+            false,
+            &decision("From a contributor"),
+        ),
+        comment(3, "helper[bot]", "MEMBER", true, &decision("From a Bot")),
+        comment(4, "teammate", "MEMBER", false, &decision("From the team")),
+    ])
+    .await;
+    let titles: Vec<&str> = one.decisions.iter().map(|d| d.title.as_str()).collect();
+    assert_eq!(titles, ["From the team"], "{:?}", one.decisions);
+
+    // A row an older server stored for comment 1, before the author was checked.
+    let (h, _) = issue_71_with(vec![comment(
+        1,
+        "stranger",
+        "NONE",
+        false,
+        &decision("From a stranger"),
+    )])
+    .await;
+    let stored = rubato_protocol::DecisionRecord {
+        issue: IssueRef::new("m0x6A/rubato", 71),
+        comment_id: 1,
+        author: "stranger".into(),
+        title: "From a stranger".into(),
+        context: None,
+        options: None,
+        chosen: Some("yes".into()),
+        why: None,
+        created_at: chrono::Utc::now(),
+        url: "c1".into(),
+    };
+    sqlx::query(
+        "INSERT OR REPLACE INTO decisions (repo, number, comment_id, record) VALUES (?, ?, ?, ?)",
+    )
+    .bind("m0x6A/rubato")
+    .bind(71_i64)
+    .bind(1_i64)
+    .bind(serde_json::to_string(&stored).unwrap())
+    .execute(&h.app.db)
+    .await
+    .unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 71).unwrap();
+    assert!(one.decisions.is_empty(), "{:?}", one.decisions);
+}
+
 /// Ticking a task keeps the approval current; editing the spec makes it stale, a finding.
 #[tokio::test]
 async fn editing_the_plan_makes_an_approval_stale() {

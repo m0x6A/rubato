@@ -1,5 +1,5 @@
 //! Per-issue reads of GitHub: issue metadata, the issue branch, its PR and checks, `Decision:`
-//! comments (ADR 0014), `Review:` and `Approved:` comments from members (ADR 0027); and the rate
+//! (ADR 0014), `Review:` and `Approved:` (ADR 0027) comments from members (ADR 0062); and the rate
 //! limit. `tasks::Poller` calls these in order (design §9.1).
 //!
 //! Issue #49 (ADR 0023, proposed): branches and open pull requests are listed once per repo per
@@ -309,23 +309,26 @@ pub struct CommentsRead {
     pub newest_approval: Option<ApprovalRecord>,
 }
 
-/// One pass over an issue's comments (one call, on the full lane): `Decision:` comments as
-/// before (ADR 0014), and `Review:` and `Approved:` comments from members (ADR 0027). A review
-/// or approval from a Bot or from someone who is not OWNER, MEMBER or COLLABORATOR is ignored
-/// and logged. Signals whose comment is gone are dropped.
+/// One pass over an issue's comments (one call, on the full lane): `Decision:` (ADR 0014),
+/// `Review:` and `Approved:` (ADR 0027) comments, each counted only from members (ADR 0062). One
+/// from a Bot or from someone who is not OWNER, MEMBER or COLLABORATOR is ignored and logged, and
+/// a decision stored for it earlier is deleted. Signals whose comment is gone are dropped.
 pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> {
     let mut read = CommentsRead::default();
     let mut kept: Vec<u64> = Vec::new();
     for c in app.github.issue_comments(&issue.repo, issue.number).await? {
         let review = ReviewRecord::parse_body(&c.body);
         let approval = ApprovalRecord::parse_body(&c.body);
-        if (review.is_some() || approval.is_some())
+        let decision = DecisionRecord::parse_body(&c.body);
+        if (review.is_some() || approval.is_some() || decision.is_some())
             && !trusted_author(&c.author_association, c.author_is_bot)
         {
             let kind = if review.is_some() {
                 "review"
-            } else {
+            } else if approval.is_some() {
                 "approval"
+            } else {
+                "decision"
             };
             let reason = if c.author_is_bot {
                 "bot".to_owned()
@@ -340,6 +343,10 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
                 reason = %reason,
                 "{kind} ignored"
             );
+            if decision.is_some() {
+                // A row an older server stored before the author was checked (#164).
+                store::delete_decision(&app.db, issue, c.id).await?;
+            }
             continue;
         }
         if let Some(r) = review {
@@ -394,7 +401,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             }
             continue;
         }
-        if let Some(body) = DecisionRecord::parse_body(&c.body) {
+        if let Some(body) = decision {
             store::upsert_decision(
                 &app.db,
                 &DecisionRecord {
