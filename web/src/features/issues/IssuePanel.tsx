@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { ProgressRing, SpendGauge, SpendSparkline, StageRail } from "./visuals.tsx";
 import { SessionChat } from "../chat/index.ts";
 import { PinMenu } from "../pins/index.ts";
 import { DraftSection, WhereItFits } from "../plans/index.ts";
+import { PullView } from "../pulls/index.ts";
 import { QueueMenu } from "../queue/index.ts";
 import { RoomSection, roomLimit } from "../room/index.ts";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
@@ -64,6 +65,9 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
       heading.current?.focus();
     }
   }, [openKey]);
+  // The pull request's view, opened from its line; closed again when another issue opens.
+  const [pullOpen, setPullOpen] = useState(false);
+  useEffect(() => setPullOpen(false), [openKey]);
   const issues = [...overview.issues]
     .filter((i) => !selection || i.pins.some((p) => p.kind === selection.kind && p.id === selection.id))
     .sort((a, b) => ORDER.indexOf(a.progress.state) - ORDER.indexOf(b.progress.state) || a.issue.number - b.issue.number);
@@ -175,9 +179,13 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             </a>{" "}
             <span className="muted">
               {selected.pull_request.merged_at ? "merged" : selected.pull_request.open ? "open" : "closed"} · checks {selected.pull_request.checks}
-            </span>
+            </span>{" "}
+            <button type="button" className="link" data-testid="open-pull-view" onClick={() => setPullOpen((v) => !v)}>
+              {pullOpen ? "Hide" : "View"}
+            </button>
           </p>
         )}
+        {selected.pull_request && pullOpen && <PullView repo={selected.pull_request.repo} number={selected.pull_request.number} refreshKey={overview.generated_at} />}
         {(selected.plan || selected.review || selected.approval) && <PlanSignals issue={selected} />}
         {(selected.decisions ?? []).length > 0 && (
           <>

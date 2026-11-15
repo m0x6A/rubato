@@ -511,7 +511,16 @@ export function App() {
               }}
             />
           )}
-          {overview && tab === "repos" && <ConnectedRepos overview={overview} />}
+          {overview && tab === "repos" && (
+            <ConnectedRepos
+              overview={overview}
+              onPin={onPin}
+              onOpenIssue={(issue) => {
+                setTab("issues");
+                setSelectedIssue(issue);
+              }}
+            />
+          )}
           {/* An open issue with a plan: the map shows the plan, and below the issue this says what the plan says. */}
           {overview && tab === "issues" && selected?.plan && (
             <PlanInspector
