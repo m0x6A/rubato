@@ -9,28 +9,60 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use rubato_protocol::pairing::{
-    PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse,
+    PAIR_FIELD_MAX_CHARS, PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse,
+    routes,
 };
 use rubato_protocol::{PairApproveRequest, PairingInfo};
 use uuid::Uuid;
 
 const SLICE: &str = "pairing";
 
+/// The reason values of a refused pairing start, as counted in `rubato.web.rejected` (#168).
+pub mod reason {
+    pub const FIELD_TOO_LONG: &str = "field_too_long";
+    pub const PENDING_CAP: &str = "pending_cap";
+}
+
+/// Who a refusal of the anonymous start is logged as.
+const ANONYMOUS: &str = "anonymous";
+
+type Refusal = (StatusCode, String);
+
 pub async fn start(
     State(app): State<App>,
     Json(req): Json<PairStartRequest>,
-) -> Result<Json<PairStartResponse>, StatusCode> {
+) -> Result<Json<PairStartResponse>, Refusal> {
+    for (field, value) in [
+        ("hostname", &req.hostname),
+        ("companion_version", &req.companion_version),
+    ] {
+        if value.chars().count() > PAIR_FIELD_MAX_CHARS {
+            app.reject(routes::PAIR_START, reason::FIELD_TOO_LONG, ANONYMOUS);
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("{field} is longer than {PAIR_FIELD_MAX_CHARS} characters."),
+            ));
+        }
+    }
     let device_code = random_token();
     let code = user_code();
-    store::create_pairing_code(
+    let stored = store::create_pairing_code(
         &app.db,
         &req,
         &device_code,
         &code,
         app.config.pairing_ttl_secs,
+        app.config.pairing_max_pending,
     )
     .await
-    .map_err(|e| internal(SLICE, e))?;
+    .map_err(|e| (internal(SLICE, e), String::new()))?;
+    if !stored {
+        app.reject(routes::PAIR_START, reason::PENDING_CAP, ANONYMOUS);
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many pairings are waiting for approval; try again in a few minutes.".into(),
+        ));
+    }
     tracing::info!(companion_id = %req.companion_id, hostname = %req.hostname, "pairing started");
     Ok(Json(PairStartResponse {
         device_code,

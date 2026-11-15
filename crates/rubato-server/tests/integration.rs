@@ -823,6 +823,118 @@ async fn bad_and_revoked_tokens_are_refused() {
     assert!(tokio_tungstenite::connect_async(revoked).await.is_err());
 }
 
+impl Harness {
+    async fn start_pairing(&self, hostname: &str, version: &str) -> reqwest::Response {
+        self.http
+            .post(format!("{}{}", self.url, pr::PAIR_START))
+            .json(&PairStartRequest {
+                companion_id: Uuid::new_v4(),
+                hostname: hostname.into(),
+                companion_version: version.into(),
+            })
+            .send()
+            .await
+            .unwrap()
+    }
+
+    async fn code_rows(&self) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM pairing_codes")
+            .fetch_one(&self.app.db)
+            .await
+            .unwrap()
+    }
+}
+
+/// #168: the anonymous start refuses strings longer than the protocol allows, storing nothing.
+#[tokio::test]
+async fn pair_start_refuses_long_fields() {
+    use rubato_protocol::pairing::PAIR_FIELD_MAX_CHARS;
+    let h = harness().await;
+    let long = "é".repeat(PAIR_FIELD_MAX_CHARS + 1);
+    let fits = "é".repeat(PAIR_FIELD_MAX_CHARS);
+    let r = h.start_pairing(&long, "t").await;
+    assert_eq!(r.status(), 422, "hostname too long");
+    assert!(r.text().await.unwrap().contains("hostname"));
+    let r = h.start_pairing("h", &long).await;
+    assert_eq!(r.status(), 422, "companion_version too long");
+    assert!(r.text().await.unwrap().contains("companion_version"));
+    assert_eq!(h.code_rows().await, 0, "nothing stored for a refused start");
+    assert_eq!(h.start_pairing(&fits, &fits).await.status(), 200);
+    assert_eq!(h.code_rows().await, 1);
+    println!("checked 3 starts: 2 too long refused, 1 at the limit stored");
+}
+
+/// #168: at most `pairing_max_pending` codes wait at once; approving one frees a place.
+#[tokio::test]
+async fn pair_start_caps_pending_codes() {
+    let h = harness_with(|c| c.pairing_max_pending = 3).await;
+    let mut codes = Vec::new();
+    for _ in 0..3 {
+        let r = h.start_pairing("h", "t").await;
+        assert_eq!(r.status(), 200);
+        codes.push(r.json::<PairStartResponse>().await.unwrap());
+    }
+    let r = h.start_pairing("h", "t").await;
+    assert_eq!(r.status(), 429, "the fourth pending code is refused");
+    assert!(r.text().await.unwrap().contains("try again"));
+    assert_eq!(h.code_rows().await, 3);
+    let approve = h
+        .http
+        .post(format!("{}{}", h.url, pr::PAIR_APPROVE))
+        .header("x-rubato-dev-user", "bob")
+        .json(&PairApproveRequest {
+            user_code: codes[0].user_code.clone(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approve.status(), 200);
+    assert_eq!(
+        h.start_pairing("h", "t").await.status(),
+        200,
+        "a place freed"
+    );
+    println!("checked 5 starts against a cap of 3: 4 stored, 1 refused");
+}
+
+/// #168: ten people approving one code at once pair it once. A race test can pass by luck;
+/// `claim_refuses_a_code_already_claimed` in the store is the one that fails on purpose.
+#[tokio::test]
+async fn concurrent_approvals_of_one_code_pair_once() {
+    let h = harness().await;
+    let start: PairStartResponse = h.start_pairing("h", "t").await.json().await.unwrap();
+    let approvals = (0..10).map(|i| {
+        h.http
+            .post(format!("{}{}", h.url, pr::PAIR_APPROVE))
+            .header("x-rubato-dev-user", format!("user{i}"))
+            .json(&PairApproveRequest {
+                user_code: start.user_code.clone(),
+            })
+            .send()
+    });
+    let statuses: Vec<u16> = futures_util::future::join_all(approvals)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap().status().as_u16())
+        .collect();
+    assert_eq!(
+        statuses.iter().filter(|s| **s == 200).count(),
+        1,
+        "{statuses:?}"
+    );
+    assert_eq!(
+        statuses.iter().filter(|s| **s == 404).count(),
+        9,
+        "{statuses:?}"
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pairings")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+    println!("checked 10 concurrent approvals of one code: 1 paired, 9 refused");
+}
+
 #[tokio::test]
 async fn launch_goes_only_to_the_callers_own_connected_companion() {
     let h = harness().await;

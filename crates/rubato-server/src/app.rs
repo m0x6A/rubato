@@ -425,6 +425,41 @@ mod tests {
         assert_eq!(refused.value, 3);
         assert_eq!(refused.attrs[attr::ROUTE], queue_routes::QUEUE);
 
+        // Pairing starts (#168): a field too long, then the pending cap.
+        use rubato_protocol::pairing::{PAIR_FIELD_MAX_CHARS, PairStartRequest};
+        let start = |hostname: String| PairStartRequest {
+            companion_id: uuid::Uuid::new_v4(),
+            hostname,
+            companion_version: "t".into(),
+        };
+        let r = http
+            .post(format!("{base}{}", pr::PAIR_START))
+            .json(&start("h".repeat(PAIR_FIELD_MAX_CHARS + 1)))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 422);
+        assert_eq!(
+            count("field_too_long"),
+            Some((1, pr::PAIR_START.to_owned()))
+        );
+        for _ in 0..app.config.pairing_max_pending {
+            sqlx::query("INSERT INTO pairing_codes (device_code, user_code, companion_id, hostname, companion_version, status, created_at, expires_at) VALUES (?, ?, 'x', 'h', 't', 'pending', '2026-01-01T00:00:00+00:00', '2999-01-01T00:00:00+00:00')")
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(uuid::Uuid::new_v4().to_string())
+                .execute(&app.db)
+                .await
+                .unwrap();
+        }
+        let r = http
+            .post(format!("{base}{}", pr::PAIR_START))
+            .json(&start("h".into()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 429);
+        assert_eq!(count("pending_cap"), Some((1, pr::PAIR_START.to_owned())));
+
         // As a GitHub App with no dev user: a session without a team record is refused, counted.
         let tmp2 = tempfile::tempdir().unwrap();
         let url2 = format!("sqlite://{}/t.db?mode=rwc", tmp2.path().display());
@@ -460,7 +495,7 @@ mod tests {
         assert_eq!(stale.len(), 1, "{stale:?}");
         assert_eq!(stale[0].attrs[attr::DROP_REASON], "team_record_stale");
         assert_eq!(stale[0].attrs[attr::ROUTE], overview_routes::OVERVIEW);
-        println!("checked 8 refusal reasons");
+        println!("checked 10 refusal reasons");
     }
 
     #[tokio::test]

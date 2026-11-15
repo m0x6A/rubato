@@ -179,6 +179,8 @@ pub struct Config {
     pub default_spend_cap_usd: f64,
     pub default_attempt_limit: u32,
     pub pairing_ttl_secs: i64,
+    /// Pairing codes that may be pending and unexpired at once; a start above it is 429 (#168).
+    pub pairing_max_pending: i64,
     /// Problems found while reading the environment. `main` logs each as `warn!` once the
     /// subscriber exists, since `from_env` runs before it does (design D14).
     pub warnings: Vec<String>,
@@ -299,6 +301,7 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3),
             pairing_ttl_secs: 900,
+            pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,
             warnings,
         })
     }
@@ -381,6 +384,7 @@ impl Config {
             default_spend_cap_usd: 25.0,
             default_attempt_limit: 3,
             pairing_ttl_secs: 900,
+            pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,
             warnings: Vec::new(),
         }
     }
