@@ -5,7 +5,7 @@ use crate::hook::HookEvent;
 use crate::launch::{CapHit, LaunchCommand, LaunchResult};
 use crate::limits::Limits;
 use crate::plan_draft::DraftBundle;
-use crate::session::{Heartbeat, SessionState, StaleSession};
+use crate::session::{ClientKind, Heartbeat, SessionState, StaleSession};
 use crate::session_message::{SessionMessage, SessionMessageResult};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
@@ -34,6 +34,11 @@ pub mod capability {
     pub const HANDOFF_REPORTS: &str = "handoff_reports";
     /// The companion writes `LaunchCommand.draft` into a worktree the launch creates (ADR 0053).
     pub const DRAFT_RESTORE: &str = "draft_restore";
+    /// The companion runs in headless mode (ADR 0062) and may send `source: headless` snapshots.
+    pub const HEADLESS: &str = "headless";
+    /// Companion: it takes `SessionMessageKind::Stop`. Server: it takes `source: headless`
+    /// snapshots and offers Stop. Neither side sends a stop or a headless snapshot otherwise.
+    pub const SESSION_STOP: &str = "session_stop";
     /// The companion types room turns and runs read-only fork turns (ADR 0057).
     pub const ROOM_TURNS: &str = "room_turns";
     /// The server takes `CompanionMessage::RoomReply`.
@@ -57,6 +62,9 @@ pub enum CompanionMessage {
         /// What this companion can take (`capability`). Absent from an older companion.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         capabilities: Vec<String>,
+        /// Interactive (tmux) or headless (ADR 0062). An older companion is interactive.
+        #[serde(default, skip_serializing_if = "ClientKind::is_interactive")]
+        client: ClientKind,
     },
     Heartbeat(Heartbeat),
     Hook(HookEvent),

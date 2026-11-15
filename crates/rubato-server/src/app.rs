@@ -104,6 +104,10 @@ pub fn router(app: App) -> Router {
             get(session_messages::list).post(session_messages::send),
         )
         .route(
+            rubato_protocol::session_message::routes::LAUNCH_STOP,
+            post(session_messages::stop),
+        )
+        .route(
             rubato_protocol::session_log::routes::LAUNCH_LOG,
             get(session_log::log),
         )

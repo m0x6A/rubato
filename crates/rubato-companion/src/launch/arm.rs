@@ -22,9 +22,18 @@ pub async fn run(
     registry: Arc<Mutex<Registry>>,
     out: mpsc::UnboundedSender<CompanionMessage>,
     poll_tx: mpsc::UnboundedSender<()>,
+    headless: Option<crate::sessions::Headless>,
 ) -> anyhow::Result<()> {
     while let Some(cmd) = commands.recv().await {
-        on_command(&cmd, &launcher, &registry, &out, &poll_tx).await;
+        on_command(
+            &cmd,
+            &launcher,
+            &registry,
+            &out,
+            &poll_tx,
+            headless.as_ref(),
+        )
+        .await;
     }
     Ok(())
 }
@@ -35,6 +44,7 @@ pub async fn on_command(
     registry: &Mutex<Registry>,
     out: &mpsc::UnboundedSender<CompanionMessage>,
     poll_tx: &mpsc::UnboundedSender<()>,
+    headless: Option<&crate::sessions::Headless>,
 ) {
     let live = registry.lock().await.begin_launch(&cmd.issue);
     tracing::info!(launch_id = %cmd.id, issue = %cmd.issue, "launch started");
@@ -55,16 +65,53 @@ pub async fn on_command(
             None,
         ),
     };
+    let mut first_turn = None;
     {
         let mut reg = registry.lock().await;
         reg.end_launch();
         if let Some(s) = started {
             reg.apply_launch(cmd, &s.pane_id, &s.tmux_session, &s.worktree, Utc::now());
             reg.set_restored_hash(cmd.id, s.draft.bundle_hash.clone());
+            if s.headless {
+                // No pane to type into or to find again after a restart (ADR 0062).
+                if let Some(e) = reg.find_by_launch(cmd.id) {
+                    e.pane_id = None;
+                    e.tmux_session = None;
+                    e.window = None;
+                }
+                first_turn = Some(s.worktree.clone());
+            }
             // Kept across a companion restart (plan 122 §D1).
             save_launches_if_changed(&mut reg, &launcher.state_dir);
         }
     }
+    let result = match (first_turn, headless) {
+        (Some(worktree), Some(h)) => {
+            let args = crate::kernel::claude::first_turn_args(
+                &cmd.session_id.to_string(),
+                &cmd.prompt,
+                &launcher.workspace.companion.permission_mode,
+            );
+            match h
+                .start(
+                    cmd.id,
+                    &cmd.session_id.to_string(),
+                    &worktree,
+                    args,
+                    cmd.prompt.clone(),
+                )
+                .await
+            {
+                Ok(()) => result,
+                Err(e) => LaunchResult::Failed {
+                    command_id: cmd.id,
+                    error: format!("starting the headless turn: {e:#}"),
+                    at: Utc::now(),
+                },
+            }
+        }
+        _ => result,
+    };
     tracing::info!(launch_id = %cmd.id, issue = %cmd.issue, outcome = ?std::mem::discriminant(&result), "{}", rubato_protocol::otel::span::LAUNCH);
     let attempts_used_up = matches!(
         &result,
@@ -237,7 +284,7 @@ mod tests {
         });
 
         let cmd = command();
-        on_command(&cmd, &launcher, &registry, &out_tx, &poll_tx).await;
+        on_command(&cmd, &launcher, &registry, &out_tx, &poll_tx, None).await;
 
         probe.await.unwrap().unwrap();
         assert_missing_dependency(&mut out_rx);
@@ -266,7 +313,7 @@ mod tests {
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         let (poll_tx, _poll_rx) = mpsc::unbounded_channel();
 
-        on_command(&command(), &launcher, &registry, &out_tx, &poll_tx).await;
+        on_command(&command(), &launcher, &registry, &out_tx, &poll_tx, None).await;
 
         match out_rx.try_recv() {
             Ok(CompanionMessage::Launch(LaunchResult::Failed { error, .. })) => {
@@ -289,7 +336,7 @@ mod tests {
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         let (poll_tx, _poll_rx) = mpsc::unbounded_channel();
 
-        on_command(&command(), &launcher, &registry, &out_tx, &poll_tx).await;
+        on_command(&command(), &launcher, &registry, &out_tx, &poll_tx, None).await;
 
         assert_missing_dependency(&mut out_rx);
     }

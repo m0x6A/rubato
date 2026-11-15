@@ -29,6 +29,10 @@ export type CompanionMessage = ({
  * What this companion can take (`capability`). Absent from an older companion.
  */
 capabilities?: string[]
+/**
+ * Interactive (tmux) or headless (ADR 0062). An older companion is interactive.
+ */
+client?: ("interactive" | "headless")
 companion_id: string
 companion_version: string
 /**
@@ -53,7 +57,7 @@ export type BlockCause = ("permission_prompt" | "idle_prompt" | "stop_failure")
 /**
  * Where a status came from. Anything not hook-derived is rendered *unknown* (A10).
  */
-export type StateSource = ("hook" | "tmux_ide" | "scraped" | "launch")
+export type StateSource = ("hook" | "tmux_ide" | "scraped" | "launch" | "headless")
 export type SessionStatus = (("working" | "idle" | "blocked" | "ended") | "unknown")
 /**
  * Companion → server: what happened to a launch command.
@@ -495,6 +499,9 @@ self_approved: boolean
  * Rubato's link to the approval, written into accepted ADRs.
  */
 url: string
+} | {
+kind: "stop"
+requested_by: string
 } | {
 /**
  * The person whose message made the turn.
@@ -1963,6 +1970,10 @@ repo: string
 truncated?: boolean
 }
 export interface PairingInfo {
+/**
+ * Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.
+ */
+client?: ("interactive" | "headless")
 companion_id: string
 /**
  * A websocket is open right now.

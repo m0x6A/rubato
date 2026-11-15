@@ -365,3 +365,27 @@ tests:
             exp_annotations:
               summary: "2 plan(s) carry an approval record that differs from Rubato's"
               panel: Approval records that differ
+
+  # #138: a turn killed by its quiet bound at minute 5 fires; stops and cap kills never do.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_headless_killed_total{rubato_reason="quiet"}'
+        values: "0x5 1x20"
+      - series: 'rubato_headless_killed_total{rubato_reason="stop"}'
+        values: "0+1x25"
+      - series: 'rubato_headless_killed_total{rubato_reason="cap"}'
+        values: "0+1x25"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: HeadlessTurnsKilled
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: HeadlessTurnsKilled
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: companion-claude-code
+              owner: rubato-companion
+            exp_annotations:
+              summary: "Headless turns were killed by a time bound or at a companion restart in the last 30 minutes"
+              panel: Headless turns

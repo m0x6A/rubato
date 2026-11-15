@@ -86,12 +86,22 @@ pub struct CompanionConfig {
     /// Where the rubato skill is installed; None means `~/.claude/skills/rubato`. Its version
     /// decides whether `plan_approved` can be typed (ADR 0055).
     pub skill_dir: Option<PathBuf>,
+    /// `interactive` (tmux, the default) or `headless` (ADR 0062, A18): one mode per companion.
+    pub mode: rubato_protocol::ClientKind,
+    /// A headless turn running longer than this is killed, `failed { timeout }` (A19).
+    pub headless_turn_max_secs: u64,
+    /// A headless turn with no stream event for this long is killed, `failed { quiet }` (A19).
+    pub headless_quiet_max_secs: u64,
     /// Deadline for one read-only fork turn of a room agent (ADR 0057). Its first turn re-reads
     /// the whole session uncached, so it gets longer than other commands.
     pub fork_timeout_secs: u64,
 }
 
 impl CompanionConfig {
+    pub fn is_headless(&self) -> bool {
+        self.mode == rubato_protocol::ClientKind::Headless
+    }
+
     pub fn command_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.command_timeout_secs)
     }
@@ -117,6 +127,9 @@ impl Default for CompanionConfig {
             permission_mode: "acceptEdits".into(),
             command_timeout_secs: crate::kernel::tmux_ide::DEFAULT_TIMEOUT.as_secs(),
             skill_dir: None,
+            mode: rubato_protocol::ClientKind::Interactive,
+            headless_turn_max_secs: 4 * 60 * 60,
+            headless_quiet_max_secs: 15 * 60,
             fork_timeout_secs: 600,
         }
     }

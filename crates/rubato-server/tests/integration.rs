@@ -865,6 +865,97 @@ async fn bad_and_revoked_tokens_are_refused() {
     assert!(tokio_tungstenite::connect_async(revoked).await.is_err());
 }
 
+/// ADR 0062: a headless companion says so in its Hello; its lane keeps the badge offline, and an
+/// older Hello without `client` reads as interactive.
+#[tokio::test]
+async fn the_pairing_shows_a_headless_companion_even_offline() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let list = || async {
+        h.http
+            .get(format!("{}{}", h.url, pr::PAIRINGS))
+            .send()
+            .await
+            .unwrap()
+            .json::<Vec<rubato_protocol::PairingInfo>>()
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        list().await[0].client,
+        rubato_protocol::ClientKind::Interactive
+    );
+    let mut ws = h.connect(&token).await;
+    let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    if let CompanionMessage::Hello { client, .. } = &mut hello.message {
+        assert_eq!(
+            *client,
+            rubato_protocol::ClientKind::Interactive,
+            "the old fixture"
+        );
+        *client = rubato_protocol::ClientKind::Headless;
+    }
+    let _ = send(&mut ws, &hello).await;
+    drop(ws);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let got = list().await;
+    assert_eq!(got[0].client, rubato_protocol::ClientKind::Headless);
+    assert!(!got[0].connected, "offline, still headless");
+}
+
+/// ADR 0062: revoking a connected companion sends `Error { auth }` and closes its socket, so no
+/// envelope it sends afterwards is applied. Before, the socket stayed open (`ws.rs` only stopped
+/// sending), and this fails there.
+#[tokio::test]
+async fn a_revoked_companions_open_socket_is_closed() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    let _ = send(&mut ws, &hello).await;
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let mut saw_error = false;
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Text(t))) => {
+                    let env: ServerEnvelope = serde_json::from_str(&t).unwrap();
+                    if matches!(env.message, ServerMessage::Error { ref code, .. } if code == "auth") {
+                        saw_error = true;
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(saw_error, "the companion is told why");
+    assert!(closed.is_ok(), "the socket stays open after the revoke");
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM companion_events")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    let heartbeat = with_companion(Harness::fixture("companion_heartbeat.json"), companion_id);
+    let _ = ws
+        .send(Message::Text(
+            serde_json::to_string(&heartbeat).unwrap().into(),
+        ))
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM companion_events")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(after, before, "an envelope after the revoke is not applied");
+}
+
 /// ADR 0053, plan 122 §D7: a session plans in Rubato only after the cutover and through a
 /// companion that announced every part of it; otherwise it plans in Git, and the command says so.
 #[tokio::test]

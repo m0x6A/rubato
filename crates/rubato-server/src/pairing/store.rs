@@ -24,6 +24,8 @@ pub struct PairingRow {
     pub last_seen: Option<DateTime<Utc>>,
     pub server_seq: u64,
     pub last_companion_seq: u64,
+    /// Interactive or headless, from its last Hello (ADR 0062, migration 0023).
+    pub client: rubato_protocol::ClientKind,
 }
 
 fn pairing_row(r: &sqlx::sqlite::SqliteRow) -> PairingRow {
@@ -40,6 +42,11 @@ fn pairing_row(r: &sqlx::sqlite::SqliteRow) -> PairingRow {
             .map(|s| parse_ts(&s)),
         server_seq: r.get::<i64, _>("server_seq") as u64,
         last_companion_seq: r.get::<i64, _>("last_companion_seq") as u64,
+        client: if r.try_get::<String, _>("client").ok().as_deref() == Some("headless") {
+            rubato_protocol::ClientKind::Headless
+        } else {
+            rubato_protocol::ClientKind::Interactive
+        },
     }
 }
 
@@ -171,6 +178,20 @@ pub async fn touch_pairing(db: &SqlitePool, companion_id: Uuid, at: DateTime<Utc
 pub async fn next_server_seq(db: &SqlitePool, companion_id: Uuid) -> Result<u64> {
     let r = sqlx::query("UPDATE pairings SET server_seq = server_seq + 1 WHERE companion_id = ? RETURNING server_seq").bind(companion_id.to_string()).fetch_one(db).await?;
     Ok(r.get::<i64, _>("server_seq") as u64)
+}
+
+/// What kind of client the companion said it is in its Hello (ADR 0062).
+pub async fn set_client(
+    db: &SqlitePool,
+    companion_id: Uuid,
+    client: rubato_protocol::ClientKind,
+) -> Result<()> {
+    sqlx::query("UPDATE pairings SET client = ? WHERE companion_id = ?")
+        .bind(client.name())
+        .bind(companion_id.to_string())
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 pub async fn set_last_companion_seq(db: &SqlitePool, companion_id: Uuid, seq: u64) -> Result<()> {

@@ -4,11 +4,15 @@
 //! D7).
 
 mod discovery;
+mod headless;
 mod identity;
 mod launches;
 mod registry;
 mod tasks;
 
+pub use headless::{
+    Headless, HeadlessConfig, TurnRecord, reap_previous, transcript_path_for, turn_script_path,
+};
 pub use identity::recheck;
 pub use launches::{LaunchRecord, launches_path, load_launches, save_launches_if_changed};
 pub use registry::{Entry, Identity, PASTED_KEPT, Registry, identify};

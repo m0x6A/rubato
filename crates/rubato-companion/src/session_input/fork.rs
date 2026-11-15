@@ -9,7 +9,7 @@
 //! says why, and a `CapHit` is sent. A fork whose cost passes the cap sends the `CapHit` after
 //! it answers, and no further fork runs. The working session is not stopped for it.
 
-use crate::kernel::claude::Claude;
+use crate::kernel::claude::{Claude, KillReason, RunningTurn, Turn};
 use crate::sessions::Registry;
 use chrono::Utc;
 use rubato_protocol::otel::{attr, event, span};
@@ -42,6 +42,8 @@ pub struct ForkCtx {
     pub limits: Arc<std::sync::Mutex<Limits>>,
     /// Fork costs per launch so far, in USD.
     pub spent: std::sync::Mutex<HashMap<Uuid, f64>>,
+    /// The fork turn running per launch, so a `stop` can kill its process group.
+    pub running: std::sync::Mutex<HashMap<Uuid, RunningTurn>>,
 }
 
 /// The workers, one per launch that has had a fork turn.
@@ -70,6 +72,18 @@ impl Forks {
             let tx = spawn(self.ctx.clone());
             let _ = tx.send(turn);
             self.workers.insert(launch, tx);
+        }
+    }
+
+    /// Kill the fork turn running for `launch_id`, if one runs (`stop`, ADR 0062). Turns queued
+    /// behind it find the session ended and do not run. Returns whether one was killed.
+    pub fn stop(&self, launch_id: Uuid) -> bool {
+        match self.ctx.running.lock().unwrap().get_mut(&launch_id) {
+            Some(t) => {
+                t.kill(KillReason::Stop);
+                true
+            }
+            None => false,
         }
     }
 }
@@ -117,13 +131,29 @@ impl ForkCtx {
             rubato.cost_usd = tracing::field::Empty,
         );
         async {
-            let (session_spend, cap, issue) = {
+            let (session_spend, cap, issue, live) = {
                 let reg = self.registry.lock().await;
                 match reg.by_launch(launch) {
-                    Some(e) => (e.spend_usd.unwrap_or(0.0), e.spend_cap_usd, e.issue.clone()),
-                    None => (0.0, None, None),
+                    Some(e) => (
+                        e.spend_usd.unwrap_or(0.0),
+                        e.spend_cap_usd,
+                        e.issue.clone(),
+                        e.is_live(),
+                    ),
+                    None => (0.0, None, None, false),
                 }
             };
+            // Queued behind a fork a `stop` ended: the session is gone, so nothing runs.
+            if !live {
+                tracing::Span::current().record(attr::OUTCOME, "stopped");
+                self.result(
+                    &turn.msg,
+                    SessionMessageOutcome::Refused {
+                        reason: rubato_protocol::MessageRefusal::UnknownSession,
+                    },
+                );
+                return;
+            }
             let issue = issue.unwrap_or_else(|| turn.msg.issue.clone());
             let spent = || {
                 session_spend + self.spent.lock().unwrap().get(&launch).copied().unwrap_or(0.0)
@@ -143,16 +173,19 @@ impl ForkCtx {
                 Some(f) => (f.clone(), false),
                 None => (turn.session_id.clone(), true),
             };
-            let ran = tokio::task::spawn_blocking({
-                let claude = self.claude.clone();
-                let (worktree, text) = (turn.worktree.clone(), text.clone());
-                move || claude.turn(&worktree, &resume, fork, &text)
-            })
-            .await;
-            let t = match ran {
-                Ok(Ok(t)) => t,
-                Ok(Err(e)) => failed_turn(format!("{e:#}")),
-                Err(e) => failed_turn(format!("fork turn task: {e}")),
+            // On the shared spawn (`kernel::claude`): its own process group, bounded, killed on
+            // every exit path, and held here so a `stop` can kill it.
+            let t = match self.claude.start(&turn.worktree, &resume, fork, text) {
+                Ok((running, end)) => {
+                    self.running.lock().unwrap().insert(launch, running);
+                    let end = end.await;
+                    self.running.lock().unwrap().remove(&launch);
+                    match end {
+                        Ok(end) => Turn::from_end(end),
+                        Err(_) => failed_turn("the fork turn's watcher ended".into()),
+                    }
+                }
+                Err(e) => failed_turn(format!("{e:#}")),
             };
             let s = tracing::Span::current();
             if let Some(c) = t.exit_code {
@@ -224,8 +257,8 @@ impl ForkCtx {
     }
 }
 
-fn failed_turn(error: String) -> crate::kernel::claude::Turn {
-    crate::kernel::claude::Turn {
+fn failed_turn(error: String) -> Turn {
+    Turn {
         text: String::new(),
         session_id: None,
         cost_usd: None,
@@ -296,6 +329,7 @@ mod tests {
                 out,
                 limits: Arc::new(std::sync::Mutex::new(Limits::default())),
                 spent: Default::default(),
+                running: Default::default(),
             },
             rx,
         )
@@ -408,5 +442,52 @@ mod tests {
             1,
             "the second turn did not run: {runs}"
         );
+    }
+
+    /// `stop` (ADR 0062) kills a running fork turn's group too: the turn ends `killed: stop` and
+    /// says so in its reply.
+    #[tokio::test(flavor = "current_thread")]
+    async fn stop_kills_a_running_fork_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, mut rx) = ctx(dir.path(), 0.1, 20.0);
+        let script = dir.path().join("slow-claude");
+        let ok = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf '%s' \"$1\" > \"$2\" && chmod +x \"$2\"")
+            .arg("sh")
+            .arg("#!/bin/sh\ncat > /dev/null\necho '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fork-1\"}'\nsleep 30\n")
+            .arg(&script)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        ctx.claude.command = script.to_string_lossy().into_owned();
+        let mut forks = Forks::new(ctx);
+        assert!(!forks.stop(Uuid::from_u128(7)), "nothing runs yet");
+        forks.submit(turn(dir.path(), 1, None));
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !forks
+            .ctx
+            .running
+            .lock()
+            .unwrap()
+            .contains_key(&Uuid::from_u128(7))
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the fork never started"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(forks.stop(Uuid::from_u128(7)));
+        let reply = loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await {
+                Ok(Some(CompanionMessage::RoomReply(r))) => break r,
+                Ok(Some(_)) => continue,
+                other => panic!("no room reply after the stop: {other:?}"),
+            }
+        };
+        assert_eq!(reply.error.as_deref(), Some("killed: stop"));
+        assert!(reply.text.is_empty());
     }
 }

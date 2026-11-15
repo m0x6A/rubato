@@ -8,8 +8,9 @@ use super::script::{check_ref, launcher_script, sh_quote};
 use crate::hooks::{HOOKS_TEMPLATE, render_hooks};
 use crate::kernel::config::{HookEndpoint, Workspace, write_private};
 use crate::kernel::tmux::{Tmux, session_name};
-use crate::kernel::tmux_ide::{TmuxIde, version_at_least};
+use crate::kernel::tmux_ide::{TmuxIde, default_worktree_path, version_at_least};
 use crate::kernel::{gitx, proc};
+use crate::sessions::turn_script_path;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rubato_protocol::{LaunchCommand, LaunchResult, RefusalReason};
@@ -32,6 +33,8 @@ pub struct Started {
     pub worktree: PathBuf,
     /// What happened to the command's draft (plan 122 §D5); default when it carried none.
     pub draft: Restored,
+    /// No pane: the launch task starts the first turn as a child process (ADR 0062).
+    pub headless: bool,
 }
 
 fn refused(cmd: &LaunchCommand, reason: RefusalReason, detail: impl Into<String>) -> LaunchResult {
@@ -89,7 +92,10 @@ impl Launcher {
                 None,
             );
         }
+        // A headless companion needs neither tmux nor tmux-ide (ADR 0062).
+        let headless = self.workspace.companion.is_headless();
         match self.tmux_ide.version() {
+            _ if headless => {}
             Ok(v) if version_at_least(&v, &self.workspace.companion.tmux_ide_min_version) => {}
             Ok(v) => {
                 return (
@@ -164,6 +170,18 @@ impl Launcher {
             .find(|(_, b)| b.as_deref() == Some(cmd.branch.as_str()))
         {
             Some((path, _)) => (path, false),
+            None if self.workspace.companion.is_headless() => {
+                let path = default_worktree_path(&repo.local, &cmd.branch);
+                gitx::worktree_add(
+                    &repo.local,
+                    &path,
+                    &cmd.branch,
+                    &cmd.base_ref,
+                    self.workspace.companion.command_timeout(),
+                )
+                .context("git worktree add")?;
+                (path, true)
+            }
             None => (
                 self.tmux_ide
                     .worktree_create(&repo.local, &cmd.branch, &cmd.base_ref)
@@ -200,6 +218,21 @@ impl Launcher {
             )
             .as_bytes(),
         )?;
+        if self.workspace.companion.is_headless() {
+            // Every turn runs `turn.sh <claude args>`: the launch's environment and hooks, then
+            // the turn's own arguments. The first turn is started by the launch task (async).
+            write_private(
+                &turn_script_path(&self.state_dir, cmd.id),
+                turn_script(&script_path, &self.workspace.companion.claude_command).as_bytes(),
+            )?;
+            return Ok(Started {
+                pane_id: String::new(),
+                tmux_session: String::new(),
+                worktree,
+                draft,
+                headless: true,
+            });
+        }
         let name = session_name(&cmd.issue.repo, &cmd.branch);
         if self.tmux.has_session(&name)? {
             anyhow::bail!("tmux session {name} already exists");
@@ -220,6 +253,18 @@ impl Launcher {
             tmux_session: name,
             worktree,
             draft,
+            headless: false,
         })
     }
+}
+
+/// A headless turn's script: everything `launch.sh` sets up, with `exec claude …` replaced by the
+/// turn's arguments. `launch.sh` is sourced up to its last line, the `exec`, so the two never drift.
+fn turn_script(launch_sh: &std::path::Path, claude: &str) -> String {
+    format!(
+        "#!/bin/sh\n# rubato headless turn; generated, do not edit\n\
+         eval \"$(sed '$d' '{}')\"\n\
+         exec {claude} --settings \"$(dirname \"$0\")/hooks.json\" \"$@\"\n",
+        launch_sh.display()
+    )
 }

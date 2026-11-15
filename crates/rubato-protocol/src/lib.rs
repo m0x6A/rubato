@@ -102,7 +102,8 @@ pub use room::{
     RoomPostRequest, RoomReply, RoomRequest, RoomView, SeamNotice, addressed_handles, agent_handle,
 };
 pub use session::{
-    BlockCause, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource, TmuxLocation,
+    BlockCause, ClientKind, Heartbeat, SessionState, SessionStatus, StaleSession, StateSource,
+    TmuxLocation,
 };
 pub use session_log::{LaunchLog, LogKind, LogRole, SessionLogEntry};
 pub use session_message::{

@@ -25,6 +25,12 @@ pub enum Decision {
         session_id: String,
         text: String,
     },
+    /// Run `text` as a headless turn of the session (ADR 0062): no pane, the turn is a child.
+    Turn {
+        session_id: String,
+        worktree: std::path::PathBuf,
+        text: String,
+    },
     /// A room turn in fork mode (ADR 0057): nothing is typed; a read-only fork of `session_id`
     /// runs in `worktree` and its answer comes back as `RoomReply`.
     Fork {
@@ -87,6 +93,13 @@ pub fn decide(
     }
     if !e.waits_for_input() {
         return Answer(SessionMessageOutcome::NotIdle);
+    }
+    if e.source == rubato_protocol::StateSource::Headless {
+        return Decision::Turn {
+            session_id,
+            worktree: e.worktree.clone().unwrap_or_else(|| e.cwd.clone()),
+            text,
+        };
     }
     let Some(target) = e.pane_id.clone().or_else(|| e.tmux_session.clone()) else {
         return refused(MessageRefusal::NoPane);
@@ -179,7 +192,7 @@ mod tests {
     fn outcome(d: Decision) -> SessionMessageOutcome {
         match d {
             Decision::Answer(o) => o,
-            Decision::Paste { .. } | Decision::Fork { .. } => {
+            Decision::Paste { .. } | Decision::Turn { .. } | Decision::Fork { .. } => {
                 panic!("expected an answer, got {d:?}")
             }
         }

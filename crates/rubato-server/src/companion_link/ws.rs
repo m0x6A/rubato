@@ -93,7 +93,15 @@ async fn handle(app: App, pairing: pairing::PairingRow, socket: WebSocket) {
 
     loop {
         tokio::select! {
-            Some(msg) = rx.recv() => {
+            msg = rx.recv() => {
+                // The sender is gone: the pairing was revoked (`pairing::revoke` drops it after
+                // its `Error { auth }`). Close, so nothing more from this companion is applied
+                // (ADR 0062). Before, the arm was only disabled and the socket stayed open.
+                let Some(msg) = msg else {
+                    tracing::warn!(%companion_id, "companion socket closed: pairing revoked");
+                    let _ = sink.close().await;
+                    break;
+                };
                 if !send_env(&app, companion_id, &mut sink, msg).await {
                     break;
                 }
@@ -212,6 +220,7 @@ async fn on_envelope(
                 protocol_version,
                 user,
                 capabilities,
+                client,
                 ..
             } => {
                 if claimed != companion_id || user != pairing.user {
@@ -232,6 +241,12 @@ async fn on_envelope(
                     });
                 }
                 app.set_capabilities(companion_id, capabilities);
+                observe(
+                    "set_client",
+                    companion_id,
+                    env.seq,
+                    pairing::set_client(&app.db, companion_id, client).await,
+                );
                 // Queued here before the Welcome is answered: the socket sends the Welcome first.
                 session_messages::on_hello(app, companion_id).await;
                 Some(ServerMessage::Welcome {
@@ -669,6 +684,7 @@ mod tests {
             last_seen: None,
             server_seq: 0,
             last_companion_seq: 0,
+            client: rubato_protocol::ClientKind::Interactive,
         };
         (app, reader, pairing, tmp)
     }

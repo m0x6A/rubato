@@ -557,6 +557,23 @@
           ]
         },
         {
+          "description": "The owner stops their own session (ADR 0062): the companion kills the running turn's\nprocess group (headless) or the tmux session (interactive). Never queued, not held\nbehind an in-flight message, and not waiting for idle. Sent only to a companion that\nannounced `session_stop`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "stop"
+            },
+            "requested_by": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "requested_by"
+          ]
+        },
+        {
           "description": "A person addressed the owner's agent in the plan's room (ADR 0057, plan 122 §D8). The\ncompanion types `text` into the working session while planning, or runs it in a\nread-only fork while building; the reply comes back as `RoomReply`.",
           "type": "object",
           "properties": {
