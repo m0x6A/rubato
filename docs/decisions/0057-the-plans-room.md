@@ -1,8 +1,8 @@
 # 0057. A plan has a room for the team; an agent joins only when its owner calls it in, and answers only when addressed
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's decisions in #122 (who calls an agent in; which instance comes in) and his answers of 2026-11-14 (no uninvited agent posts; Rubato's seam notices); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/122#issuecomment-6891477242 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's decisions in #122 (who calls an agent in; which instance comes in) and his answers of 2026-11-14 (no uninvited agent posts; Rubato's seam notices)
 - **Seam:** web-server, companion-server, companion-claude-code
 - **Issue:** m0x6A/rubato#122
 
