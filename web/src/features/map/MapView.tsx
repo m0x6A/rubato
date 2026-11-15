@@ -1,5 +1,5 @@
 import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
-import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { caption, playerReducer, resolveScenario } from "./scenario.ts";
 import { mergeNodes } from "./nodes.ts";
 import type { IssueRef, MapLayout, MapRef, Plan } from "../../protocol.ts";
@@ -8,7 +8,7 @@ import { planLens } from "./lens.ts";
 import { type XY, placePart, positionsToSave } from "./layout.ts";
 import { lit } from "./explain.ts";
 import { type Arrow, LENSES, type Lens, arrowsFor, flowCounts } from "./flows.ts";
-import type { OnPin } from "./drop.ts";
+import { type OnPin, useIssueDrop } from "./drop.ts";
 import { hasIssueDrag } from "../../shared/dnd.ts";
 import { type Grouping, boxRepo, clampInBox, groupedToSave, placeGrouped, refitBoxes, savedIds, settle, settledGrouped } from "./grouped.ts";
 import { type Bundle, badgeState, bundleKey, bundlesOf, isOpen as bundleIsOpen } from "./bundles.ts";
@@ -53,7 +53,7 @@ type SeamEdgeData = {
   labelT?: number | undefined;
 };
 type SeamFlowEdge = Edge<SeamEdgeData, "seam">;
-type BundleEdgeData = { labelT: number | undefined; bundle: Bundle; inDraft: (id: string) => boolean; dim: boolean; onToggle: (key: string, fromKeyboard: boolean) => void; onDragOpen: (key: string) => void };
+type BundleEdgeData = { labelT: number | undefined; onPin: OnPin | undefined; bundle: Bundle; inDraft: (id: string) => boolean; dim: boolean; onToggle: (key: string, fromKeyboard: boolean) => void; onDragOpen: (key: string) => void };
 type BundleFlowEdge = Edge<BundleEdgeData, "bundle">;
 type TerritoryEdgeData = { edge: UndeclaredEdge; windowSecs: number; reduced: boolean; still: boolean };
 type TerritoryFlowEdge = Edge<TerritoryEdgeData, "territory">;
@@ -173,13 +173,18 @@ function GhostCard({ data }: NodeProps<GhostFlowNode>) {
  */
 function BundleEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<BundleFlowEdge>) {
   const [path, midX, midY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  // A bundle of one seam takes an issue dropped on its badge for that seam, as the seam's chip
+  // would: nothing has to open under the dragged issue. A bundle of several opens instead, and
+  // stays open until the drop, so the issue can be taken to the right chip.
+  const only = data && data.bundle.seams.length === 1 ? data.bundle.seams[0] : undefined;
+  const drop = useIssueDrop<HTMLButtonElement>({ kind: "seam", id: only?.id ?? "" }, only && !data?.inDraft(only.id) ? data?.onPin : undefined);
   if (!data) {
     return null;
   }
   const { x: labelX, y: labelY } = data.labelT !== undefined ? bezierAt({ x: sourceX, y: sourceY }, { x: targetX, y: targetY }, data.labelT) : { x: midX, y: midY };
   const b = data.bundle;
   const st = badgeState(b, data.inDraft);
-  const classes = ["seam-chip", "bundle-badge", "nodrag", "nopan", st.tone, st.draft ? "draft" : ""].filter(Boolean).join(" ");
+  const classes = ["seam-chip", "bundle-badge", "nodrag", "nopan", st.tone, st.draft ? "draft" : "", drop.over ? "drop-over" : ""].filter(Boolean).join(" ");
   return (
     <>
       <BaseEdge path={path} className="bundle-line" />
@@ -196,11 +201,15 @@ function BundleEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, target
               // A click from the keyboard has no pointer position: detail is 0.
               data.onToggle(b.key, e.detail === 0);
             }}
-            onDragEnter={(e) => {
-              if (hasIssueDrag(e)) {
-                data.onDragOpen(b.key);
-              }
-            }}
+            {...(only
+              ? drop.handlers
+              : {
+                  onDragEnter: (e: DragEvent<HTMLButtonElement>) => {
+                    if (hasIssueDrag(e)) {
+                      data.onDragOpen(b.key);
+                    }
+                  },
+                })}
           >
             {st.text}
             {st.warn && <span aria-hidden="true"> ⚠</span>}
@@ -728,8 +737,16 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       const parent = n.parentId ? byId.get(n.parentId) : undefined;
       cards.set(n.id, { x: n.position.x + (parent?.position.x ?? 0), y: n.position.y + (parent?.position.y ?? 0), width: n.measured?.width ?? NODE_WIDTH, height: n.measured?.height ?? NODE_HEIGHT });
     }
+    // Every bundle has one place along its curve, open or closed: an opened bundle's chips sit
+    // where its badge was, so opening it moves nothing under the pointer or a dragged issue.
+    const inBundle = new Map<string, string>();
+    for (const b of bundles.values()) {
+      for (const sm of b.seams) {
+        inBundle.set(sm.id, b.key);
+      }
+    }
     const stacks: LabelStack[] = graph.edges
-      .filter((e) => !folded.has(e.id))
+      .filter((e) => !inBundle.has(e.id))
       .map((e) => {
         const arrows = arrowsFor(planView ? { ...e, flows: planView.flows.get(e.id) } : e, lens);
         const chipChars = e.id.length + (e.openPlans.length ? 9 : 0) + (e.issues.length ? 10 : 0) + (e.collision || e.findings.length || e.quietFor !== undefined ? 3 : 0) + (draftMarks?.has(e.id) ? 24 : 0);
@@ -742,11 +759,18 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           chipAbove: CHIP_ABOVE_FLOW,
         };
       });
-    for (const b of closed) {
+    for (const b of bundles.values()) {
       stacks.push({ key: `bundle-${b.key}`, from: b.from, to: b.to, arrows: [{ offset: 0, label: null }], chip: { width: textWidth(9, 10.5, 20), height: 22 }, chipAbove: 0 });
     }
-    return placeLabels(stacks, cards);
-  }, [grouping, nodes, graph, folded, closed, lens, planView, draftMarks]);
+    const placed = placeLabels(stacks, cards);
+    for (const [seam, key] of inBundle) {
+      const t = placed.get(`bundle-${key}`);
+      if (t !== undefined) {
+        placed.set(seam, t);
+      }
+    }
+    return placed;
+  }, [grouping, nodes, graph, bundles, lens, planView, draftMarks]);
   const edges: (SeamFlowEdge | BundleFlowEdge | TerritoryFlowEdge)[] = useMemo(() => {
     const chevronsFor = (e: GraphEdge) => {
       if (!showTraffic || !e.traffic) {
@@ -766,7 +790,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         className: litNow !== null ? "bundle dim" : "bundle",
         selectable: false,
         focusable: false,
-        data: { labelT: labelTs.get(`bundle-${b.key}`), bundle: b, inDraft: (id: string) => draftMarks?.has(id) ?? false, dim: litNow !== null, onToggle: onBundleToggle, onDragOpen: setDragBundle },
+        data: { labelT: labelTs.get(`bundle-${b.key}`), onPin, bundle: b, inDraft: (id: string) => draftMarks?.has(id) ?? false, dim: litNow !== null, onToggle: onBundleToggle, onDragOpen: setDragBundle },
       });
     }
     const bundleOf = (e: GraphEdge) => (bundles.has(bundleKey(e.from, e.to)) ? bundleKey(e.from, e.to) : undefined);
