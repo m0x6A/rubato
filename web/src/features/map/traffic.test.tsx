@@ -212,8 +212,8 @@ describe("unknown, not quiet (design §5.5)", () => {
     };
     expect(await legendFor(withTraffic({ state: "failing", error: "refused", seams: [], undeclared: [] }))).toContain("Traffic unknown: the source failed: refused.");
     const fresh = await legendFor(withTraffic());
-    expect(fresh).toContain("Observed calls move as chevrons, more of them for more calls. A hollow seam declares a connection nobody used in the last 1 h. A dotted amber line is traffic the map does not declare.");
-    expect(fresh).toContain("2 services are not on the map");
+    expect(fresh).toContain("Observed calls move as chevrons, more of them for more calls. A hollow seam declares a connection nobody used in the last 1 h. A dotted amber line is traffic the map does not declare, and a dashed card at the right is a service that runs but is not on the map.");
+    expect(fresh).toContain("2 services with no namespace and no part to match");
     expect(trafficLegend(withTraffic().traffic!).unmapped).toEqual(["billing", "checkout"]);
   });
 });

@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RoomView",
+  "description": "A room and its messages (`GET` `routes::ROOM`).",
+  "type": "object",
+  "properties": {
+    "agents": {
+      "description": "Agents called in, present ones first (PR 11).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RoomAgent"
+      }
+    },
+    "branch": {
+      "type": "string"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RoomMessage"
+      }
+    },
+    "number": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "repo": {
+      "type": "string"
+    },
+    "requests": {
+      "description": "Requests to call an agent in, pending ones first.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RoomRequest"
+      }
+    }
+  },
+  "required": [
+    "repo",
+    "number",
+    "branch",
+    "messages"
+  ],
+  "$defs": {
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    },
+    "LeftReason": {
+      "description": "Why an agent left a room.",
+      "oneOf": [
+        {
+          "description": "Its owner, or whoever called it in, dismissed it.",
+          "type": "string",
+          "const": "dismissed"
+        },
+        {
+          "description": "Not addressed for `Limits.room_agent_idle_secs`.",
+          "type": "string",
+          "const": "timed_out"
+        },
+        {
+          "description": "Its session ended.",
+          "type": "string",
+          "const": "session_ended"
+        }
+      ]
+    },
+    "RequestState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "accepted",
+        "declined",
+        "withdrawn"
+      ]
+    },
+    "RoomAgent": {
+      "description": "An agent called into a room (ADR 0057): who is in, called by whom, since when.",
+      "type": "object",
+      "properties": {
+        "called_by": {
+          "type": "string"
+        },
+        "handle": {
+          "description": "`<owner>-agent`, what a message names to address it.",
+          "type": "string"
+        },
+        "joined_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_turn_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "left_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "left_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeftReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "owner",
+        "launch_id",
+        "called_by",
+        "joined_at"
+      ]
+    },
+    "RoomAuthorKind": {
+      "description": "Who wrote a room message.",
+      "oneOf": [
+        {
+          "description": "A person who may log in.",
+          "type": "string",
+          "const": "person"
+        },
+        {
+          "description": "An agent called into the room by its owner (PR 11).",
+          "type": "string",
+          "const": "agent"
+        },
+        {
+          "description": "Rubato itself: seam notices, limits reached.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    },
+    "RoomMessage": {
+      "description": "One message of a room, oldest first in a `RoomView`.",
+      "type": "object",
+      "properties": {
+        "addressed": {
+          "description": "Agent handles this message addresses (`@<owner>-agent`), PR 11.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "author": {
+          "description": "The person's login, the agent's handle (`<owner>-agent`), or `rubato`.",
+          "type": "string"
+        },
+        "author_kind": {
+          "$ref": "#/$defs/RoomAuthorKind"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "notice": {
+          "description": "For a seam notice: the other issue and the seam both plans touch.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SeamNotice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn_id": {
+          "description": "The turn this message made, or the turn an agent's message answers.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "id",
+        "author_kind",
+        "author",
+        "text",
+        "at"
+      ]
+    },
+    "RoomRequest": {
+      "description": "A teammate's request to call someone else's agent in, pending until the owner answers.",
+      "type": "object",
+      "properties": {
+        "answered_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "requested_by": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/RequestState"
+        }
+      },
+      "required": [
+        "id",
+        "owner",
+        "launch_id",
+        "requested_by",
+        "at",
+        "state"
+      ]
+    },
+    "SeamNotice": {
+      "description": "What a system seam notice is about (ADR 0057, Q6): posted once per pair of issue and seam.",
+      "type": "object",
+      "properties": {
+        "other": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "other_branch": {
+          "type": "string"
+        },
+        "seam": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seam",
+        "other",
+        "other_branch"
+      ]
+    }
+  }
+}

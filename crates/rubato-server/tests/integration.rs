@@ -435,6 +435,20 @@ async fn protocol_fixtures_replay_derives_progress() {
         .send()
         .await
         .unwrap();
+    // The companion reports a session on #2 first: a cap hit counts only from a companion
+    // that runs the issue (#162).
+    let mut on_two = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    on_two.seq = 8;
+    if let CompanionMessage::Sessions { sessions } = &mut on_two.message {
+        let mut s = sessions[0].clone();
+        s.session_id = Some("s-two".into());
+        s.issue = Some(two.clone());
+        sessions.push(s);
+    }
+    assert!(matches!(
+        send(&mut ws, &on_two).await,
+        ServerMessage::Ack { seq: 8 }
+    ));
     let mut cap = Harness::fixture("companion_cap_hit.json");
     if let CompanionMessage::CapHit(c) = &mut cap.message {
         c.issue = two.clone();
@@ -747,6 +761,48 @@ async fn an_approval_on_another_branch_is_compared_with_that_branch() {
     );
 }
 
+/// Plan 122 §D6: at start the composition root fills the kernel's session cache from the stored
+/// snapshots, so approval sees the owner's working session before its companion reconnects.
+#[tokio::test]
+async fn the_session_cache_starts_from_the_stored_snapshots() {
+    let h = harness().await;
+    let companion = Uuid::new_v4();
+    let session = rubato_protocol::SessionState {
+        session_id: Some("s1".into()),
+        companion_id: companion,
+        user: "m0x6A".into(),
+        tmux: None,
+        cwd: "/w".into(),
+        worktree: None,
+        branch: Some("issue/122-x".into()),
+        repo: Some("m0x6A/rubato".into()),
+        issue: Some(IssueRef::new("m0x6A/rubato", 122)),
+        status: rubato_protocol::SessionStatus::Working,
+        source: rubato_protocol::StateSource::Hook,
+        last_seen: chrono::Utc::now(),
+        spend_usd: None,
+        branch_drift: None,
+        blocked_by: None,
+        launch_id: None,
+        hooks_lost: false,
+    };
+    sqlx::query(
+        "INSERT INTO session_snapshots (companion_id, sessions, updated_at) VALUES (?, ?, ?)",
+    )
+    .bind(companion.to_string())
+    .bind(serde_json::to_string(&vec![session.clone()]).unwrap())
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(&h.app.db)
+    .await
+    .unwrap();
+    assert!(
+        h.app.latest_sessions().is_empty(),
+        "nothing before the start"
+    );
+    tasks::warm_sessions(&h.app).await.unwrap();
+    assert_eq!(h.app.latest_sessions(), vec![session]);
+}
+
 #[tokio::test]
 async fn derived_state_is_never_stored() {
     let h = harness().await;
@@ -985,6 +1041,329 @@ async fn pairing_your_own_companion_again_replaces_the_token() {
     println!("checked 2 tokens for one companion: old 401, new connects");
 }
 
+type CompanionWs =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// The next server message, or `None` once the socket has closed. Panics if the socket stays
+/// open and silent: that is the bug in #161.
+async fn next_or_closed(ws: &mut CompanionWs) -> Option<ServerMessage> {
+    let next = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+        .await
+        .expect("the socket stayed open");
+    match next {
+        Some(Ok(Message::Text(t))) => {
+            Some(serde_json::from_str::<ServerEnvelope>(&t).unwrap().message)
+        }
+        _ => None,
+    }
+}
+
+async fn snapshots_of(h: &Harness, companion_id: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM session_snapshots WHERE companion_id = ?")
+        .bind(companion_id.to_string())
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap()
+}
+
+/// #161: revoking a connected companion ends its socket, and what it sends after is not stored.
+#[tokio::test]
+async fn a_revoked_companion_is_disconnected_and_stores_nothing() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+
+    let Some(ServerMessage::Error { code, .. }) = next_or_closed(&mut ws).await else {
+        panic!("no auth error after revoke")
+    };
+    assert_eq!(code, "auth");
+    assert!(
+        next_or_closed(&mut ws).await.is_none(),
+        "the socket closes after the error"
+    );
+    let sessions = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    let _ = ws
+        .send(Message::Text(
+            serde_json::to_string(&sessions).unwrap().into(),
+        ))
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(snapshots_of(&h, companion_id).await, 0, "nothing stored");
+    println!("checked 1 revoked socket: error, close, 0 snapshots");
+}
+
+/// #161: an envelope on a socket whose pairing was revoked behind its back is refused before
+/// anything is recorded, whatever the in-memory table says.
+#[tokio::test]
+async fn an_envelope_after_revocation_is_dropped() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    sqlx::query("UPDATE pairings SET revoked_at = '2026-11-15T00:00:00Z' WHERE companion_id = ?")
+        .bind(companion_id.to_string())
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let sessions = with_companion(Harness::fixture("companion_sessions.json"), companion_id);
+    ws.send(Message::Text(
+        serde_json::to_string(&sessions).unwrap().into(),
+    ))
+    .await
+    .unwrap();
+    let reply = next_or_closed(&mut ws).await;
+    assert!(
+        matches!(&reply, Some(ServerMessage::Error { code, .. }) if code == "auth"),
+        "{reply:?}"
+    );
+    assert!(
+        next_or_closed(&mut ws).await.is_none(),
+        "then the socket closes"
+    );
+    assert_eq!(snapshots_of(&h, companion_id).await, 0, "nothing stored");
+    let events: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM companion_events WHERE companion_id = ?")
+            .bind(companion_id.to_string())
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap();
+    assert_eq!(events, 1, "only the hello was recorded");
+    println!("checked 1 envelope after revocation: refused, 0 snapshots, 1 event");
+}
+
+/// #161: a second connection for one companion closes the first, and the first's exit does not
+/// take the second out of the table.
+#[tokio::test]
+async fn a_second_connection_replaces_the_first() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: issue.clone(),
+            target: MapRef::node("skill-rubato"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut first = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    assert!(matches!(
+        send(&mut first, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    let mut second = h.connect(&token).await;
+    let mut hello2 = hello;
+    hello2.seq = 2;
+    assert!(matches!(
+        send(&mut second, &hello2).await,
+        ServerMessage::Welcome { .. }
+    ));
+    assert!(
+        next_or_closed(&mut first).await.is_none(),
+        "the older socket is closed"
+    );
+    // Let the older socket's handler finish its exit before launching.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": issue, "slug": "skill", "companion_id": companion_id }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let Some(ServerMessage::Launch(_)) = next_or_closed(&mut second).await else {
+        panic!("the launch reaches the newer socket")
+    };
+    println!("checked 2 connections for 1 companion: older closed, newer launched");
+}
+
+/// ADR 0062: a headless companion says so in its Hello; its lane keeps the badge offline, and an
+/// older Hello without `client` reads as interactive.
+#[tokio::test]
+async fn the_pairing_shows_a_headless_companion_even_offline() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let list = || async {
+        h.http
+            .get(format!("{}{}", h.url, pr::PAIRINGS))
+            .send()
+            .await
+            .unwrap()
+            .json::<Vec<rubato_protocol::PairingInfo>>()
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        list().await[0].client,
+        rubato_protocol::ClientKind::Interactive
+    );
+    let mut ws = h.connect(&token).await;
+    let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    if let CompanionMessage::Hello { client, .. } = &mut hello.message {
+        assert_eq!(
+            *client,
+            rubato_protocol::ClientKind::Interactive,
+            "the old fixture"
+        );
+        *client = rubato_protocol::ClientKind::Headless;
+    }
+    let _ = send(&mut ws, &hello).await;
+    drop(ws);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let got = list().await;
+    assert_eq!(got[0].client, rubato_protocol::ClientKind::Headless);
+    assert!(!got[0].connected, "offline, still headless");
+}
+
+/// ADR 0062: revoking a connected companion sends `Error { auth }` and closes its socket, so no
+/// envelope it sends afterwards is applied. Before, the socket stayed open (`ws.rs` only stopped
+/// sending), and this fails there.
+#[tokio::test]
+async fn a_revoked_companions_open_socket_is_closed() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    let _ = send(&mut ws, &hello).await;
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let mut saw_error = false;
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Text(t))) => {
+                    let env: ServerEnvelope = serde_json::from_str(&t).unwrap();
+                    if matches!(env.message, ServerMessage::Error { ref code, .. } if code == "auth") {
+                        saw_error = true;
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(saw_error, "the companion is told why");
+    assert!(closed.is_ok(), "the socket stays open after the revoke");
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM companion_events")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    let heartbeat = with_companion(Harness::fixture("companion_heartbeat.json"), companion_id);
+    let _ = ws
+        .send(Message::Text(
+            serde_json::to_string(&heartbeat).unwrap().into(),
+        ))
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM companion_events")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(after, before, "an envelope after the revoke is not applied");
+}
+
+/// ADR 0053, plan 122 §D7: a session plans in Rubato only after the cutover and through a
+/// companion that announced every part of it; otherwise it plans in Git, and the command says so.
+#[tokio::test]
+async fn a_launch_plans_in_rubato_only_after_the_cutover_with_a_capable_companion() {
+    async fn planning_of(cutover: bool, caps: &[&str]) -> rubato_protocol::PlanningMode {
+        let h = harness_with(|c| {
+            if cutover {
+                c.comment_approvals_until = Some(chrono::Utc::now());
+            }
+        })
+        .await;
+        let (companion_id, token) = h.pair("m0x6A").await;
+        let mut ws = h.connect(&token).await;
+        let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+        if let CompanionMessage::Hello { capabilities, .. } = &mut hello.message {
+            *capabilities = caps.iter().map(|c| (*c).to_owned()).collect();
+        }
+        let _ = send(&mut ws, &hello).await;
+        let issue = IssueRef::new("m0x6A/rubato", 3);
+        h.http
+            .post(format!("{}{}", h.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: issue.clone(),
+                target: MapRef::node("skill-rubato"),
+            })
+            .send()
+            .await
+            .unwrap();
+        let r = h
+            .http
+            .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+            .json(&serde_json::json!({ "issue": issue, "slug": "skill" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+        let launched: rubato_protocol::LaunchResponse = r.json().await.unwrap();
+        // The prompt matches the mode: a Rubato session is told to draft, not to commit.
+        assert_eq!(
+            launched
+                .command
+                .prompt
+                .contains("This session plans in Rubato"),
+            launched.command.planning == rubato_protocol::PlanningMode::Rubato,
+            "{}",
+            launched.command.prompt
+        );
+        launched.command.planning
+    }
+    use rubato_protocol::PlanningMode::{Git, Rubato};
+    let all = [
+        "session_input",
+        "draft_mirror",
+        "plan_handoff",
+        "skill:0.2.0",
+    ];
+    assert_eq!(planning_of(true, &all).await, Rubato);
+    assert_eq!(planning_of(false, &all).await, Git, "before the cutover");
+    assert_eq!(
+        planning_of(
+            true,
+            &[
+                "session_input",
+                "draft_mirror",
+                "plan_handoff",
+                "skill:0.1.0"
+            ]
+        )
+        .await,
+        Git,
+        "a skill without plan.ts handoff"
+    );
+    assert_eq!(planning_of(true, &[]).await, Git, "an older companion");
+}
+
 #[tokio::test]
 async fn launch_goes_only_to_the_callers_own_connected_companion() {
     let h = harness().await;
@@ -1083,6 +1462,29 @@ async fn unauthenticated_requests_without_dev_user_are_401() {
         .await
         .unwrap();
     assert_eq!(r.status(), 401);
+    // A room is read and posted in only by someone who may log in (ADR 0057).
+    let r = reqwest::get(format!(
+        "http://{addr}{}?repo=m0x6A%2Frubato&number=1&branch=issue%2F1-x",
+        rubato_protocol::room::routes::ROOM
+    ))
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 401);
+    let r = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}{}",
+            rubato_protocol::room::routes::ROOM_MESSAGES
+        ))
+        .json(&rubato_protocol::RoomPostRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 1,
+            branch: "issue/1-x".into(),
+            text: "hi".into(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
     let r = reqwest::get(format!("http://{addr}/api/health"))
         .await
         .unwrap();
@@ -1121,8 +1523,9 @@ async fn await_reason(web: &mut Ws, reason: &str) {
             panic!("web socket closed waiting for {reason:?}")
         };
         let ev: rubato_protocol::WebEvent = serde_json::from_str(&t).unwrap();
-        let rubato_protocol::WebEvent::Changed { reason: got, .. } = ev;
-        if got == reason {
+        if let rubato_protocol::WebEvent::Changed { reason: got, .. } = ev
+            && got == reason
+        {
             return;
         }
     }
@@ -1199,6 +1602,8 @@ async fn web_events_follow_every_action() {
             worktree: "/w".into(),
             tmux_session: "t".into(),
             at: chrono::Utc::now(),
+            draft_restored: false,
+            restore_skipped: None,
         }),
     };
     let _ = send(&mut ws, &started).await;
@@ -1386,6 +1791,8 @@ async fn attempt_limit_does_not_block_a_running_issue() {
                 spend_usd: None,
                 branch_drift: None,
                 blocked_by: None,
+                launch_id: None,
+                hooks_lost: false,
             }],
         },
     };
@@ -1434,6 +1841,8 @@ fn started(seq: u64, launched: &rubato_protocol::LaunchResponse) -> CompanionEnv
             worktree: "/w".into(),
             tmux_session: "t".into(),
             at: chrono::Utc::now(),
+            draft_restored: false,
+            restore_skipped: None,
         }),
     }
 }
@@ -1539,6 +1948,156 @@ async fn a_companion_attempts_hit_blocks_whatever_the_companion_clock_says() {
     assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
 }
 
+/// A second companion, paired to alice, that will claim things that are not its own (#162).
+async fn intruder(h: &Harness) -> (Uuid, Ws) {
+    let (companion_id, token) = h.pair("alice").await;
+    let mut ws = h.connect(&token).await;
+    let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    if let CompanionMessage::Hello { user, .. } = &mut hello.message {
+        *user = "alice".into();
+    }
+    assert!(matches!(
+        send(&mut ws, &hello).await,
+        ServerMessage::Welcome { .. }
+    ));
+    (companion_id, ws)
+}
+
+/// #162 S1: a snapshot's sessions take the pairing's companion id and user.
+#[tokio::test]
+async fn a_snapshot_cannot_claim_another_companion_or_user() {
+    let h = harness().await;
+    let (victim, token) = h.pair("m0x6A").await;
+    let _victim_ws = h.connect(&token).await;
+    let (alice, mut ws) = intruder(&h).await;
+    let mut forged = with_companion(Harness::fixture("companion_sessions.json"), victim);
+    forged.seq = 2;
+    let CompanionMessage::Sessions { sessions } = &mut forged.message else {
+        panic!("fixture")
+    };
+    let n = sessions.len();
+    sessions.iter_mut().for_each(|s| s.user = "bob".into());
+    assert!(matches!(
+        send(&mut ws, &forged).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let stored: String =
+        sqlx::query_scalar("SELECT sessions FROM session_snapshots WHERE companion_id = ?")
+            .bind(alice.to_string())
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap();
+    let stored: Vec<rubato_protocol::SessionState> = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored.len(), n);
+    assert!(
+        stored
+            .iter()
+            .all(|s| s.companion_id == alice && s.user == "alice"),
+        "{stored:?}"
+    );
+    let ov = h.overview("m0x6A").await;
+    let shown: Vec<_> = ov
+        .issues
+        .iter()
+        .flat_map(|i| i.sessions.iter())
+        .chain(ov.unpinned_sessions.iter())
+        .collect();
+    assert!(!shown.is_empty());
+    assert!(
+        shown.iter().all(|s| s.companion_id != victim),
+        "nothing shows in the victim's lane: {shown:?}"
+    );
+    println!("checked {n} forged sessions: all under the pairing");
+}
+
+/// #162 S2: a cap hit counts only from a companion that runs the issue.
+#[tokio::test]
+async fn a_cap_hit_for_an_issue_this_companion_does_not_run_is_dropped() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_victim, mut victim_ws) = ready_to_launch(&h, &issue).await;
+    let r = start(&h, &issue, 3).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let (_alice, mut ws) = intruder(&h).await;
+
+    let hit = spend_hit(&issue, 2, "s-forged", chrono::Utc::now());
+    assert!(matches!(
+        send(&mut ws, &hit).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cap_hits")
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "the forged hit is not stored");
+    assert_ne!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+
+    // The launch command is on the victim's socket; read it off, then the victim's own hit counts.
+    let Some(Ok(Message::Text(_))) = victim_ws.next().await else {
+        panic!("no launch on the victim's socket")
+    };
+    let hit = spend_hit(&issue, 50, "s-real", chrono::Utc::now());
+    assert!(matches!(
+        send(&mut victim_ws, &hit).await,
+        ServerMessage::Ack { seq: 50 }
+    ));
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Blocked);
+    println!("checked 2 cap hits: 1 dropped, 1 stored");
+}
+
+/// #162 S3: a launch result updates only a launch sent to this companion.
+#[tokio::test]
+async fn a_launch_result_for_another_companions_command_changes_nothing() {
+    let h = harness().await;
+    let issue = IssueRef::new("m0x6A/rubato", 3);
+    let (_victim, _victim_ws) = ready_to_launch(&h, &issue).await;
+    let launched: rubato_protocol::LaunchResponse =
+        start(&h, &issue, 3).await.json().await.unwrap();
+    let (_alice, mut ws) = intruder(&h).await;
+    assert!(matches!(
+        send(&mut ws, &started(2, &launched)).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let result: Option<String> = sqlx::query_scalar("SELECT result FROM launches WHERE id = ?")
+        .bind(launched.command.id.to_string())
+        .fetch_one(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(result, None, "the victim's launch keeps no result");
+    assert_eq!(progress_of(&h, &issue).await.state, ProgressState::Planned);
+    println!("checked 1 foreign launch result: 0 rows changed");
+}
+
+/// #162 S4: a stale event is recorded under the pairing.
+#[tokio::test]
+async fn a_stale_event_is_recorded_under_the_pairing() {
+    let h = harness().await;
+    let victim = Uuid::new_v4();
+    let (alice, mut ws) = intruder(&h).await;
+    let stale = CompanionEnvelope {
+        seq: 2,
+        sent_at: chrono::Utc::now(),
+        message: CompanionMessage::Stale(rubato_protocol::StaleSession {
+            companion_id: victim,
+            session_id: Some("s".into()),
+            issue: None,
+            last_seen: chrono::Utc::now(),
+            silent_for_secs: 900,
+            at: chrono::Utc::now(),
+        }),
+    };
+    assert!(matches!(
+        send(&mut ws, &stale).await,
+        ServerMessage::Ack { seq: 2 }
+    ));
+    let ids: Vec<String> = sqlx::query_scalar("SELECT companion_id FROM stale_events")
+        .fetch_all(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(ids, vec![alice.to_string()]);
+    println!("checked 1 stale event: under the pairing");
+}
+
 #[tokio::test]
 async fn welcome_carries_last_seen_seq_after_reconnect() {
     let h = harness().await;
@@ -1547,12 +2106,24 @@ async fn welcome_carries_last_seen_seq_after_reconnect() {
     let hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
     let ServerMessage::Welcome {
         last_seen_companion_seq,
+        capabilities,
         ..
     } = send(&mut ws, &hello).await
     else {
         panic!("no welcome")
     };
     assert_eq!(last_seen_companion_seq, 0, "a new pairing has seen nothing");
+    // What this server takes: a companion sends a message kind only to a server that said so.
+    assert_eq!(
+        capabilities,
+        [
+            "session_messages",
+            "drafts",
+            "handoff_reports",
+            "room_replies"
+        ],
+        "the Welcome names every message kind the server takes"
+    );
     let mut beat = with_companion(Harness::fixture("companion_heartbeat.json"), companion_id);
     beat.seq = 7;
     assert!(matches!(
@@ -1779,15 +2350,16 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .collect();
     // Issue #49 (design 49-poll-cost S1–S4): branches and open pull requests once per repo,
     // title and state from the open listing, the plan read when the head moves, comments on the
-    // full lane. Was 16 calls here (six per issue with an open pull request).
+    // full lane. Was 16 calls here (six per issue with an open pull request). Plans are read
+    // at the head sha (ADR 0055).
     let expected = [
         "open_issues m0x6A/rubato",
         "branches m0x6A/rubato issue/",
-        "file m0x6A/rubato docs/plans/31.md issue/31-ok",
+        "file m0x6A/rubato docs/plans/31.md s31",
         "open_pulls m0x6A/rubato",
         "checks m0x6A/rubato s31",
         "issue_comments m0x6A/rubato#31",
-        "file m0x6A/rubato docs/plans/32.md issue/32-bad",
+        "file m0x6A/rubato docs/plans/32.md s32",
         "pull_for_branch m0x6A/rubato issue/32-bad",
         "issue_comments m0x6A/rubato#32",
         "issue_comments m0x6A/rubato#33",
@@ -2081,6 +2653,66 @@ async fn pin_kind_must_match_id() {
         "nothing stored for the refused ones"
     );
     println!("checked {} pin requests", cases.len());
+}
+
+/// Issue #163: a pin for an issue of a repo the map does not name is refused and writes no
+/// row, so the poll never reads it with the App's token; the map's repo in other case pins.
+/// A pin row for such a repo (written before the check) cannot start a session either.
+#[tokio::test]
+async fn issues_of_repos_the_map_does_not_name_are_not_pinned_or_launched() {
+    let h = harness().await;
+    let pin = |repo: &str, number: u64| {
+        h.http
+            .post(format!("{}{}", h.url, pin_routes::PINS))
+            .json(&PinRequest {
+                issue: IssueRef::new(repo, number),
+                target: MapRef::node("web"),
+            })
+            .send()
+    };
+    let cases = [
+        ("elsewhere/secret", 1, 422),
+        ("m0x6A/rubato/../../elsewhere/secret", 2, 422),
+        ("M0X6A/Rubato", 3, 201),
+    ];
+    for (repo, number, status) in cases {
+        let r = pin(repo, number).await.unwrap();
+        assert_eq!(r.status(), status, "{repo}: {}", r.text().await.unwrap());
+    }
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(
+        ov.issues.iter().map(|i| i.issue.number).collect::<Vec<_>>(),
+        [3],
+        "only the map's repo is tracked"
+    );
+
+    // An old pin row for a repo the map does not name, and a connected companion.
+    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'elsewhere/secret', 9, 'node', 'web', 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let (companion_id, token) = h.pair("m0x6A").await;
+    let mut ws = h.connect(&token).await;
+    let _ = send(
+        &mut ws,
+        &with_companion(Harness::fixture("companion_hello.json"), companion_id),
+    )
+    .await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": IssueRef::new("elsewhere/secret", 9), "slug": "x" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+    assert!(
+        r.text().await.unwrap().contains("not a repo the map names"),
+        "the refusal names why"
+    );
+    let next = tokio::time::timeout(std::time::Duration::from_millis(300), ws.next()).await;
+    assert!(next.is_err(), "no LaunchCommand was sent: {next:?}");
+    println!("checked {} pins and 1 launch", cases.len());
 }
 
 #[tokio::test]
@@ -2585,6 +3217,8 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
             worktree: "/w".into(),
             tmux_session: "s".into(),
             at: chrono::Utc::now(),
+            draft_restored: false,
+            restore_skipped: None,
         }),
     };
     send(&mut ws, &started).await;
@@ -3835,7 +4469,8 @@ async fn the_plan_file_is_read_again_only_when_the_branch_moves() {
     poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
     assert_eq!(
         h.call_args("file"),
-        ["m0x6A/rubato docs/plans/8.md issue/8-x"]
+        ["m0x6A/rubato docs/plans/8.md s8b"],
+        "read at the new head sha, not at the branch name (ADR 0055)"
     );
     println!("checked 4 ticks of plan reads");
 }
@@ -4201,10 +4836,7 @@ async fn an_untracked_plan_branch_is_discovered_and_stays_not_pinned() {
         .collect();
     assert_eq!(
         for_90,
-        [(
-            "file",
-            "m0x6A/rubato docs/plans/90.md issue/90-x".to_owned()
-        )],
+        [("file", "m0x6A/rubato docs/plans/90.md s90".to_owned())],
         "discovery reads the plan file and nothing else for an untracked issue"
     );
 
@@ -4370,6 +5002,138 @@ async fn a_stack_reads_the_plan_from_the_bottom_then_from_the_approved_branch() 
         read_from(&h.overview("m0x6A").await).as_deref(),
         Some("issue/92-a-top")
     );
+}
+
+/// ADR 0054: the poll's `BranchPrefs` come from the merged list `tasks.rs` builds, and prefer
+/// the branch of the newest Rubato approval: over the bottom of the stack, and over a newer
+/// counted comment naming the bottom. Without the approval both of those say the bottom.
+#[tokio::test]
+async fn the_poll_reads_the_plan_from_the_branch_approved_in_rubato() {
+    // The cutover is set (approval in Rubato on) and an hour away (comments still count).
+    let h = harness_with(|c| {
+        c.comment_approvals_until = Some(chrono::Utc::now() + chrono::Duration::hours(1));
+    })
+    .await;
+    let plan = |title: &str| {
+        PLAN_49.replace("#1", "#93").replace(
+            "---\n## Affected",
+            &format!("title: {title}\n---\n## Affected"),
+        )
+    };
+    let (top, bottom) = ("issue/93-a-top", "issue/93-z-bottom");
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.push((top.into(), "top".into()));
+        b.push((bottom.into(), "bottom".into()));
+        for (branch, title) in [(top, "top"), (bottom, "bottom")] {
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    "docs/plans/93.md".into(),
+                    branch.into(),
+                ),
+                plan(title),
+            );
+        }
+        let mut t = open_pull(1, "top");
+        t.base = Some(bottom.into());
+        let mut b = open_pull(2, "bottom");
+        b.base = Some("main".into());
+        g.pulls.insert(("m0x6A/rubato".into(), top.into()), t);
+        g.pulls.insert(("m0x6A/rubato".into(), bottom.into()), b);
+        g.comments.insert(
+            ("m0x6A/rubato".into(), 93),
+            vec![comment(
+                600,
+                "m0x6A",
+                "OWNER",
+                false,
+                &format!("Approved: plan 0123456789 on {bottom}"),
+            )],
+        );
+    });
+    h.pin_issue(93).await;
+    // The draft on the top branch, approved in Rubato before the comment was posted.
+    let text = plan("top");
+    let files = vec![rubato_protocol::DraftFile {
+        path: "docs/plans/93.md".into(),
+        text: text.clone(),
+    }];
+    rubato_server::plan_drafts::on_draft(
+        &h.app,
+        &rubato_protocol::DraftBundle {
+            launch_id: Uuid::from_u128(1),
+            session_id: None,
+            issue: IssueRef::new("m0x6A/rubato", 93),
+            branch: top.into(),
+            bundle_hash: rubato_protocol::bundle_hash(
+                "docs/plans/93.md",
+                &[("docs/plans/93.md".into(), text.clone())],
+            ),
+            files,
+            missing: vec![],
+            refused: None,
+            at: chrono::Utc::now(),
+        },
+        "m0x6A",
+    )
+    .await;
+    let r = h
+        .http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::approve::routes::PLAN_DRAFT_APPROVE
+        ))
+        .header("x-rubato-dev-user", "teammate")
+        .json(&rubato_protocol::DraftApproveRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 93,
+            branch: top.into(),
+            plan_sha: rubato_server::plans::approval_hash(&text),
+            rev: None,
+            summary: String::new(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{:?}", r.text().await);
+    // The first tick reads the comment after choosing the branch; the second has it stored.
+    for tick in ["first", "second"] {
+        tasks::poll_once(&h.app).await.unwrap();
+        let ov = h.overview("m0x6A").await;
+        let one = ov.issues.iter().find(|i| i.issue.number == 93).unwrap();
+        assert_eq!(
+            one.plan.as_ref().and_then(|p| p.git_ref.as_deref()),
+            Some(top),
+            "{tick} tick: the bottom of the stack and the newer comment both name {bottom}"
+        );
+    }
+    let approval = rubato_server::approve::approvals(&h.app).await.unwrap();
+    assert_eq!(
+        approval.counted.len(),
+        2,
+        "the comment counts: before the cutover"
+    );
+}
+
+/// ADR 0054: the overview says whether plans are approved in Rubato, so the web offers Approve
+/// on the draft only where the server takes it, and Accept plan only where it posts.
+#[tokio::test]
+async fn the_overview_carries_the_cutover_only_when_one_is_set() {
+    let h = harness().await;
+    let ov = h.overview("m0x6A").await;
+    assert_eq!(ov.comment_approvals_until, None);
+    let v = serde_json::to_value(&ov).unwrap();
+    assert!(
+        v.get("comment_approvals_until").is_none(),
+        "unset, the field is not on the wire: the golden overview is unchanged"
+    );
+    let at = chrono::DateTime::parse_from_rfc3339("2026-11-20T10:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let h = harness_with(|c| c.comment_approvals_until = Some(at)).await;
+    assert_eq!(h.overview("m0x6A").await.comment_approvals_until, Some(at));
 }
 
 /// ADR 0029: an approval of the current plan counts only while the plan fits the map.
@@ -5101,4 +5865,762 @@ async fn spend_history_sums_two_sessions_on_the_issue() {
     let line = spend_line(&[&[1.0, 0.5], &[2.5, 0.5], &[4.0, 1.0]]).await;
     let usd: Vec<f64> = line.iter().map(|p| p.usd).collect();
     assert_eq!(usd, [1.5, 3.0, 5.0], "{line:?}");
+}
+
+// ---- #122 PR 7: the handoff and its link comment (ADR 0055, design §D7) ----
+
+/// Accepting as a person is possible (an App, a token key) and the cutover is an hour ago.
+async fn handoff_harness() -> Harness {
+    harness_with(|c| {
+        c.github_app = Some(rubato_server::kernel::config::GitHubApp {
+            app_id: 1,
+            private_key: "unused".into(),
+            installation_id: 34,
+        });
+        c.token_key = Some(rubato_server::kernel::config::TokenKey::from_hex(TOKEN_KEY).unwrap());
+        c.github_client_id = Some("Iv1.test".into());
+        c.github_client_secret = Some("secret".into());
+        c.comment_approvals_until = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+    })
+    .await
+}
+
+fn plan_94() -> String {
+    PLAN_49.replace("#1", "#94")
+}
+
+/// The draft of #94 on `issue/94-x`, owned by m0x6A, approved in Rubato by teammate with a
+/// summary. Returns the approval.
+async fn approved_94(h: &Harness) -> rubato_protocol::DraftApproveResponse {
+    let text = plan_94();
+    rubato_server::plan_drafts::on_draft(
+        &h.app,
+        &rubato_protocol::DraftBundle {
+            launch_id: Uuid::from_u128(1),
+            session_id: None,
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            branch: "issue/94-x".into(),
+            bundle_hash: rubato_protocol::bundle_hash(
+                "docs/plans/94.md",
+                &[("docs/plans/94.md".into(), text.clone())],
+            ),
+            files: vec![rubato_protocol::DraftFile {
+                path: "docs/plans/94.md".into(),
+                text: text.clone(),
+            }],
+            missing: vec![],
+            refused: None,
+            at: chrono::Utc::now(),
+        },
+        "m0x6A",
+    )
+    .await;
+    let r = h
+        .http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::approve::routes::PLAN_DRAFT_APPROVE
+        ))
+        .header("x-rubato-dev-user", "teammate")
+        .json(&rubato_protocol::DraftApproveRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 94,
+            branch: "issue/94-x".into(),
+            plan_sha: rubato_server::plans::approval_hash(&text),
+            rev: None,
+            summary: "We kept the table as it was.".into(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    r.json().await.unwrap()
+}
+
+/// The plan as `plan.ts handoff` commits it: the approval record in the front matter, for
+/// `by` at the approval's second.
+fn handed_off(a: &rubato_protocol::DraftApproveResponse, by: &str) -> String {
+    plan_94().replacen(
+        "issue: m0x6A/rubato#94\n",
+        &format!(
+            "issue: m0x6A/rubato#94\napproved_by: {by}\napproved_at: {}\napproved_sha: {}\n",
+            a.approved_at.format("%Y-%m-%dT%H:%M:%SZ"),
+            a.plan_sha
+        ),
+        1,
+    )
+}
+
+/// Put `text` on `issue/94-x` at head `sha`, and track #94.
+async fn on_branch_94(h: &Harness, text: &str, sha: &str) {
+    h.github.with(|g| {
+        let b = g.branches.get_mut("m0x6A/rubato").unwrap();
+        b.retain(|(n, _)| n != "issue/94-x");
+        b.push(("issue/94-x".into(), sha.into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/94.md".into(),
+                "issue/94-x".into(),
+            ),
+            text.to_owned(),
+        );
+    });
+}
+
+fn link_posts(h: &Harness) -> Vec<String> {
+    h.call_args("comment_as")
+        .into_iter()
+        .filter(|a| a.starts_with("m0x6A/rubato#94 "))
+        .collect()
+}
+
+async fn findings_94(h: &Harness) -> Vec<Finding> {
+    h.overview("m0x6A")
+        .await
+        .findings
+        .into_iter()
+        .filter(|f| serde_json::to_value(f).unwrap()["issue"]["number"] == 94)
+        .collect()
+}
+
+/// ADR 0055: once the handoff commit is on the branch, the link comment is posted once as the
+/// approver, naming the commit the plan was read at. A building agent pushing after it, so the
+/// head moves, makes no second comment.
+#[tokio::test]
+async fn the_link_comment_is_posted_once_over_two_ticks_while_the_head_moves() {
+    let h = handoff_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    // Before the handoff: the plan is not on the branch, nothing to link.
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(link_posts(&h).is_empty());
+
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let posts = link_posts(&h);
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    let body = &posts[0];
+    assert!(
+        body.contains(
+            "Plan approved in Rubato: [docs/plans/94.md at h1](https://github.com/m0x6A/rubato/blob/h1/docs/plans/94.md)"
+        ),
+        "the permalink names the commit read: {body}"
+    );
+    assert!(body.contains("Approved by teammate at "), "{body}");
+    assert!(!body.contains("@teammate"), "nobody is notified");
+    assert!(body.contains("We kept the table as it was."));
+    assert!(body.contains(&format!("Rubato-Approval: {}", a.approval_id)));
+
+    // The agent goes on building and pushes: the head moves, the plan stays.
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h2").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(link_posts(&h).len(), 1, "one link comment per approval");
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 94).unwrap();
+    assert_eq!(
+        one.approval.as_ref().map(|s| s.version),
+        Some(rubato_protocol::ApprovalVersion::Current)
+    );
+    assert!(
+        findings_94(&h).await.is_empty(),
+        "{:?}",
+        findings_94(&h).await
+    );
+}
+
+/// ADR 0055: a post whose outcome is unknown stays `opening`; the comments pass finds it by its
+/// `Rubato-Approval:` line from the approver, and it is never posted again on its own. One that
+/// is never found is `LinkCommentWaiting` after 30 minutes, still not posted again.
+#[tokio::test]
+async fn an_unknown_link_comment_is_found_by_its_line_and_never_posted_again() {
+    let h = handoff_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    h.github.with(|g| g.comment_times_out = true);
+    tasks::poll_once(&h.app).await.unwrap(); // posts; GitHub does not answer
+    h.github.with(|g| g.comment_times_out = false);
+    tasks::poll_once(&h.app).await.unwrap(); // reads the comment, settles the row
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(link_posts(&h).len(), 1);
+    h.app
+        .clock
+        .set(chrono::Utc::now() + chrono::Duration::minutes(31));
+    assert!(
+        !findings_94(&h)
+            .await
+            .iter()
+            .any(|f| matches!(f, Finding::LinkCommentWaiting { .. })),
+        "found, so not waiting"
+    );
+
+    // Never found: the comment did not land.
+    let h = handoff_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    h.github.with(|g| g.comment_times_out = true);
+    tasks::poll_once(&h.app).await.unwrap();
+    h.github.with(|g| {
+        g.comment_times_out = false;
+        g.comments.remove(&("m0x6A/rubato".into(), 94));
+    });
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(findings_94(&h).await.is_empty(), "not yet 30 minutes");
+    h.app
+        .clock
+        .set(chrono::Utc::now() + chrono::Duration::minutes(31));
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(link_posts(&h).len(), 1, "never posted again on its own");
+    assert_eq!(
+        findings_94(&h).await,
+        vec![Finding::LinkCommentWaiting {
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            approval_id: a.approval_id,
+        }]
+    );
+}
+
+/// ADR 0054: keys that are not Rubato's record of that branch, or keys on a branch Rubato has no
+/// approval of, are `ApprovalRecordMismatch`, and nothing is posted.
+#[tokio::test]
+async fn an_approval_record_that_differs_is_a_finding_and_posts_nothing() {
+    let h = handoff_harness().await;
+    give_token(&h, "teammate", 8 * 3600).await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "mallory"), "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(link_posts(&h).is_empty());
+    assert_eq!(
+        findings_94(&h).await,
+        vec![Finding::ApprovalRecordMismatch {
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            branch: "issue/94-x".into(),
+            reason: "record_differs".into(),
+        }]
+    );
+
+    // Keys on the branch of an issue nobody approved in Rubato.
+    let h = handoff_harness().await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(link_posts(&h).is_empty());
+    assert_eq!(
+        findings_94(&h).await,
+        vec![Finding::ApprovalRecordMismatch {
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            branch: "issue/94-x".into(),
+            reason: "no_rubato_record".into(),
+        }]
+    );
+}
+
+/// ADR 0055: with no token for the approver the link waits (`LinkWaitingForApprover`), and is
+/// posted on the first tick after they log in.
+#[tokio::test]
+async fn a_link_comment_waits_for_an_approver_with_no_token() {
+    let h = handoff_harness().await;
+    let a = approved_94(&h).await;
+    h.pin_issue(94).await;
+    on_branch_94(&h, &handed_off(&a, "teammate"), "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(link_posts(&h).is_empty());
+    assert_eq!(
+        findings_94(&h).await,
+        vec![Finding::LinkWaitingForApprover {
+            issue: IssueRef::new("m0x6A/rubato", 94),
+            approver: "teammate".into(),
+        }]
+    );
+    give_token(&h, "teammate", 8 * 3600).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(link_posts(&h).len(), 1);
+    assert!(findings_94(&h).await.is_empty());
+}
+
+/// With the cutover unset nothing of the handoff shows: keys on a branch are no finding.
+#[tokio::test]
+async fn the_handoff_findings_stay_dark_without_a_cutover() {
+    let h = harness().await;
+    h.pin_issue(94).await;
+    let text = PLAN_49.replace("#1", "#94").replacen(
+        "issue: m0x6A/rubato#94\n",
+        "issue: m0x6A/rubato#94\napproved_by: x\napproved_at: 2026-11-14T08:00:00Z\napproved_sha: f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9\n",
+        1,
+    );
+    on_branch_94(&h, &text, "h1").await;
+    tasks::poll_once(&h.app).await.unwrap();
+    assert!(findings_94(&h).await.is_empty());
+    assert!(link_posts(&h).is_empty());
+}
+
+/// Plan 122 §D5: a draft revision stored for `owner` on `branch` of issue #3, with caps in its
+/// front matter.
+async fn draft_on(h: &Harness, owner: &str, branch: &str, cap: f64) {
+    let plan = format!(
+        "---\nissue: m0x6A/rubato#3\nspend_cap_usd: {cap}\nattempt_limit: 7\n---\n## Affected parts\n| Node | Status | What changes | Seams |\n| --- | --- | --- | --- |\n| skill-rubato | affected | x | |\n"
+    );
+    let bundle = rubato_protocol::DraftBundle {
+        launch_id: Uuid::new_v4(),
+        session_id: None,
+        issue: IssueRef::new("m0x6A/rubato", 3),
+        branch: branch.into(),
+        files: vec![rubato_protocol::DraftFile {
+            path: "docs/plans/3.md".into(),
+            text: plan,
+        }],
+        missing: vec![],
+        bundle_hash: format!("h-{branch}-{cap}"),
+        refused: None,
+        at: chrono::Utc::now(),
+    };
+    rubato_server::plan_drafts::on_draft(&h.app, &bundle, owner).await;
+}
+
+/// A connected companion of `user` that announced `caps`, and issue #3 pinned.
+async fn launcher(
+    h: &Harness,
+    user: &str,
+    caps: &[&str],
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    let (companion_id, token) = h.pair(user).await;
+    let mut ws = h.connect(&token).await;
+    let mut hello = with_companion(Harness::fixture("companion_hello.json"), companion_id);
+    if let CompanionMessage::Hello {
+        capabilities,
+        user: u,
+        ..
+    } = &mut hello.message
+    {
+        *capabilities = caps.iter().map(|c| (*c).to_owned()).collect();
+        *u = user.into();
+    }
+    let _ = send(&mut ws, &hello).await;
+    ws
+}
+
+async fn pin_3(h: &Harness) {
+    h.http
+        .post(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 3),
+            target: MapRef::node("skill-rubato"),
+        })
+        .send()
+        .await
+        .unwrap();
+}
+
+async fn launch_3(h: &Harness, user: &str, extra: serde_json::Value) -> reqwest::Response {
+    let mut body = serde_json::json!({ "issue": IssueRef::new("m0x6A/rubato", 3) });
+    if let (Some(b), Some(e)) = (body.as_object_mut(), extra.as_object()) {
+        b.extend(e.clone());
+    }
+    h.http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .header("x-rubato-dev-user", user)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// ADR 0053, §D5: the owner's launch resumes their draft's branch, whatever the title says now;
+/// the draft's newest revision sets the caps, comes along for a companion that restores, and
+/// each resumption counts as an attempt.
+#[tokio::test]
+async fn the_owner_resumes_a_parked_draft_on_its_branch() {
+    let h = harness().await;
+    let _ws = launcher(&h, "m0x6A", &["draft_restore"]).await;
+    pin_3(&h).await;
+    draft_on(&h, "m0x6A", "issue/3-first-title", 4.5).await;
+
+    let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let first: rubato_protocol::LaunchResponse = r.json().await.unwrap();
+    let cmd = first.command;
+    assert_eq!(cmd.branch, "issue/3-first-title", "not a slug of the title");
+    assert_eq!(cmd.plan_path.as_deref(), Some("docs/plans/3.md"));
+    assert_eq!(
+        cmd.spend_cap_usd, 4.5,
+        "caps from the draft's newest revision"
+    );
+    assert_eq!(cmd.attempt_limit, 7);
+    let draft = cmd
+        .draft
+        .expect("the draft travels to a companion that restores");
+    assert_eq!(draft.rev, 1);
+    assert_eq!(draft.files[0].path, "docs/plans/3.md");
+
+    // A second resumption is the next attempt.
+    let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+    let again: rubato_protocol::LaunchResponse = r.json().await.unwrap();
+    assert_eq!(again.command.attempt, cmd.attempt + 1);
+}
+
+/// ADR 0053, §D5: an older companion gets no draft in the command (it would drop the field
+/// silently); the launch still goes on the draft's branch.
+#[tokio::test]
+async fn a_companion_that_does_not_restore_gets_no_draft() {
+    let h = harness().await;
+    let _ws = launcher(&h, "m0x6A", &[]).await;
+    pin_3(&h).await;
+    draft_on(&h, "m0x6A", "issue/3-first-title", 4.5).await;
+    let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+    let cmd = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(cmd.branch, "issue/3-first-title");
+    assert_eq!(cmd.draft, None);
+}
+
+/// ADR 0053, §D5: two drafts of the caller's and no branch named is 409 pass_branch; naming one
+/// launches on it, and a branch outside the issue's prefix is refused.
+#[tokio::test]
+async fn several_drafts_need_the_branch_named() {
+    let h = harness().await;
+    let _ws = launcher(&h, "m0x6A", &["draft_restore"]).await;
+    pin_3(&h).await;
+    draft_on(&h, "m0x6A", "issue/3-one", 1.0).await;
+    draft_on(&h, "m0x6A", "issue/3-two", 2.0).await;
+    let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+    assert_eq!(r.status(), 409);
+    let text = r.text().await.unwrap();
+    assert!(text.starts_with("pass_branch: "), "{text}");
+    assert!(
+        text.contains("issue/3-one") && text.contains("issue/3-two"),
+        "{text}"
+    );
+
+    let r = launch_3(&h, "m0x6A", serde_json::json!({ "branch": "issue/3-two" })).await;
+    assert_eq!(r.status(), 200);
+    let cmd = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(cmd.branch, "issue/3-two");
+    assert_eq!(cmd.spend_cap_usd, 2.0);
+    assert_eq!(cmd.draft.map(|d| d.files.len()), Some(1));
+
+    let r = launch_3(&h, "m0x6A", serde_json::json!({ "branch": "issue/4-two" })).await;
+    assert_eq!(r.status(), 422, "a branch of another issue");
+}
+
+/// ADR 0053, §D5: a teammate's draft stays theirs: another person's launch goes on a branch of
+/// their own and carries no draft (taking a draft over is Import).
+#[tokio::test]
+async fn a_teammates_draft_is_not_resumed_by_someone_else() {
+    let h = harness().await;
+    let _mine = launcher(&h, "m0x6A", &["draft_restore"]).await;
+    let _theirs = launcher(&h, "alice", &["draft_restore"]).await;
+    pin_3(&h).await;
+    draft_on(&h, "m0x6A", "issue/3-first-title", 4.5).await;
+    let r = launch_3(&h, "alice", serde_json::json!({ "slug": "alices" })).await;
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let cmd = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(cmd.branch, "issue/3-alices");
+    assert_eq!(cmd.draft, None);
+}
+
+/// ADR 0058: issue #95 has a plan on `issue/95-hand` written outside Rubato, at head `h95`.
+fn hand_written(h: &Harness, plan: &str) {
+    let branch = "issue/95-hand";
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push((branch.into(), "h95".into()));
+        for r in [branch, "h95"] {
+            g.files.insert(
+                ("m0x6A/rubato".into(), "docs/plans/95.md".into(), r.into()),
+                plan.into(),
+            );
+        }
+        g.commit_authors.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/95.md".into(),
+                "h95".into(),
+            ),
+            "bob".into(),
+        );
+    });
+}
+
+async fn import_95(h: &Harness, user: &str) -> reqwest::Response {
+    h.http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::plan_draft::routes::PLAN_IMPORT
+        ))
+        .header("x-rubato-dev-user", user)
+        .json(&rubato_protocol::ImportRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 95,
+            branch: "issue/95-hand".into(),
+        })
+        .send()
+        .await
+        .unwrap()
+}
+
+/// ADR 0058: after the cutover a plan with no draft and no counted approval is outside Rubato;
+/// importing a plan that fits makes a draft the importer owns, with the last committer kept as
+/// its author and the files at the head as revision 1; a second import is refused; and the
+/// issue may launch unpinned, placed by its plan.
+#[tokio::test]
+async fn a_plan_written_outside_rubato_is_imported_as_the_importers_draft() {
+    let h = harness_with(|c| c.comment_approvals_until = Some(chrono::Utc::now())).await;
+    hand_written(&h, &PLAN_49.replace("#1", "#95"));
+    // The poll reads plans of the issues it follows: pinned once, then unpinned, it keeps
+    // following #95 by its plan.
+    h.pin_issue(95).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let r = h
+        .http
+        .delete(format!("{}{}", h.url, pin_routes::PINS))
+        .json(&PinRequest {
+            issue: IssueRef::new("m0x6A/rubato", 95),
+            target: MapRef::node("rubato-server"),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov
+        .issues
+        .iter()
+        .find(|i| i.issue.number == 95)
+        .expect("followed by its plan");
+    assert!(one.pins.is_empty());
+    assert!(
+        one.outside_rubato,
+        "no draft, no approval, after the cutover"
+    );
+    assert!(one.draft.is_none());
+
+    let r = import_95(&h, "m0x6A").await;
+    assert_eq!(r.status(), 201, "{:?}", r.text().await);
+    let rubato_protocol::ImportResponse::Imported {
+        draft_id,
+        rev,
+        original_author,
+    } = r.json().await.unwrap()
+    else {
+        panic!("a fitting plan is imported, not rewritten")
+    };
+    assert_eq!(rev, 1);
+    assert_eq!(original_author.as_deref(), Some("bob"));
+    assert!(
+        h.github
+            .calls()
+            .iter()
+            .any(|(c, a)| *c == "last_commit_author" && a == "m0x6A/rubato docs/plans/95.md h95"),
+        "one commits call at the head"
+    );
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 95).unwrap();
+    assert!(!one.outside_rubato, "it has a draft now");
+    let d = one.draft.as_ref().expect("the draft shows");
+    assert_eq!(d.draft_id, draft_id);
+    assert_eq!(d.owner, "m0x6A", "the importer owns it");
+    assert_eq!(d.original_author.as_deref(), Some("bob"));
+    assert_eq!(d.imported_from.as_deref(), Some("issue/95-hand"));
+
+    let again = import_95(&h, "alice").await;
+    assert_eq!(again.status(), 409);
+    assert_eq!(
+        again.json::<serde_json::Value>().await.unwrap()["reason"],
+        "already_in_rubato"
+    );
+
+    // Unpinned, but its plan fits: the owner may launch, placed by the plan's parts.
+    let _ws = launcher(&h, "m0x6A", &[]).await;
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, launch_routes::LAUNCH))
+        .json(&serde_json::json!({ "issue": IssueRef::new("m0x6A/rubato", 95) }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let cmd = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(cmd.branch, "issue/95-hand");
+    assert_eq!(cmd.node_ids, vec!["rubato-server".to_string()]);
+}
+
+/// ADR 0058: before the cutover nothing is outside Rubato (plans are approved by comment).
+#[tokio::test]
+async fn nothing_is_outside_rubato_before_the_cutover() {
+    let h = harness().await;
+    hand_written(&h, &PLAN_49.replace("#1", "#95"));
+    h.pin_issue(95).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let ov = h.overview("m0x6A").await;
+    let one = ov.issues.iter().find(|i| i.issue.number == 95).unwrap();
+    assert!(!one.outside_rubato);
+}
+
+/// ADR 0058: a plan that does not fit is rewritten by a session of the importer's on that
+/// branch, told why; with no companion of theirs the launch's refusal is passed on.
+#[tokio::test]
+async fn a_plan_that_does_not_fit_is_rewritten_by_the_importers_session() {
+    let h = harness_with(|c| c.comment_approvals_until = Some(chrono::Utc::now())).await;
+    let unfit = PLAN_49
+        .replace("#1", "#95")
+        .replace("| rubato-server | affected |", "| nowhere | affected |");
+    hand_written(&h, &unfit);
+    h.pin_issue(95).await;
+
+    let r = import_95(&h, "m0x6A").await;
+    assert_eq!(
+        r.status(),
+        409,
+        "no companion of the importer's is connected"
+    );
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(v["reason"], "launch_refused");
+    assert!(v["detail"].as_str().unwrap().contains("companion"), "{v}");
+
+    let mut ws = launcher(&h, "m0x6A", &[]).await;
+    let r = import_95(&h, "m0x6A").await;
+    assert_eq!(r.status(), 202, "{:?}", r.text().await);
+    let rubato_protocol::ImportResponse::Rewriting { branch, .. } = r.json().await.unwrap() else {
+        panic!("a plan that does not fit is rewritten")
+    };
+    assert_eq!(branch, "issue/95-hand");
+    let cmd = loop {
+        let Some(Ok(Message::Text(t))) = ws.next().await else {
+            panic!("no launch on the socket")
+        };
+        let env: ServerEnvelope = serde_json::from_str(&t).unwrap();
+        if let ServerMessage::Launch(cmd) = env.message {
+            break cmd;
+        }
+    };
+    assert_eq!(cmd.branch, "issue/95-hand");
+    assert!(
+        cmd.prompt.contains("written outside Rubato"),
+        "{}",
+        cmd.prompt
+    );
+    assert!(
+        cmd.prompt.contains("nowhere"),
+        "the prompt says why: {}",
+        cmd.prompt
+    );
+    let ov = h.overview("m0x6A").await;
+    assert!(
+        ov.issues
+            .iter()
+            .find(|i| i.issue.number == 95)
+            .unwrap()
+            .draft
+            .is_none(),
+        "no draft until the rewrite mirrors one"
+    );
+}
+
+/// #122 PR 10 (ADR 0057): the poll tick posts the seam notices, once over two ticks, and the
+/// team routes serve the room: what one person posts, another reads.
+#[tokio::test]
+async fn the_tick_posts_seam_notices_and_the_room_is_read_by_the_team() {
+    let h = harness().await;
+    for n in [95u64, 96] {
+        let branch = format!("issue/{n}-x");
+        h.github.with(|g| {
+            g.branches
+                .get_mut("m0x6A/rubato")
+                .unwrap()
+                .push((branch.clone(), format!("s{n}")));
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    format!("docs/plans/{n}.md"),
+                    branch.clone(),
+                ),
+                PLAN_49.replace("#1", &format!("#{n}")),
+            );
+        });
+        h.pin_issue(n).await;
+    }
+    tasks::poll_once(&h.app).await.unwrap();
+    tasks::poll_once(&h.app).await.unwrap();
+    let room = |n: u64, user: &'static str| {
+        let h = &h;
+        async move {
+            let r = h
+                .http
+                .get(format!(
+                    "{}{}?repo=m0x6A%2Frubato&number={n}&branch=issue%2F{n}-x",
+                    h.url,
+                    rubato_protocol::room::routes::ROOM
+                ))
+                .header("x-rubato-dev-user", user)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            r.json::<rubato_protocol::RoomView>().await.unwrap()
+        }
+    };
+    let in95 = room(95, "alice").await;
+    assert_eq!(in95.messages.len(), 1, "{:?}", in95.messages);
+    let notice = in95.messages[0].notice.as_ref().unwrap();
+    assert_eq!(
+        (
+            notice.seam.as_str(),
+            notice.other.number,
+            notice.other_branch.as_str()
+        ),
+        ("server-github", 96, "issue/96-x")
+    );
+    assert_eq!(room(96, "alice").await.messages.len(), 1);
+
+    let r = h
+        .http
+        .post(format!(
+            "{}{}",
+            h.url,
+            rubato_protocol::room::routes::ROOM_MESSAGES
+        ))
+        .header("x-rubato-dev-user", "alice")
+        .json(&rubato_protocol::RoomPostRequest {
+            repo: "m0x6A/rubato".into(),
+            number: 95,
+            branch: "issue/95-x".into(),
+            text: "Shall we share the comments pass?".into(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let seen = room(95, "bob").await.messages;
+    assert_eq!(
+        seen.last().map(|m| (m.author.as_str(), m.text.as_str())),
+        Some(("alice", "Shall we share the comments pass?"))
+    );
 }

@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import { ProgressRing, SpendGauge, SpendSparkline, StageRail } from "./visuals.tsx";
+import { SessionChat } from "../chat/index.ts";
 import { PinMenu } from "../pins/index.ts";
-import { WhereItFits } from "../plans/index.ts";
+import { DraftSection, WhereItFits } from "../plans/index.ts";
 import { QueueMenu } from "../queue/index.ts";
+import { RoomSection, roomLimit } from "../room/index.ts";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
 import { setIssueDrag } from "../../shared/dnd.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
@@ -17,7 +19,8 @@ interface Props {
   selection: MapRef | null;
   onSelect: (issue: IssueRef | null) => void;
   onClearSelection: () => void;
-  onLaunch: (issue: IssueRef) => void;
+  /** `branch` resumes one of the caller's drafts on it (ADR 0053). */
+  onLaunch: (issue: IssueRef, branch?: string) => void;
   /** Adds a pin; an issue may have several. The keyboard twin of dropping a row on the map. */
   onPin: (issue: IssueRef, target: MapRef) => void;
   onUnpin: (req: PinRequest) => void;
@@ -25,6 +28,8 @@ interface Props {
   onQueue?: ((issue: IssueRef, companionId: string) => void) | undefined;
   /** Says what *Accept plan* did. */
   onNotice?: ((text: string) => void) | undefined;
+  /** Show a seam on the map, from a room's seam notice. */
+  onShowSeam?: ((seam: string) => void) | undefined;
 }
 
 /** Companions the current user may queue issues on: their own, paired, not revoked (ADR 0020). */
@@ -45,7 +50,7 @@ export function ownConnectedCompanions(overview: Overview, me: Me | null) {
 
 const ORDER = ["blocked", "unknown", "building", "designing", "designed", "started", "in_review", "planned", "done"] as const;
 
-export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice }: Props) {
+export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice, onShowSeam }: Props) {
   const own = ownConnectedCompanions(overview, me);
   // The name of this workspace, when there are several: what "counts in" is told apart from.
   const hereName = (overview.workspaces ?? []).find((w) => w.id === overview.workspace)?.name;
@@ -117,29 +122,51 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             <table className="mini">
               <tbody>
                 {(selected.sessions ?? []).map((s, i) => (
-                  <tr key={s.session_id ?? i}>
-                    <td>
-                      <span className={`badge ${s.status}`}>{s.status}</span>
-                    </td>
-                    <td className="muted">{s.source}</td>
-                    <td>{s.tmux?.session ?? s.cwd}</td>
-                    <td className="muted">{relative(s.last_seen)}</td>
-                    <td>{s.spend_usd !== undefined && s.spend_usd !== null ? `$${s.spend_usd.toFixed(2)}` : ""}</td>
-                  </tr>
+                  <Fragment key={s.session_id ?? i}>
+                    <tr>
+                      <td>
+                        <span className={`badge ${s.status}`}>{s.status}</span>
+                      </td>
+                      <td className="muted">{s.source}</td>
+                      <td>{s.tmux?.session ?? s.cwd}</td>
+                      <td className="muted">{relative(s.last_seen)}</td>
+                      <td>{s.spend_usd !== undefined && s.spend_usd !== null ? `$${s.spend_usd.toFixed(2)}` : ""}</td>
+                    </tr>
+                    {/* A session Rubato launched can be messaged by its owner and read by everyone (ADR 0051). */}
+                    {s.launch_id && (
+                      <tr className="chat-row">
+                        <td colSpan={5}>
+                          <SessionChat session={s} me={me} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </>
         )}
+        {selected.draft && (
+          <DraftSection issue={selected} me={me} approvalsInRubato={Boolean(overview.comment_approvals_until)} onResume={own.length > 0 ? (branch) => onLaunch(selected.issue, branch) : undefined} />
+        )}
         {(selected.plan || selected.fit) && (
           <>
             <h3 style={{ marginTop: 12 }}>Plan · {selected.plan?.path ?? "does not parse"}</h3>
-            <WhereItFits issue={selected} map={overview.map.map} me={me} onNotice={(t) => onNotice?.(t)} />
+            <WhereItFits issue={selected} map={overview.map.map} me={me} onNotice={(t) => onNotice?.(t)} approvalsInRubato={Boolean(overview.comment_approvals_until)} />
             {selected.plan?.assumed && selected.plan.assumed.some((a) => a.scope === "seam") && (
               <p className="warn">⚠ {selected.plan.assumed.filter((a) => a.scope === "seam").length} seam-level question(s) wait for a human.</p>
             )}
           </>
         )}
+        {/* The plan's room: the draft's branch, else the plan's; nothing without either (ADR 0057). */}
+        <RoomSection
+          issue={selected}
+          me={me}
+          maxChars={roomLimit(overview)}
+          onOpenIssue={onSelect}
+          canOpen={(i) => overview.issues.some((x) => x.issue.repo === i.repo && x.issue.number === i.number)}
+          onShowSeam={onShowSeam}
+        />
         {selected.pull_request && (
           <p>
             PR{" "}

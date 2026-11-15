@@ -172,6 +172,8 @@ body { background: var(--bg); color: var(--ink); font: 13px/1.45 var(--font-ui);
 .tabs button.active { background: none; color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 button, .button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); cursor: pointer; text-decoration: none; }
 button.active, .button.primary, button.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); font-weight: 600; }
+/* A step that cannot be taken back, asked a second time (Stop session, ADR 0062). */
+button.danger { background: var(--bad-wash); border-color: var(--bad); color: var(--bad-ink); font-weight: 600; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .login { max-width: 420px; margin: 15vh auto; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; text-align: center; }
 h1, h2, h3 { margin: 0 0 8px; }
@@ -219,6 +221,86 @@ button.link:hover { text-decoration: underline; }
 .new-issue label { display: flex; flex-direction: column; gap: 2px; }
 .new-issue textarea, .new-issue input, .new-issue select { width: 100%; box-sizing: border-box; font: inherit; }
 .new-issue-start { margin: 8px 0; }
+/* chat: messages to your own launched session, read by the whole team (ADR 0051) */
+tr.chat-row > td { padding-top: 0; }
+.chat-toggle { padding: 2px 8px; font-size: 12px; min-height: 24px; }
+.chat { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+:where(.chat p) { margin: 0; }
+.chat h4 { margin: 4px 0 0; font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.chat-msg { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); }
+.chat-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.chat-text { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.msg-state { font-size: 12px; color: var(--muted); }
+.msg-state.sent { color: var(--accent-ink); }
+.msg-state.delivered { color: var(--ok-ink); }
+.msg-state.refused, .msg-state.failed { color: var(--bad-ink); }
+.msg-state.delivery_unknown { color: var(--warn-ink); }
+.chat-unknown { margin-top: 4px; }
+.chat-unknown button { padding: 2px 8px; min-height: 24px; font-size: 12px; }
+.log-entry { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); }
+.log-entry.assistant { border-left: 3px solid var(--accent); }
+.log-entry.review, .log-entry.summary { border-left-color: var(--new); }
+.log-source, .log-kind { font-size: 12px; color: var(--muted); }
+.log-entry.review .log-kind, .log-entry.summary .log-kind { color: var(--new-ink); font-weight: 600; }
+.log-text { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.log-new-session { padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px dashed var(--line); }
+.msg-answered { font-size: 12px; color: var(--ok-ink); }
+.chat-meta a { font-size: 12px; color: var(--accent-ink); }
+.chat-compose { display: flex; flex-direction: column; gap: 4px; }
+/* a plan's room: the team's discussion and Rubato's seam notices (ADR 0057) */
+:where(.room p) { margin: 4px 0; }
+.room-log { gap: 6px; margin-top: 6px; }
+.room-msg { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); }
+.room-msg.agent { border-left: 3px solid var(--accent); }
+.room-msg.system { border-color: var(--warn); background: var(--warn-wash); }
+.room-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.room-kind { font-size: 12px; color: var(--muted); }
+.room-msg.agent .room-kind { color: var(--accent-ink); font-weight: 600; }
+.room-msg.system .room-kind { color: var(--warn-ink); font-weight: 600; }
+.room-text { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.room-notice { font-size: 12px; }
+.room-compose { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.room-compose textarea { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); resize: vertical; }
+.room-compose textarea[aria-invalid="true"] { border-color: var(--bad); }
+.room-compose-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+/* who is in a room: agents called in, requests, the call-in and its estimate (PR 11) */
+.room h4 { margin: 10px 0 4px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.room h4[tabindex="-1"]:focus { outline: none; }
+.room-agents, .room-requests { gap: 4px; font-size: 12px; }
+.room-agents button, .room-requests button, .room-callin-open button, .room-callin button { padding: 2px 8px; min-height: 24px; font-size: 12px; }
+.room-request.pending .room-request-state { color: var(--warn-ink); font-weight: 600; }
+.room-callin { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent-wash); }
+.room-addressed { font-size: 12px; color: var(--accent-ink); }
+.room-replies { margin: 6px 0 0 12px; gap: 6px; }
+/* the plan draft on an issue, its revisions and what changed since you last looked (ADR 0053) */
+.draft h4 { margin: 10px 0 4px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.draft p { margin: 4px 0; }
+.badge.draft-live { color: var(--ok-ink); background: var(--ok-wash); border-color: var(--ok); }
+.badge.draft-parked { color: var(--muted); border-style: dashed; border-color: var(--quiet); }
+.draft-missing { margin: 2px 0 0; padding-left: 18px; }
+.draft-revisions { gap: 4px; }
+.draft-revisions button { padding: 2px 8px; min-height: 24px; font-size: 12px; }
+.draft-revisions button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.draft-change, .draft-file { margin-top: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); }
+.draft-change > summary, .draft-file > summary { padding: 4px 8px; cursor: pointer; overflow-wrap: anywhere; }
+.change-status { font-size: 12px; color: var(--muted); }
+.draft-text { margin: 0; padding: 6px 8px; border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Approval in Rubato (ADR 0054): the agent's review, the summary to edit, one button. */
+.approve-draft { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--raised); display: flex; flex-direction: column; gap: 4px; }
+.approve-draft label { font-size: 12px; color: var(--chip-ink); }
+.approve-draft textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); resize: vertical; }
+.draft-review > summary { cursor: pointer; overflow-wrap: anywhere; }
+.diff-lines { list-style: none; margin: 0; padding: 4px 0; border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 12px; }
+.diff-lines li { display: flex; gap: 6px; padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-lines li.add { background: var(--ok-wash); }
+.diff-lines li.del { background: var(--bad-wash); }
+.diff-lines li.gap { color: var(--muted); font-style: italic; }
+.diff-lines .mark { flex: none; width: 1ch; }
+.diff-lines li.add .mark { color: var(--ok-ink); }
+.diff-lines li.del .mark { color: var(--bad-ink); }
+.diff-lines ins, .diff-lines del { text-decoration: none; }
+.chat-compose textarea { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); resize: vertical; }
+.chat-compose-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .repo-status { font-size: 12px; gap: 2px; }
 .repo-status li.warn { font-size: 12px; }
 /* "Pin to…": the keyboard twin of the drag */
@@ -314,6 +396,16 @@ button.link:hover { text-decoration: underline; }
 /* Traffic the map does not declare (finding UndeclaredTraffic): static amber dots, round caps. */
 .react-flow__edge.territory .react-flow__edge-path { stroke: var(--warn); stroke-width: 2.5; stroke-dasharray: 1 5; stroke-linecap: round; }
 .territory-label { font-family: var(--font-mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px; color: var(--warn-ink); background: var(--warn-wash); border: 1px dotted var(--warn); white-space: nowrap; }
+/* A ghost part (issue #140): a service that runs but no part names. Dashed amber, static, never a part. */
+.ghost-card { width: 220px; min-height: 72px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 2px dashed var(--warn); border-radius: 8px; background: var(--warn-wash); color: var(--warn-ink); }
+.ghost-card strong { font-size: 14px; overflow-wrap: anywhere; }
+.ghost-tag { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+/* What the map and the observed system disagree about, under the Traffic lens's legend. */
+.discrepancies { padding: 8px 12px; border-top: 1px solid var(--warn); background: var(--warn-wash); max-height: 22vh; overflow: auto; }
+.discrepancies > summary { cursor: pointer; font-size: 13px; color: var(--warn-ink); }
+.discrepancies li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 0; }
+.discrepancy-actions { display: inline-flex; gap: 6px; }
+.service-fields { border: 1px solid var(--line, currentColor); border-radius: 6px; padding: 6px 8px; }
 .legend details.unmapped { display: inline-block; margin-left: 8px; }
 .lens button.active { background: var(--accent-strong); color: var(--on-accent); font-weight: 600; }
 .lens button:disabled { opacity: 0.6; cursor: default; }
