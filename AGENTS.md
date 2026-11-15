@@ -60,6 +60,8 @@ schema/
   system-map.schema.json   # JSON Schema for system-map.yml
   plan.schema.json         # the plan file's affected-parts section
 actions/plan-check/        # GitHub Action: fail a PR whose plan names an unknown node or lacks an O-row per seam
+features/                  # the app's user scenarios in Gherkin, one <capability>.feature each, ids @<capability>.<slug> (ADR 0069)
+e2e/                       # end to end: run.ts (server + companion), scenarios.ts (scenario check and coverage report)
 observability/
   alerts/                  # alert rules for the "never silent" list, each with a test that fires it
   dashboards/              # issue → node → session → cost; map with drift findings
@@ -227,6 +229,7 @@ One planning workflow, the `rubato` skill (`skills/rubato/SKILL.md`, ADR 0028), 
 - **Size the track first.** Trivial, small or full, with the triggers in the skill; a full plan gets a design note in `docs/plans/<issue>-<slug>/design.md`.
 - **Plan before code.** A plan file at `docs/plans/<issue>.md` using `schema/plan.schema.json`, under the spec headings (what the change does, how we'll know it works, what it must not break, how we'll debug it at 3 am). Front matter is `issue`, `title`, `map_version`, `spend_cap_usd` and `attempt_limit` (ADR 0027), plus the approval record `approved_by`, `approved_at` and `approved_sha`, which only `plan.ts handoff` writes (ADR 0054). Open decisions go in a section headed **Assumed, not yet approved**; a decision that touches a seam blocks, a decision inside one node may be assumed and labelled.
 - **Review and approval happen in Rubato.** The design review is the agent's reply whose first line is `Review:` (`skills/rubato/review-template.md`, checklist in `review-checklist.md`), and its summary of the discussion a reply that starts `Summary:`. A person approves the draft's newest revision in Rubato, as themselves; an agent never approves. At approval the plan reaches the branch in one commit with the approval record (`plan.ts handoff`), and the issue gets one link comment from the approver (ADR 0054, ADR 0055). `Approved:` comments posted before the cutover still count; later ones do not.
+- **New features come with a scenario.** A user-facing change adds or changes a scenario in `features/<capability>.feature`, with a stable `@<capability>.<slug>` id (ADR 0069). Every e2e test cites the scenarios it covers: a Playwright test in its `tag` detail, an `e2e/run.ts` check in `e2e/run-checks.ts`; `@selftest` marks a `must fail:` test, `@tooling` one that asserts nothing. `pnpm scenarios check` fails on an unknown id or a test that cites none and warns on an uncovered scenario; `pnpm scenarios report` writes the coverage of the last run.
 - **Small, reversible changes.** One task, one branch named `issue/<n>-<slug>`, one PR.
 - **Every check reports how many things it checked and has a test that makes it fail on purpose.** This includes the plan check and every Gherkin suite.
 - **Ask with a question, not with prose.** When a choice can't be settled from the code, raise it as a numbered question with options; don't bury it in a paragraph.
