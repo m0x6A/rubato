@@ -334,3 +334,38 @@ async fn then_planted_gone(_w: &mut RubatoWorld) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
+
+/// The pair a headless turn ends with carries one `prompt_id`, as Claude Code's own hooks do:
+/// the server's session log drops a hook without one (`no_prompt_id`), and a room turn's reply
+/// is found through it (plan 122 §D8).
+#[then("the launched session's UserPromptSubmit and Stop share one prompt id")]
+async fn then_one_prompt_id(w: &mut RubatoWorld) {
+    wait_stop_hook(w, 1).await;
+    let session = launched_session(w);
+    let ids =
+        |kind: HookEventKind, got: &[rubato_protocol::CompanionEnvelope]| -> Vec<Option<String>> {
+            got.iter()
+                .filter_map(|e| match &e.message {
+                    CompanionMessage::Hook(h)
+                        if h.session_id == session && h.hook_event_name == kind =>
+                    {
+                        Some(
+                            h.payload
+                                .as_ref()
+                                .and_then(|p| p.get("prompt_id"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_owned),
+                        )
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+    let got = w.server().received.lock().await;
+    let prompts = ids(HookEventKind::UserPromptSubmit, &got);
+    let stops = ids(HookEventKind::Stop, &got);
+    assert_eq!(prompts.len(), 1, "{prompts:?}");
+    assert_eq!(stops.len(), 1, "{stops:?}");
+    assert!(prompts[0].is_some(), "UserPromptSubmit without a prompt_id");
+    assert_eq!(prompts[0], stops[0], "the pair has two prompt ids");
+}
