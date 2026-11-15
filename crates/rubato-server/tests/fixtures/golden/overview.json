@@ -107,7 +107,7 @@
           "kind": "external"
         },
         {
-          "description": "The only agent in v0. Hooks are the event source. Exports its own OTel.",
+          "description": "The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Exports its own OTel.",
           "id": "claude-code",
           "kind": "external"
         },
@@ -443,10 +443,16 @@
           "description": "Each companion reports what its sessions are doing, and receives launch commands and messages for its own user's sessions only. The companion always dials out.",
           "flows": [
             {
-              "carries": "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities",
+              "carries": "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071)",
               "from": "rubato-companion",
               "kind": "data",
               "to": "rubato-server"
+            },
+            {
+              "carries": "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071)",
+              "from": "rubato-server",
+              "kind": "data",
+              "to": "rubato-companion"
             },
             {
               "carries": "LaunchCommand, for the paired user only",
@@ -557,6 +563,35 @@
           "from": "rubato-companion",
           "guard": "Gherkin replays recorded hook payloads per event name; fixtures refreshed on Claude Code upgrade",
           "id": "companion-claude-code",
+          "owner": "rubato-companion",
+          "to": "claude-code"
+        },
+        {
+          "carries": "MCP over loopback HTTP (POST /mcp on the hook receiver, the hook token from a 0600 mcp.json, X-Rubato-Launch): get_assignment, report_status, plan_status",
+          "description": "A session Rubato launched asks its own companion what it is assigned to and where its plan stands, and says what it is doing. What it says is a signal with a last-seen time, never a progress state; hooks stay the evidence (ADR 0071).",
+          "flows": [
+            {
+              "carries": "get_assignment and plan_status calls, with the launch id the companion wrote into mcp.json",
+              "from": "claude-code",
+              "kind": "control",
+              "to": "rubato-companion"
+            },
+            {
+              "carries": "report_status: one line of what the agent is doing and the map parts it is on",
+              "from": "claude-code",
+              "kind": "data",
+              "to": "rubato-companion"
+            },
+            {
+              "carries": "the assignment (repo, issue, branch, map parts, plan path, caps) and the plan status Rubato last sent, with its age; refusals with a reason",
+              "from": "rubato-companion",
+              "kind": "data",
+              "to": "claude-code"
+            }
+          ],
+          "from": "rubato-companion",
+          "guard": "agent_mcp tests: identity from the launch id only, a call naming another issue refused and counted, no tool name or description that writes an approval; Gherkin calls each tool against a launched session",
+          "id": "companion-mcp",
           "owner": "rubato-companion",
           "to": "claude-code"
         },
