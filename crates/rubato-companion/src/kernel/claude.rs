@@ -516,6 +516,34 @@ mod tests {
         p.display().to_string()
     }
 
+    /// `spawn` for a stand-in just written. Another test thread that forks while the stand-in is
+    /// open for writing holds that descriptor until its own exec, and an exec of the stand-in in
+    /// that window fails with ETXTBSY ("Text file busy"). Retry that one error briefly.
+    fn spawn_standin(
+        make: impl Fn() -> TurnRequest,
+    ) -> (
+        RunningTurn,
+        mpsc::UnboundedReceiver<TurnProgress>,
+        oneshot::Receiver<TurnEnd>,
+    ) {
+        for _ in 0..50 {
+            match spawn(make()) {
+                Ok(t) => return t,
+                Err(e)
+                    if e.chain().any(|c| {
+                        c.downcast_ref::<std::io::Error>()
+                            .and_then(std::io::Error::raw_os_error)
+                            == Some(26)
+                    }) =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => panic!("spawn failed: {e:#}"),
+            }
+        }
+        panic!("the stand-in stayed busy");
+    }
+
     fn req(program: String, dir: &std::path::Path) -> TurnRequest {
         TurnRequest {
             program,
@@ -557,7 +585,7 @@ mod tests {
             r#"echo '{"type":"system","subtype":"init"}'
 echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"#,
         );
-        let (_turn, mut progress, end) = spawn(req(p, dir.path())).unwrap();
+        let (_turn, mut progress, end) = spawn_standin(|| req(p.clone(), dir.path()));
         let end = end.await.unwrap();
         assert_eq!(end.result_text.as_deref(), Some("PONG"));
         assert_eq!(end.cost_usd, Some(0.25));
@@ -574,7 +602,7 @@ echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"
     async fn a_turn_without_a_result_ends_with_none() {
         let dir = tempfile::tempdir().unwrap();
         let p = standin(dir.path(), "echo '{\"type\":\"system\"}'; exit 3");
-        let (_turn, _p, end) = spawn(req(p, dir.path())).unwrap();
+        let (_turn, _p, end) = spawn_standin(|| req(p.clone(), dir.path()));
         let end = end.await.unwrap();
         assert_eq!(end.result_text, None);
         assert_eq!(end.exit_code, Some(3));
@@ -591,7 +619,7 @@ echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"
                 marker.display()
             ),
         );
-        let (mut turn, mut progress, end) = spawn(req(p, dir.path())).unwrap();
+        let (mut turn, mut progress, end) = spawn_standin(|| req(p.clone(), dir.path()));
         progress.recv().await.unwrap();
         turn.kill(KillReason::Stop);
         let end = end.await.unwrap();
@@ -632,7 +660,7 @@ echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"
     async fn a_live_group_is_ours_only_with_its_start_time() {
         let dir = tempfile::tempdir().unwrap();
         let p = standin(dir.path(), "echo '{\"type\":\"x\"}'; sleep 30");
-        let (mut turn, mut progress, end) = spawn(req(p, dir.path())).unwrap();
+        let (mut turn, mut progress, end) = spawn_standin(|| req(p.clone(), dir.path()));
         progress.recv().await.unwrap();
         let now = Utc::now();
         assert!(same_group_alive(turn.pgid, turn.started_at, now));

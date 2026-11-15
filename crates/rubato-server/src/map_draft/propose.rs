@@ -65,17 +65,33 @@ fn hash(text: &str) -> String {
         .collect()
 }
 
+/// One table cell as a code span (design 193 D7): no mention, link, image or HTML renders in
+/// it, a backtick cannot close it, a pipe cannot split the row and a newline cannot end it.
+fn cell(text: &str) -> String {
+    let inner: String = text
+        .chars()
+        .map(|c| match c {
+            '`' => "'".to_owned(),
+            '|' => "\\|".to_owned(),
+            '\n' | '\r' => " ".to_owned(),
+            c => c.to_string(),
+        })
+        .collect();
+    format!("`{inner}`")
+}
+
 fn body(ops: &[DraftOp], by: &str) -> String {
-    // Logins are in backticks on purpose: a bare @name would notify people from a server.
+    // Logins are code spans on purpose: a bare @name would notify people from a server.
     let mut out = format!(
-        "Opened by Rubato from the team's shared map draft, proposed by `{by}`.\n\n| # | Change | By |\n| --- | --- | --- |\n"
+        "Opened by Rubato from the team's shared map draft, proposed by {}.\n\n| # | Change | By |\n| --- | --- | --- |\n",
+        cell(by)
     );
     for (i, o) in ops.iter().enumerate() {
         out.push_str(&format!(
-            "| {} | {} | `{}` |\n",
+            "| {} | {} | {} |\n",
             i + 1,
-            o.op.summary(),
-            o.author
+            cell(&o.op.summary()),
+            cell(&o.author)
         ));
     }
     out.push_str("\nThe file is written from Rubato's map model, so hand-written comments in it are not kept. When this is merged and Rubato has loaded the map again, the draft empties. Closing it without merging makes the draft editable again, with every change kept.\n");
@@ -503,6 +519,38 @@ mod tests {
 
     const MAP: &str = include_str!("../../../../docs/design/rubato-map.yml");
     const PATH: &str = "docs/design/rubato-map.yml";
+
+    /// Design 193 D7: a summary cannot mention, link, or break the table.
+    #[test]
+    fn summaries_are_code_spans() {
+        let op = DraftOp {
+            seq: 1,
+            op_id: uuid::Uuid::new_v4(),
+            op: MapOp::RemoveNode {
+                id: "x @team [x](https://e) ` | y\nz".into(),
+            },
+            author: "m0x6A".into(),
+            created_at: Utc::now(),
+            stale: None,
+        };
+        let text = body(&[op], "alice");
+        let row = text
+            .lines()
+            .find(|l| l.starts_with("| 1 |"))
+            .expect("one row on one line");
+        assert_eq!(
+            row,
+            "| 1 | `remove part x @team [x](https://e) ' \\| y z` | `m0x6A` |"
+        );
+        // Outside code spans there is no @ and no [.
+        let outside: String = text.split('`').step_by(2).collect();
+        assert!(
+            !outside.contains('@') && !outside.contains('['),
+            "{outside}"
+        );
+        // Three cells: the only unescaped pipes are the four borders.
+        assert_eq!(row.replace("\\|", "").matches('|').count(), 4);
+    }
 
     async fn drafted() -> (
         App,

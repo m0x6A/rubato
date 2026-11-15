@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "rubato-companion", version = VERSION, about = "Per-developer Rubato companion: outbound only, your tmux only.")]
 struct Cli {
-    /// Path to workspace.yml (default: $RUBATO_WORKSPACE or ~/.config/rubato/workspace.yml).
+    /// Path to local.yml (default: $RUBATO_LOCAL, else ~/.config/rubato/local.yml; the old $RUBATO_WORKSPACE and workspace.yml are still read, with a warning).
     #[arg(long, global = true)]
     workspace: Option<PathBuf>,
     /// State directory (default: $RUBATO_STATE_DIR or ~/.local/state/rubato).
@@ -53,10 +53,7 @@ enum Cmd {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let state_dir = cli.state_dir.clone().unwrap_or_else(state_dir);
-    let ws_path = cli
-        .workspace
-        .clone()
-        .unwrap_or_else(Workspace::default_path);
+    let (ws_path, old_name) = Workspace::resolve(cli.workspace.clone());
     match cli.cmd {
         Cmd::Pair { server, insecure } => {
             let _g = telemetry::init("rubato-companion", None)?;
@@ -91,6 +88,9 @@ async fn main() -> Result<()> {
                 "rubato-companion",
                 workspace.otel.as_ref().map(|o| o.endpoint.as_str()),
             )?;
+            if old_name {
+                tracing::warn!("{}", Workspace::old_name_warning(&ws_path));
+            }
             let Some(state) = State::load(&state_dir)? else {
                 bail!("not paired: run `rubato-companion pair --server <url>` first");
             };
