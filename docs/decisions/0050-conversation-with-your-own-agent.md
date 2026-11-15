@@ -1,8 +1,8 @@
 # 0050. Build a planning-time tool, not an orchestrator, that carries the conversation with your own agent
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-14
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #122), asked for by Mattias Jonsson 2026-11-14 ("only the Chat non-goal goes"); a human accepts
+- **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/122#issuecomment-6891477242 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #122), asked for by Mattias Jonsson 2026-11-14 ("only the Chat non-goal goes")
 - **Seam:** none (non-goal)
 - **Issue:** m0x6A/rubato#122
 
