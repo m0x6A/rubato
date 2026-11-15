@@ -11,6 +11,8 @@ export function resourceKey(r: WebResource): string {
       return `${r.kind}:${r.launch_id}`;
     case "draft":
       return `${r.kind}:${r.draft_id}`;
+    case "room":
+      return `${r.kind}:${r.repo}#${r.number}:${r.branch}`;
   }
 }
 

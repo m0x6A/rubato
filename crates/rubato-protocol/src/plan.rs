@@ -179,7 +179,33 @@ pub struct Assumption {
     pub scope: AssumptionScope,
 }
 
+/// Plans grouped by the seams they touch, each seam's plans in the order given: what the
+/// overview's `SeamCollision` and a room's seam notices both read (ADR 0057). Pure.
+pub fn seam_groups<'a, K>(
+    plans: impl IntoIterator<Item = (K, &'a Plan)>,
+) -> std::collections::BTreeMap<&'a str, Vec<K>>
+where
+    K: Clone,
+{
+    let mut out: std::collections::BTreeMap<&'a str, Vec<K>> = Default::default();
+    for (key, plan) in plans {
+        for seam in plan.seams_touched() {
+            out.entry(seam).or_default().push(key.clone());
+        }
+    }
+    out
+}
+
 impl Plan {
+    /// The seams the plan touches: those of its affected parts and of its O-rows, each once.
+    pub fn seams_touched(&self) -> std::collections::BTreeSet<&str> {
+        self.affected_parts
+            .iter()
+            .flat_map(|p| p.seams.iter().map(String::as_str))
+            .chain(self.o_rows.iter().map(|o| o.seam.as_str()))
+            .collect()
+    }
+
     /// Seam ids named in affected parts that have no O-row. Empty means the 3 am question is answered.
     pub fn seams_without_o_row(&self) -> Vec<&str> {
         let mut missing: Vec<&str> = self
@@ -264,6 +290,35 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plan's seams are its parts' and its O-rows', each once; plans group by seam in the order
+    /// given, which the overview's `SeamCollision` and the rooms' notices both read.
+    #[test]
+    fn plans_group_by_the_seams_they_touch_in_order() {
+        let plan = |part_seams: &[&str], o_row_seams: &[&str]| -> Plan {
+            serde_json::from_value(serde_json::json!({
+                "issue": {"repo": "o/r", "number": 1},
+                "path": "p.md",
+                "affected_parts": [{"node": "n", "status": "affected", "change": "c",
+                                    "seams": part_seams}],
+                "o_rows": o_row_seams.iter().map(|s| serde_json::json!({
+                    "seam": s, "signal": "s", "panel": "p", "owner": "o"})).collect::<Vec<_>>(),
+            }))
+            .unwrap()
+        };
+        let a = plan(&["web-server", "server-github"], &["web-server"]);
+        let b = plan(&[], &["web-server"]);
+        let c = plan(&["companion-server"], &[]);
+        assert_eq!(
+            a.seams_touched().into_iter().collect::<Vec<_>>(),
+            ["server-github", "web-server"]
+        );
+        let groups = seam_groups([("a", &a), ("b", &b), ("c", &c)]);
+        assert_eq!(groups["web-server"], ["a", "b"]);
+        assert_eq!(groups["server-github"], ["a"]);
+        assert_eq!(groups["companion-server"], ["c"]);
+        assert_eq!(groups.len(), 3);
+    }
 
     fn plan() -> Plan {
         Plan {

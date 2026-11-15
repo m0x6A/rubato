@@ -10,9 +10,9 @@ use rubato_protocol::layout::MapLayout;
 use rubato_protocol::{
     ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
     DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, ObservedTraffic,
-    OpenIssue, Plan, Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls,
-    ReviewRecord, SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress,
-    derive_traffic, plan_fit,
+    OpenIssue, Progress, ProgressInputs, ProgressState, PullRequestState, RepoPulls, ReviewRecord,
+    SessionState, SessionStatus, SpendPoint, blocked_from, derive_progress, derive_traffic,
+    plan_fit,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -115,14 +115,6 @@ pub struct Built {
     pub pulls: Vec<RepoPulls>,
     /// Observed traffic per seam; its findings are in `findings` (ADR 0039).
     pub traffic: ObservedTraffic,
-}
-
-fn seams_touched(plan: &Plan) -> BTreeSet<&str> {
-    plan.affected_parts
-        .iter()
-        .flat_map(|p| p.seams.iter().map(String::as_str))
-        .chain(plan.o_rows.iter().map(|o| o.seam.as_str()))
-        .collect()
 }
 
 /// Whether the live cap hit blocks the issue. A spend hit always does (its session is being
@@ -502,32 +494,22 @@ pub fn build(
             .cloned(),
     );
 
-    // Two or more open plans on one seam.
-    let mut by_seam: BTreeMap<&str, Vec<IssueRef>> = BTreeMap::new();
-    for s in &out {
-        if s.progress.state == ProgressState::Done {
-            continue;
-        }
-        if let Some(p) = &s.plan {
-            for seam in seams_touched(p) {
-                by_seam.entry(seam).or_default().push(s.issue.clone());
-            }
-        }
-    }
+    // Two or more open plans on one seam: plans on a branch, then drafts not on one (the same
+    // grouping a room's seam notices read, `seam_groups`).
     let done: HashSet<&IssueRef> = out
         .iter()
         .filter(|s| s.progress.state == ProgressState::Done)
         .map(|s| &s.issue)
         .collect();
-    for (issue, p) in &draft_plans {
-        if done.contains(issue) {
-            continue;
-        }
-        for seam in seams_touched(p) {
-            by_seam.entry(seam).or_default().push(issue.clone());
-        }
-    }
-    for (seam, issues) in by_seam {
+    let open_plans = out
+        .iter()
+        .filter(|s| s.progress.state != ProgressState::Done)
+        .filter_map(|s| s.plan.as_ref().map(|p| (s.issue.clone(), p)));
+    let open_drafts = draft_plans
+        .iter()
+        .filter(|(issue, _)| !done.contains(issue))
+        .map(|(issue, p)| (issue.clone(), p));
+    for (seam, issues) in rubato_protocol::seam_groups(open_plans.chain(open_drafts)) {
         if issues.len() > 1 {
             findings.push(Finding::SeamCollision {
                 seam: seam.to_owned(),
@@ -742,7 +724,7 @@ pub fn counts(built: &Built) -> (BTreeMap<ProgressState, usize>, BTreeMap<String
             continue;
         }
         if let Some(p) = &i.plan {
-            for s in seams_touched(p) {
+            for s in p.seams_touched() {
                 *by_seam.entry(s.to_owned()).or_insert(0) += 1;
             }
         }
@@ -785,7 +767,9 @@ fn blocked_from_label(at: Option<ProgressState>) -> &'static str {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use rubato_protocol::{AffectedPart, BlockCause, ORow, PartStatus, StateSource, SystemMap};
+    use rubato_protocol::{
+        AffectedPart, BlockCause, ORow, PartStatus, Plan, StateSource, SystemMap,
+    };
     use uuid::Uuid;
 
     fn now() -> DateTime<Utc> {

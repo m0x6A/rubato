@@ -7,7 +7,7 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
-    pairing, pins, plan_drafts, queue, session_log, session_messages, traffic, web_link,
+    pairing, pins, plan_drafts, queue, rooms, session_log, session_messages, traffic, web_link,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -110,6 +110,11 @@ pub fn router(app: App) -> Router {
         .route(
             rubato_protocol::plan_draft::routes::DRAFT,
             get(plan_drafts::draft),
+        )
+        .route(rubato_protocol::room::routes::ROOM, get(rooms::room))
+        .route(
+            rubato_protocol::room::routes::ROOM_MESSAGES,
+            post(rooms::post),
         )
         .route(
             rubato_protocol::plan_draft::routes::DRAFT_REVISION,
@@ -214,6 +219,17 @@ mod tests {
             (Method::GET, auth_routes::CALLBACK.into()),
             (Method::POST, auth_routes::LOGOUT.into()),
             (Method::GET, workspace_routes::WORKSPACES.into()),
+            (
+                Method::GET,
+                format!(
+                    "{}?repo=m0x6A/rubato&number=1&branch=issue/1-x",
+                    rubato_protocol::room::routes::ROOM
+                ),
+            ),
+            (
+                Method::POST,
+                rubato_protocol::room::routes::ROOM_MESSAGES.into(),
+            ),
         ];
         // Every map-scoped route again under `/api/w/{ws}` for a configured workspace (ADR 0049).
         let scoped: Vec<(Method, String)> = routes
@@ -536,6 +552,7 @@ mod tests {
             "/api/w/default/pair/start",
             "/api/w/default/me",
             "/api/w/default/workspaces",
+            "/api/w/default/room/messages",
         ] {
             let r = http.post(format!("{url}{path}")).send().await.unwrap();
             assert_eq!(r.status(), 404, "{path}");

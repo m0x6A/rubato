@@ -234,6 +234,13 @@
           "default": 60,
           "minimum": 0
         },
+        "room_message_max_chars": {
+          "description": "The longest room message a person may post, in characters (ADR 0057).",
+          "type": "integer",
+          "format": "uint64",
+          "default": 8000,
+          "minimum": 0
+        },
         "session_log_max_chars": {
           "description": "The longest prompt or reply the companion forwards for the session log (ADR 0052); longer\ntext is cut and marked truncated.",
           "type": "integer",

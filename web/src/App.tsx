@@ -492,6 +492,7 @@ export function App() {
                 setNotice(text);
                 void refresh();
               }}
+              onShowSeam={(id) => onSelectOnMap({ kind: "seam", id })}
             />
           )}
           {overview && tab === "plans" && (
