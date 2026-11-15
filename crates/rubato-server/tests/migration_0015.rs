@@ -1,4 +1,4 @@
-//! Migration 0014 (plan 122, ADR 0052): stored hook events lose Claude Code's raw payload, every
+//! Migration 0015 (plan 122, ADR 0052): stored hook events lose Claude Code's raw payload, every
 //! row survives, and rows of other kinds are untouched.
 
 use sqlx::{Row, SqlitePool};
