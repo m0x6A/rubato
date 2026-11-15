@@ -5,7 +5,7 @@
   "type": "module",
   "description": "End to end: two connected repos, three issues through the flow, real companion and server, a Claude Code stand-in, an OTLP receiver.",
   "scripts": {
-    "test": "echo 'run: pnpm e2e (needs cargo build --workspace)'",
+    "test": "node --experimental-strip-types --test scenarios.test.ts run-checks.test.ts",
     "typecheck": "tsc -p tsconfig.json",
     "e2e": "node --experimental-strip-types run.ts"
   },

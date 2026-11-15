@@ -196,7 +196,9 @@ impl Launcher {
             None => Restored::default(),
         };
         let launch_dir = self.state_dir.join("launches").join(cmd.id.to_string());
-        std::fs::create_dir_all(&launch_dir)?;
+        // Owner only: the directory holds the hook token (header file, launch script) and the prompt.
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(&launch_dir)?;
         // The token goes in a 0600 header file curl reads; never in a hook command (ADR 0063).
         let header_path = HookEndpoint::header_path(&launch_dir);
         self.hook_endpoint.write_header(&header_path)?;
@@ -206,7 +208,7 @@ impl Launcher {
             render_hooks(HOOKS_TEMPLATE, self.hook_endpoint.port, &header_path)?.as_bytes(),
         )?;
         let prompt_path = launch_dir.join("prompt.txt");
-        std::fs::write(&prompt_path, &cmd.prompt)?;
+        write_private(&prompt_path, cmd.prompt.as_bytes())?;
         let script_path = launch_dir.join("launch.sh");
         // Private: it exports the hook token (`RUBATO_HOOK_TOKEN`), like the header file holds it.
         write_private(

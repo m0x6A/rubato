@@ -28,5 +28,6 @@ export default defineConfig({
     { name: "motion", testMatch: /motion\.spec\.ts/, dependencies: ["shots"], use: { browserName: "chromium" } },
     { name: "perf", testMatch: /perf\.spec\.ts/, dependencies: ["motion"], use: { browserName: "chromium" } },
   ],
-  reporter: [["list"]],
+  // The JSON report feeds the scenario coverage report (pnpm scenarios report, issue #198).
+  reporter: [["list"], ["json", { outputFile: "../e2e/results/playwright.json" }]],
 });
