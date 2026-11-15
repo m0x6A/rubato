@@ -65,7 +65,7 @@ nodes:
 
   - id: tmux-ide
     kind: external
-    description: Session runner (TypeScript CLI, npm tmux-ide, tmux >= 3.7). worktree create, events, team --json, send, wait, MCP. Version pinned by the companion.
+    description: "Retired by ADR 0070: the companion runs tmux and git itself and no longer calls tmux-ide. The id stays so merged plans that name it still check (plan 147 Q1)."
 
   - id: claude-code
     kind: external
@@ -112,13 +112,10 @@ seams:
   - id: companion-tmux-ide
     from: rubato-companion
     to: tmux-ide
-    carries: worktree create, events --follow --json, team --json, send, wait
+    carries: nothing; retired by ADR 0070
     owner: rubato-companion
-    guard: Gherkin against real tmux-ide on tmux -L rubato-test; version pinned (2.9.x), reported as rubato.tmux_ide.version; low-confidence state renders unknown
-    description: "The companion asks tmux-ide to create worktrees and sessions, and reads which sessions exist and what state they are in."
-    flows:
-      - { kind: control, from: rubato-companion, to: tmux-ide, carries: "worktree create, send, wait" }
-      - { kind: data, from: tmux-ide, to: rubato-companion, carries: "team --json and events --follow --json: sessions, panes, agent status" }
+    guard: "the companion's Gherkin suite runs with no tmux-ide installed; rubato.launches by outcome on the Launches by outcome panel"
+    description: "Retired by ADR 0070: the companion makes worktrees with git and sessions with tmux itself, and takes state from hooks only. Kept so merged plans that name it still check (plan 147 Q1); a follow-up retires the id."
 
   - id: companion-claude-code
     from: rubato-companion
@@ -251,7 +248,6 @@ scenarios:
     steps:
       - { seam: web-server, from: web, to: rubato-server, kind: control, says: "you press Start on a pinned issue" }
       - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "LaunchCommand, for the paired user only", says: "the server sends the launch to your own companion only" }
-      - { seam: companion-tmux-ide, from: rubato-companion, to: tmux-ide, kind: control, says: "the companion creates a worktree on the issue branch" }
       - { seam: companion-claude-code, from: rubato-companion, to: claude-code, kind: control, says: "Claude Code starts with hooks and telemetry attributes" }
       - { seam: companion-server, from: rubato-companion, to: rubato-server, kind: data, says: "the launch result and the new session come back" }
       - { seam: web-server, from: rubato-server, to: web, kind: control, says: "every browser is told something changed" }
