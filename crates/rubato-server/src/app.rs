@@ -545,6 +545,41 @@ mod tests {
         assert_eq!(refused.value, 3);
         assert_eq!(refused.attrs[attr::ROUTE], queue_routes::QUEUE);
 
+        // Pairing (#160): approving a code for a companion another login owns is refused.
+        use rubato_protocol::pairing::{PairStartRequest, PairStartResponse};
+        let owned = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO pairings (companion_id, user, token_hash, hostname, created_at) VALUES (?, 'bob', 'h', 'h', '2026-11-01T00:00:00Z')")
+            .bind(owned.to_string())
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let start: PairStartResponse = http
+            .post(format!("{base}{}", pr::PAIR_START))
+            .json(&PairStartRequest {
+                companion_id: owned,
+                hostname: "h".into(),
+                companion_version: "t".into(),
+            })
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let r = http
+            .post(format!("{base}{}", pr::PAIR_APPROVE))
+            .json(&rubato_protocol::PairApproveRequest {
+                user_code: start.user_code,
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 409);
+        assert_eq!(
+            count("companion_taken"),
+            Some((1, pr::PAIR_APPROVE.to_owned()))
+        );
+
         // As a GitHub App with no dev user: a session without a team record is refused, counted.
         let tmp2 = tempfile::tempdir().unwrap();
         let url2 = format!("sqlite://{}/t.db?mode=rwc", tmp2.path().display());
@@ -580,7 +615,7 @@ mod tests {
         assert_eq!(stale.len(), 1, "{stale:?}");
         assert_eq!(stale[0].attrs[attr::DROP_REASON], "team_record_stale");
         assert_eq!(stale[0].attrs[attr::ROUTE], overview_routes::OVERVIEW);
-        println!("checked 8 refusal reasons");
+        println!("checked 9 refusal reasons");
     }
 
     #[tokio::test]

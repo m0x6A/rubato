@@ -86,7 +86,10 @@ async fn harness_with(configure: impl FnOnce(&mut Config)) -> Harness {
 
 impl Harness {
     async fn pair(&self, as_user: &str) -> (Uuid, String) {
-        let companion_id = Uuid::new_v4();
+        self.pair_as(as_user, Uuid::new_v4()).await
+    }
+
+    async fn pair_as(&self, as_user: &str, companion_id: Uuid) -> (Uuid, String) {
         let start: PairStartResponse = self
             .http
             .post(format!("{}{}", self.url, pr::PAIR_START))
@@ -877,6 +880,165 @@ async fn bad_and_revoked_tokens_are_refused() {
         .headers_mut()
         .insert("authorization", format!("Bearer {token}").parse().unwrap());
     assert!(tokio_tungstenite::connect_async(revoked).await.is_err());
+}
+
+impl Harness {
+    /// Starts a pairing for `companion_id` and approves it as `as_user`, without asserting the
+    /// outcome. Returns the approve response and the device code.
+    async fn start_and_approve(
+        &self,
+        as_user: &str,
+        companion_id: Uuid,
+    ) -> (reqwest::Response, String) {
+        let start: PairStartResponse = self
+            .http
+            .post(format!("{}{}", self.url, pr::PAIR_START))
+            .json(&PairStartRequest {
+                companion_id,
+                hostname: format!("{as_user}-host"),
+                companion_version: "t".into(),
+            })
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let approve = self
+            .http
+            .post(format!("{}{}", self.url, pr::PAIR_APPROVE))
+            .header("x-rubato-dev-user", as_user)
+            .json(&PairApproveRequest {
+                user_code: start.user_code,
+            })
+            .send()
+            .await
+            .unwrap();
+        (approve, start.device_code)
+    }
+
+    async fn poll_code(&self, device_code: &str) -> PairPollResponse {
+        self.http
+            .post(format!("{}{}", self.url, pr::PAIR_POLL))
+            .json(&PairPollRequest {
+                device_code: device_code.to_owned(),
+            })
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    async fn pairings_of(&self, as_user: &str) -> Vec<PairingInfo> {
+        self.http
+            .get(format!("{}{}", self.url, pr::PAIRINGS))
+            .header("x-rubato-dev-user", as_user)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    async fn ws_status(&self, token: &str) -> Result<(), String> {
+        let mut req = format!(
+            "ws://{}{}",
+            self.url.trim_start_matches("http://"),
+            pr::COMPANION_WS
+        )
+        .into_client_request()
+        .unwrap();
+        req.headers_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+            .await
+            .map(drop)
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Issue #160: a teammate who knows another person's companion id (the overview lists it) must
+/// not take that pairing over by approving a code they started with that id.
+#[tokio::test]
+async fn a_teammate_cannot_take_over_another_persons_companion() {
+    let h = harness().await;
+    let (x, bob_token) = h.pair_as("bob", Uuid::new_v4()).await;
+    let before = h.pairings_of("bob").await;
+
+    let (approve, device_code) = h.start_and_approve("alice", x).await;
+    assert_eq!(approve.status(), 409, "alice cannot take bob's companion");
+    let text = approve.text().await.unwrap();
+    assert!(text.contains("another person"), "{text}");
+    assert_eq!(
+        h.poll_code(&device_code).await,
+        PairPollResponse::Denied,
+        "the refused code is denied, so its companion stops polling"
+    );
+
+    assert_eq!(
+        h.pairings_of("bob").await,
+        before,
+        "bob's pairing unchanged"
+    );
+    assert!(h.pairings_of("alice").await.is_empty(), "alice got nothing");
+    h.ws_status(&bob_token)
+        .await
+        .expect("bob's companion still connects");
+    println!("checked 1 takeover: 409, denied, owner unchanged, owner still connects");
+}
+
+/// Issue #160: a revoked pairing still carries its owner's identity and history; only the owner
+/// may pair that companion id again.
+#[tokio::test]
+async fn a_revoked_companion_stays_with_its_owner() {
+    let h = harness().await;
+    let (x, _) = h.pair_as("bob", Uuid::new_v4()).await;
+    let r = h
+        .http
+        .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, x))
+        .header("x-rubato-dev-user", "bob")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+
+    let (approve, device_code) = h.start_and_approve("alice", x).await;
+    assert_eq!(
+        approve.status(),
+        409,
+        "alice cannot take bob's revoked companion"
+    );
+    assert_eq!(h.poll_code(&device_code).await, PairPollResponse::Denied);
+    let bobs = h.pairings_of("bob").await;
+    assert_eq!(bobs.len(), 1);
+    assert!(bobs[0].revoked_at.is_some(), "still bob's, still revoked");
+
+    let (again, _) = h.pair_as("bob", x).await;
+    assert_eq!(again, x);
+    let bobs = h.pairings_of("bob").await;
+    assert_eq!(bobs[0].revoked_at, None, "bob paired it again");
+    println!("checked 2 approvals of a revoked companion: other person 409, owner 200");
+}
+
+/// The path #160 must keep: pairing your own companion again replaces its token.
+#[tokio::test]
+async fn pairing_your_own_companion_again_replaces_the_token() {
+    let h = harness().await;
+    let (x, first) = h.pair_as("bob", Uuid::new_v4()).await;
+    let (_, second) = h.pair_as("bob", x).await;
+    let refused = h
+        .ws_status(&first)
+        .await
+        .expect_err("the old token is gone");
+    assert!(refused.contains("401"), "{refused}");
+    h.ws_status(&second).await.expect("the new token connects");
+    assert_eq!(h.pairings_of("bob").await.len(), 1);
+    println!("checked 2 tokens for one companion: old 401, new connects");
 }
 
 type CompanionWs =
