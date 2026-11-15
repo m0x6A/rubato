@@ -11,7 +11,7 @@ import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 
 import { join, resolve, sep } from "node:path";
 import { acceptedInRubato, acceptedText, adrStatus, decisionFile, pinnedAdrs, rubatoAcceptance } from "../adrs.ts";
 import { planIssue } from "./approval.ts";
-import { currentBranch, git, issueFromBranch, originRepo } from "./git.ts";
+import { blobText, currentBranch, git, issueFromBranch, keepBlob, originRepo } from "./git.ts";
 import type { Workspace } from "./local.ts";
 import { APPROVAL_KEYS, gitBlobSha, planSha } from "./plan-sha.ts";
 import { bundleModule } from "./vendor.ts";
@@ -219,44 +219,75 @@ async function run(ws: Workspace, cwd: string, a: HandoffArgs, o: HandoffOptions
   }
 
   // The bundle as approved. An ADR this approval already accepted (a run that stopped before its
-  // commit) counts at the blob the plan pinned, which is what the approval saw.
+  // commit) counts at the blob the plan pinned, which is what the approval saw, but only when its
+  // text is exactly what this handoff writes over the pinned text (#212). Rows are keyed by the
+  // path rule the bundle uses, so `./docs/…` finds its pin.
+  const date = a.at.slice(0, 10);
+  const acceptance = rubatoAcceptance(a.by, date, a.url, a.self);
   const bundle = await bundleModule();
   const paths = bundle.bundlePaths(text, planPath);
   const files = presentFiles(top, paths);
-  const pinnedBlob = new Map(pinned.map((r) => [r.file, r.blob]));
+  const rowPath = (r: { file: string }) => bundle.normalisePath(r.file) ?? r.file;
+  const pinnedAt = new Map(pinned.map((r) => [rowPath(r), r]));
+  // Why a text that reads as accepted by this approval is not what this handoff writes over the
+  // pinned text, or null when it is: the pinned text was proposed, and the acceptance over it is
+  // this text, byte for byte.
+  const notAtPin = (t: string, pin: string): string | null => {
+    const original = blobText(top, pin);
+    if (original === null) {
+      return `its pinned text ${pin} is not in this clone's objects`;
+    }
+    if (adrStatus(original) !== "proposed") {
+      return `its pinned text ${pin} was not proposed`;
+    }
+    return t === acceptedText(original, acceptance) ? null : "its text differs from the acceptance over its pinned text";
+  };
+  const misses: string[] = [];
   const blobs = files.map(([p, t]): [string, string] => {
     if (p === planPath) {
       return [p, planSha(t)];
     }
-    const pin = pinnedBlob.get(p);
-    return [p, pin && adrFile(p) !== null && acceptedInRubato(t, a.url) ? pin : gitBlobSha(t)];
+    const row = pinnedAt.get(p);
+    if (row && adrFile(p) !== null && acceptedInRubato(t, a.url)) {
+      const why = notAtPin(t, row.blob);
+      if (why === null) {
+        return [p, row.blob];
+      }
+      misses.push(`ADR ${row.adr} reads as accepted by this approval but ${why}`);
+    }
+    return [p, gitBlobSha(t)];
   });
   const bundleNow = bundle.bundleHashOfBlobs(blobs);
   if (bundleNow !== a.bundle) {
-    return done("bundle_changed", { error: `the bundle hashes to ${bundleNow}, the approval names ${a.bundle}` });
+    const why = misses.length ? `; ${misses.join("; ")}` : "";
+    return done("bundle_changed", { error: `the bundle hashes to ${bundleNow}, the approval names ${a.bundle}${why}` });
   }
+  const inBundle = new Set(paths);
 
   // The ADRs: every check before any write.
   const accepted: string[] = [];
   const left: string[] = [];
   const writes: [string, string][] = [];
+  // The pinned texts about to be overwritten, kept as git objects first so a rerun can compare.
+  const keep: [string, string][] = [];
   const changed: string[] = [];
-  const date = a.at.slice(0, 10);
   for (const r of pinned) {
     const abs = adrFile(r.file);
-    if (abs === null || !existsSync(abs)) {
+    // A row the bundle does not carry (one the plan's table parser skipped) is never written.
+    if (abs === null || !existsSync(abs) || !inBundle.has(rowPath(r))) {
       left.push(r.adr);
       continue;
     }
     const t = readFileSync(abs, "utf8");
     if (acceptedInRubato(t, a.url)) {
-      accepted.push(r.adr);
+      (notAtPin(t, r.blob) === null ? accepted : changed).push(r.adr);
     } else if (gitBlobSha(t) !== r.blob) {
       changed.push(r.adr);
     } else if (adrStatus(t) !== "proposed") {
       left.push(r.adr);
     } else {
-      writes.push([abs, acceptedText(t, rubatoAcceptance(a.by, date, a.url, a.self))]);
+      writes.push([abs, acceptedText(t, acceptance)]);
+      keep.push([r.adr, t]);
       accepted.push(r.adr);
     }
   }
@@ -264,6 +295,15 @@ async function run(ws: Workspace, cwd: string, a: HandoffArgs, o: HandoffOptions
     return done("adr_changed", { error: `ADR ${changed.join(", ")} changed after it was pinned: pin again and ask for a new approval` });
   }
 
+  // Keep the pinned texts as objects before any write, so a rerun after a stop can compare.
+  // A pinned text that cannot be kept, or that git hashes differently, ends the run here.
+  for (const [adr, t] of keep) {
+    const sha = keepBlob(top, t);
+    const pin = pinned.find((r) => r.adr === adr)?.blob;
+    if (sha !== pin) {
+      throw new Error(`ADR ${adr}: git keeps its pinned text as ${sha}, the plan pins ${pin}`);
+    }
+  }
   // Write the record, then the ADRs, then commit at once: the plan and every bundle path present.
   const next = withApprovalRecord(text, { approved_by: a.by, approved_at: a.at, approved_sha: now });
   if (next !== text) {
