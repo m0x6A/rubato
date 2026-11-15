@@ -102,16 +102,17 @@ fn body(ops: &[DraftOp], by: &str) -> String {
 /// counted. The proposal row, if there is one, stays in `opening`.
 fn step_failed(
     app: &App,
+    cfg: &crate::kernel::workspaces::WorkspaceEntry,
     user: &str,
     step: &'static str,
-    branch: &str,
-    base_sha: &str,
+    (branch, base_sha): (&str, &str),
     frozen: bool,
     e: &anyhow::Error,
 ) -> Refusal {
     tracing::error!(
         step,
-        rubato.repo = %app.config.map_repo,
+        rubato.repo = %cfg.map_repo,
+        rubato.workspace = %cfg.id,
         branch,
         base_sha,
         rubato.user = user,
@@ -218,9 +219,27 @@ pub async fn propose(
         Ok(Some(sha)) => sha,
         Ok(None) => {
             let e = anyhow::anyhow!("branch {} not found in {}", cfg.map_ref, cfg.map_repo);
-            return Err(step_failed(&app, &user, "head", &branch, &base, frozen, &e));
+            return Err(step_failed(
+                &app,
+                cfg,
+                &user,
+                "head",
+                (&branch, &base),
+                frozen,
+                &e,
+            ));
         }
-        Err(e) => return Err(step_failed(&app, &user, "head", &branch, &base, frozen, &e)),
+        Err(e) => {
+            return Err(step_failed(
+                &app,
+                cfg,
+                &user,
+                "head",
+                (&branch, &base),
+                frozen,
+                &e,
+            ));
+        }
     };
     let on_branch = match app
         .github
@@ -228,7 +247,17 @@ pub async fn propose(
         .await
     {
         Ok(f) => f,
-        Err(e) => return Err(step_failed(&app, &user, "file", &branch, &base, frozen, &e)),
+        Err(e) => {
+            return Err(step_failed(
+                &app,
+                cfg,
+                &user,
+                "file",
+                (&branch, &base),
+                frozen,
+                &e,
+            ));
+        }
     };
     if on_branch.as_deref() != Some(map.yaml.as_str()) {
         return Err(refuse(
@@ -287,7 +316,15 @@ pub async fn propose(
     };
     app.notify_ws("draft", ws.as_str());
     let fail = |step: &'static str, e: anyhow::Error| {
-        step_failed(&app, &user, step, &row.branch, &row.base_sha, true, &e)
+        step_failed(
+            &app,
+            cfg,
+            &user,
+            step,
+            (&row.branch, &row.base_sha),
+            true,
+            &e,
+        )
     };
 
     app.github
@@ -398,7 +435,15 @@ pub async fn withdraw(
         ));
     }
     let fail = |e: anyhow::Error| {
-        let (_, text) = step_failed(&app, &user, "close", &row.branch, &row.base_sha, true, &e);
+        let (_, text) = step_failed(
+            &app,
+            cfg,
+            &user,
+            "close",
+            (&row.branch, &row.base_sha),
+            true,
+            &e,
+        );
         (
             StatusCode::BAD_GATEWAY,
             text.replace(
@@ -653,5 +698,39 @@ mod tests {
         assert!(failed.fields["error"].contains("Resource not accessible"));
         assert_eq!(outcome(&reader, "failed"), Some(1));
         assert_eq!(outcome(&reader, "opened"), None);
+    }
+
+    /// A failed step names the map repo of the workspace being proposed, not the default's (#130).
+    #[tokio::test]
+    async fn a_failed_step_logs_its_workspaces_map_repo() {
+        let (app, _github, _reader, _tmp) = drafted().await;
+        let shop = crate::kernel::workspaces::WorkspaceEntry {
+            id: "shop".into(),
+            name: None,
+            map_repo: "acme/shop-map".into(),
+            map_path: "system-map.yml".into(),
+            map_ref: "main".into(),
+            map_file: None,
+        };
+        let (events, _g) = capture::start();
+        let e = anyhow::anyhow!("boom");
+        step_failed(
+            &app,
+            &shop,
+            "alice",
+            "ref",
+            ("rubato/map-shop", "head1"),
+            true,
+            &e,
+        );
+        let events = events.lock().unwrap();
+        let line = events
+            .iter()
+            .find(|e| e.message == "map proposal failed")
+            .expect("the step failure is logged");
+        let field = |k: &str| line.fields.get(k).map(String::as_str);
+        assert_eq!(field("rubato.repo"), Some("acme/shop-map"));
+        assert_eq!(field("rubato.workspace"), Some("shop"));
+        assert_ne!(field("rubato.repo"), Some(app.config.map_repo.as_str()));
     }
 }
