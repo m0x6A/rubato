@@ -97,7 +97,7 @@ pub struct Request {
 /// List each repo any workspace's map names, once (ADR 0048), and store the result; each
 /// workspace whose map names the repo places and suggests on its own map (ADR 0046). Never
 /// fails the poll: a repo that cannot be listed keeps its rows and gets its error recorded.
-pub async fn list_open_issues(app: &App, maps: &[(String, SystemMap)]) -> Listed {
+pub async fn list_open_issues(app: &App, maps: &[(&str, &SystemMap)]) -> Listed {
     let mut repos: Vec<String> = Vec::new();
     for (_, m) in maps {
         for r in m.repos_named() {
@@ -106,7 +106,7 @@ pub async fn list_open_issues(app: &App, maps: &[(String, SystemMap)]) -> Listed
             }
         }
     }
-    let ids: Vec<&str> = maps.iter().map(|(w, _)| w.as_str()).collect();
+    let ids: Vec<&str> = maps.iter().map(|(w, _)| *w).collect();
     let mut listed = Listed::default();
     let mut counts = Counts::default();
     for repo in &repos {
@@ -138,7 +138,7 @@ pub async fn list_open_issues(app: &App, maps: &[(String, SystemMap)]) -> Listed
                         if let Some(target) = &p.pin {
                             counts.map_lines += 1;
                             listed.map_lines.push(MapLine {
-                                workspace: ws.clone(),
+                                workspace: (*ws).to_owned(),
                                 issue: IssueRef::new(repo.clone(), i.number),
                                 target: target.clone(),
                                 author: i.author.clone(),
@@ -158,7 +158,7 @@ pub async fn list_open_issues(app: &App, maps: &[(String, SystemMap)]) -> Listed
                         }
                         placements.insert(i.number, p);
                     }
-                    by_ws.push((ws.as_str(), placements));
+                    by_ws.push((*ws, placements));
                 }
                 listed.open.extend(
                     listing
@@ -325,14 +325,7 @@ mod tests {
             g.open.insert("o/node-only".into(), vec![issue(9)]);
         });
         let (app, reader, _tmp) = app(github.clone()).await;
-        list_open_issues(
-            &app,
-            &[(
-                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-                map().clone(),
-            )],
-        )
-        .await;
+        list_open_issues(&app, &[(rubato_protocol::DEFAULT_WORKSPACE, &map())]).await;
 
         let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
@@ -363,14 +356,7 @@ mod tests {
         github.with(|g| {
             g.open.insert("o/listed".into(), vec![issue(1), issue(3)]);
         });
-        list_open_issues(
-            &app,
-            &[(
-                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-                map().clone(),
-            )],
-        )
-        .await;
+        list_open_issues(&app, &[(rubato_protocol::DEFAULT_WORKSPACE, &map())]).await;
         let (issues, _) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -394,14 +380,7 @@ mod tests {
             g.open.insert("o/listed".into(), vec![issue(1)]);
         });
         let (app, reader, _tmp) = app(github.clone()).await;
-        list_open_issues(
-            &app,
-            &[(
-                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-                map().clone(),
-            )],
-        )
-        .await;
+        list_open_issues(&app, &[(rubato_protocol::DEFAULT_WORKSPACE, &map())]).await;
         let (_, before) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -417,14 +396,7 @@ mod tests {
                 .insert("o/listed".into(), "rate limited".into());
         });
         let (events, _guard) = capture::start();
-        list_open_issues(
-            &app,
-            &[(
-                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-                map().clone(),
-            )],
-        )
-        .await;
+        list_open_issues(&app, &[(rubato_protocol::DEFAULT_WORKSPACE, &map())]).await;
         let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -456,14 +428,7 @@ mod tests {
 
         // It recovers: the error clears.
         github.with(|g| g.open_errors.clear());
-        list_open_issues(
-            &app,
-            &[(
-                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-                map().clone(),
-            )],
-        )
-        .await;
+        list_open_issues(&app, &[(rubato_protocol::DEFAULT_WORKSPACE, &map())]).await;
         let (_, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -479,14 +444,7 @@ mod tests {
         });
         let (app, reader, _tmp) = app(github).await;
         let (events, _guard) = capture::start();
-        list_open_issues(
-            &app,
-            &[(
-                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-                map().clone(),
-            )],
-        )
-        .await;
+        list_open_issues(&app, &[(rubato_protocol::DEFAULT_WORKSPACE, &map())]).await;
         let (issues, repos) = store::backlog(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
             .await
             .unwrap();
@@ -518,24 +476,10 @@ mod tests {
             g.open.insert("o/node-only".into(), vec![issue(9)]);
         });
         let (app, reader, _tmp) = app(github).await;
-        list_open_issues(
-            &app,
-            &[(
-                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-                map().clone(),
-            )],
-        )
-        .await;
+        list_open_issues(&app, &[(rubato_protocol::DEFAULT_WORKSPACE, &map())]).await;
         let mut smaller = map();
         smaller.nodes[0].repo = None;
-        list_open_issues(
-            &app,
-            &[(
-                rubato_protocol::DEFAULT_WORKSPACE.to_string(),
-                smaller.clone(),
-            )],
-        )
-        .await;
+        list_open_issues(&app, &[(rubato_protocol::DEFAULT_WORKSPACE, &smaller)]).await;
         assert_eq!(
             value(&reader, metric::BACKLOG_ISSUES, "o/node-only"),
             Some(0)
@@ -624,10 +568,11 @@ mod workspace_tests {
             Config::for_tests(url, "m0x6A"),
             github.clone(),
         );
-        let maps = vec![
-            ("default".to_string(), map_with(&["auth-api"])),
-            ("shop".to_string(), map_with(&["auth-api", "storefront"])),
-        ];
+        let (default, shop) = (
+            map_with(&["auth-api"]),
+            map_with(&["auth-api", "storefront"]),
+        );
+        let maps = vec![("default", &default), ("shop", &shop)];
         let listed = list_open_issues(&app, &maps).await;
 
         let mut calls = 0;

@@ -133,17 +133,16 @@ impl Poller {
         // Before the per-issue reads: every open issue of the map's repos (one listing per
         // repo), then, as an installation only, which repos it covers.
         // Every loaded workspace map, in id order: the listing is over their union (ADR 0048).
-        let maps: Vec<(String, crate::kernel::state::LoadedMap)> = app
+        // Pointer copies under one guard, then borrowed: no map is copied (#171).
+        let maps: Vec<(String, std::sync::Arc<LoadedMap>)> = app
             .maps
             .read()
             .await
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, v)| (k.clone(), std::sync::Arc::clone(v)))
             .collect();
-        let systems: Vec<(String, rubato_protocol::SystemMap)> = maps
-            .iter()
-            .map(|(k, v)| (k.clone(), v.map.clone()))
-            .collect();
+        let systems: Vec<(&str, &rubato_protocol::SystemMap)> =
+            maps.iter().map(|(k, v)| (k.as_str(), &v.map)).collect();
         let listed = github_poll::list_open_issues(app, &systems).await;
         // Creations GitHub did not confirm, found by their `Rubato-Request:` line (ADR 0025).
         let found: Vec<new_issue::Found> = listed
@@ -200,8 +199,8 @@ impl Poller {
         for issue in &issues {
             let busy = live.contains(issue);
             let prefer = github_poll::BranchPrefs {
-                approved: approved.get(issue).cloned(),
-                stored: stored.get(issue).cloned(),
+                approved: approved.get(issue).map(String::as_str),
+                stored: stored.get(issue).map(String::as_str),
             };
             match self
                 .poll_issue(app, &map, issue, busy, &listed, &mut view, lane, &prefer)
@@ -308,7 +307,7 @@ impl Poller {
         listed: &github_poll::Listed,
         view: &mut github_poll::RepoView,
         lane: Lane,
-        prefer: &github_poll::BranchPrefs,
+        prefer: &github_poll::BranchPrefs<'_>,
     ) -> Result<bool> {
         use github_poll::Standing;
         let first = !self.seen.contains(issue);
@@ -386,16 +385,13 @@ impl Poller {
         let mut found = 0;
         let union = app.union_repos().await;
         for repo in union.iter().map(String::as_str) {
-            let heads = view.heads(app, repo).await;
+            let heads = view.head_issues(app, repo).await;
             for issue in untracked.iter().filter(|i| i.repo == repo) {
-                if !heads
-                    .iter()
-                    .any(|b| IssueRef::number_from_branch(&b.name) == Some(issue.number))
-                {
+                if !heads.contains(&issue.number) {
                     continue;
                 }
                 let prefer = github_poll::BranchPrefs {
-                    approved: approved.get(*issue).cloned(),
+                    approved: approved.get(*issue).map(String::as_str),
                     stored: None,
                 };
                 let head = match view.branch(app, issue, &prefer).await {
