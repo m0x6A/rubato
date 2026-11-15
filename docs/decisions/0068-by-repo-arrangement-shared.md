@@ -1,8 +1,8 @@
 # 0068. Keep the By repo arrangement as a second shared layout next to the flat one
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, issue #144 design session), best effort under Mattias's delegation for this run (2026-11-15); a human accepts
+- **Decided by:** agent (delegated by Mattias, 2026-11-15), accepted with plan #144 after its design review passed; drafted by agent (Claude Code, issue #144 design session)
 - **Seam:** web-server
 - **Issue:** m0x6A/rubato#144
 
