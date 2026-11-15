@@ -900,7 +900,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, unknown_repo (an issue of a repo no map names, on pins, launch and queue), not_on_team, team_record_stale, installation_lookup_failed, session_expired, companion_taken (on /api/pair/approve: a code for a companion paired to another person, #160), field_too_long and pending_cap (on /api/pair/start: a hostname or version over 255 characters, or too many codes waiting for approval, #168; logged as user anonymous). Each has an info log line 'web write rejected' with the user.",
+      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, unknown_repo (an issue of a repo no map names, on pins, launch and queue), not_on_team, team_record_stale, installation_lookup_failed, token_exchange_failed and user_lookup_failed (login, log line 'login failed' with step), session_expired, companion_taken (on /api/pair/approve: a code for a companion paired to another person, #160), field_too_long and pending_cap (on /api/pair/start: a hostname or version over 255 characters, or too many codes waiting for approval, #168; logged as user anonymous), cross_origin (a write or websocket from another origin, ADR 0066; warn line 'cross-origin request refused' with origin and sec_fetch_site; behind a proxy, check RUBATO_PUBLIC_URL is the origin the browser sees). Each has an info log line 'web write rejected' with the user.",
       "targets": [
         {
           "refId": "A",
