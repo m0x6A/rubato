@@ -45,6 +45,7 @@ const SLICES: &[&str] = &[
     "spend_history",
     "overview",
     "web_link",
+    "webhooks",
 ];
 
 /// The composition root plus this check.

@@ -3,7 +3,7 @@
 //! Organised by vertical slices (ADR 0015): one module per capability, a `kernel` of leaf
 //! infrastructure that names no slice, and a composition root (`lib.rs`, `app.rs`, `tasks.rs`)
 //! that names every slice. Slices: `auth`, `pairing`, `companion_link`, `pins`, `launch`, `map`,
-//! `plans`, `github_poll`, `traffic`, `overview`, `web_link`. `slices.rs` checks the layout.
+//! `plans`, `github_poll`, `traffic`, `overview`, `web_link`, `webhooks`. `slices.rs` checks the layout.
 
 pub mod app;
 pub mod kernel;
@@ -31,6 +31,7 @@ pub mod session_messages;
 pub mod spend_history;
 pub mod traffic;
 pub mod web_link;
+pub mod webhooks;
 
 #[cfg(test)]
 mod slices;

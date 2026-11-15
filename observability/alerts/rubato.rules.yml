@@ -155,3 +155,29 @@ groups:
         annotations:
           summary: "Headless turns were killed by a time bound or at a companion restart in the last 30 minutes"
           panel: Headless turns
+
+      # #208, ADR 0074: the catch-up poll had to find a change more than 30 minutes after the
+      # last accepted webhook delivery. The hook is broken (webhook URL, secret, tunnel, or an
+      # event the App is not subscribed to) and the 15-minute poll is hiding it. Both gauges are
+      # exported only while webhooks are on, so a server without the secret stays silent.
+      - alert: GitHubWebhooksSilent
+        expr: max(rubato_github_catchup_last_change_at) - max(rubato_github_webhook_last_accepted_at) > 1800
+        labels:
+          severity: ticket
+          seam: server-github
+          owner: rubato-server
+        annotations:
+          summary: "The catch-up poll found a change more than 30 minutes after the last GitHub webhook delivery"
+          panel: Webhooks
+
+      # #208, ADR 0074: an accepted delivery has waited over 5 minutes to be applied: the refresh
+      # keeps failing or the poll loop is stuck, while deliveries arrive.
+      - alert: GitHubWebhooksStuck
+        expr: max(rubato_github_webhook_pending_oldest_seconds) > 300
+        labels:
+          severity: ticket
+          seam: server-github
+          owner: rubato-server
+        annotations:
+          summary: "A GitHub webhook delivery has waited over 5 minutes to be applied"
+          panel: Webhooks

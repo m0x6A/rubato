@@ -32,9 +32,25 @@ pub async fn list_repo_pulls(
     tracked: &HashSet<(String, u64)>,
     full: bool,
 ) -> PullsPass {
+    list_repo_pulls_in(app, map, view, tracked, full, None).await
+}
+
+/// As [`list_repo_pulls`], listing only the repos in `only` (lower case) when it is given: a
+/// webhook refresh (ADR 0074). Then nothing is forgotten: the other repos' rows stay.
+pub async fn list_repo_pulls_in(
+    app: &App,
+    map: &SystemMap,
+    view: &mut RepoView,
+    tracked: &HashSet<(String, u64)>,
+    full: bool,
+    only: Option<&BTreeSet<String>>,
+) -> PullsPass {
     let mut pass = PullsPass::default();
     let named: BTreeSet<&str> = map.repos_named();
     for repo in &named {
+        if only.is_some_and(|o| !o.contains(&repo.to_ascii_lowercase())) {
+            continue;
+        }
         // Borrowed from the tick's view, not copied (#171).
         let result = match view.pull_listing(app, repo).await {
             Ok(l) => {
@@ -51,7 +67,9 @@ pub async fn list_repo_pulls(
             tracing::error!(rubato.repo = %repo, error = %format!("{e:#}"), "storing pull listing failed");
         }
     }
-    if let Err(e) = forget_others(&app.db, &named).await {
+    if only.is_none()
+        && let Err(e) = forget_others(&app.db, &named).await
+    {
         tracing::error!(error = %format!("{e:#}"), "dropping pull listings of repos no longer in the map failed");
     }
     pass

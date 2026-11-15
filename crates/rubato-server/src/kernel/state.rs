@@ -94,6 +94,11 @@ pub struct AppState {
     /// (approval's "is the owner's session working", plan 122 §D6). `companion_link` writes it
     /// on every snapshot; the composition root fills it once at start.
     pub sessions: Mutex<HashMap<Uuid, Vec<SessionState>>>,
+    /// Woken by an accepted webhook delivery; the poll loop reads what it names (ADR 0074).
+    pub webhook_wake: tokio::sync::Notify,
+    /// Lower case: the repos the last poll tick read (the union of workspace repos and tracked
+    /// issues' repos), so a delivery for any other repo is ignored. Empty before the first tick.
+    pub polled_repos: Mutex<BTreeSet<String>>,
 }
 
 pub type App = Arc<AppState>;
@@ -126,6 +131,8 @@ impl AppState {
             traffic: RwLock::new(traffic),
             clock: Clock::default(),
             sessions: Mutex::new(HashMap::new()),
+            webhook_wake: tokio::sync::Notify::new(),
+            polled_repos: Mutex::new(BTreeSet::new()),
         })
     }
 
@@ -164,6 +171,19 @@ impl AppState {
             .await
             .insert(ws.to_string(), Arc::clone(&map));
         map
+    }
+
+    /// The repos a webhook delivery may name (ADR 0074), lower case: what the last tick read, and
+    /// every repo the loaded maps name.
+    pub async fn read_repos(&self) -> BTreeSet<String> {
+        let mut out = self.polled_repos.lock().unwrap().clone();
+        out.extend(
+            self.union_repos()
+                .await
+                .into_iter()
+                .map(|r| r.to_ascii_lowercase()),
+        );
+        out
     }
 
     /// Every distinct repo the loaded maps name, each once (ADR 0048), in order.

@@ -118,6 +118,7 @@ traffic         observed calls per seam from a traffic report, dismissed discrep
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
+webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
 ```
 <!-- /slices -->
 <!-- slices: rubato-companion -->
@@ -275,6 +276,7 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A handoff commit whose link comment is not on the issue.
 - A plan whose committed approval record differs from Rubato's.
 - Headless turns killed for running too long or too quiet, or left over from a companion restart (`HeadlessTurnsKilled`; never a stop or a cap hit).
+- A GitHub App webhook that has stopped delivering while the catch-up poll finds changes, or a delivery not applied for 5 minutes (`GitHubWebhooksSilent`, `GitHubWebhooksStuck`, ADR 0074).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

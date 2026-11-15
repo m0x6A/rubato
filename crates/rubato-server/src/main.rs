@@ -17,6 +17,7 @@ async fn main() -> Result<()> {
         tracing::warn!("{w}");
     }
     config.report_cutover();
+    config.report_webhooks();
     let pool = db::connect(&config.database_url).await?;
     let dev_issues = match &config.dev_issues {
         Some(path) => {

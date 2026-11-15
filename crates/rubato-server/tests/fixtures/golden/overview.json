@@ -506,10 +506,16 @@
               "from": "github",
               "kind": "data",
               "to": "rubato-server"
+            },
+            {
+              "carries": "App webhook deliveries, signed with X-Hub-Signature-256: which issue, pull request, check or branch changed",
+              "from": "github",
+              "kind": "data",
+              "to": "rubato-server"
             }
           ],
           "from": "rubato-server",
-          "guard": "one GitHubApi trait with recorded-response tests; rubato.github.rate_limit.remaining alert",
+          "guard": "one GitHubApi trait with recorded-response tests; rubato.github.rate_limit.remaining alert; GitHubWebhooksSilent alert",
           "id": "server-github",
           "owner": "rubato-server",
           "to": "github"

@@ -389,3 +389,97 @@ tests:
             exp_annotations:
               summary: "Headless turns were killed by a time bound or at a companion restart in the last 30 minutes"
               panel: Headless turns
+
+  # #208, ADR 0074: the last accepted delivery at 1000 s; the catch-up finds a change at 2000 s
+  # (a delivery missed, not yet 30 minutes), then at 4000 s (the hook has been silent 50 minutes
+  # while changes happen): fires. A delivery at 4100 s resolves it.
+  - interval: 1m
+    input_series:
+      - series: "rubato_github_webhook_last_accepted_at"
+        values: "1000x10 4100x5"
+      - series: "rubato_github_catchup_last_change_at"
+        values: "0x2 2000x3 4000x10"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: GitHubWebhooksSilent
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: GitHubWebhooksSilent
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: GitHubWebhooksSilent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "The catch-up poll found a change more than 30 minutes after the last GitHub webhook delivery"
+              panel: Webhooks
+      - eval_time: 13m
+        alertname: GitHubWebhooksSilent
+        exp_alerts: []
+
+  # Never an accepted delivery (only pings and ignored events arrive, or none at all) while the
+  # catch-up, at a 3600 s interval, finds a change: fires.
+  - interval: 1m
+    input_series:
+      - series: "rubato_github_webhook_last_accepted_at"
+        values: "0x10"
+      - series: "rubato_github_catchup_last_change_at"
+        values: "0x3 7200x6"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: GitHubWebhooksSilent
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: GitHubWebhooksSilent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "The catch-up poll found a change more than 30 minutes after the last GitHub webhook delivery"
+              panel: Webhooks
+
+  # A quiet team: deliveries stopped long ago and the catch-up found nothing since. Webhooks
+  # off: no series at all. Both stay silent.
+  - interval: 1m
+    input_series:
+      - series: "rubato_github_webhook_last_accepted_at"
+        values: "1000x10"
+      - series: "rubato_github_catchup_last_change_at"
+        values: "900x10"
+      - series: 'rubato_companion_heartbeat{rubato_companion_id="c1", rubato_user="m0x6A"}'
+        values: "0+60x10"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: GitHubWebhooksSilent
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: GitHubWebhooksStuck
+        exp_alerts: []
+
+  # #208: an accepted delivery waits 120 s (quiet), then 400 s (fires), then is applied (0).
+  - interval: 1m
+    input_series:
+      - series: "rubato_github_webhook_pending_oldest_seconds"
+        values: "0x2 120x2 400x3 0x3"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GitHubWebhooksStuck
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: GitHubWebhooksStuck
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "A GitHub webhook delivery has waited over 5 minutes to be applied"
+              panel: Webhooks
+      - eval_time: 12m
+        alertname: GitHubWebhooksStuck
+        exp_alerts: []
