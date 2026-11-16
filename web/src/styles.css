@@ -655,6 +655,21 @@ tr.chat-row > td { padding-top: 0; }
 .workspace-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .workspace-switch select { font: inherit; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
 .workspace-switch select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* settings: Configure workspace (issue #189, ADR 0075) */
+.configure-workspace { padding: 2px 10px; min-height: 24px; font-size: 12px; }
+.configure-workspace[aria-pressed="true"] { border-color: var(--accent); }
+.settings form { display: flex; flex-direction: column; gap: 8px; }
+.settings label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--chip-ink); }
+.settings input, .settings select { width: 100%; box-sizing: border-box; font: inherit; }
+.settings fieldset { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.settings legend { padding: 0 4px; font-size: 12px; font-weight: 600; color: var(--ink); }
+.settings p, .settings dl { margin: 0; }
+.settings dd { margin: 0; overflow-wrap: anywhere; }
+.settings-secret { display: flex; flex-direction: column; gap: 4px; }
+.settings-error { color: var(--bad-ink); }
+.settings-actions { display: flex; align-items: center; gap: 8px; }
+.settings-new { padding-top: 8px; border-top: 1px solid var(--line); }
+.settings-delete { display: flex; flex-direction: column; gap: 6px; }
 .badge.elsewhere { color: var(--new-ink); background: var(--new-wash); }
 /* the By repo grouping (issue #89): a box behind each repo's parts */
 .repo-box { width: 100%; height: 100%; border: 1px dashed var(--line-strong); border-radius: 14px; background: rgb(255 255 255 / 0.015); pointer-events: none; }
