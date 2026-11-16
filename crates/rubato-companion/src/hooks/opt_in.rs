@@ -239,6 +239,17 @@ mod tests {
         );
     }
 
+    /// Plan 248 "must not break": `render-hooks` with no flag is the launch's rendering, each
+    /// command behind the prefix and nothing else changed.
+    #[test]
+    fn manual_hooks_are_the_launch_hooks_behind_the_prefix() {
+        let launch = render_hooks(HOOKS_TEMPLATE, 4321, Path::new(HEADER)).unwrap();
+        let mut want: Value = serde_json::from_str(&launch).unwrap();
+        for_each_command(&mut want, |c| *c = format!("{STAND_DOWN}{c}"));
+        let got: Value = serde_json::from_str(&ours(4321)).unwrap();
+        assert_eq!(got, want);
+    }
+
     #[test]
     fn our_port_recognises_only_our_commands() {
         assert_eq!(our_port(&commands(&ours(7))[0]), Some(7));
