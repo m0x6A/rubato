@@ -1,0 +1,25 @@
+# Retired parts (ADR 0077). Read by rubato_protocol::map::tests and actions/plan-check/test:
+# the same result on both sides. A retired id stays declared; a retired seam carries nothing,
+# and no live seam ends at a retired node.
+version: 1
+name: retired
+nodes:
+  - id: companion
+    kind: context
+  - id: runner
+    kind: external
+    retired: "0070"
+  - id: agent
+    kind: external
+seams:
+  - id: companion-runner
+    from: companion
+    to: runner
+    owner: companion
+    retired: "0070"
+  - id: companion-agent
+    from: companion
+    to: agent
+    owner: companion
+    flows:
+      - { kind: control, from: companion, to: agent, carries: launch }

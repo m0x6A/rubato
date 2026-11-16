@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { overview, realMap } from "../../../test/fixtures.ts";
+import { liveNodes, overview, realMap } from "../../../test/fixtures.ts";
 import { buildGraph } from "./graph.ts";
 import { MapView } from "./MapView.tsx";
 
@@ -15,7 +15,7 @@ describe("MapView", () => {
     const auto = render(<MapView graph={graph} selected={null} onSelect={() => {}} />);
     await waitFor(() => expect(auto.getByTestId("node-rubato-server")).toBeInTheDocument(), { timeout: 5000 });
     const byElk = placed(auto.container);
-    expect(byElk.size).toBe(realMap().nodes.length);
+    expect(byElk.size).toBe(liveNodes().length);
     // ELK spreads the parts: no two share a place, and none is left at the origin by default.
     expect(new Set(byElk.values()).size).toBe(byElk.size);
     // Without a way to save a move, parts do not drag, and there is no Auto-arrange.
@@ -74,7 +74,7 @@ describe("MapView", () => {
   it("renders a card for every node of rubato-map.yml", async () => {
     render(<MapView graph={buildGraph(overview())} selected={null} onSelect={() => {}} />);
     await waitFor(() => expect(screen.getByTestId("node-rubato-server")).toBeInTheDocument(), { timeout: 5000 });
-    for (const n of realMap().nodes) {
+    for (const n of liveNodes()) {
       expect(screen.getByTestId(`node-${n.id}`)).toBeInTheDocument();
     }
   });

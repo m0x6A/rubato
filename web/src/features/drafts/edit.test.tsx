@@ -133,6 +133,23 @@ describe("editing the map as a draft (S18, S19)", () => {
     expect(writes()).toHaveLength(1);
   });
 
+  it("an edit of a retired part keeps it retired (ADR 0077)", async () => {
+    show(overview(), { kind: "node", id: "tmux-ide" });
+    const part = screen.getByRole("form", { name: "Change part tmux-ide" });
+    fireEvent.click(within(part).getByRole("button", { name: "Save part" }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]!.body).toMatchObject({ op: "update_node", node: { id: "tmux-ide", retired: "0070" } });
+  });
+
+  it("a new seam joins live parts only (ADR 0077)", () => {
+    show(overview(), null);
+    const add = screen.getByRole("form", { name: "Add seam" });
+    for (const name of ["from", "to"]) {
+      const select = add.querySelector(`select[name="${name}"]`) as HTMLSelectElement;
+      expect([...select.options].map((o) => o.value)).not.toContain("tmux-ide");
+    }
+  });
+
   it("remove posts a removal", async () => {
     show(overview(), { kind: "node", id: "plan-check" });
     fireEvent.click(screen.getByRole("button", { name: "Remove part plan-check" }));
