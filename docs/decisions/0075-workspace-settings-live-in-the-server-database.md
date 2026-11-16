@@ -1,8 +1,8 @@
 # 0075. Keep workspace settings in the server's database, set at runtime; the environment seeds them once
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (issue m0x6A/rubato#189), proposed; a human accepts
+- **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-16; drafted by agent
 - **Seam:** web-server, server-system-map, server-github
 - **Issue:** m0x6A/rubato#189
 
