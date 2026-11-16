@@ -25,3 +25,12 @@ Feature: Look and feel
     Given a map of 40 parts and 60 seams, every seam busy
     When a person looks at it with flows moving
     Then no frame takes long enough to stutter
+
+  @look.panel-expands
+  Scenario: The panel can be widened to read in, and the browser remembers
+    Given a window wide enough for the map and the panel side by side
+    When a person presses the panel's size button
+    Then the panel goes from normal to wide, with the map still beside it, then fills the window
+    And the next press brings back the normal width and the map
+    And the size is the same after a reload
+    And on a narrow window the panel has one size, whatever was stored

@@ -21,6 +21,7 @@ import { openIssues } from "./shared/finished.ts";
 import { issueKey, relative } from "./shared/format.ts";
 import { concernsUs, setWorkspace } from "./shared/workspace.ts";
 import { liveMap } from "./shared/map.ts";
+import { PANEL_ACTION, type PanelSize, nextPanelSize, readPanelSize, storePanelSize, useSideBySide } from "./shared/panel.ts";
 
 type Tab = "issues" | "plans" | "companions" | "repos";
 
@@ -385,6 +386,10 @@ export function App() {
     return <LoginPage />;
   }
 
+  // The stored size applies only while the map and the panel sit side by side.
+  const sideBySide = useSideBySide();
+  const [storedPanelSize, setStoredPanelSize] = useState<PanelSize>(readPanelSize);
+  const panelSize: PanelSize = sideBySide ? storedPanelSize : "normal";
   const selected = overview && selectedIssue ? (overview.issues.find((i) => issueKey(i.issue) === issueKey(selectedIssue)) ?? null) : null;
 
   return (
@@ -423,8 +428,9 @@ export function App() {
           </button>
         )}
       </div>
-      <div className="body">
-        <section className="map">
+      <div className="body" data-panel={panelSize} data-testid="body">
+        {/* Hidden at full size, so the map lays nothing out at no width and leaves the tab order. */}
+        <section className="map" hidden={panelSize === "full"}>
           {graph && overview ? (
             <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={(arrangement) => void onAutoArrange(arrangement)} plan={selected?.plan ? { issue: selected.issue, plan: selected.plan } : null}
               draftMarks={marks}
@@ -468,6 +474,23 @@ export function App() {
             <button className={tab === "repos" ? "active" : ""} onClick={() => setTab("repos")} data-testid="tab-repos">
               Repos{overview ? ` (${(overview.repos ?? []).length})` : ""}
             </button>
+            {/* One button, three sizes (#265). Stacked under 901 px, the panel has one size. */}
+            {sideBySide && (
+              <button
+                type="button"
+                className="panel-size"
+                data-testid="panel-size"
+                aria-label={PANEL_ACTION[panelSize].name}
+                title={PANEL_ACTION[panelSize].name}
+                onClick={() => {
+                  const next = nextPanelSize(panelSize);
+                  setStoredPanelSize(next);
+                  storePanelSize(next);
+                }}
+              >
+                {PANEL_ACTION[panelSize].word}
+              </button>
+            )}
           </nav>
           {overview && <Findings findings={overview.findings} />}
           {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} prefill={prefill} />}

@@ -110,6 +110,69 @@ describe("open on GitHub by default (#265)", () => {
   });
 });
 
+describe("the panel's three sizes (#265)", () => {
+  const body = () => screen.getByTestId("body");
+  const map = () => document.querySelector("section.map")!;
+  /** The window is wide or narrow: what `(min-width: 901px)` answers. */
+  const windowIs = (wide: boolean) => vi.stubGlobal("matchMedia", () => ({ matches: wide, addEventListener() {}, removeEventListener() {} }));
+  afterEach(() => localStorage.clear());
+
+  it("one button cycles normal, wide, full and back, names what it does next, and the browser remembers", async () => {
+    windowIs(true);
+    const first = render(<App />);
+    const button = await screen.findByTestId("panel-size");
+    expect(body()).toHaveAttribute("data-panel", "normal");
+    expect(button).toHaveAccessibleName("Widen panel");
+    fireEvent.click(button);
+    expect(body()).toHaveAttribute("data-panel", "wide");
+    expect(map()).not.toHaveAttribute("hidden");
+    expect(button).toHaveAccessibleName("Fill the window with the panel");
+    fireEvent.click(button);
+    expect(body()).toHaveAttribute("data-panel", "full");
+    expect(map()).toHaveAttribute("hidden");
+    expect(button).toHaveAccessibleName("Back to normal panel width");
+    expect(localStorage.getItem("rubato.panel")).toBe("full");
+    first.unmount();
+    // A reload: the stored size is read back.
+    render(<App />);
+    await screen.findByTestId("panel-size");
+    expect(body()).toHaveAttribute("data-panel", "full");
+    fireEvent.click(screen.getByTestId("panel-size"));
+    expect(body()).toHaveAttribute("data-panel", "normal");
+    expect(map()).not.toHaveAttribute("hidden");
+  });
+
+  it("a stacked window has one size and no button, whatever is stored", async () => {
+    localStorage.setItem("rubato.panel", "full");
+    windowIs(false);
+    render(<App />);
+    await screen.findByRole("button", { name: /^Issues/ });
+    expect(body()).toHaveAttribute("data-panel", "normal");
+    expect(map()).not.toHaveAttribute("hidden");
+    expect(screen.queryByTestId("panel-size")).toBeNull();
+  });
+
+  it("renders at normal when storage throws or holds something else", async () => {
+    windowIs(true);
+    localStorage.setItem("rubato.panel", "huge");
+    const first = render(<App />);
+    await screen.findByTestId("panel-size");
+    expect(body()).toHaveAttribute("data-panel", "normal");
+    first.unmount();
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByTestId("panel-size"));
+    expect(body()).toHaveAttribute("data-panel", "wide");
+    get.mockRestore();
+    set.mockRestore();
+  });
+});
+
 describe("pinning from the shell (S3, N16)", () => {
   it("a pin is announced and focus lands on the issue's heading", async () => {
     await pinFromTheMenu(/^rubato-server\b/);
