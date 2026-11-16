@@ -1,6 +1,6 @@
 //! The fetch task: one fetch per interval, validated against the limits, swapped into
-//! `AppState::traffic`, its gauges recorded, and the browsers told only when the derived
-//! summary changed (design §4).
+//! `AppState::traffic`, its gauges recorded, and each workspace's browsers told only when its
+//! derived summary changed (design §4, #131).
 
 use super::prometheus::{PrometheusConfig, PrometheusSource};
 use super::source::{ConfiguredSource, DevFileSource, Source, SourceError};
@@ -37,11 +37,11 @@ impl Outcome {
 }
 
 /// One source and what the task remembers between fetches: when it started (the report's age
-/// before the first good one) and the last summary the browsers were told about.
+/// before the first good one) and, per workspace, the last summary its browsers were told about.
 pub struct Fetcher<S> {
     source: S,
     started: DateTime<Utc>,
-    told: Option<ObservedTraffic>,
+    told: std::collections::BTreeMap<String, ObservedTraffic>,
     timeout: Duration,
 }
 
@@ -56,7 +56,7 @@ impl<S: Source> Fetcher<S> {
         Self {
             source,
             started: now,
-            told: None,
+            told: std::collections::BTreeMap::new(),
             timeout: FETCH_TIMEOUT,
         }
     }
@@ -133,8 +133,9 @@ impl<S: Source> Fetcher<S> {
         outcome
     }
 
-    /// Gauges from the derivation the overview would make now, and `notify("traffic")` only
-    /// when the summary, its report time aside, differs from the last one sent.
+    /// Gauges from the derivation each workspace's overview would make now, and
+    /// `notify_ws("traffic", ws)` for each workspace whose summary, its report time aside, differs
+    /// from the last one it was told about (#131; ADR 0049: a change of one map is scoped to it).
     async fn record(&mut self, app: &App, now: DateTime<Utc>) {
         let latest = app.traffic.read().await.clone();
         let since = latest
@@ -145,9 +146,9 @@ impl<S: Source> Fetcher<S> {
         app.metrics
             .traffic_report_age
             .record(u64::try_from(age).unwrap_or(0), &[]);
-        // Judged against each workspace's map and its dismissals (ADR 0039, 0060); the browsers
-        // are told once, from `default`'s, which unprefixed overviews show. A dismissal changed
-        // in another workspace notifies that workspace itself (`dismiss.rs`).
+        // Judged against each workspace's map and its dismissals (ADR 0039, 0060), and each
+        // workspace told on its own. A dismissal also notifies its workspace from the handler
+        // (`dismiss.rs`); the next tick tells it once more, since `dismissed` is in the summary.
         let maps: Vec<(String, std::sync::Arc<crate::kernel::state::LoadedMap>)> = app
             .maps
             .read()
@@ -155,7 +156,7 @@ impl<S: Source> Fetcher<S> {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        let mut default = None;
+        let mut changed = Vec::new();
         for (ws, m) in &maps {
             let dismissed = super::dismiss::list(&app.db, ws).await.unwrap_or_else(|e| {
                 tracing::warn!(error = %e, rubato.workspace = ws.as_str(), "traffic dismissals unreadable");
@@ -191,20 +192,19 @@ impl<S: Source> Fetcher<S> {
             app.metrics
                 .traffic_dismissals
                 .record(t.dismissed.len() as u64, &w);
-            if is_default {
-                default = Some(t);
+            let summary = ObservedTraffic {
+                observed_at: None,
+                ..t
+            };
+            if self.told.get(ws) != Some(&summary) {
+                self.told.insert(ws.clone(), summary);
+                changed.push(ws.clone());
             }
         }
-        let Some(traffic) = default else {
-            return;
-        };
-        let summary = ObservedTraffic {
-            observed_at: None,
-            ..traffic
-        };
-        if self.told.as_ref() != Some(&summary) {
-            self.told = Some(summary);
-            app.notify("traffic");
+        // Defensive: no code path removes a loaded map today.
+        self.told.retain(|ws, _| maps.iter().any(|(m, _)| m == ws));
+        for ws in changed {
+            app.notify_ws("traffic", &ws);
         }
     }
 }
