@@ -22,6 +22,19 @@ Feature: Discovering sessions
     When Claude Code in the worktree for branch "issue/9-menu" of "acme/pantry" posts the recorded hook "user-prompt-submit.json"
     Then the server receives a sessions snapshot where issue 9 of "acme/pantry" has source "hook" and status "working"
 
+  Scenario: A session started by hand reports through the hooks render-hooks wrote into its worktree
+    ADR 0078: the opt-in the companion merges into .claude/settings.local.json is what such a
+    session runs; its command posts to the companion like a launched session's.
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And a temporary repository "acme/pantry" with a bare origin
+    And a worktree for branch "issue/9-menu" of "acme/pantry" with a tmux pane running the stand-in claude in it
+    And the companion daemon is running and connected
+    And the developer opts the worktree for branch "issue/9-menu" of "acme/pantry" in by hand
+    Then the server receives a sessions snapshot with issue 9 of "acme/pantry" on branch "issue/9-menu"
+    When Claude Code started by hand in the worktree for branch "issue/9-menu" of "acme/pantry" fires the opted-in hook "user-prompt-submit.json"
+    Then the server receives a sessions snapshot where issue 9 of "acme/pantry" has source "hook" and status "working"
+
   Scenario: A session that checks out an issue branch moves onto that issue
     Issue #80: identity is read again when the worktree's HEAD changes, off the registry lock.
     Given a test server that approves pairing for user "m0x6A"

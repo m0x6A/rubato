@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { legacyKeys, parsePlan } from "../../../actions/plan-check/src/parse-plan.ts";
 import { listAdrs, parseAdr } from "../scripts/adrs.ts";
-import { HOOK_EVENTS, main, renderHooks, templatePath } from "../scripts/hooks.ts";
+import { HOOK_EVENTS, main, renderHooks, templatePath, renderManualHooks, STAND_DOWN } from "../scripts/hooks.ts";
 import { install } from "../scripts/install.ts";
 import { normalisePlan, planSha } from "../scripts/lib/plan-sha.ts";
 import { render, summarize } from "../scripts/map.ts";
@@ -375,6 +375,20 @@ describe("hooks.ts", () => {
     const template = readFileSync(templatePath(), "utf8");
     expect(() => renderHooks(template, 0, "/x/hook-auth.header")).toThrow(/port/);
     expect(() => renderHooks(template, 8080, "")).toThrow(/header/);
+  });
+
+  it("renders a manual session's hooks behind the stand-down guard, the companion's words (ADR 0078)", () => {
+    const template = readFileSync(templatePath(), "utf8");
+    const parsed = JSON.parse(renderManualHooks(template, 43125, "/s/hook-auth.header")) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+    const commands = Object.values(parsed.hooks).flatMap((es) => es.flatMap((e) => e.hooks.map((h) => h.command)));
+    expect(commands).toHaveLength(HOOK_EVENTS.length);
+    for (const c of commands) {
+      expect(c.startsWith(STAND_DOWN)).toBe(true);
+      expect(c).toContain("http://127.0.0.1:43125/hook");
+    }
+    // The companion's constant, word for word (crates/rubato-companion/src/hooks/opt_in.rs).
+    const rust = readFileSync(join(root, "crates/rubato-companion/src/hooks/opt_in.rs"), "utf8");
+    expect(rust).toContain(`pub const STAND_DOWN: &str = "${STAND_DOWN.replaceAll('"', '\\"')}";`);
   });
 
   it("refuses --token: the token must not go on a command line (ADR 0063)", () => {

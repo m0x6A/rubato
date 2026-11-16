@@ -213,7 +213,10 @@ approval stale; Rubato shows that, and a new approval sends the handoff again.
   `plan.ts handoff` writes the approval record, and nothing else does.
 - Don't post an approval or write the approval record; a person approves in Rubato.
 - Don't steer another developer's agent; coordinate through the issue and the plan's room.
-- Don't install the hooks yourself; the companion injects `hooks.json` at launch. To opt a
-  manual session in: `node --experimental-strip-types scripts/hooks.ts --port <p> --header-file
-  <state dir>/hook-auth.header --out .claude/settings.local.json` (`rubato-companion status`
-  prints both). Never put the token itself on a command line (ADR 0063).
+- Don't install the hooks yourself; the companion injects `hooks.json` at launch. A session
+  started by hand reports only when its repo or worktree is opted in (ADR 0078): the developer
+  runs `rubato-companion render-hooks --into <dir>/.claude/settings.local.json`, which keeps the
+  file's other settings, and `rubato-companion status` lists what is opted in. Without the
+  binary: `node --experimental-strip-types scripts/hooks.ts --port <p> --header-file <state
+  dir>/hook-auth.header --out .claude/settings.local.json`. Either way the hooks stand down inside
+  a launched session. Never put the token itself on a command line (ADR 0063).
