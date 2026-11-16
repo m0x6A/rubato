@@ -84,6 +84,14 @@
             "null"
           ]
         },
+        "retired": {
+          "description": "The ADR that retired this part (ADR 0077). Still declared, so plans and pins that named\nit resolve; drawn, offered and suggested nowhere.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{4}$"
+        },
         "service": {
           "description": "The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No\ndefault: a part without it is never matched to observed traffic.",
           "anyOf": [
@@ -250,6 +258,14 @@
         "owner": {
           "description": "Node id of the owner side; must be `from` or `to`.",
           "type": "string"
+        },
+        "retired": {
+          "description": "The ADR that retired this seam (ADR 0077); a retired seam declares no flows.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{4}$"
         },
         "to": {
           "type": "string"

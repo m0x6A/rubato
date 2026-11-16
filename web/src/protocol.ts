@@ -996,6 +996,11 @@ path?: (string | null)
  */
 repo?: (string | null)
 /**
+ * The ADR that retired this part (ADR 0077). Still declared, so plans and pins that named
+ * it resolve; drawn, offered and suggested nowhere.
+ */
+retired?: (string | null)
+/**
  * The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No
  * default: a part without it is never matched to observed traffic.
  */
@@ -1025,6 +1030,10 @@ id: string
  * Node id of the owner side; must be `from` or `to`.
  */
 owner: string
+/**
+ * The ADR that retired this seam (ADR 0077); a retired seam declares no flows.
+ */
+retired?: (string | null)
 to: string
 }
 /**
@@ -2005,6 +2014,11 @@ url?: (string | null)
  * The whole picture in one payload: what the web view renders.
  */
 export interface Overview {
+/**
+ * What each live launched session's agent last said it is doing (ADR 0071): a signal shown
+ * with its age, joined on `(companion_id, launch_id)`, never a progress state.
+ */
+agent_lines?: AgentLine[]
 backlog?: Backlog
 /**
  * Whether "New issue here…" can create an issue: the GitHub App's installation has
@@ -2056,6 +2070,24 @@ workspace?: string
  * Every configured workspace, in switcher order. Empty from an older server.
  */
 workspaces?: WorkspaceInfo[]
+}
+/**
+ * What a launched agent last said, as the overview shows it (ADR 0071, plan 226 §3). Joined to
+ * a session on `(companion_id, launch_id)`, never on the launch id alone; never a progress
+ * state.
+ */
+export interface AgentLine {
+/**
+ * The pairing the report arrived on.
+ */
+companion_id: string
+doing: string
+launch_id: string
+parts?: string[]
+/**
+ * When the server received it (the server's clock).
+ */
+reported_at: string
 }
 /**
  * Open issues not tracked yet (ADR 0019).

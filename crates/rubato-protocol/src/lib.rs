@@ -38,7 +38,7 @@ pub mod voice;
 pub mod web_link;
 pub mod workspace;
 
-pub use agent::{AgentReport, BranchStatus, DraftStatus, PlanStatus};
+pub use agent::{AgentLine, AgentReport, BranchStatus, DraftStatus, PlanStatus};
 pub use approve::{
     ApproveRequest, ApproveResponse, ApproveState, DraftApproveRequest, DraftApproveResponse,
 };

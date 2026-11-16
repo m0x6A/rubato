@@ -107,3 +107,15 @@ Feature: One worktree and one tmux session per issue
     Then the server receives a launch result "refused" with reason "missing_dependency"
     And the refusal's detail contains "3.5" and "3.7"
     And no worktree exists for branch "issue/7-restock" of "acme/pantry"
+
+  Scenario: A launch in a worktree opted in by hand delivers each event once
+    Issue #248 box 2: the hand opt-in's hooks stand down inside a launched session, which keeps
+    its own --settings hooks (ADR 0078).
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And a temporary repository "acme/pantry" with a bare origin
+    And the companion daemon is running and connected
+    And the server has launched issue 7 of "acme/pantry" with slug "restock" for user "m0x6A"
+    When the developer opts the launched session's worktree in by hand
+    And the launched session fires "Stop" as session "0f8fad5b-d9cb-469f-a165-70867728950e" through both its own hooks and the hand opt-in
+    Then the server receives exactly 1 hook event "Stop" for session "0f8fad5b-d9cb-469f-a165-70867728950e"

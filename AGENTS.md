@@ -120,6 +120,7 @@ rooms           a plan's room: messages, seam notices, agents called in, turns  
 voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
+agent_reports   what each launched agent last said it is doing  agent_reports
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
@@ -137,7 +138,7 @@ slices:
 pairing        device-code pairing with a GitHub login                            pair
 server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
 sessions       Registry, identity, discovery, launches.json, headless turns        reconcile (essential, not headless)
-hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
+hooks          hook receiver (port and token kept), template, apply_hook, manual opt-in   hook server, dropped counter (essential)
 launch         LaunchCommand: own user only, worktree, tmux or a headless turn    launch task (essential)
 spend          transcript cost, spend cap, CapHit                                 after each hook
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
@@ -150,7 +151,8 @@ agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_st
 `web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, selection, handlers);
 `shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
 `scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
-`motion.ts` the one motion switch, `data-motion` on `<html>`);
+`motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
+its retired parts, for every reader that draws or offers ids, ADR 0077);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
 `features/features.test.ts`:
 
@@ -180,7 +182,7 @@ Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; 
 modules, each with the types and `routes` its seam uses (every type re-exported at the root):
 
 ```text
-agent      AgentReport, PlanStatus, DraftStatus, BranchStatus (ADR 0071; capability agent_mcp)
+agent      AgentReport, PlanStatus, DraftStatus, BranchStatus, AgentLine (ADR 0071; capability agent_mcp)
 approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
 auth       Me; ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
@@ -294,7 +296,7 @@ Each of these has an alert rule committed under `observability/alerts/` and a te
 
 ### Map versus territory
 
-Rubato's map is declared. Production traffic is observed. When the two disagree (a service calls a node the map does not connect it to, or a declared seam carries no traffic), that is a finding, shown on the map, not an error to suppress. The overlay only shows it; nothing acts on it by itself. A person may take a discrepancy into the shared map draft and merge it through the map's pull request like any other change, or dismiss it for the workspace (ADRs 0018, 0059, 0060). A part is matched to the service it says it is, by the `service.namespace` and `service.name` that service emits; Rubato never sets or derives them.
+Rubato's map is declared. Production traffic is observed. When the two disagree (a service calls a node the map does not connect it to, or a declared seam carries no traffic), that is a finding, shown on the map, not an error to suppress. The overlay only shows it; nothing acts on it by itself. A person may take a discrepancy into the shared map draft and merge it through the map's pull request like any other change, or dismiss it for the workspace (ADRs 0018, 0059, 0060). A part nobody runs any more is retired, not removed: `retired: "<ADR>"` on the node or seam keeps the id declared, so plans that named it still check, while the map, the skill and Rubato's menus leave it out (ADR 0077). A part is matched to the service it says it is, by the `service.namespace` and `service.name` that service emits; Rubato never sets or derives them.
 
 ## Conventions
 

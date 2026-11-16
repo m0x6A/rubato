@@ -3,6 +3,7 @@ import type { IssueRef, MapRef, NewIssueRequest, Overview, SystemMap } from "../
 import { failureText } from "../../shared/api.ts";
 import { issueKey } from "../../shared/format.ts";
 import { newIssueApi } from "./api.ts";
+import { liveMap } from "../../shared/map.ts";
 
 interface Props {
   overview: Overview;
@@ -130,14 +131,14 @@ export function NewIssueForm({ overview, target: start, onCreated, onCancel, onN
             setRepo(repoFor(map, t) ?? repo);
           }}>
             <optgroup label="Parts">
-              {map.nodes.map((n) => (
+              {liveMap(map).nodes.map((n) => (
                 <option key={n.id} value={encode({ kind: "node", id: n.id })}>
                   {n.id}
                 </option>
               ))}
             </optgroup>
             <optgroup label="Seams">
-              {(map.seams ?? []).map((s) => (
+              {(liveMap(map).seams ?? []).map((s) => (
                 <option key={s.id} value={encode({ kind: "seam", id: s.id })}>
                   {s.id}
                 </option>

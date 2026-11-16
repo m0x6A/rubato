@@ -183,6 +183,7 @@ mod tests {
             path: None,
             description: None,
             service: None,
+            retired: None,
         };
         SystemMap {
             version: 1,
@@ -199,6 +200,7 @@ mod tests {
                 guard: None,
                 description: None,
                 flows: vec![],
+                retired: None,
             }],
             scenarios: vec![],
         }
@@ -334,6 +336,7 @@ mod tests {
             path: None,
             description: None,
             service: None,
+            retired: None,
         });
         assert_eq!(
             apply_map_lines(

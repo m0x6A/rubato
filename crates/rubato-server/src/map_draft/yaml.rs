@@ -22,7 +22,16 @@ const TOP: &[&str] = &[
     "scenarios",
 ];
 const REPO: &[&str] = &["name", "plan_path"];
-const NODE: &[&str] = &["id", "kind", "repo", "path", "description", "service"];
+/// `retired`: the ADR that retired the part (ADR 0077), kept across a proposal.
+const NODE: &[&str] = &[
+    "id",
+    "kind",
+    "repo",
+    "path",
+    "description",
+    "service",
+    "retired",
+];
 /// A part's service as its telemetry emits it (ADR 0059).
 const SERVICE: &[&str] = &["namespace", "name"];
 const SEAM: &[&str] = &[
@@ -34,6 +43,7 @@ const SEAM: &[&str] = &[
     "guard",
     "description",
     "flows",
+    "retired",
 ];
 const FLOW: &[&str] = &["kind", "from", "to", "carries"];
 const SCENARIO: &[&str] = &["id", "name", "description", "steps"];
@@ -101,6 +111,7 @@ mod tests {
     const FLOWS: &str = include_str!("../../../../schema/fixtures/maps/flows.yml");
     const SCENARIOS: &str = include_str!("../../../../schema/fixtures/maps/scenarios.yml");
     const SERVICES: &str = include_str!("../../../../schema/fixtures/maps/services.yml");
+    const RETIRED: &str = include_str!("../../../../schema/fixtures/maps/retired.yml");
 
     #[test]
     fn round_trip_keeps_the_committed_maps() {
@@ -110,6 +121,7 @@ mod tests {
             ("flows.yml", FLOWS),
             ("scenarios.yml", SCENARIOS),
             ("services.yml", SERVICES),
+            ("retired.yml", RETIRED),
         ] {
             let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
             let written = render(&map).unwrap();
@@ -127,7 +139,7 @@ mod tests {
                 "{name}"
             );
         }
-        println!("checked 5 map files");
+        println!("checked 6 map files");
     }
 
     #[test]

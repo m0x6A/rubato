@@ -4,6 +4,13 @@
   "description": "The whole picture in one payload: what the web view renders.",
   "type": "object",
   "properties": {
+    "agent_lines": {
+      "description": "What each live launched session's agent last said it is doing (ADR 0071): a signal shown\nwith its age, joined on `(companion_id, launch_id)`, never a progress state.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentLine"
+      }
+    },
     "backlog": {
       "description": "Open issues not tracked yet (ADR 0019).",
       "$ref": "#/$defs/Backlog",
@@ -154,6 +161,41 @@
         "node",
         "status",
         "change"
+      ]
+    },
+    "AgentLine": {
+      "description": "What a launched agent last said, as the overview shows it (ADR 0071, plan 226 §3). Joined to\na session on `(companion_id, launch_id)`, never on the launch id alone; never a progress\nstate.",
+      "type": "object",
+      "properties": {
+        "companion_id": {
+          "description": "The pairing the report arrived on.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "doing": {
+          "type": "string"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reported_at": {
+          "description": "When the server received it (the server's clock).",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "companion_id",
+        "launch_id",
+        "doing",
+        "reported_at"
       ]
     },
     "ApprovalRecord": {
@@ -1857,6 +1899,14 @@
             "null"
           ]
         },
+        "retired": {
+          "description": "The ADR that retired this part (ADR 0077). Still declared, so plans and pins that named\nit resolve; drawn, offered and suggested nowhere.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{4}$"
+        },
         "service": {
           "description": "The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No\ndefault: a part without it is never matched to observed traffic.",
           "anyOf": [
@@ -3040,6 +3090,14 @@
         "owner": {
           "description": "Node id of the owner side; must be `from` or `to`.",
           "type": "string"
+        },
+        "retired": {
+          "description": "The ADR that retired this seam (ADR 0077); a retired seam declares no flows.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{4}$"
         },
         "to": {
           "type": "string"

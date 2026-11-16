@@ -18,6 +18,7 @@ import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/a
 import { hasIssueDrag } from "./shared/dnd.ts";
 import { issueKey, relative } from "./shared/format.ts";
 import { concernsUs, setWorkspace } from "./shared/workspace.ts";
+import { liveMap } from "./shared/map.ts";
 
 type Tab = "issues" | "plans" | "companions" | "repos";
 
@@ -445,9 +446,9 @@ export function App() {
           {overview && <Findings findings={overview.findings} />}
           {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} prefill={prefill} />}
           {/* The map explains what is selected; an open issue takes the panel instead. */}
-          {overview && tab === "issues" && !newIssueAt && !selected && overview.map.map.nodes[0] && (
+          {overview && tab === "issues" && !newIssueAt && !selected && liveMap(overview.map.map).nodes[0] && (
             <p className="new-issue-start">
-              <button type="button" data-testid="new-issue-start" onClick={() => setNewIssueAt(selection ?? { kind: "node", id: overview.map.map.nodes[0]?.id ?? "" })}>
+              <button type="button" data-testid="new-issue-start" onClick={() => setNewIssueAt(selection ?? { kind: "node", id: liveMap(overview.map.map).nodes[0]?.id ?? "" })}>
                 New issue…
               </button>
             </p>

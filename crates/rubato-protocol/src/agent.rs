@@ -63,6 +63,21 @@ pub struct DraftStatus {
     pub fits: bool,
 }
 
+/// What a launched agent last said, as the overview shows it (ADR 0071, plan 226 §3). Joined to
+/// a session on `(companion_id, launch_id)`, never on the launch id alone; never a progress
+/// state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentLine {
+    /// The pairing the report arrived on.
+    pub companion_id: Uuid,
+    pub launch_id: Uuid,
+    pub doing: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<String>,
+    /// When the server received it (the server's clock).
+    pub reported_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BranchStatus {
     /// The plan's hash at the branch head.

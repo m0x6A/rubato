@@ -389,8 +389,10 @@ appear in their title and body.
   `$CLAUDE_CONFIG_DIR/projects`), as a regular file of at most 256 MiB, and logs
   `rubato.transcript.refused` with the reason otherwise.
 - The issue shows **Unknown**: the trust check. The last signal is older than the stale
-  threshold, or the session was started by hand and sends no hooks: opt it in with the skill's
-  `hooks.ts`. A hook event fixes it.
+  threshold, or the session was started by hand and sends no hooks. `rubato-companion status`
+  lists each repo and worktree as opted in, stale, or with the command that opts it in:
+  `rubato-companion render-hooks --into <dir>/.claude/settings.local.json` (ADR 0078). A hook
+  event fixes it.
 - The plan never shows: the server polls GitHub every `RUBATO_GITHUB_POLL_SECS`; check the
   server log for `poll failed for issue` and the token's scopes.
 
