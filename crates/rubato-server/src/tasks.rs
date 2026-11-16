@@ -636,6 +636,8 @@ impl Poller {
             tracing::error!(error = %format!("{e:#}"), "pruning agent reports failed");
         }
         webhooks::record(app).await;
+        // #69: a companion silent with its socket open counts its sessions as unknown.
+        companion_link::mark_quiet(app, app.clock.now());
         overview::refresh_gauges(app).await?;
         app.notify("poll");
         Ok(())

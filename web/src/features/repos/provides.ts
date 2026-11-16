@@ -4,6 +4,7 @@
  * owns, and the journeys its parts take part in. Pure, so it is tested without a DOM.
  */
 import type { MapNode, Scenario, Seam, SystemMap } from "../../protocol.ts";
+import { liveMap } from "../../shared/map.ts";
 
 export interface RepoFeatures {
   parts: MapNode[];
@@ -17,7 +18,9 @@ export interface RepoFeatures {
 
 const same = (a: string | null | undefined, b: string) => (a ?? "").toLowerCase() === b.toLowerCase();
 
-export function repoFeatures(map: SystemMap, repo: string): RepoFeatures {
+export function repoFeatures(full: SystemMap, repo: string): RepoFeatures {
+  // A repo provides only live parts (ADR 0077).
+  const map = liveMap(full);
   const parts = map.nodes.filter((n) => same(n.repo, repo));
   const ids = new Set(parts.map((p) => p.id));
   const seams = map.seams ?? [];

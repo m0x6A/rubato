@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import type { IssueRef, MapRef, SystemMap } from "../../protocol.ts";
+import { liveMap } from "../../shared/map.ts";
 
 interface Props {
   map: SystemMap;
@@ -20,6 +21,8 @@ export function PinMenu({ map, issue, pinned = [], onPin }: Props) {
   const list = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const key = `${issue.repo}#${issue.number}`;
+  // Only live parts are offered (ADR 0077).
+  const live = liveMap(map);
   const isPinned = (kind: MapRef["kind"], id: string) => pinned.some((p) => p.kind === kind && p.id === id);
 
   const items = () => Array.from(list.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
@@ -99,14 +102,14 @@ export function PinMenu({ map, issue, pinned = [], onPin }: Props) {
             <div className="pin-menu-heading" aria-hidden="true">
               Parts
             </div>
-            {map.nodes.map((n) => entry("node", n.id, n.kind))}
+            {live.nodes.map((n) => entry("node", n.id, n.kind))}
           </div>
-          {(map.seams ?? []).length > 0 && (
+          {(live.seams ?? []).length > 0 && (
             <div role="group" aria-label="Seams">
               <div className="pin-menu-heading" aria-hidden="true">
                 Seams
               </div>
-              {(map.seams ?? []).map((s) => entry("seam", s.id, `${s.from} → ${s.to}`))}
+              {(live.seams ?? []).map((s) => entry("seam", s.id, `${s.from} → ${s.to}`))}
             </div>
           )}
         </div>

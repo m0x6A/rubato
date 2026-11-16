@@ -3,7 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkPlanFile, logLine } from "../src/check.ts";
 import { parseArgs } from "../src/cli.ts";
-import { loadMap, loadMapText, MapError, mapIds } from "../src/map.ts";
+import { loadMap, loadMapText, MapError, mapIds, retiredMapIds, structuralProblems, type SystemMap } from "../src/map.ts";
+import { parse as parseYaml } from "yaml";
 import { parsePlan } from "../src/parse-plan.ts";
 import { planSha } from "../src/plan-sha.ts";
 import { bundleHash, bundlePaths } from "../src/bundle.ts";
@@ -50,6 +51,34 @@ describe("map", () => {
       'seam "web-server" has a flow from "server" to "store", which are not its two nodes',
       'seam "web-server" has a flow from "web" to "web", which are not its two nodes',
     ]);
+  });
+
+  it("retired fixtures (ADR 0077)", () => {
+    // The same files `rubato_protocol::map::tests::retired_fixtures` reads: same problems, same order.
+    const dir = resolve(root, "schema/fixtures/maps");
+    const good = loadMapText(readFileSync(resolve(dir, "retired.yml"), "utf8"), schemaDir);
+    expect(good).toEqual(JSON.parse(readFileSync(resolve(dir, "retired.json"), "utf8")));
+    expect([...retiredMapIds(good)]).toEqual(["runner", "companion-runner"]);
+    expect(mapIds(good).has("runner")).toBe(true);
+    const badText = readFileSync(resolve(dir, "retired-bad.yml"), "utf8");
+    const problems = structuralProblems(parseYaml(badText) as SystemMap);
+    expect(problems).toEqual([
+      'node "runner" retired "70" is not an ADR number (four digits)',
+      'node "tracer" is retired but names service "tracer"; a retired part matches no traffic',
+      'seam "companion-runner" is retired but declares flows',
+      'seam "companion-tracer" is live but ends at retired node "tracer"',
+      'seam "companion-agent" retired "ADR 70" is not an ADR number (four digits)',
+    ]);
+    // Loaded, the schema's pattern refuses a value that is not four digits before any rule runs.
+    let err: unknown;
+    try {
+      loadMapText(badText, schemaDir);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(MapError);
+    expect((err as MapError).problems.join("\n")).toContain("/nodes/1/retired");
+    console.log(`checked 2 retired map fixtures, ${problems.length} problems`);
   });
 
   it("refuses node and seam ids outside the map id rule (issue #155)", () => {
@@ -117,11 +146,10 @@ describe("map", () => {
     expect(() => loadMapText("version: 1\nname: x\nnodes:\n  - {id: a, kind: context}\n  - {id: b, kind: context}\nseams:\n  - {id: a-b, from: a, to: b, owner: a, flows: [{kind: magic, from: a, to: b, carries: x}]}\n", schemaDir)).toThrow(MapError);
     // The plan fixture from before the Flows table still passes.
     expect(checkPlanFile(resolve(fixtures, "valid.md"), map, schemaDir).ok).toBe(true);
-    // The team's own map declares flows on every seam but a retired one, which carries nothing
-    // (ADR 0070: tmux-ide); every seam has a description.
-    const retired = ["companion-tmux-ide"];
-    expect((map.seams ?? []).filter((s) => !s.description || (!s.flows?.length && !retired.includes(s.id))).map((s) => s.id)).toEqual([]);
-    expect((map.seams ?? []).filter((s) => retired.includes(s.id) && s.flows?.length).map((s) => s.id)).toEqual([]);
+    // The team's own map declares flows on every live seam; a retired one carries nothing
+    // (ADR 0077); every seam has a description.
+    expect((map.seams ?? []).filter((s) => !s.description || (!s.flows?.length && s.retired === undefined)).map((s) => s.id)).toEqual([]);
+    expect((map.seams ?? []).filter((s) => s.retired !== undefined && s.flows?.length).map((s) => s.id)).toEqual([]);
   });
 
   it("rejects a map with a wrong kind", () => {
@@ -263,6 +291,24 @@ describe("check", () => {
     const r = checkPlanFile(resolve(fixtures, "bad-status.md"), map, schemaDir);
     expect(r.ok).toBe(false);
     expect(r.schemaErrors.join(" ")).toMatch(/status|enum/);
+  });
+
+  it("reports a retired id a plan names, and does not fail it (ADR 0077)", () => {
+    const r = checkPlanFile(resolve(root, "docs/plans/v0.md"), map, schemaDir);
+    expect(r.ok).toBe(true);
+    expect(r.retiredIds).toContain("companion-tmux-ide");
+    expect(logLine(r)["rubato.plan.retired_ids"]).toEqual(r.retiredIds);
+    // On purpose: the same map without `retired` reports nothing, so the count below would fail.
+    const unretired: SystemMap = { ...map, nodes: map.nodes.map(({ retired: _, ...n }) => n), seams: (map.seams ?? []).map(({ retired: _, ...s }) => s) };
+    expect(checkPlanFile(resolve(root, "docs/plans/v0.md"), unretired, schemaDir).retiredIds).toEqual([]);
+    // Every merged plan that names tmux-ide or its seam: history checks, and is counted.
+    const naming = readdirSync(resolve(root, "docs/plans"))
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => checkPlanFile(resolve(root, "docs/plans", f), map, schemaDir))
+      .filter((x) => x.retiredIds.length > 0);
+    expect(naming.every((x) => x.ok)).toBe(true);
+    expect(naming.length).toBe(10);
+    console.log(`checked ${naming.length} plans that name retired ids`);
   });
 
   it("passes every plan in this repo (dogfood)", () => {

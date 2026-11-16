@@ -430,7 +430,67 @@ pub mod capture {
         }
     }
 
-    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
+    /// A span's fields as recorded so far; pushed as a `Captured` whose message is
+    /// `span <name>` when the span closes (plan 226 §1: declared fields only).
+    struct SpanFields(BTreeMap<String, String>);
+
+    impl<S> tracing_subscriber::Layer<S> for Layer
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            id: &tracing::span::Id,
+            ctx: Context<'_, S>,
+        ) {
+            let mut c = Captured {
+                level: *attrs.metadata().level(),
+                message: String::new(),
+                fields: BTreeMap::new(),
+            };
+            attrs.record(&mut Visitor(&mut c));
+            if let Some(span) = ctx.span(id) {
+                span.extensions_mut().insert(SpanFields(c.fields));
+            }
+        }
+
+        fn on_record(
+            &self,
+            id: &tracing::span::Id,
+            values: &tracing::span::Record<'_>,
+            ctx: Context<'_, S>,
+        ) {
+            let Some(span) = ctx.span(id) else { return };
+            let mut ext = span.extensions_mut();
+            if let Some(SpanFields(fields)) = ext.get_mut::<SpanFields>() {
+                let mut c = Captured {
+                    level: tracing::Level::INFO,
+                    message: String::new(),
+                    fields: std::mem::take(fields),
+                };
+                values.record(&mut Visitor(&mut c));
+                *fields = c.fields;
+            }
+        }
+
+        fn on_close(&self, id: tracing::span::Id, ctx: Context<'_, S>) {
+            let Some(sink) = SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
+                return;
+            };
+            let Some(span) = ctx.span(&id) else { return };
+            let fields = span
+                .extensions()
+                .get::<SpanFields>()
+                .map(|f| f.0.clone())
+                .unwrap_or_default();
+            sink.lock().unwrap().push(Captured {
+                level: *span.metadata().level(),
+                message: format!("span {}", span.name()),
+                fields,
+            });
+        }
+
         fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
             let Some(sink) = SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
                 return;

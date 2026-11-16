@@ -12,6 +12,7 @@ import { setIssueDrag } from "../../shared/dnd.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
 import { Backlog } from "./Backlog.tsx";
 import { PlanSignals, SignalBadges } from "./PlanSignals.tsx";
+import { isRetired } from "../../shared/map.ts";
 
 interface Props {
   overview: Overview;
@@ -112,6 +113,8 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             <li key={`${p.kind}:${p.id}`} className="issue-row">
               <span>
                 <span className="muted">{p.kind}</span> {p.id}
+                {/* Still pinned, but the part is drawn and offered nowhere (ADR 0077). */}
+                {isRetired(overview.map.map, p.id) && <span className="muted"> (retired)</span>}
               </span>
               <button onClick={() => onUnpin({ issue: selected.issue, target: p })}>unpin</button>
             </li>

@@ -40,6 +40,15 @@ describe("start session button (ADR 0004: own tmux only)", () => {
   });
 });
 
+describe("a pin on a retired part (ADR 0077)", () => {
+  it("stays in the issue detail, marked retired", () => {
+    const pinned = issue(612, "tmux-ide");
+    const ov = overview({ issues: [pinned] });
+    render(<IssuePanel overview={ov} me={null} selected={pinned} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(screen.getByText("tmux-ide").closest("li")).toHaveTextContent("node tmux-ide (retired)");
+  });
+});
+
 describe("issue list", () => {
   it("shows progress badges and sorts blocked first", () => {
     const now = new Date().toISOString();
