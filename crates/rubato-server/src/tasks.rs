@@ -12,8 +12,8 @@
 
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
-    approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue, overview,
-    pairing, pins, plans, pulls, queue, rooms, session_messages, traffic, webhooks,
+    agent_reports, approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue,
+    overview, pairing, pins, plans, pulls, queue, rooms, session_messages, traffic, webhooks,
 };
 use anyhow::{Result, anyhow};
 use chrono::Utc;
@@ -631,6 +631,10 @@ impl Poller {
             .await
             .unwrap_or_default();
         session_messages::record_gauges(app, &sessions).await;
+        // Lines of launches no companion reports any more (a revoked one sends no snapshot).
+        if let Err(e) = agent_reports::prune_absent(&app.db, &app.latest_sessions()).await {
+            tracing::error!(error = %format!("{e:#}"), "pruning agent reports failed");
+        }
         webhooks::record(app).await;
         // #69: a companion silent with its socket open counts its sessions as unknown.
         companion_link::mark_quiet(app, app.clock.now());
