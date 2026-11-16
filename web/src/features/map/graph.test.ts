@@ -29,7 +29,8 @@ describe("buildGraph from docs/design/rubato-map.yml", () => {
     const g = buildGraph(overview({ issues: [planFor(1, "affected", "building"), planFor(2, "new", "building"), planFor(3, "quiet", "done")] }));
     const node = g.nodes.find((n) => n.id === "rubato-companion")!;
     expect(node.paint).toBe("new");
-    expect(node.issues.length).toBe(3);
+    // The finished one is on no part of the map (#265).
+    expect(node.issues.map((i) => i.issue.number)).toEqual([1, 2]);
     const edge = g.edges.find((e) => e.id === "companion-server")!;
     expect(edge.openPlans.map((p) => p.number)).toEqual([1, 2]);
     expect(edge.collision).toBe(false);

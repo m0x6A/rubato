@@ -216,7 +216,8 @@ function Lane({ companion: c, own, sessions, agentLines, queue, issues, titles, 
             const key = issueKey(q.issue);
             const tracked = issues.find((x) => sameIssue(x.issue, q.issue));
             const pinned = (tracked?.pins.length ?? 0) > 0;
-            const why = !pinned ? "pin first" : !c.connected ? "companion not connected" : null;
+            // Finished on GitHub (#265): it will not start; the row stays so its owner can remove it.
+            const why = tracked?.finished ? "finished on GitHub" : !pinned ? "pin first" : !c.connected ? "companion not connected" : null;
             return (
               <li
                 key={key}

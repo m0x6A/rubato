@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PinMenu } from "../pins/index.ts";
 import { PullList, PullView } from "../pulls/index.ts";
 import type { IssueRef, MapRef, Overview } from "../../protocol.ts";
+import { isFinished } from "../../shared/finished.ts";
 import { relative } from "../../shared/format.ts";
 
 type Row = { issue: IssueRef; title: string; labels: string[]; updated_at: string | null; url: string | null; tracked: boolean };
@@ -13,7 +14,7 @@ export function openIssuesOf(overview: Overview, repo: string): Row[] {
     .filter((i) => same(i.issue.repo))
     .map((i) => ({ issue: i.issue, title: i.title, labels: i.labels ?? [], updated_at: i.updated_at, url: i.url, tracked: false }));
   const tracked: Row[] = overview.issues
-    .filter((i) => same(i.issue.repo) && i.progress.state !== "done")
+    .filter((i) => same(i.issue.repo) && !isFinished(i))
     .map((i) => ({ issue: i.issue, title: i.title ?? `#${i.issue.number}`, labels: [], updated_at: null, url: i.url ?? null, tracked: true }));
   return [...tracked, ...backlog].sort((a, b) => b.issue.number - a.issue.number);
 }

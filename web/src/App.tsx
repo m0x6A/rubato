@@ -17,6 +17,7 @@ import { WorkspaceSwitcher } from "./features/workspaces/index.ts";
 import type { DiscrepancyKey, IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
 import { hasIssueDrag } from "./shared/dnd.ts";
+import { openIssues } from "./shared/finished.ts";
 import { issueKey, relative } from "./shared/format.ts";
 import { concernsUs, setWorkspace } from "./shared/workspace.ts";
 import { liveMap } from "./shared/map.ts";
@@ -399,7 +400,7 @@ export function App() {
               Configure workspace
             </button>
           )}
-          {overview && <TeamTrack issues={overview.issues} />}
+          {overview && <TeamTrack issues={openIssues(overview)} />}
         </div>
         <div className="status">
           <span className={live ? "dot live" : "dot"} title={live ? "live" : "disconnected"} />
@@ -447,7 +448,7 @@ export function App() {
           <>
           <nav className="tabs">
             <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
-              Issues{overview ? ` (${overview.issues.length})` : ""}
+              Issues{overview ? ` (${openIssues(overview).length})` : ""}
             </button>
             <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")} data-testid="tab-plans">
               Plans{overview ? ` (${groupPlans(overview).proposed.length} proposed)` : ""}

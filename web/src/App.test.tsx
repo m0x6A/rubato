@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issue, minutesAgo, openIssue, overview } from "../test/fixtures.ts";
 import { App } from "./App.tsx";
-import type { MapRef } from "./protocol.ts";
+import type { IssueSummary, MapRef } from "./protocol.ts";
 import { resetNeedsLogin } from "./shared/api.ts";
 
 class QuietSocket {
@@ -17,6 +17,8 @@ const REPO = "m0x6A/rubato";
 /** What `POST /api/pins` does in this test: a status and body, or "offline" for a fetch that rejects. */
 let pinAnswer: { status: number; body?: string } | "offline";
 let pinned: Map<number, MapRef[]>;
+/** Tracked issues the overview holds besides the pinned ones. */
+let others: IssueSummary[];
 /** The team's stored layout, as `PUT` and `DELETE /api/layout` change it. */
 let layoutStore: Record<string, { x: number; y: number }>;
 let layoutAnswer: { status: number; body?: string };
@@ -25,6 +27,7 @@ beforeEach(() => {
   resetNeedsLogin();
   pinAnswer = { status: 201 };
   pinned = new Map();
+  others = [];
   layoutStore = {};
   layoutAnswer = { status: 204 };
   vi.stubGlobal("WebSocket", QuietSocket);
@@ -37,7 +40,7 @@ beforeEach(() => {
       if (url === "/api/overview") {
         const open = [openIssue(902, "Backlog: an unpinned issue")].filter((i) => !pinned.has(i.issue.number));
         const tracked = [...pinned].map(([n, pins]) => issue(n, "", { pins, title: "Backlog: an unpinned issue" }));
-        return new Response(JSON.stringify(overview({ issues: tracked, backlog: { issues: open, repos: [{ repo: REPO, listed_at: minutesAgo(1) }] }, layout: { positions: { ...layoutStore } } })), { status: 200 });
+        return new Response(JSON.stringify(overview({ issues: [...tracked, ...others], backlog: { issues: open, repos: [{ repo: REPO, listed_at: minutesAgo(1) }] }, layout: { positions: { ...layoutStore } } })), { status: 200 });
       }
       if (url === "/api/layout" && init?.method === "DELETE") {
         const removed = { positions: layoutStore };
@@ -93,6 +96,17 @@ describe("Configure workspace in the shell (issue #189)", () => {
     fireEvent.click(within(view).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("region", { name: "Configure workspace" })).toBeNull();
     expect(screen.getByRole("button", { name: /^Issues/ })).toBeInTheDocument();
+  });
+});
+
+describe("open on GitHub by default (#265)", () => {
+  it("the Issues tab and the top bar count what is not finished", async () => {
+    const at = (n: number, state: "designed" | "done") => ({ issue: { repo: REPO, number: n }, state, last_seen: minutesAgo(1) });
+    others = [issue(1, "web", { progress: at(1, "designed") }), issue(2, "web", { progress: at(2, "done") }), issue(3, "web", { progress: at(3, "designed"), closed: true, finished: true })];
+    render(<App />);
+    expect(await screen.findByRole("button", { name: "Issues (1)" })).toBeInTheDocument();
+    expect(screen.getByTestId("team-track")).toHaveTextContent("1 issue");
+    expect(screen.getByTestId("issues-view-done")).toHaveTextContent("Done (2)");
   });
 });
 

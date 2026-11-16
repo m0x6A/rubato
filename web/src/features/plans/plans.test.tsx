@@ -44,9 +44,41 @@ describe("plans (issue #80)", () => {
         issue(5, "web"),
       ],
     });
-    const { proposed, open } = groupPlans(ov);
+    const { proposed, open, done } = groupPlans(ov);
     expect(proposed.map((i) => i.issue.number)).toEqual([1, 3]);
     expect(open.map((i) => i.issue.number)).toEqual([2]);
+    expect(done.map((i) => i.issue.number)).toEqual([4]);
+  });
+
+  it("finished plans are done, open or not approved; a draft alone is a proposed plan (#265)", () => {
+    const draft = { draft_id: "00000000-0000-0000-0000-000000000005", rev: 2, at: now, branch: "issue/6-x", bundle_hash: "b", plan_sha: "p", owner: "m0x6A", live: false };
+    const ov = overview({
+      issues: [
+        planned(1),
+        // Closed on GitHub without a merge: the server says finished.
+        planned(2, { closed: true, finished: true }),
+        // Closed, an agent still working: not finished, so still proposed.
+        planned(3, { closed: true }),
+        issue(6, "web", { draft }),
+        issue(7, "web", { draft, closed: true, finished: true }),
+        issue(8, "web", { closed: true, finished: true }),
+      ],
+    });
+    const { proposed, open, done } = groupPlans(ov);
+    expect(proposed.map((i) => i.issue.number)).toEqual([1, 3, 6]);
+    expect(open).toEqual([]);
+    expect(done.map((i) => i.issue.number).sort()).toEqual([2, 7]);
+  });
+
+  it("a finished plan is read, not acted on: no Accept and no Import (#265)", () => {
+    const { unmount } = render(<WhereItFits issue={planned(80)} map={overview().map.map} me={me} onNotice={() => {}} />);
+    // Must fail on purpose if the action is gone for every plan.
+    expect(screen.getByTestId("accept-plan")).toBeInTheDocument();
+    unmount();
+    render(<WhereItFits issue={planned(80, { closed: true, finished: true })} map={overview().map.map} me={me} onNotice={() => {}} readOnly />);
+    expect(screen.getByTestId("fit-verdict")).toBeInTheDocument();
+    expect(screen.queryByTestId("accept-plan")).toBeNull();
+    expect(screen.queryByTestId("import-plan")).toBeNull();
   });
 
   it("shows where a plan fits: the map strip, the parts, the data models by part", () => {
