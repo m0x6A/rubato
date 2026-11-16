@@ -46,6 +46,7 @@ const SLICES: &[&str] = &[
     "traffic",
     "spend_history",
     "agent_reports",
+    "plan_status",
     "overview",
     "web_link",
     "webhooks",

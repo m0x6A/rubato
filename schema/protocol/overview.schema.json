@@ -865,6 +865,13 @@
           "type": "string",
           "format": "uuid"
         },
+        "fits": {
+          "description": "Whether the plan in that revision fits the workspace's map (`plan_fit`), derived on each\noverview build (ADR 0071, plan 226 §4). Absent when it does not parse, or from an older\nserver.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "imported_from": {
           "description": "The branch an imported plan was found on (ADR 0058).",
           "type": [
