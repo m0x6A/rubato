@@ -50,6 +50,7 @@ const SLICES: &[&str] = &[
     "overview",
     "web_link",
     "webhooks",
+    "workspace_settings",
 ];
 
 /// The composition root plus this check.

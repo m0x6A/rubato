@@ -36,6 +36,7 @@ pub mod traffic;
 pub mod voice;
 pub mod web_link;
 pub mod webhooks;
+pub mod workspace_settings;
 
 #[cfg(test)]
 mod slices;

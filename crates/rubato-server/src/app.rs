@@ -1195,6 +1195,55 @@ mod tests {
         counts_become(&reader, companion_id, &[]).await;
     }
 
+    /// Plan 189 PR 1: every reader takes the kernel's registry, not `Config`. A workspace added
+    /// to the registry is listed and passes `check_workspace`; one never added is still unknown.
+    #[tokio::test(flavor = "current_thread")]
+    async fn readers_follow_the_workspace_registry() {
+        use crate::kernel::workspaces::{Registry, Source};
+        let (base, app, _reader, _tmp) = hardened(|_| {}).await;
+        let http = reqwest::Client::new();
+        let get = |path: String| {
+            let http = http.clone();
+            async move { http.get(path).send().await.unwrap() }
+        };
+        let scoped_map = |ws: &str| format!("{base}/api/w/{ws}/map");
+        // Before: shop is not held.
+        let before = get(scoped_map("shop")).await;
+        assert_eq!(before.status(), 404);
+        assert!(before.text().await.unwrap().contains("unknown_workspace"));
+
+        let (mut entries, _) = app.workspace_entries();
+        let mut shop = entries[0].clone();
+        shop.id = "shop".into();
+        shop.map_path = "docs/design/shop-map.yml".into();
+        entries.push(shop);
+        app.set_workspaces(Registry {
+            entries,
+            source: Source::Database,
+        });
+
+        let listed: Vec<rubato_protocol::WorkspaceInfo> =
+            get(format!("{base}{}", workspace_routes::WORKSPACES))
+                .await
+                .json()
+                .await
+                .unwrap();
+        let ids: Vec<&str> = listed.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, ["default", "shop"]);
+        let after = get(scoped_map("shop")).await;
+        assert!(
+            !after.text().await.unwrap().contains("unknown_workspace"),
+            "shop passes check_workspace"
+        );
+        let never = get(scoped_map("nope")).await;
+        assert_eq!(
+            never.status(),
+            404,
+            "a workspace never added is still unknown"
+        );
+        println!("checked 2 listed workspaces and 3 scoped reads");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn a_signed_delivery_passes_the_same_origin_check() {
         let secret = "s3cret";

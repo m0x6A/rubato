@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// routes serve; another workspace that fails is logged (`workspace map load failed`), counted
 /// and keeps its last good map.
 pub async fn reload(app: &App) -> Result<Arc<LoadedMap>> {
-    let (entries, _) = app.config.workspace_entries();
+    let (entries, _) = app.workspace_entries();
     let mut default = None;
     for w in &entries {
         let got = reload_ws(app, w).await;
@@ -165,7 +165,7 @@ fn parse(app: &App, w: &WorkspaceEntry, yaml: &str, count: bool) -> Result<Syste
 /// Load each workspace's map from the database at startup so the server answers before the
 /// first fetch.
 pub async fn warm(app: &App) -> Result<()> {
-    let (entries, _) = app.config.workspace_entries();
+    let (entries, _) = app.workspace_entries();
     for w in &entries {
         if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.id).await? {
             let map: SystemMap = serde_yaml_ng::from_str(&yaml)?;

@@ -244,8 +244,7 @@ fn is_map_push(app: &App, t: &webhooks::Target) -> bool {
     let Some(branch) = t.pushed_branch.as_deref() else {
         return false;
     };
-    app.config
-        .workspace_entries()
+    app.workspace_entries()
         .0
         .iter()
         .any(|w| w.map_repo.eq_ignore_ascii_case(&t.repo) && w.map_ref == branch)
