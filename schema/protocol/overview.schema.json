@@ -4,6 +4,13 @@
   "description": "The whole picture in one payload: what the web view renders.",
   "type": "object",
   "properties": {
+    "agent_lines": {
+      "description": "What each live launched session's agent last said it is doing (ADR 0071): a signal shown\nwith its age, joined on `(companion_id, launch_id)`, never a progress state.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentLine"
+      }
+    },
     "backlog": {
       "description": "Open issues not tracked yet (ADR 0019).",
       "$ref": "#/$defs/Backlog",
@@ -154,6 +161,41 @@
         "node",
         "status",
         "change"
+      ]
+    },
+    "AgentLine": {
+      "description": "What a launched agent last said, as the overview shows it (ADR 0071, plan 226 §3). Joined to\na session on `(companion_id, launch_id)`, never on the launch id alone; never a progress\nstate.",
+      "type": "object",
+      "properties": {
+        "companion_id": {
+          "description": "The pairing the report arrived on.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "doing": {
+          "type": "string"
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reported_at": {
+          "description": "When the server received it (the server's clock).",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "companion_id",
+        "launch_id",
+        "doing",
+        "reported_at"
       ]
     },
     "ApprovalRecord": {

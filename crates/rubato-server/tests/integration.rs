@@ -889,6 +889,57 @@ async fn derived_state_is_never_stored() {
 
 /// #105: the web's freshness bar drains over the server's N, not a constant of its own. Fails
 /// on purpose if the handler writes `Limits::default()` instead of the configured value.
+/// ADR 0071, plan 226 §3: the overview carries the newest line of each live launched session,
+/// with the companion it came from, and leaves out a line whose launch is no longer live. The
+/// progress of the issue is the same with and without it.
+#[tokio::test]
+async fn the_overview_carries_live_agent_lines_and_nothing_else() {
+    let h = harness().await;
+    let (c, live, gone) = (Uuid::from_u128(1), Uuid::from_u128(10), Uuid::from_u128(11));
+    let before = h.overview("m0x6A").await;
+    let now = chrono::Utc::now();
+    rubato_server::agent_reports::record(
+        &h.app.db,
+        c,
+        live,
+        "designing the seam",
+        &["rubato-server".into()],
+        now,
+    )
+    .await
+    .unwrap();
+    rubato_server::agent_reports::record(&h.app.db, c, gone, "ended", &[], now)
+        .await
+        .unwrap();
+    let mut s: rubato_protocol::SessionState = serde_json::from_value(serde_json::json!({
+        "session_id": "s", "companion_id": c, "user": "m0x6A", "cwd": "/w",
+        "status": "idle", "source": "launch", "last_seen": now,
+    }))
+    .unwrap();
+    s.launch_id = Some(live);
+    h.app.set_sessions(c, vec![s]);
+    let after = h.overview("m0x6A").await;
+    assert_eq!(after.agent_lines.len(), 1, "{:?}", after.agent_lines);
+    let line = &after.agent_lines[0];
+    assert_eq!(
+        (line.companion_id, line.launch_id, line.doing.as_str()),
+        (c, live, "designing the seam")
+    );
+    assert_eq!(line.parts, vec!["rubato-server".to_owned()]);
+    let progress = |o: &rubato_protocol::Overview| {
+        o.issues
+            .iter()
+            .map(|i| (i.issue.clone(), i.progress.state))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        progress(&before),
+        progress(&after),
+        "a line is never progress"
+    );
+    println!("checked 2 agent lines, 1 shown");
+}
+
 #[tokio::test]
 async fn the_overview_carries_the_configured_companion_threshold() {
     let h = harness_with(|c| c.limits.companion_silent_secs = 300).await;
