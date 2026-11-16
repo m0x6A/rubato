@@ -1,13 +1,16 @@
 //! A GitHub stand-in over local bare repositories, for end-to-end runs without GitHub
 //! (`RUBATO_LOCAL_REPOS=owner/name=/path/to/repo.git,...`). Files and branches are real git;
-//! issues, comments and pull requests do not exist here.
+//! issues and pull requests live in memory (`RUBATO_DEV_ISSUES`, `RUBATO_DEV_PULLS`), comments do
+//! not exist here.
 
 use super::{
-    BranchHead, Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, OpenPulls, PullInfo,
+    BranchHead, Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, OpenPulls, PullFull,
+    PullInfo, RepoAccess,
 };
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use rubato_protocol::ChecksStatus;
+use rubato_protocol::pulls::{ChangedFile, MergeMethod};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
@@ -18,6 +21,28 @@ pub struct LocalGit {
     open: std::sync::Mutex<HashMap<String, Vec<OpenIssueInfo>>>,
     /// Pull requests opened through this stand-in, by (repo, head branch). Git has none.
     pulls: std::sync::Mutex<HashMap<(String, String), PullInfo>>,
+    /// Pull requests `create_pull` made so far: numbered from 1 on their own, so seeded ones
+    /// (`RUBATO_DEV_PULLS`) do not shift the numbers a map proposal gets.
+    created: std::sync::atomic::AtomicU64,
+}
+
+/// One seeded pull request of `RUBATO_DEV_PULLS`: `{"owner/name": [{number, branch, base,
+/// title, author}]}`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DevPull {
+    pub number: u64,
+    pub branch: String,
+    #[serde(default = "main_branch")]
+    pub base: String,
+    pub title: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub draft: bool,
+}
+
+fn main_branch() -> String {
+    "main".into()
 }
 
 impl LocalGit {
@@ -37,6 +62,7 @@ impl LocalGit {
             repos,
             open: Default::default(),
             pulls: Default::default(),
+            created: Default::default(),
         })
     }
 
@@ -44,6 +70,42 @@ impl LocalGit {
     pub fn with_open_issues(mut self, open: HashMap<String, Vec<OpenIssueInfo>>) -> Self {
         self.open = std::sync::Mutex::new(open);
         self
+    }
+
+    /// Give the stand-in open pull requests between its branches (`RUBATO_DEV_PULLS`, issue #82).
+    /// Their heads are read from git whenever they are listed or viewed.
+    pub fn with_pulls(self, seeds: HashMap<String, Vec<DevPull>>) -> Self {
+        {
+            let mut pulls = self.pulls.lock().unwrap();
+            for (repo, list) in seeds {
+                for d in list {
+                    pulls.insert(
+                        (repo.clone(), d.branch.clone()),
+                        PullInfo {
+                            number: d.number,
+                            open: true,
+                            draft: d.draft,
+                            head_sha: String::new(),
+                            merged_at: None,
+                            updated_at: chrono::Utc::now(),
+                            url: format!("local-git://{repo}/pull/{}", d.number),
+                            base: Some(d.base),
+                            title: d.title,
+                            author: d.author,
+                        },
+                    );
+                }
+            }
+        }
+        self
+    }
+
+    /// The pull request as stored, with its head read from git now.
+    async fn fresh(&self, repo: &str, branch: &str, mut p: PullInfo) -> PullInfo {
+        if let Ok(Some(sha)) = self.branch_sha(repo, branch).await {
+            p.head_sha = sha;
+        }
+        p
     }
 
     fn path(&self, repo: &str) -> Result<&Path> {
@@ -170,7 +232,7 @@ impl GitHubApi for LocalGit {
     }
 
     async fn open_pulls(&self, repo: &str) -> Result<OpenPulls> {
-        let pulls = self
+        let listed: Vec<(String, PullInfo)> = self
             .pulls
             .lock()
             .unwrap()
@@ -178,9 +240,154 @@ impl GitHubApi for LocalGit {
             .filter(|((r, _), p)| r == repo && p.open)
             .map(|((_, branch), p)| (branch.clone(), p.clone()))
             .collect();
+        let mut pulls = Vec::with_capacity(listed.len());
+        for (branch, p) in listed {
+            let p = self.fresh(repo, &branch, p).await;
+            pulls.push((branch, p));
+        }
+        pulls.sort_by_key(|(_, p)| p.number);
         Ok(OpenPulls {
             pulls,
             truncated: false,
+        })
+    }
+
+    async fn pull(&self, repo: &str, number: u64) -> Result<Option<PullFull>> {
+        let found = self
+            .pulls
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|((r, _), p)| r == repo && p.number == number)
+            .map(|((_, branch), p)| (branch.clone(), p.clone()));
+        let Some((branch, p)) = found else {
+            return Ok(None);
+        };
+        let info = self.fresh(repo, &branch, p).await;
+        let base = info.base.clone().unwrap_or_else(main_branch);
+        let base_sha = self.branch_sha(repo, &base).await?.unwrap_or_default();
+        Ok(Some(PullFull {
+            info,
+            branch,
+            body: String::new(),
+            fork: false,
+            mergeable: Some(true),
+            base_sha,
+        }))
+    }
+
+    /// `git diff --numstat` between the base and the head, as GitHub's three-dot compare.
+    async fn pull_files(&self, repo: &str, number: u64) -> Result<Vec<ChangedFile>> {
+        let Some(p) = self.pull(repo, number).await? else {
+            return Ok(vec![]);
+        };
+        let range = format!("{}...{}", p.base_sha, p.info.head_sha);
+        let out = self
+            .git(repo, &["diff", "--numstat", &range])
+            .await?
+            .unwrap_or_default();
+        Ok(out
+            .lines()
+            .filter_map(|l| {
+                let mut f = l.split('\t');
+                let add = f.next()?.parse().unwrap_or(0);
+                let del = f.next()?.parse().unwrap_or(0);
+                Some(ChangedFile {
+                    path: f.next()?.to_owned(),
+                    additions: add,
+                    deletions: del,
+                })
+            })
+            .take(super::FILES_PER_PAGE)
+            .collect())
+    }
+
+    fn acts_without_token(&self) -> bool {
+        true
+    }
+
+    /// A merge into the bare repo, as GitHub would make it: the head must still be `sha` (409),
+    /// the trees must merge cleanly (405); `merge` makes a commit with both parents, `squash` and
+    /// `rebase` one with the base only. The base moves only from the commit read (`update-ref`
+    /// with the old value), as GitHub guards it.
+    async fn merge_as(
+        &self,
+        _token: &str,
+        repo: &str,
+        number: u64,
+        sha: &str,
+        method: MergeMethod,
+    ) -> std::result::Result<String, super::MergeError> {
+        use super::MergeError;
+        let refused = |status: u16, message: String| MergeError::Refused { status, message };
+        let unknown = |e: anyhow::Error| MergeError::Unknown(format!("{e:#}"));
+        let found = self
+            .pulls
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|((r, _), p)| r == repo && p.number == number)
+            .map(|((_, b), p)| (b.clone(), p.clone()));
+        let Some((branch, p)) = found else {
+            return Err(refused(404, "Not Found".into()));
+        };
+        if !p.open {
+            return Err(refused(405, "Pull Request is not mergeable".into()));
+        }
+        let base = p.base.clone().unwrap_or_else(main_branch);
+        let head = self.branch_sha(repo, &branch).await.map_err(unknown)?;
+        if head.as_deref() != Some(sha) {
+            return Err(refused(
+                409,
+                "Head branch was modified. Review and try the merge again.".into(),
+            ));
+        }
+        let old = self
+            .branch_sha(repo, &base)
+            .await
+            .map_err(unknown)?
+            .ok_or_else(|| refused(422, format!("base branch {base} does not exist")))?;
+        let tree = self
+            .git_write(repo, &["merge-tree", "--write-tree", &old, sha], None, None)
+            .await
+            .map_err(|e| refused(405, format!("Merge conflict: {e:#}")))?;
+        let tree = tree.lines().next().unwrap_or_default().to_owned();
+        let message = format!("Merge pull request #{number} from {branch}");
+        let mut args = vec!["commit-tree", tree.as_str(), "-p", old.as_str()];
+        if method == MergeMethod::Merge {
+            args.extend(["-p", sha]);
+        }
+        args.extend(["-m", message.as_str()]);
+        let made = self
+            .git_write(repo, &args, None, None)
+            .await
+            .map_err(unknown)?;
+        self.git_write(
+            repo,
+            &["update-ref", &format!("refs/heads/{base}"), &made, &old],
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| refused(409, format!("Base branch was modified: {e:#}")))?;
+        if let Some(p) = self
+            .pulls
+            .lock()
+            .unwrap()
+            .get_mut(&(repo.to_owned(), branch))
+        {
+            p.open = false;
+            p.merged_at = Some(chrono::Utc::now());
+        }
+        Ok(made)
+    }
+
+    /// The local stand-in has one person, who may do everything.
+    async fn repo_as(&self, _token: &str, repo: &str) -> Result<RepoAccess> {
+        self.path(repo)?;
+        Ok(RepoAccess {
+            push: true,
+            methods: vec![MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase],
         })
     }
 
@@ -341,7 +548,10 @@ impl GitHubApi for LocalGit {
             .await?
             .with_context(|| format!("branch {head} does not exist in {repo}"))?;
         let mut pulls = self.pulls.lock().unwrap();
-        let number = pulls.len() as u64 + 1;
+        let number = self
+            .created
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
         let url = format!("local-git://{repo}/pull/{number}");
         pulls.insert(
             (repo.to_owned(), head.to_owned()),
@@ -437,6 +647,140 @@ mod tests {
         assert_eq!(g.file("a/r", "missing.md", "main").await.unwrap(), None);
         assert!(g.issue("a/r", 4).await.unwrap().is_none());
         assert!(LocalGit::from_spec("").is_err());
+    }
+
+    /// `RUBATO_DEV_PULLS` (issue #82): a seeded pull request lists with its branch's head as
+    /// git has it now, reads on its own with the base head, and its files are the three-dot diff.
+    #[tokio::test]
+    async fn seeded_pull_requests_list_and_read_from_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["checkout", "-q", "-b", "issue/7-x"]);
+        std::fs::write(repo.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "work"]);
+        let seeds: HashMap<String, Vec<DevPull>> = serde_json::from_str(
+            r#"{"a/r": [{"number": 3, "branch": "issue/7-x", "title": "Work", "author": "ann"}]}"#,
+        )
+        .unwrap();
+        let g = LocalGit::from_spec(&format!("a/r={}", repo.display()))
+            .unwrap()
+            .with_pulls(seeds);
+        let head = g.branch_sha("a/r", "issue/7-x").await.unwrap().unwrap();
+        let listed = g.open_pulls("a/r").await.unwrap();
+        assert_eq!(listed.pulls.len(), 1);
+        assert_eq!(listed.pulls[0].1.head_sha, head);
+        assert_eq!(listed.pulls[0].1.base.as_deref(), Some("main"));
+        let p = g.pull("a/r", 3).await.unwrap().unwrap();
+        assert_eq!(
+            (p.branch.as_str(), p.info.head_sha.as_str()),
+            ("issue/7-x", head.as_str())
+        );
+        assert_eq!(Some(p.base_sha), g.branch_sha("a/r", "main").await.unwrap());
+        assert!(g.pull("a/r", 4).await.unwrap().is_none());
+        let mut files = g.pull_files("a/r", 3).await.unwrap();
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(
+            files
+                .iter()
+                .map(|f| (f.path.as_str(), f.additions, f.deletions))
+                .collect::<Vec<_>>(),
+            [("a.txt", 2, 0), ("b.txt", 1, 0)]
+        );
+        assert!(g.repo_as("", "a/r").await.unwrap().push);
+        assert!(g.repo_as("", "x/y").await.is_err());
+    }
+
+    /// Issue #82: a merge moves the base of the bare repo once, refuses a moved head, and refuses a
+    /// conflict without moving anything.
+    #[tokio::test]
+    async fn a_merge_moves_the_base_once_and_only_from_the_head_seen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let seed = tmp.path().join("seed");
+        std::fs::create_dir_all(&seed).unwrap();
+        git(&seed, &["init", "-q", "-b", "main"]);
+        std::fs::write(seed.join("a.txt"), "one\n").unwrap();
+        git(&seed, &["add", "-A"]);
+        git(&seed, &["commit", "-q", "-m", "base"]);
+        for (b, file, text) in [
+            ("issue/7-x", "b.txt", "b\n"),
+            ("issue/8-y", "a.txt", "other\n"),
+        ] {
+            git(&seed, &["checkout", "-q", "-b", b, "main"]);
+            std::fs::write(seed.join(file), text).unwrap();
+            git(&seed, &["add", "-A"]);
+            git(&seed, &["commit", "-q", "-m", b]);
+        }
+        git(&seed, &["checkout", "-q", "main"]);
+        std::fs::write(seed.join("a.txt"), "changed on main\n").unwrap();
+        git(&seed, &["commit", "-q", "-am", "main moves"]);
+        let bare = tmp.path().join("r.git");
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                seed.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        let seeds: HashMap<String, Vec<DevPull>> = serde_json::from_str(
+            r#"{"a/r": [{"number": 1, "branch": "issue/7-x", "title": "B"}, {"number": 2, "branch": "issue/8-y", "title": "C"}]}"#,
+        )
+        .unwrap();
+        let g = LocalGit::from_spec(&format!("a/r={}", bare.display()))
+            .unwrap()
+            .with_pulls(seeds);
+        let main = g.branch_sha("a/r", "main").await.unwrap().unwrap();
+        let head = g.branch_sha("a/r", "issue/7-x").await.unwrap().unwrap();
+        let refused = |r: std::result::Result<String, super::super::MergeError>| match r {
+            Err(super::super::MergeError::Refused { status, .. }) => status,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        assert_eq!(
+            refused(
+                g.merge_as("", "a/r", 1, "0000000", MergeMethod::Merge)
+                    .await
+            ),
+            409
+        );
+        assert_eq!(
+            g.branch_sha("a/r", "main").await.unwrap(),
+            Some(main.clone())
+        );
+        let made = g
+            .merge_as("", "a/r", 1, &head, MergeMethod::Merge)
+            .await
+            .unwrap();
+        assert_eq!(
+            g.branch_sha("a/r", "main").await.unwrap(),
+            Some(made.clone())
+        );
+        assert!(
+            g.file("a/r", "b.txt", "main").await.unwrap().is_some(),
+            "the head's file landed"
+        );
+        let p = g.pull("a/r", 1).await.unwrap().unwrap();
+        assert!(!p.info.open && p.info.merged_at.is_some());
+        assert_eq!(
+            refused(g.merge_as("", "a/r", 1, &head, MergeMethod::Merge).await),
+            405,
+            "merged once"
+        );
+        // A conflict: issue/8-y and main both changed a.txt.
+        let head8 = g.branch_sha("a/r", "issue/8-y").await.unwrap().unwrap();
+        assert_eq!(
+            refused(g.merge_as("", "a/r", 2, &head8, MergeMethod::Squash).await),
+            405
+        );
+        assert_eq!(g.branch_sha("a/r", "main").await.unwrap(), Some(made));
     }
 
     #[tokio::test]

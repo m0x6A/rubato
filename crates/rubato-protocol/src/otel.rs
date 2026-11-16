@@ -5,6 +5,8 @@
 pub mod attr {
     pub const REPO: &str = "rubato.repo";
     pub const ISSUE: &str = "rubato.issue";
+    /// A pull request's number, beside `rubato.repo` (issue #82).
+    pub const PR: &str = "rubato.pr";
     pub const BRANCH: &str = "rubato.branch";
     pub const NODE: &str = "rubato.node";
     pub const SEAM: &str = "rubato.seam";
@@ -30,9 +32,12 @@ pub mod attr {
     pub const PLAN_UNKNOWN_IDS: &str = "rubato.plan.unknown_ids";
     pub const PLAN_O_ROWS_MISSING: &str = "rubato.plan.o_rows_missing";
     pub const GITHUB_ENDPOINT: &str = "rubato.github.endpoint";
-    pub const TMUX_IDE_VERSION: &str = "rubato.tmux_ide.version";
+    /// The tmux version a companion found at start (`tmux -V`, ADR 0070).
+    pub const TMUX_VERSION: &str = "rubato.tmux.version";
     pub const DROP_REASON: &str = "rubato.reason";
     pub const SUBSCRIBERS: &str = "rubato.subscribers";
+    /// Agent panes one reconcile cycle found (`rubato.reconcile`, ADR 0070).
+    pub const RECONCILE_PANES: &str = "rubato.reconcile.panes";
     pub const CAP_KIND: &str = "rubato.cap.kind";
     /// The background task a `rubato.task.exited` event names.
     pub const TASK: &str = "rubato.task";
@@ -68,6 +73,23 @@ pub mod attr {
     pub const EXIT_CODE: &str = "rubato.exit_code";
     /// Which traffic source answered a fetch (ADR 0040): `dev_file` or `prometheus`.
     pub const TRAFFIC_SOURCE: &str = "rubato.traffic.source";
+    /// Which shared layout a write or clear touched (ADR 0068): `flat` or `grouped`.
+    pub const LAYOUT_ARRANGEMENT: &str = "rubato.layout.arrangement";
+    /// The GitHub webhook event a delivery carried (ADR 0074): `issues`, `issue_comment`,
+    /// `pull_request`, `check_suite`, `check_run`, `push`, `ping` or `other`.
+    pub const GITHUB_EVENT: &str = "rubato.github.event";
+    /// What a catch-up change was (ADR 0074): `issue`, `pull` or `plan`.
+    pub const CHANGE_KIND: &str = "rubato.change.kind";
+    /// A speech call (ADR 0073): `stt` or `tts`.
+    pub const VOICE_OP: &str = "rubato.voice.op";
+    /// The speech adapter: `openai_compatible` or `fake`.
+    pub const VOICE_PROVIDER: &str = "rubato.voice.provider";
+    /// Bytes sent to or read from the speech provider in one call.
+    pub const VOICE_BYTES: &str = "rubato.voice.bytes";
+    /// The MCP tool or method a companion's `rubato.mcp.call` served (ADR 0071): `get_assignment`,
+    /// `report_status`, `plan_status`, `initialize`, `ping`, `tools/list`, `discovery` or
+    /// `unknown`. Never a client-chosen string.
+    pub const MCP_TOOL: &str = "rubato.mcp.tool";
 }
 
 /// Metric instrument names.
@@ -184,6 +206,9 @@ pub mod metric {
     /// Headless turns the companion killed, by `rubato.reason`: `stop`, `cap`, `revoke`,
     /// `timeout`, `quiet`, `companion_restarted`. `HeadlessTurnsKilled` fires on the last three.
     pub const HEADLESS_KILLED: &str = "rubato.headless.killed";
+    /// Companion: launch results, by `rubato.outcome` (`started`, `refused`, `failed`) and, for a
+    /// refusal, `rubato.reason` (the refusal reason); with `rubato.companion_id` (ADR 0070).
+    pub const LAUNCHES: &str = "rubato.launches";
     /// Session log entries stored, by role and kind (ADR 0052).
     pub const SESSION_LOG_ENTRIES: &str = "rubato.session_log.entries";
     /// Hooks that should have made a log entry and did not, by reason (`no_text`, `no_prompt_id`).
@@ -220,19 +245,62 @@ pub mod metric {
     pub const WORKSPACE_ID_COLLISIONS: &str = "rubato.workspace.id_collisions";
     /// Tracked plans that fit none of their issue's workspaces (ADR 0045), every poll tick.
     pub const PLANS_FIT_NONE: &str = "rubato.plans.fit_none";
+    /// GitHub webhook deliveries (ADR 0074), by `rubato.github.event` and `rubato.outcome`:
+    /// `accepted`, `duplicate`, `ignored`, `rejected` (bad signature), `malformed`,
+    /// `too_large`, `error` (not stored).
+    pub const GITHUB_WEBHOOK_DELIVERIES: &str = "rubato.github.webhook.deliveries";
+    /// Unix seconds of the newest accepted delivery, 0 before any; recorded every poll tick while
+    /// webhooks are on, absent otherwise. No unit, like `rubato.map.loaded_at`.
+    pub const GITHUB_WEBHOOK_LAST_ACCEPTED_AT: &str = "rubato.github.webhook.last_accepted_at";
+    /// Age in seconds of the oldest accepted delivery not yet refreshed, 0 when none; recorded
+    /// every poll tick while webhooks are on. `GitHubWebhooksStuck` fires above 300.
+    pub const GITHUB_WEBHOOK_PENDING_OLDEST: &str = "rubato.github.webhook.pending_oldest_seconds";
+    /// Changes a catch-up poll found that no delivery brought, by `rubato.change.kind`.
+    pub const GITHUB_CATCHUP_CHANGES: &str = "rubato.github.catchup.changes";
+    /// Unix seconds of the newest such change, 0 before any; recorded every poll tick while
+    /// webhooks are on. `GitHubWebhooksSilent` compares it with the last accepted delivery.
+    pub const GITHUB_CATCHUP_LAST_CHANGE_AT: &str = "rubato.github.catchup.last_change_at";
+    /// Pull request views by outcome (`cached`, `fetched`, `failed`), issue #82, ADR 0034.
+    pub const PULLS_VIEW_FETCHES: &str = "rubato.pulls.view_fetches";
+    /// Merges sent and not confirmed for more than 120 s (ADR 0033), every poll tick.
+    pub const PULLS_MERGES_OPENING: &str = "rubato.pulls.merges_opening";
+    /// Speech calls by `rubato.voice.op`, `rubato.outcome` and `rubato.voice.provider` (ADR 0073);
+    /// alert `SpeechProviderFailing`.
+    pub const VOICE_SPEECH: &str = "rubato.voice.speech";
+    /// Seconds one speech call took, by `rubato.voice.op`.
+    pub const VOICE_DURATION: &str = "rubato.voice.duration";
+    /// Voice join tokens minted or refused, by `rubato.outcome`.
+    pub const VOICE_TOKENS: &str = "rubato.voice.tokens";
+    /// Failed voice joins the browser reported, by `rubato.reason`.
+    pub const VOICE_JOIN_FAILED: &str = "rubato.voice.join_failed";
+    /// Companion: MCP requests from launched sessions (ADR 0071), by `rubato.mcp.tool`,
+    /// `rubato.outcome` (`ok`, `refused`, `coalesced`, `error`) and `rubato.reason`.
+    pub const MCP_CALLS: &str = "rubato.mcp.calls";
+    /// Companion: agent reports drained, by `rubato.outcome` (`sent`, `not_sent`) and
+    /// `rubato.reason` (`server_too_old`).
+    pub const MCP_REPORTS: &str = "rubato.mcp.reports";
+    /// Companion: launches with no MCP request 5 minutes after they started, once each.
+    pub const MCP_NOT_INITIALIZED: &str = "rubato.mcp.not_initialized";
+    /// Server: `PlanStatus` pushes, by `rubato.reason` (`welcome`, `change`) and
+    /// `rubato.outcome` (`sent`, `offline`).
+    pub const PLAN_STATUS_SENT: &str = "rubato.plan_status.sent";
 }
 
 /// Span names.
 pub mod span {
     pub const LAUNCH: &str = "rubato.launch";
     pub const HOOK_FORWARD: &str = "rubato.hook.forward";
-    pub const TEAM_POLL: &str = "rubato.team_poll";
+    /// Companion: one reconcile cycle (`tmux list-panes`, identity, snapshot), with
+    /// `rubato.companion_id` and an error status when `tmux list-panes` fails (ADR 0070).
+    pub const RECONCILE: &str = "rubato.reconcile";
     pub const INBOUND_EVENT: &str = "rubato.inbound_event";
     pub const GITHUB_CALL: &str = "rubato.github.call";
     pub const WS_FANOUT: &str = "rubato.ws.fanout";
     pub const HANDOFF: &str = "rubato.handoff";
     /// An approval posted from Rubato as the person (ADR 0030).
     pub const PLAN_APPROVE: &str = "rubato.plan.approve";
+    /// A merge as the person, wrapping its GitHub call (ADR 0033).
+    pub const PR_MERGE: &str = "rubato.pr.merge";
     /// One fetch of the traffic report (ADR 0039), with `rubato.outcome`.
     pub const TRAFFIC_FETCH: &str = "rubato.traffic.fetch";
     /// Server: one dispatch of a launch's queue (ADR 0051).
@@ -251,6 +319,15 @@ pub mod span {
     /// A call from a skill to another part, a client span with `peer.service` naming the map id
     /// of the other side (`github`, `system-map`, `plan-file`).
     pub const SKILL_CALL: &str = "rubato.skill.call";
+    /// Server: one voice join token minted (ADR 0073).
+    pub const VOICE_TOKEN: &str = "rubato.voice.token";
+    /// Server: one transcription call to the speech provider.
+    pub const VOICE_STT: &str = "rubato.voice.stt";
+    /// Server: one synthesis call to the speech provider.
+    pub const VOICE_TTS: &str = "rubato.voice.tts";
+    /// Companion: one MCP request on `/mcp` (ADR 0071), with `rubato.mcp.tool`,
+    /// `rubato.launch_id`, `rubato.issue`, `rubato.outcome` and `rubato.reason`.
+    pub const MCP_CALL: &str = "rubato.mcp.call";
 }
 
 /// Event (log record) names.
@@ -258,6 +335,8 @@ pub mod event {
     pub const SESSION_STALE: &str = "rubato.session.stale";
     pub const CAP_HIT: &str = "rubato.cap.hit";
     pub const PLAN_CHECK: &str = "rubato.plan.check";
+    /// The app's user scenarios against the e2e tests that cite them (`pnpm scenarios`, ADR 0069).
+    pub const SCENARIOS_CHECK: &str = "rubato.scenarios.check";
     /// A planning session waiting for a person's approval (skill `plan.ts wait`, ADR 0035).
     pub const PLAN_WAIT: &str = "rubato.plan.wait";
     /// A plan's pinned ADRs recorded as accepted by an approval (skill `adrs.ts accept`).
@@ -291,6 +370,7 @@ pub fn all_names() -> Vec<&'static str> {
     vec![
         attr::REPO,
         attr::ISSUE,
+        attr::PR,
         attr::BRANCH,
         attr::NODE,
         attr::SEAM,
@@ -309,7 +389,8 @@ pub fn all_names() -> Vec<&'static str> {
         attr::PLAN_UNKNOWN_IDS,
         attr::PLAN_O_ROWS_MISSING,
         attr::GITHUB_ENDPOINT,
-        attr::TMUX_IDE_VERSION,
+        attr::TMUX_VERSION,
+        attr::RECONCILE_PANES,
         attr::DROP_REASON,
         attr::SUBSCRIBERS,
         attr::CAP_KIND,
@@ -330,6 +411,13 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SKILL_NAME,
         attr::SKILL_SUBCOMMAND,
         attr::TRAFFIC_SOURCE,
+        attr::LAYOUT_ARRANGEMENT,
+        attr::GITHUB_EVENT,
+        attr::CHANGE_KIND,
+        attr::VOICE_OP,
+        attr::VOICE_PROVIDER,
+        attr::VOICE_BYTES,
+        attr::MCP_TOOL,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -378,12 +466,24 @@ pub fn all_names() -> Vec<&'static str> {
         metric::WORKSPACE_ORPHAN_ROWS,
         metric::WORKSPACE_ID_COLLISIONS,
         metric::PLANS_FIT_NONE,
+        metric::GITHUB_WEBHOOK_DELIVERIES,
+        metric::GITHUB_WEBHOOK_LAST_ACCEPTED_AT,
+        metric::GITHUB_WEBHOOK_PENDING_OLDEST,
+        metric::GITHUB_CATCHUP_CHANGES,
+        metric::GITHUB_CATCHUP_LAST_CHANGE_AT,
+        metric::PULLS_VIEW_FETCHES,
+        metric::PULLS_MERGES_OPENING,
+        metric::MCP_CALLS,
+        metric::MCP_REPORTS,
+        metric::MCP_NOT_INITIALIZED,
+        metric::PLAN_STATUS_SENT,
         metric::SESSION_MESSAGES,
         metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
         metric::COMPANIONS_BY_CAPABILITY,
         metric::SESSION_INPUT_FAILED,
         metric::HEADLESS_TURNS,
         metric::HEADLESS_KILLED,
+        metric::LAUNCHES,
         metric::SESSION_LOG_ENTRIES,
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
@@ -395,14 +495,19 @@ pub fn all_names() -> Vec<&'static str> {
         metric::PLANS_LINK_COMMENT_MISSING,
         metric::PLANS_APPROVAL_RECORD_MISMATCH,
         metric::PLANS_COMMENT_AFTER_CUTOVER,
+        metric::VOICE_SPEECH,
+        metric::VOICE_DURATION,
+        metric::VOICE_TOKENS,
+        metric::VOICE_JOIN_FAILED,
         span::LAUNCH,
         span::HOOK_FORWARD,
-        span::TEAM_POLL,
+        span::RECONCILE,
         span::INBOUND_EVENT,
         span::GITHUB_CALL,
         span::WS_FANOUT,
         span::HANDOFF,
         span::PLAN_APPROVE,
+        span::PR_MERGE,
         span::TRAFFIC_FETCH,
         span::SESSION_MESSAGE_DISPATCH,
         span::SESSION_INPUT_DELIVER,
@@ -411,9 +516,14 @@ pub fn all_names() -> Vec<&'static str> {
         span::ROOM_FORK_TURN,
         span::SKILL_COMMAND,
         span::SKILL_CALL,
+        span::VOICE_TOKEN,
+        span::VOICE_STT,
+        span::VOICE_TTS,
+        span::MCP_CALL,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,
+        event::SCENARIOS_CHECK,
         event::PLAN_WAIT,
         event::ADRS_ACCEPT,
         event::PLAN_HANDOFF,

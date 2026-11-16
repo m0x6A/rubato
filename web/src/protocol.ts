@@ -45,7 +45,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | AgentReport1 | {
 seq: number
 type: "ack"
 })
@@ -369,6 +369,14 @@ error: string
 outcome: "failed"
 })
 /**
+ * How a pull request is merged: `merge_method` on GitHub's merge call.
+ */
+export type MergeMethod = ("merge" | "squash" | "rebase")
+/**
+ * Where a merge is.
+ */
+export type MergeState = ("merged" | "opening")
+/**
  * Where a creation stands.
  */
 export type CreationState = (("created" | "failed") | "opening")
@@ -442,6 +450,22 @@ status: "denied"
 status: "expired"
 })
 /**
+ * What the plan of the linked issue says about merging (ADR 0033, plan 82 Decisions 1–3).
+ */
+export type PlanGate = ({
+kind: "no_plan"
+} | {
+kind: "approved"
+sha: string
+} | {
+kind: "not_approved"
+why: string
+})
+/**
+ * Whether the pull request is open, closed without merging, or merged.
+ */
+export type PullState = ("open" | "closed" | "merged")
+/**
  * The owner answers a request (`POST` `routes::ROOM_REQUEST`), or its asker withdraws it.
  */
 export type RequestAnswer = ("accept" | "decline" | "withdraw")
@@ -465,7 +489,7 @@ limits: Limits
 protocol_version: number
 server_version: string
 type: "welcome"
-} | LaunchCommand1 | SessionMessage | {
+} | LaunchCommand1 | SessionMessage | PlanStatus1 | {
 seq: number
 type: "ack"
 } | {
@@ -562,6 +586,7 @@ repo: string
 })
 
 export interface RubatoProtocol {
+AgentReport?: AgentReport
 ApproveRequest?: ApproveRequest
 ApproveResponse?: ApproveResponse
 CallInRequest?: CallInRequest
@@ -595,6 +620,8 @@ MapLayout?: MapLayout
 MapRef?: MapRef
 MapResponse?: MapResponse
 Me?: Me
+MergeRequest?: MergeRequest
+MergeResponse?: MergeResponse
 NewIssueRequest?: NewIssueRequest
 NewIssueResponse?: NewIssueResponse
 Overview?: Overview
@@ -606,8 +633,10 @@ PairStartResponse?: PairStartResponse
 PairingInfo?: PairingInfo
 PinRequest?: PinRequest
 Plan?: Plan
+PlanStatus?: PlanStatus
 Progress?: Progress
 ProposeResponse?: ProposeResponse
+PullDetail?: PullDetail
 PullRequestState?: PullRequestState
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
@@ -622,7 +651,37 @@ SessionState?: SessionState
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
 TrafficReport?: TrafficReport
+UtteranceQuery?: UtteranceQuery
+VoiceJoinFailed?: VoiceJoinFailed
+VoiceToken?: VoiceToken
+VoiceTokenRequest?: VoiceTokenRequest
 WebEvent?: WebEvent
+}
+/**
+ * What a launched session's agent said it is doing, through `report_status` (ADR 0071). A
+ * signal with its own time, never a progress state: the server shows the newest per launch and
+ * never derives progress from it.
+ */
+export interface AgentReport {
+/**
+ * When the agent called `report_status`.
+ */
+at: string
+/**
+ * One line, at most 200 characters (`limits::AGENT_DOING_MAX_CHARS`).
+ */
+doing: string
+/**
+ * The launch the companion resolved from the call's `X-Rubato-Launch`, never from what the
+ * agent said.
+ */
+launch_id: string
+/**
+ * Map ids the agent says it is on, at most 8 (`limits::AGENT_PARTS_MAX`).
+ * 
+ * @maxItems 8
+ */
+parts?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]
 }
 /**
  * Approve the plan of `issue` as it is now. `sha` is the plan's approval hash the person saw
@@ -819,6 +878,32 @@ export interface RoomReply {
 type: "room_reply"
 }
 /**
+ * What a launched session's agent said it is doing, through `report_status` (ADR 0071). A
+ * signal with its own time, never a progress state: the server shows the newest per launch and
+ * never derives progress from it.
+ */
+export interface AgentReport1 {
+/**
+ * When the agent called `report_status`.
+ */
+at: string
+/**
+ * One line, at most 200 characters (`limits::AGENT_DOING_MAX_CHARS`).
+ */
+doing: string
+/**
+ * The launch the companion resolved from the call's `X-Rubato-Launch`, never from what the
+ * agent said.
+ */
+launch_id: string
+/**
+ * Map ids the agent says it is on, at most 8 (`limits::AGENT_PARTS_MAX`).
+ * 
+ * @maxItems 8
+ */
+parts?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]
+}
+/**
  * A decision recorded as an issue comment with the `Decision:` template (ADR 0014).
  */
 export interface DecisionRecord {
@@ -1012,7 +1097,15 @@ claude_version?: (string | null)
 companion_id: string
 companion_version: string
 hostname: string
+/**
+ * Deprecated (ADR 0070): `tmux-ide --version` from a companion that still ran tmux-ide.
+ * Read, never sent by a current companion.
+ */
 tmux_ide_version?: (string | null)
+/**
+ * `tmux -V` at start, such as `3.8` (ADR 0070). None on a headless companion (ADR 0062).
+ */
+tmux_version?: (string | null)
 user: string
 }
 /**
@@ -1676,16 +1769,34 @@ session_message_max_chars?: number
  */
 session_stale_secs?: number
 /**
- * Reconciliation poll of `tmux-ide team --json`.
+ * Reconcile interval: `tmux list-panes` and identity, every this many seconds. The name is
+ * kept from the retired `tmux-ide team --json` poll (ADR 0070).
  */
 team_poll_interval_secs?: number
 }
 /**
- * Positions by part id. In the overview it is the whole stored layout; as the body of
- * `PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`
- * it is what was removed, so a `PUT` of it undoes the removal.
+ * Positions by part id, for the flat map (ADR 0016) and for the By repo grouping (ADR 0068).
+ * In the overview it is the whole stored layout; as the body of `PUT /api/layout` it holds only
+ * what moved; as the answer of `DELETE /api/layout` or `DELETE /api/layout/grouped` it is what
+ * was removed, so a `PUT` of it undoes the removal.
  */
 export interface MapLayout {
+/**
+ * The By repo grouping: each repo box's top-left on the canvas, by `owner/name`.
+ */
+boxes?: {
+[k: string]: Position | undefined
+}
+/**
+ * The By repo grouping: each part's top-left relative to its repo's box, or on the canvas
+ * for a part with no repo. Never read for the flat map, never written by it.
+ */
+grouped?: {
+[k: string]: Position | undefined
+}
+/**
+ * The flat map: each part's top-left on the canvas.
+ */
 positions?: {
 [k: string]: Position | undefined
 }
@@ -1792,6 +1903,49 @@ can_act_on_github?: boolean
  */
 cannot_act_reason?: (string | null)
 login: string
+/**
+ * A plan room's voice channel (ADR 0073); absent while `RUBATO_VOICE` is off.
+ */
+voice?: (VoiceAvailability | null)
+}
+/**
+ * Whether voice is on for this server, on `Me` only while it is (ADR 0073).
+ */
+export interface VoiceAvailability {
+/**
+ * A voice channel can be joined: LiveKit is configured.
+ */
+enabled: boolean
+/**
+ * A speech provider is configured: utterances reach the room and spoken replies play.
+ */
+speech: boolean
+/**
+ * The provider's hosts, for the consent text; empty for the fake adapter.
+ */
+speech_hosts?: string[]
+}
+/**
+ * Merge a pull request as yourself (`POST /api/pulls/merge`, ADR 0033): at the head the person
+ * saw, with the method they picked.
+ */
+export interface MergeRequest {
+head_sha: string
+method: MergeMethod
+number: number
+repo: string
+}
+export interface MergeResponse {
+/**
+ * Who pressed Merge for this head: a retry or a second tab gets the first press's row.
+ */
+login: string
+/**
+ * The merge commit GitHub made.
+ */
+merge_sha?: (string | null)
+method: MergeMethod
+state: MergeState
 }
 /**
  * `POST /api/issues`. Each list item is one line of its section.
@@ -2012,11 +2166,28 @@ state: ProposalState
 state_since: string
 }
 /**
- * Positions by part id. In the overview it is the whole stored layout; as the body of
- * `PUT /api/layout` it holds only the parts that moved; as the answer of `DELETE /api/layout`
- * it is what was removed, so a `PUT` of it undoes the removal.
+ * Positions by part id, for the flat map (ADR 0016) and for the By repo grouping (ADR 0068).
+ * In the overview it is the whole stored layout; as the body of `PUT /api/layout` it holds only
+ * what moved; as the answer of `DELETE /api/layout` or `DELETE /api/layout/grouped` it is what
+ * was removed, so a `PUT` of it undoes the removal.
  */
 export interface MapLayout1 {
+/**
+ * The By repo grouping: each repo box's top-left on the canvas, by `owner/name`.
+ */
+boxes?: {
+[k: string]: Position | undefined
+}
+/**
+ * The By repo grouping: each part's top-left relative to its repo's box, or on the canvas
+ * for a part with no repo. Never read for the flat map, never written by it.
+ */
+grouped?: {
+[k: string]: Position | undefined
+}
+/**
+ * The flat map: each part's top-left on the canvas.
+ */
 positions?: {
 [k: string]: Position | undefined
 }
@@ -2317,10 +2488,195 @@ issue: IssueRef
 target: MapRef
 }
 /**
+ * Where the plan of one launched session stands, as the server derives it (ADR 0071). The
+ * companion keeps the newest per launch and answers `plan_status` from it.
+ */
+export interface PlanStatus {
+/**
+ * The newest counted approval and whether it is of the current version; an approval whose
+ * version is not `current` does not cover the plan as it is.
+ */
+approval?: (ApprovalState | null)
+/**
+ * When the server derived it.
+ */
+as_of: string
+/**
+ * The plan on the issue branch, when there is one.
+ */
+branch?: (BranchStatus | null)
+/**
+ * The newest settled revision of the launch's draft (ADR 0053).
+ */
+draft?: (DraftStatus | null)
+launch_id: string
+/**
+ * The issue's newest counted design review.
+ */
+review?: (ReviewRecord | null)
+}
+export interface BranchStatus {
+/**
+ * Whether the plan on the branch carries the approval record (ADR 0054).
+ */
+carries_approval: boolean
+/**
+ * The plan's hash at the branch head.
+ */
+sha: string
+}
+export interface DraftStatus {
+/**
+ * When the revision settled.
+ */
+at: string
+/**
+ * Whether the revision's plan fits the map.
+ */
+fits: boolean
+/**
+ * The revision's plan hash, as an approval names it.
+ */
+plan_sha: string
+/**
+ * Revision number, 1-based.
+ */
+rev: number
+}
+/**
  * Answer of `POST /api/map/draft/propose`.
  */
 export interface ProposeResponse {
 proposal: Proposal
+}
+/**
+ * A pull request's view (`GET /api/pulls/{owner}/{repo}/{number}`, ADR 0034): read when opened,
+ * cached 30 s. Titles and bodies are shown as text.
+ */
+export interface PullDetail {
+author: string
+base: string
+/**
+ * The description, as written (plain text, design A4).
+ */
+body?: string
+branch: string
+check_runs?: CheckRun[]
+/**
+ * The folded check runs at the head.
+ */
+checks: (("green" | "red" | "pending") | "none")
+draft: boolean
+files: FilesSummary
+/**
+ * The head is in another repo (ADR 0034: never merged from Rubato).
+ */
+fork?: boolean
+head_sha: string
+/**
+ * The issue the branch names (ADR 0006).
+ */
+issue?: (IssueRef | null)
+merge: MergeOffer
+/**
+ * GitHub's `mergeable`; absent while GitHub is still computing it.
+ */
+mergeable?: (boolean | null)
+merged_at?: (string | null)
+number: number
+/**
+ * Reviews from outside the team: counted, not shown (design A7).
+ */
+outside_reviews?: number
+/**
+ * When GitHub was read for this view; a cached view is at most 30 s old.
+ */
+read_at: string
+repo: string
+/**
+ * The latest review per team reviewer.
+ */
+reviews?: PullReview[]
+state: PullState
+title: string
+url: string
+}
+/**
+ * One check run at the head.
+ */
+export interface CheckRun {
+/**
+ * `success`, `failure`, `neutral`, … once completed.
+ */
+conclusion?: (string | null)
+name: string
+/**
+ * `queued`, `in_progress` or `completed`, as GitHub says.
+ */
+status: string
+url: string
+}
+/**
+ * What the pull request changes, from one page of 100 files.
+ */
+export interface FilesSummary {
+additions: number
+/**
+ * Files on the page read.
+ */
+count: number
+deletions: number
+/**
+ * The [`TOP_FILES`] with the most changed lines.
+ */
+top?: ChangedFile[]
+/**
+ * The page was full: the pull request changes more files than `count`.
+ */
+truncated?: boolean
+}
+/**
+ * One changed file.
+ */
+export interface ChangedFile {
+additions: number
+deletions: number
+path: string
+}
+/**
+ * What *Merge* offers the person, from [`merge_refusal`] with no ask.
+ */
+export interface MergeOffer {
+can_merge: boolean
+/**
+ * Squash when allowed (ADR 0033), else the first allowed.
+ */
+default_method?: (MergeMethod | null)
+/**
+ * The methods the repo allows; empty without the person's facts.
+ */
+methods?: MergeMethod[]
+plan_gate: PlanGate
+/**
+ * Open pull requests whose base is this head branch: a squash makes them conflict
+ * (plan 82 Decision 7).
+ */
+stacked_above?: number
+/**
+ * A [`reason`] when `can_merge` is false.
+ */
+why_not?: (string | null)
+}
+/**
+ * The latest review of one team reviewer (ADR 0027's trusted authors).
+ */
+export interface PullReview {
+author: string
+/**
+ * `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` or `DISMISSED`, as GitHub says.
+ */
+state: string
+submitted_at: string
 }
 /**
  * Body of `PUT`: the full order of one lane. Refused when its set of issues differs from what
@@ -2359,6 +2715,10 @@ id: string
  * For a seam notice: the other issue and the seam both plans touch.
  */
 notice?: (SeamNotice | null)
+/**
+ * Posted from a push-to-talk utterance (ADR 0073); a turn it makes is asked aloud.
+ */
+spoken?: boolean
 text: string
 /**
  * The turn this message made, or the turn an agent's message answers.
@@ -2483,6 +2843,34 @@ number: number
 repo: string
 }
 /**
+ * Where the plan of one launched session stands, as the server derives it (ADR 0071). The
+ * companion keeps the newest per launch and answers `plan_status` from it.
+ */
+export interface PlanStatus1 {
+/**
+ * The newest counted approval and whether it is of the current version; an approval whose
+ * version is not `current` does not cover the plan as it is.
+ */
+approval?: (ApprovalState | null)
+/**
+ * When the server derived it.
+ */
+as_of: string
+/**
+ * The plan on the issue branch, when there is one.
+ */
+branch?: (BranchStatus | null)
+/**
+ * The newest settled revision of the launch's draft (ADR 0053).
+ */
+draft?: (DraftStatus | null)
+launch_id: string
+/**
+ * The issue's newest counted design review.
+ */
+review?: (ReviewRecord | null)
+}
+/**
  * Web → server: send this text to the launch's session.
  */
 export interface SessionMessageRequest {
@@ -2547,4 +2935,61 @@ server: string
  * OpenTelemetry `service.namespace` of the callee, as it emits it.
  */
 server_namespace?: (string | null)
+}
+/**
+ * The query of an utterance (`POST` `routes::VOICE_UTTERANCE`); the audio is the body.
+ */
+export interface UtteranceQuery {
+branch: string
+/**
+ * Chosen by the browser; it becomes the room message's id, so a repeat posts once.
+ */
+id: string
+number: number
+repo: string
+/**
+ * An agent's handle in the room: the transcript is posted as `@<to> <transcript>`.
+ */
+to?: (string | null)
+}
+/**
+ * A failed join, reported by the browser (`POST` `routes::VOICE_JOIN_FAILED`): Rubato never sees
+ * LiveKit, so this is the only signal for a LiveKit that is down or unreachable.
+ */
+export interface VoiceJoinFailed {
+branch: string
+number: number
+/**
+ * One of `join_reason`; anything else is counted as `other`.
+ */
+reason: string
+repo: string
+}
+/**
+ * A LiveKit join token for one person and one plan room. `expires_at` bounds the join only:
+ * LiveKit refreshes the token of a connected participant (ADR 0073).
+ */
+export interface VoiceToken {
+expires_at: string
+/**
+ * `<login>#<suffix>`, so two tabs of one person do not evict each other.
+ */
+identity: string
+/**
+ * The LiveKit room: `rubato-` and 32 hex digits of the plan room's key.
+ */
+room: string
+token: string
+/**
+ * The LiveKit server, `wss://…`.
+ */
+url: string
+}
+/**
+ * Which room's voice channel to join (`POST` `routes::VOICE_TOKEN`).
+ */
+export interface VoiceTokenRequest {
+branch: string
+number: number
+repo: string
 }

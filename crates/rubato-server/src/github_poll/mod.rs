@@ -12,16 +12,18 @@ mod pulls;
 mod store;
 mod suggest;
 
-pub use backlog::{BACKLOG_MAX_PER_REPO, Listed, MapLine, Request, list_open_issues};
+pub use backlog::{
+    BACKLOG_MAX_PER_REPO, Listed, MapLine, Request, list_open_issues, list_open_issues_in,
+};
 pub use coverage::check_coverage;
 pub use links::{LINK_LINE, LinkComment, link_approval};
 pub use poll::{
     BranchPrefs, CommentsRead, RepoView, Standing, has_open_pr, poll_comments, poll_pr,
     poll_pr_of_gone_branch, read_meta, record_rate_limit,
 };
-pub use pulls::{PullsPass, list_repo_pulls, repo_pulls};
+pub use pulls::{PullsPass, list_repo_pulls, list_repo_pulls_in, repo_pulls};
 pub use store::{
     IssueMeta, all_approvals, all_decisions, all_issue_meta, all_prs, all_reviews,
-    approved_branches, backlog, issue_meta, link_comments, set_target_sha, uncovered,
+    approved_branches, backlog, issue_meta, link_comments, pr_for, set_target_sha, uncovered,
 };
 pub use suggest::{SUGGEST_THRESHOLD, suggest};

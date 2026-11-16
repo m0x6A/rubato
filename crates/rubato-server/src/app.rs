@@ -7,7 +7,8 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
-    pairing, pins, plan_drafts, queue, rooms, session_log, session_messages, traffic, web_link,
+    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic, voice,
+    web_link, webhooks,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -24,6 +25,7 @@ use rubato_protocol::pairing::routes as pr;
 use rubato_protocol::pins::routes as pin_routes;
 use rubato_protocol::plan_draft::routes as plan_draft_routes;
 use rubato_protocol::progress::routes as overview_routes;
+use rubato_protocol::pulls::routes as pull_routes;
 use rubato_protocol::queue::routes as queue_routes;
 use rubato_protocol::traffic::routes as traffic_routes;
 use rubato_protocol::web_link::routes as web_routes;
@@ -68,6 +70,10 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
             put(layout::put_layout).delete(layout::clear_layout),
         )
         .route(
+            &at(layout_routes::LAYOUT_GROUPED),
+            delete(layout::clear_grouped_layout),
+        )
+        .route(
             &at(traffic_routes::TRAFFIC_DISMISSALS),
             post(traffic::dismiss),
         )
@@ -75,6 +81,8 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
             &at(&format!("{}/{{id}}", traffic_routes::TRAFFIC_DISMISSALS)),
             delete(traffic::undismiss),
         )
+        .route(&at(pull_routes::PULL), get(pulls::pull_view))
+        .route(&at(pull_routes::PULLS_MERGE), post(pulls::merge))
 }
 
 pub fn router(app: App) -> Router {
@@ -128,6 +136,24 @@ pub fn router(app: App) -> Router {
             rubato_protocol::room::routes::ROOM_MESSAGES,
             post(rooms::post),
         )
+        // ADR 0073: a plan room's voice channel. Every route answers 404 `voice_off` while
+        // `RUBATO_VOICE` is off; the handlers cap their own bodies.
+        .route(
+            rubato_protocol::voice::routes::VOICE_TOKEN,
+            post(voice::voice_token),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_UTTERANCE,
+            post(voice::utterance),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_SPEECH,
+            get(voice::speech),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_JOIN_FAILED,
+            post(voice::join_failed),
+        )
         .route(
             rubato_protocol::plan_draft::routes::DRAFT_REVISION,
             get(plan_drafts::revision),
@@ -147,8 +173,22 @@ pub fn router(app: App) -> Router {
             app.clone(),
             crate::kernel::http::same_origin,
         ));
+    // After the same-origin layer on purpose (ADR 0074): GitHub is not a browser, and the
+    // signature is this route's authentication. Without the secret the path is unknown.
+    let api = if app.config.webhooks_on() {
+        api.route(
+            webhooks::PATH,
+            post(webhooks::receive).layer(axum::extract::DefaultBodyLimit::max(
+                webhooks::MAX_BODY_BYTES,
+            )),
+        )
+    } else {
+        api.route(webhooks::PATH, any(unknown_api_path))
+    }
+    .route("/webhooks/{*rest}", any(unknown_api_path));
     let csp = axum::http::HeaderValue::from_str(&crate::kernel::http::content_security_policy(
         &app.config.public_url,
+        app.config.livekit_url(),
     ))
     .expect("a header-safe policy");
     api.fallback_service(ServeDir::new(dist).not_found_service(ServeFile::new(index)))
@@ -228,6 +268,15 @@ mod tests {
             (Method::POST, approve_routes::PLAN_DRAFT_APPROVE.into()),
             (Method::PUT, layout_routes::LAYOUT.into()),
             (Method::DELETE, layout_routes::LAYOUT.into()),
+            (Method::DELETE, layout_routes::LAYOUT_GROUPED.into()),
+            (Method::POST, pull_routes::PULLS_MERGE.into()),
+            (
+                Method::GET,
+                pull_routes::PULL
+                    .replace("{owner}", "m0x6A")
+                    .replace("{repo}", "rubato")
+                    .replace("{number}", "1"),
+            ),
             (Method::POST, traffic_routes::TRAFFIC_DISMISSALS.into()),
             (
                 Method::DELETE,
@@ -284,7 +333,8 @@ mod tests {
     }
 
     /// The paths served per workspace: map-scoped, never team-scoped.
-    const MAP_SCOPED: [&str; 10] = [
+    const MAP_SCOPED: [&str; 11] = [
+        "/api/pulls",
         "/api/traffic",
         "/api/overview",
         "/api/map",
@@ -433,6 +483,7 @@ mod tests {
         use rubato_protocol::layout::{MapLayout, Position};
         let layout = |id: &str, x: f64| MapLayout {
             positions: [(id.to_owned(), Position { x, y: 0.0 })].into(),
+            ..Default::default()
         };
         let put = |l: MapLayout| {
             http.put(format!("{base}{}", layout_routes::LAYOUT))
@@ -465,7 +516,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cleared.status(), 200);
-        assert_eq!(reader.points(metric::LAYOUT_WRITES)[0].value, 2);
+        let writes = |which: &str| {
+            reader
+                .points(metric::LAYOUT_WRITES)
+                .into_iter()
+                .find(|p| p.attrs.get(attr::LAYOUT_ARRANGEMENT).map(String::as_str) == Some(which))
+                .map(|p| p.value)
+        };
+        assert_eq!(writes("flat"), Some(2));
+        // The By repo grouping (ADR 0068) counts apart from the flat map.
+        let grouped = MapLayout {
+            grouped: [("web".to_owned(), Position { x: 30.0, y: 60.0 })].into(),
+            boxes: [("m0x6A/rubato".to_owned(), Position { x: 0.0, y: 0.0 })].into(),
+            ..Default::default()
+        };
+        assert_eq!(put(grouped).await.unwrap().status(), 204);
+        let cleared = http
+            .delete(format!("{base}{}", layout_routes::LAYOUT_GROUPED))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cleared.status(), 200);
+        assert_eq!(writes("grouped"), Some(2));
+        assert_eq!(writes("flat"), Some(2), "a grouped write is not a flat one");
+        // One body with both counts once in each arrangement.
+        let both = MapLayout {
+            grouped: [("web".to_owned(), Position { x: 1.0, y: 1.0 })].into(),
+            ..layout("web", 20.0)
+        };
+        assert_eq!(put(both).await.unwrap().status(), 204);
+        assert_eq!((writes("flat"), writes("grouped")), (Some(3), Some(3)));
+        {
+            let events = events.lock().unwrap();
+            assert!(
+                events.iter().any(|e| e.message == "layout written"
+                    && e.level == tracing::Level::INFO
+                    && e.fields
+                        .get("rubato.layout.arrangement")
+                        .map(String::as_str)
+                        == Some("grouped")),
+                "a write is logged at info with its arrangement"
+            );
+        }
         {
             let events = events.lock().unwrap();
             assert!(
@@ -735,6 +827,10 @@ mod tests {
             (Method::POST, "/api/nope"),
             (Method::GET, "/ws/nope"),
             (Method::GET, "/auth/nope"),
+            // ADR 0074: without RUBATO_GITHUB_WEBHOOK_SECRET the webhook path is unknown.
+            (Method::POST, "/webhooks/github"),
+            (Method::GET, "/webhooks/github"),
+            (Method::POST, "/webhooks/nope"),
         ] {
             let r = http
                 .request(method.clone(), format!("{url}{path}"))
@@ -938,6 +1034,62 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn a_signed_delivery_passes_the_same_origin_check() {
+        let secret = "s3cret";
+        let (base, _app, _reader, _tmp) = hardened(|c| {
+            c.github_webhook_secret =
+                crate::kernel::config::WebhookSecret::from_env_value(Some(secret.into()));
+        })
+        .await;
+        let http = reqwest::Client::new();
+        let body = r#"{"action":"closed","pull_request":{"head":{"ref":"issue/5-x"}},"repository":{"full_name":"m0x6A/rubato"}}"#;
+        let evil = [
+            ("sec-fetch-site", "cross-site"),
+            ("origin", "https://evil.example"),
+        ];
+        let send = |id: &'static str, sig: String| {
+            let mut r = http
+                .post(format!("{base}{}", webhooks::PATH))
+                .header("x-github-delivery", id)
+                .header("x-github-event", "pull_request")
+                .header("x-hub-signature-256", sig)
+                .body(body);
+            for (k, v) in evil {
+                r = r.header(k, v);
+            }
+            r.send()
+        };
+        let good = send("d-1", webhooks::sign(secret.as_bytes(), body.as_bytes()))
+            .await
+            .unwrap();
+        assert_eq!(
+            good.status(),
+            202,
+            "signed: accepted whatever the browser headers say"
+        );
+        let bad = send("d-2", webhooks::sign(b"wrong", body.as_bytes()))
+            .await
+            .unwrap();
+        assert_eq!(
+            bad.status(),
+            401,
+            "refused by the signature, not by the origin check"
+        );
+        // The same headers on an ordinary write are still refused (ADR 0066).
+        let mut w = http.post(format!("{base}{}", map_routes::MAP_RELOAD));
+        for (k, v) in evil {
+            w = w.header(k, v);
+        }
+        assert_eq!(w.send().await.unwrap().status(), 403);
+        let get = http
+            .get(format!("{base}{}", webhooks::PATH))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get.status(), 405, "only POST is routed");
+    }
+
+    #[tokio::test]
     async fn cross_origin_writes_are_refused_and_counted() {
         use rubato_protocol::otel::{attr, metric};
         let (base, _app, reader, _tmp) = hardened(|_| {}).await;

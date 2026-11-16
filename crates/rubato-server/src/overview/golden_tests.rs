@@ -373,6 +373,17 @@ fn rich() -> OverviewInputs {
                 ("app-web".to_string(), Position { x: -5.5, y: 0.0 }),
             ]
             .into(),
+            // The By repo grouping (ADR 0068): the same filter, and a box only for a repo a part names.
+            grouped: [
+                ("app-web".to_string(), Position { x: 24.0, y: 48.0 }),
+                ("removed".to_string(), Position { x: 3.0, y: 4.0 }),
+            ]
+            .into(),
+            boxes: [
+                ("acme/app".to_string(), Position { x: 10.0, y: 20.0 }),
+                ("acme/gone".to_string(), Position { x: 0.0, y: 0.0 }),
+            ]
+            .into(),
         },
         repo_pulls: de(json!([
             { "repo": "acme/app", "listed_at": at(2), "truncated": false, "pulls": [

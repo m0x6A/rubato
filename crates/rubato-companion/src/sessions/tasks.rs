@@ -1,107 +1,110 @@
-//! Discovery tasks: follow tmux-ide events (best-effort) and reconcile pane metadata with
-//! `tmux-ide team --json` on a timer and whenever woken.
+//! Discovery: reconcile pane metadata from `tmux list-panes` (and `ps` for wrapped agents) with
+//! the registry, on a timer and whenever a launch wakes it. State comes from hooks only; tmux-ide's
+//! `team --json` and `events --follow` are gone (ADR 0070).
 
 use super::Registry;
 use crate::kernel::telemetry::Metrics;
 use crate::kernel::tmux::Tmux;
-use crate::kernel::tmux_ide::{Fleet, TmuxIde};
 use anyhow::Result;
 use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
-use rubato_protocol::{CompanionMessage, Limits};
+use rubato_protocol::{CompanionMessage, Limits, SessionState};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, watch};
 use tracing::Instrument;
 
-/// Each line of `tmux-ide events --follow` wakes reconcile. The command needs an adopted session
-/// and exits at once without one (no `events.jsonl`), which is normal on a fresh machine: then
-/// discovery runs on the timer alone and this task ends (it is best-effort, design D12).
-pub async fn watch_events(
-    tmux_ide: TmuxIde,
-    poll_tx: mpsc::UnboundedSender<()>,
-    mut shutdown: watch::Receiver<bool>,
-) -> Result<()> {
-    let unavailable = || tracing::info!("tmux-ide events unavailable; timer only");
-    let child = tokio::task::spawn_blocking(move || tmux_ide.events_follow()).await;
-    let Ok(Ok(mut child)) = child else {
-        unavailable();
-        return Ok(());
-    };
-    let Some(stdout) = child.stdout.take() else {
-        unavailable();
-        return Ok(());
-    };
-    let stdout = tokio::process::ChildStdout::from_std(stdout)?;
-    use tokio::io::AsyncBufReadExt;
-    let mut lines = tokio::io::BufReader::new(stdout).lines();
-    loop {
-        tokio::select! {
-            line = lines.next_line() => match line {
-                Ok(Some(_)) => { let _ = poll_tx.send(()); }
-                _ => { let _ = child.kill(); unavailable(); return Ok(()); }
-            },
-            _ = shutdown.changed() => { let _ = child.kill(); return Ok(()); }
-        }
-    }
-}
-
-/// Panes and fleet → registry → snapshot; the snapshot goes to the server only when it changed.
-#[allow(clippy::too_many_arguments)]
+/// Panes → registry → snapshot; the snapshot goes to the server only when it changed. Each cycle
+/// runs in a `rubato.reconcile` span with the companion id and the agent panes it found, and an
+/// error status when `tmux list-panes` fails.
 pub async fn reconcile(
     out: mpsc::UnboundedSender<CompanionMessage>,
     registry: Arc<Mutex<Registry>>,
     metrics: Arc<Metrics>,
     tmux: Tmux,
-    tmux_ide: TmuxIde,
-    limits: Arc<std::sync::Mutex<Limits>>,
+    mut limits: watch::Receiver<Limits>,
     mut poll_rx: mpsc::UnboundedReceiver<()>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut last_snapshot: Option<String> = None;
-    let mut team_poll = TeamPoll::default();
+    let mut last_snapshot: Option<Vec<SessionState>> = None;
+    let companion = registry.lock().await.companion_id;
     loop {
-        let t = tmux.clone();
-        let panes = tokio::task::spawn_blocking(move || t.panes()).await?;
-        let fleet = team_poll.poll(&tmux_ide).await?;
-        let wrapped = match &panes {
-            Ok(p) => wrapped_agents(p).await,
-            Err(_) => Default::default(),
-        };
-        {
-            let mut reg = registry.lock().await;
-            let now = Utc::now();
-            match panes {
-                Ok(p) => reg.apply_panes_with(&p, &wrapped, now),
-                Err(e) => tracing::warn!(error = %e, "tmux list-panes failed"),
-            }
-            if let Some(f) = fleet {
-                reg.apply_fleet(&f, now);
-            }
-            reg.sweep(now, 300);
-        }
-        // Identity again where a checkout changed it: git off the lock (design 80 §5).
-        let checks = registry.lock().await.identity_checks();
-        let found = tokio::task::spawn_blocking(move || crate::sessions::recheck(checks)).await?;
-        {
-            let mut reg = registry.lock().await;
-            reg.apply_identities(found);
-            let snap = reg.snapshot();
-            record_gauges(&reg, &metrics);
-            let key = serde_json::to_string(&snap).unwrap_or_default();
-            if last_snapshot.as_deref() != Some(key.as_str()) {
-                last_snapshot = Some(key);
-                let _ = out.send(CompanionMessage::Sessions { sessions: snap });
-            }
-        }
-        let secs = limits.lock().unwrap().team_poll_interval_secs.max(1);
+        let span = tracing::info_span!(
+            span::RECONCILE,
+            rubato.companion_id = %companion,
+            rubato.reconcile.panes = tracing::field::Empty,
+            otel.status_code = tracing::field::Empty,
+            otel.status_description = tracing::field::Empty,
+        );
+        cycle(&out, &registry, &metrics, &tmux, &mut last_snapshot, &span)
+            .instrument(span.clone())
+            .await?;
+        let secs = limits.borrow_and_update().team_poll_interval_secs.max(1);
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(secs)) => {}
+            // A `Welcome` with new limits: poll now and wait the new interval from here.
+            Ok(()) = limits.changed() => {}
             _ = poll_rx.recv() => {}
             _ = shutdown.changed() => return Ok(()),
         }
     }
+}
+
+/// One reconcile cycle. A failing `tmux list-panes` keeps every entry (plan 40 N7) and marks the
+/// span as an error; the snapshot still goes out if hooks changed it.
+async fn cycle(
+    out: &mpsc::UnboundedSender<CompanionMessage>,
+    registry: &Mutex<Registry>,
+    metrics: &Metrics,
+    tmux: &Tmux,
+    last_snapshot: &mut Option<Vec<SessionState>>,
+    span: &tracing::Span,
+) -> Result<()> {
+    let t = tmux.clone();
+    let panes = tokio::task::spawn_blocking(move || t.panes()).await?;
+    let wrapped = match &panes {
+        Ok(p) => wrapped_agents(p).await,
+        Err(_) => Default::default(),
+    };
+    {
+        let mut reg = registry.lock().await;
+        let now = Utc::now();
+        match panes {
+            Ok(p) => {
+                let agents = p
+                    .iter()
+                    .filter(|p| {
+                        super::discovery::looks_like_agent(&p.current_command)
+                            || wrapped.contains(&p.pane_id)
+                    })
+                    .count();
+                span.record("rubato.reconcile.panes", agents as u64);
+                reg.apply_panes_with(&p, &wrapped, now);
+            }
+            Err(e) => {
+                span.record("otel.status_code", "ERROR");
+                span.record("otel.status_description", format!("{e:#}"));
+                tracing::warn!(error = %e, "tmux list-panes failed");
+            }
+        }
+        reg.sweep(now, 300);
+    }
+    // Identity again where a checkout changed it: git off the lock (design 80 §5).
+    let checks = registry.lock().await.identity_checks();
+    let found = tokio::task::spawn_blocking(move || crate::sessions::recheck(checks)).await?;
+    let snap = {
+        let mut reg = registry.lock().await;
+        reg.apply_identities(found);
+        record_gauges(&reg, metrics);
+        reg.snapshot()
+    };
+    // Compared as structs, off the lock.
+    if last_snapshot.as_ref() != Some(&snap) {
+        *last_snapshot = Some(snap.clone());
+        let _ = out.send(CompanionMessage::Sessions { sessions: snap });
+    }
+    Ok(())
 }
 
 /// Panes whose own command is not Claude Code but whose process tree runs it (a wrapper
@@ -133,46 +136,6 @@ async fn wrapped_agents(panes: &[crate::kernel::tmux::Pane]) -> std::collections
     }
 }
 
-/// `tmux-ide team --json`, one poll at a time. Remembers whether the last poll failed, so a
-/// broken tmux-ide is one `warn!` and one `info!` on recovery, not a line per poll.
-#[derive(Default)]
-struct TeamPoll {
-    failing: bool,
-}
-
-impl TeamPoll {
-    /// One poll inside a `rubato.team_poll` span; a failure sets the span's error status.
-    /// `None` when the poll failed: discovery then runs on panes and hooks alone.
-    async fn poll(&mut self, tmux_ide: &TmuxIde) -> Result<Option<Fleet>> {
-        let span = tracing::info_span!(
-            span::TEAM_POLL,
-            otel.status_code = tracing::field::Empty,
-            otel.status_description = tracing::field::Empty,
-        );
-        let ti = tmux_ide.clone();
-        let fleet = tokio::task::spawn_blocking(move || ti.team())
-            .instrument(span.clone())
-            .await?;
-        let _in_span = span.enter();
-        match fleet {
-            Ok(f) => {
-                if std::mem::take(&mut self.failing) {
-                    tracing::info!("tmux-ide team --json recovered");
-                }
-                Ok(Some(f))
-            }
-            Err(e) => {
-                span.record("otel.status_code", "ERROR");
-                span.record("otel.status_description", format!("{e:#}"));
-                if !std::mem::replace(&mut self.failing, true) {
-                    tracing::warn!(error = %e, "tmux-ide team --json failed");
-                }
-                Ok(None)
-            }
-        }
-    }
-}
-
 /// `rubato.sessions.discovered` per source, with this companion's id and including its zeros.
 /// `rubato.sessions.by_state` is the server's, recorded from each snapshot this companion sends
 /// (#43), so a sum over it counts each session once.
@@ -195,7 +158,6 @@ mod tests {
     use crate::kernel::telemetry::{capture, metric_reader};
     use rubato_protocol::HookEvent;
     use rubato_protocol::otel::metric;
-    use std::os::unix::fs::PermissionsExt;
     use uuid::Uuid;
 
     #[test]
@@ -216,8 +178,8 @@ mod tests {
         let discovered = reader.points(metric::SESSIONS_DISCOVERED);
         assert_eq!(
             discovered.len(),
-            rubato_protocol::StateSource::ALL.len(),
-            "one point per source: {discovered:?}"
+            rubato_protocol::StateSource::ALL.len() - 1,
+            "one point per source a companion produces (not tmux_ide, ADR 0070): {discovered:?}"
         );
         for p in &discovered {
             assert_eq!(
@@ -232,14 +194,7 @@ mod tests {
             .collect();
         assert_eq!(
             sources,
-            [
-                ("headless", 0),
-                ("hook", 1),
-                ("launch", 0),
-                ("scraped", 0),
-                ("tmux_ide", 0)
-            ]
-            .into()
+            [("headless", 0), ("hook", 1), ("launch", 0), ("scraped", 0)].into()
         );
 
         // The session moves on: `discovered` follows, and `by_state` is never recorded here.
@@ -249,7 +204,7 @@ mod tests {
         record_gauges(&reg, &metrics);
         assert_eq!(
             reader.points(metric::SESSIONS_DISCOVERED).len(),
-            rubato_protocol::StateSource::ALL.len()
+            rubato_protocol::StateSource::ALL.len() - 1
         );
         let by_state = reader.points(metric::SESSIONS_BY_STATE);
         assert!(
@@ -258,88 +213,115 @@ mod tests {
         );
     }
 
-    /// A `tmux-ide` stand-in: a shell script with the given body.
-    fn stand_in(dir: &std::path::Path, name: &str, body: &str) -> TmuxIde {
-        let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        TmuxIde::new(path.to_string_lossy().into_owned(), Tmux::new("tmux", None))
+    /// A stand-in `tmux` that answers `list-sessions` (a server is running) and fails
+    /// `list-panes`: a failing `list-sessions` reads as no server and no panes, not an error
+    /// (`kernel/tmux.rs`). Written by a child `sh` (ETXTBSY, #217).
+    fn panes_fail(dir: &std::path::Path) -> Tmux {
+        let script = dir.join("tmux");
+        let body =
+            "#!/bin/sh\n[ \"$1\" = list-sessions ] && exit 0\necho no panes here >&2\nexit 1\n";
+        let ok = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf '%s' \"$1\" > \"$2\" && chmod +x \"$2\"")
+            .arg("sh")
+            .arg(body)
+            .arg(&script)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        Tmux::new(script.to_string_lossy(), None)
     }
 
+    /// ADR 0070: one `rubato.reconcile` span per cycle, with the companion id, an error status when
+    /// `tmux list-panes` fails, and the agent panes found when it works. The span's error status is
+    /// what a trace search for failed cycles finds (#41); the OpenTelemetry layer maps
+    /// `otel.status_code` to the exported status.
     #[tokio::test(flavor = "current_thread")]
-    async fn a_failing_team_poll_warns_once() {
-        let (events, _g) = capture::start();
-        let tmp = tempfile::tempdir().unwrap();
-        let broken = stand_in(tmp.path(), "broken", "echo no tmux-ide here >&2; exit 1");
-        let working = stand_in(tmp.path(), "working", r#"echo '{"projects":[]}'"#);
-        let count = |level: tracing::Level, message: &str| {
-            events
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|e| e.level == level && e.message == message)
-                .count()
-        };
-        let mut poll = TeamPoll::default();
-
-        assert!(poll.poll(&broken).await.unwrap().is_none());
-        assert!(poll.poll(&broken).await.unwrap().is_none());
-        assert_eq!(
-            count(tracing::Level::WARN, "tmux-ide team --json failed"),
-            1
-        );
-        let warned = events.lock().unwrap()[0].clone();
-        assert!(
-            warned.fields["error"].contains("no tmux-ide here"),
-            "{warned:?}"
-        );
-
-        assert_eq!(poll.poll(&working).await.unwrap(), Some(Fleet::default()));
-        assert_eq!(poll.poll(&working).await.unwrap(), Some(Fleet::default()));
-        assert_eq!(
-            count(tracing::Level::INFO, "tmux-ide team --json recovered"),
-            1
-        );
-
-        // A second outage is reported again.
-        assert!(poll.poll(&broken).await.unwrap().is_none());
-        assert_eq!(
-            count(tracing::Level::WARN, "tmux-ide team --json failed"),
-            2
-        );
-        assert_eq!(events.lock().unwrap().len(), 3);
-    }
-
-    /// The span's error status is what a trace search for failed polls finds (#41); the
-    /// OpenTelemetry layer maps `otel.status_code` to the exported status.
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_failing_team_poll_marks_its_span_as_an_error() {
+    async fn a_reconcile_cycle_is_a_span_marked_as_an_error_when_tmux_fails() {
         let (spans, _g) = capture::spans();
         let tmp = tempfile::tempdir().unwrap();
-        let broken = stand_in(tmp.path(), "broken", "echo no tmux-ide here >&2; exit 1");
-        let working = stand_in(tmp.path(), "working", r#"echo '{"projects":[]}'"#);
-        let mut poll = TeamPoll::default();
-
-        assert!(poll.poll(&broken).await.unwrap().is_none());
-        assert_eq!(poll.poll(&working).await.unwrap(), Some(Fleet::default()));
+        let id = Uuid::new_v4();
+        let registry = Arc::new(Mutex::new(Registry::new(id, "m0x6A")));
+        let (out, mut sent) = mpsc::unbounded_channel();
+        let (_limits_tx, limits_rx) = watch::channel(Limits::default());
+        let (poll_tx, poll_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let task = tokio::spawn(reconcile(
+            out,
+            registry,
+            Arc::new(Metrics::new()),
+            panes_fail(tmp.path()),
+            limits_rx,
+            poll_rx,
+            shutdown_rx,
+        ));
+        // The first cycle sends the (empty) snapshot; a wake-up runs a second.
+        let first = tokio::time::timeout(Duration::from_secs(5), sent.recv()).await;
+        assert!(
+            matches!(first, Ok(Some(CompanionMessage::Sessions { .. }))),
+            "{first:?}"
+        );
+        poll_tx.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        shutdown_tx.send(true).unwrap();
+        task.await.unwrap().unwrap();
 
         let spans = spans.lock().unwrap();
-        let polls: Vec<_> = spans
+        let cycles: Vec<_> = spans
             .iter()
-            .filter(|s| s.message == span::TEAM_POLL)
+            .filter(|s| s.message == span::RECONCILE)
             .collect();
-        assert_eq!(polls.len(), 2, "one span per poll: {spans:?}");
-        let failed = &polls[0].fields;
+        assert!(cycles.len() >= 2, "one span per cycle: {spans:?}");
+        for c in &cycles {
+            assert_eq!(
+                c.fields.get("rubato.companion_id"),
+                Some(&id.to_string()),
+                "{c:?}"
+            );
+            assert_eq!(
+                c.fields.get("otel.status_code").map(String::as_str),
+                Some("ERROR"),
+                "{c:?}"
+            );
+            assert!(
+                c.fields["otel.status_description"].contains("no panes here"),
+                "{c:?}"
+            );
+        }
+        println!("checked {} reconcile spans", cycles.len());
+    }
+
+    /// With no tmux server at all, a cycle is not an error: there are no panes (plan 40 N7).
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cycle_with_no_tmux_server_is_not_an_error() {
+        let (spans, _g) = capture::spans();
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = Arc::new(Mutex::new(Registry::new(Uuid::nil(), "m0x6A")));
+        let (out, _sent) = mpsc::unbounded_channel();
+        let mut last = None;
+        let none = Tmux::new(tmp.path().join("no-tmux").to_string_lossy(), None);
+        let span = tracing::info_span!(
+            span::RECONCILE,
+            rubato.reconcile.panes = tracing::field::Empty,
+            otel.status_code = tracing::field::Empty,
+            otel.status_description = tracing::field::Empty,
+        );
+        cycle(&out, &registry, &Metrics::new(), &none, &mut last, &span)
+            .instrument(span.clone())
+            .await
+            .unwrap();
+        drop(span);
+        let spans = spans.lock().unwrap();
+        let c = spans
+            .iter()
+            .find(|s| s.message == span::RECONCILE)
+            .expect("the span");
+        assert!(!c.fields.contains_key("otel.status_code"), "{c:?}");
         assert_eq!(
-            failed.get("otel.status_code").map(String::as_str),
-            Some("ERROR"),
-            "{failed:?}"
+            c.fields.get("rubato.reconcile.panes").map(String::as_str),
+            Some("0"),
+            "{c:?}"
         );
-        assert!(
-            failed["otel.status_description"].contains("no tmux-ide here"),
-            "{failed:?}"
-        );
-        let ok = &polls[1].fields;
-        assert!(!ok.contains_key("otel.status_code"), "{ok:?}");
     }
 }

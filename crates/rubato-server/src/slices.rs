@@ -39,12 +39,15 @@ const SLICES: &[&str] = &[
     "session_messages",
     "session_log",
     "github_poll",
+    "pulls",
     "import",
     "rooms",
+    "voice",
     "traffic",
     "spend_history",
     "overview",
     "web_link",
+    "webhooks",
 ];
 
 /// The composition root plus this check.

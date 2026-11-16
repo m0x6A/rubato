@@ -98,6 +98,17 @@ pub struct Request {
 /// workspace whose map names the repo places and suggests on its own map (ADR 0046). Never
 /// fails the poll: a repo that cannot be listed keeps its rows and gets its error recorded.
 pub async fn list_open_issues(app: &App, maps: &[(&str, &SystemMap)]) -> Listed {
+    list_open_issues_in(app, maps, None).await
+}
+
+/// As [`list_open_issues`], listing only the repos in `only` (lower case) when it is given: a
+/// webhook refresh (ADR 0074). What is forgotten is still decided by every repo the maps name,
+/// so a refresh for one repo leaves the others' rows alone.
+pub async fn list_open_issues_in(
+    app: &App,
+    maps: &[(&str, &SystemMap)],
+    only: Option<&std::collections::BTreeSet<String>>,
+) -> Listed {
     let mut repos: Vec<String> = Vec::new();
     for (_, m) in maps {
         for r in m.repos_named() {
@@ -110,6 +121,9 @@ pub async fn list_open_issues(app: &App, maps: &[(&str, &SystemMap)]) -> Listed 
     let mut listed = Listed::default();
     let mut counts = Counts::default();
     for repo in &repos {
+        if only.is_some_and(|o| !o.contains(&repo.to_ascii_lowercase())) {
+            continue;
+        }
         match app.github.open_issues(repo, BACKLOG_MAX_PER_REPO).await {
             Ok(listing) => {
                 if !listing.truncated {

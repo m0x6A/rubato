@@ -51,4 +51,10 @@ describe("the workspace this page is on (issue #89, ADR 0049)", () => {
     expect(concernsUs({ type: "changed", at: "t", reason: "layout", workspace: "shop" })).toBe(true);
     expect(concernsUs({ type: "changed", at: "t", reason: "pin" })).toBe(true);
   });
+
+  it("a page that has not learned its workspace is default's: a traffic change of default is ours, of shop not (#131)", () => {
+    expect(currentWorkspace()).toBeNull();
+    expect(concernsUs({ type: "changed", at: "t", reason: "traffic", workspace: "default" })).toBe(true);
+    expect(concernsUs({ type: "changed", at: "t", reason: "traffic", workspace: "shop" })).toBe(false);
+  });
 });

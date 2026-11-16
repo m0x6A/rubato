@@ -7,13 +7,14 @@ mod fake;
 mod local;
 
 pub use api::{
-    BODY_EXCERPT_BYTES, BranchHead, Comment, GitHubApi, ISSUES_PER_PAGE, IssueInfo, Octo,
-    OpenIssueInfo, OpenIssues, OpenPulls, PULLS_PER_PAGE, PostError, PostedComment, PullInfo,
-    READ_TIMEOUT, USER_WRITE_TIMEOUT, issues_from_page, summarize_check_runs,
+    BODY_EXCERPT_BYTES, BranchHead, Comment, FILES_PER_PAGE, GitHubApi, ISSUES_PER_PAGE, IssueInfo,
+    MergeError, Octo, OpenIssueInfo, OpenIssues, OpenPulls, PULLS_PER_PAGE, PostError,
+    PostedComment, PullFull, PullInfo, READ_TIMEOUT, RepoAccess, ReviewInfo, USER_WRITE_TIMEOUT,
+    issues_from_page, summarize_check_runs,
 };
 pub use app::{AppCheckError, check_app};
 pub use fake::{FakeGitHub, FakeInner};
-pub use local::LocalGit;
+pub use local::{DevPull, LocalGit};
 
 /// Open issues per repo from a `RUBATO_DEV_ISSUES` file: `{"owner/name": [{number, title, url}]}`.
 pub fn read_dev_issues(
@@ -23,6 +24,16 @@ pub fn read_dev_issues(
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("RUBATO_DEV_ISSUES {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("RUBATO_DEV_ISSUES {}", path.display()))
+}
+
+/// Open pull requests per repo from a `RUBATO_DEV_PULLS` file, for the local stand-in (#82).
+pub fn read_dev_pulls(
+    path: &std::path::Path,
+) -> anyhow::Result<std::collections::HashMap<String, Vec<DevPull>>> {
+    use anyhow::Context;
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("RUBATO_DEV_PULLS {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("RUBATO_DEV_PULLS {}", path.display()))
 }
 
 #[cfg(test)]

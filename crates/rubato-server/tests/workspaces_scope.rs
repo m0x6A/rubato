@@ -156,6 +156,22 @@ async fn a_layout_written_in_one_workspace_stays_there() {
         !default.layout.positions.contains_key("rubato-server"),
         "default's part of the same id did not move"
     );
+    // The By repo grouping (ADR 0068) is per workspace too.
+    let r = h
+        .req(reqwest::Method::PUT, &scoped("shop", "/api/layout"))
+        .json(&serde_json::json!({ "grouped": { "rubato-server": { "x": 24.0, "y": 48.0 } } }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204, "{}", r.text().await.unwrap());
+    assert!(
+        h.overview(Some("shop"))
+            .await
+            .layout
+            .grouped
+            .contains_key("rubato-server")
+    );
+    assert!(h.overview(None).await.layout.grouped.is_empty());
 }
 
 #[tokio::test]

@@ -2,6 +2,7 @@
 //! sequence numbers, resume on reconnect. Nothing listens for the server; the companion calls.
 
 use super::seq::{Reservation, ReservationError};
+use crate::kernel::config::{Transport, check_server_url, warn_plain_http};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
@@ -42,10 +43,14 @@ pub struct Client {
     /// Envelopes sent and not yet acknowledged; replayed after a reconnect.
     outbox: VecDeque<CompanionEnvelope>,
     last_server_seq: u64,
+    /// `pair --insecure` was used: plain http/ws off loopback is allowed (ADR 0067).
+    allow_plain_http: bool,
 }
 
-/// `http(s)://host` → `ws(s)://host/ws/companion`.
-pub fn ws_url(server_url: &str) -> String {
+/// `http(s)://host` → `ws(s)://host/ws/companion`. Refuses plain text off loopback unless
+/// `allow_plain_http` (ADR 0067).
+pub fn ws_url(server_url: &str, allow_plain_http: bool) -> Result<String> {
+    check_server_url(server_url, allow_plain_http)?;
     let base = server_url.trim_end_matches('/');
     let ws = if let Some(rest) = base.strip_prefix("https://") {
         format!("wss://{rest}")
@@ -54,7 +59,7 @@ pub fn ws_url(server_url: &str) -> String {
     } else {
         base.to_owned()
     };
-    format!("{ws}{}", routes::COMPANION_WS)
+    Ok(format!("{ws}{}", routes::COMPANION_WS))
 }
 
 impl Client {
@@ -70,7 +75,14 @@ impl Client {
             seq,
             outbox: VecDeque::new(),
             last_server_seq,
+            allow_plain_http: false,
         }
+    }
+
+    /// Accept an http/ws server URL off loopback: `allow_plain_http` from `companion.json`.
+    pub fn allow_plain_http(mut self, allow: bool) -> Self {
+        self.allow_plain_http = allow;
+        self
     }
 
     fn envelope(
@@ -95,6 +107,12 @@ impl Client {
         connected: watch::Sender<bool>,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<()> {
+        // Not a lost connection either: retrying cannot make a plain-text URL safe. Checked once
+        // per start, so the opt-in warning is logged once per start, not per reconnect.
+        if check_server_url(&self.server_url, self.allow_plain_http)? == Transport::PlainOffLoopback
+        {
+            warn_plain_http(&self.server_url);
+        }
         let mut backoff = Duration::from_secs(1);
         loop {
             if *shutdown.borrow() {
@@ -136,7 +154,7 @@ impl Client {
         connected: &watch::Sender<bool>,
         shutdown: &mut watch::Receiver<bool>,
     ) -> Result<()> {
-        let mut req = ws_url(&self.server_url)
+        let mut req = ws_url(&self.server_url, self.allow_plain_http)?
             .into_client_request()
             .context("bad server url")?;
         req.headers_mut().insert(
@@ -212,11 +230,11 @@ impl Client {
                                             "hello treated as a replay"
                                         );
                                     }
-                                    self.outbox.retain(|e| e.seq > acked);
+                                    drop_acked(&mut self.outbox, acked);
                                 }
                                 ServerMessage::Welcome { last_seen_companion_seq, .. } => {
                                     let acked = *last_seen_companion_seq;
-                                    self.outbox.retain(|e| e.seq > acked);
+                                    drop_acked(&mut self.outbox, acked);
                                 }
                                 ServerMessage::Error { code, message } => {
                                     tracing::error!(code, message, "server error");
@@ -239,10 +257,44 @@ impl Client {
     }
 }
 
+/// Drop what an ack covers. The outbox is in seq order (each envelope takes the next number as
+/// it is pushed), so this pops from the front instead of scanning up to 10,000 entries.
+fn drop_acked(outbox: &mut VecDeque<CompanionEnvelope>, acked: u64) {
+    while outbox.front().is_some_and(|e| e.seq <= acked) {
+        outbox.pop_front();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kernel::telemetry::capture;
+
+    #[test]
+    fn an_ack_pops_only_what_it_covers() {
+        let outbox = |seqs: std::ops::RangeInclusive<u64>| -> VecDeque<CompanionEnvelope> {
+            seqs.map(|seq| CompanionEnvelope {
+                seq,
+                sent_at: Utc::now(),
+                message: CompanionMessage::Ack { seq },
+            })
+            .collect()
+        };
+        let left = |o: &VecDeque<CompanionEnvelope>| o.iter().map(|e| e.seq).collect::<Vec<_>>();
+        let mut o = outbox(5..=9);
+        drop_acked(&mut o, 7);
+        assert_eq!(left(&o), vec![8, 9]);
+        let mut o = outbox(5..=9);
+        drop_acked(&mut o, 4);
+        assert_eq!(
+            left(&o),
+            vec![5, 6, 7, 8, 9],
+            "an ack below the front drops nothing"
+        );
+        let mut o = outbox(5..=9);
+        drop_acked(&mut o, 100);
+        assert!(o.is_empty(), "an ack past the back drops everything");
+    }
     use crate::server_link::seq::BLOCK;
     use std::future::Future;
     use tokio::net::{TcpListener, TcpStream};
@@ -400,12 +452,18 @@ mod tests {
     #[test]
     fn ws_urls() {
         assert_eq!(
-            super::ws_url("https://rubato.example/"),
+            super::ws_url("https://rubato.example/", false).unwrap(),
             "wss://rubato.example/ws/companion"
         );
         assert_eq!(
-            super::ws_url("http://127.0.0.1:8080"),
+            super::ws_url("http://127.0.0.1:8080", false).unwrap(),
             "ws://127.0.0.1:8080/ws/companion"
         );
+        assert_eq!(
+            super::ws_url("http://192.168.1.20:8080", true).unwrap(),
+            "ws://192.168.1.20:8080/ws/companion"
+        );
+        let refused = super::ws_url("http://rubato.example", false).unwrap_err();
+        assert!(format!("{refused:#}").contains("https"), "{refused:#}");
     }
 }

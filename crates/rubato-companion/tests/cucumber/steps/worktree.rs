@@ -2,7 +2,7 @@
 
 use super::launch_refusal::when_launch;
 use crate::world::*;
-use cucumber::{given, then};
+use cucumber::{given, then, when};
 use rubato_companion::kernel::gitx;
 use rubato_companion::kernel::tmux::session_name;
 use rubato_protocol::{CompanionMessage, IssueRef, LaunchResult};
@@ -164,6 +164,22 @@ async fn then_settings_no_token(w: &mut RubatoWorld) {
     );
 }
 
+#[then("the launch directory has mode 0700 and its prompt file mode 0600")]
+async fn then_launch_dir_private(w: &mut RubatoWorld) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = standin_log(w).await;
+    let args = log.lines().find(|l| l.starts_with("ARGS:")).unwrap();
+    let settings = args
+        .split_whitespace()
+        .skip_while(|a| *a != "--settings")
+        .nth(1)
+        .expect("--settings <file>");
+    let dir = std::path::Path::new(settings).parent().unwrap();
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(dir), 0o700, "{}", dir.display());
+    assert_eq!(mode(&dir.join("prompt.txt")), 0o600, "prompt.txt");
+}
+
 #[then(
     expr = "the server receives a sessions snapshot with issue {int} of {string} from source {string}"
 )]
@@ -186,4 +202,172 @@ async fn then_snapshot_source(w: &mut RubatoWorld, issue: u64, repo: String, sou
         })
         .await;
     assert_eq!(got.as_deref(), Some(source.as_str()));
+}
+
+// ----- ADR 0070: the worktree with git, the tmux pin (plan 147) -------------------------------
+
+/// A script at `fake_bin/<name>` with `body`, written by a child `sh` so this process never
+/// holds it open for writing (ETXTBSY, #217).
+fn script(w: &RubatoWorld, name: &str, body: &str) -> PathBuf {
+    let path = w.fake_bin.join(name);
+    let ok = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("printf '%s' \"$1\" > \"$2\" && chmod +x \"$2\"")
+        .arg("sh")
+        .arg(body)
+        .arg(&path)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+    path
+}
+
+fn git_calls(w: &RubatoWorld) -> PathBuf {
+    w.fake_bin.join("git-calls")
+}
+
+/// Every git call the companion's launch makes is appended, one per line, then run by the real
+/// git (`companion.git_command`).
+#[given("the companion's git records its calls")]
+async fn given_recording_git(w: &mut RubatoWorld) {
+    let body = format!(
+        "#!/bin/sh\necho \"$*\" >> '{}'\nexec git \"$@\"\n",
+        git_calls(w).display()
+    );
+    let path = script(w, "git-recording", &body);
+    w.workspace.companion.git_command = path.to_string_lossy().into_owned();
+}
+
+#[then(expr = "the companion's git ran {string} {int} time(s)")]
+async fn then_git_ran(w: &mut RubatoWorld, call: String, times: usize) {
+    let calls = std::fs::read_to_string(git_calls(w)).unwrap_or_default();
+    let n = calls.lines().filter(|l| l.contains(&call)).count();
+    assert_eq!(n, times, "{calls}");
+}
+
+#[given(expr = "the clone of {string} has a local branch {string}")]
+async fn given_local_branch(w: &mut RubatoWorld, repo: String, branch: String) {
+    RubatoWorld::git(w.repos.get(&repo).unwrap(), &["branch", &branch]);
+}
+
+/// Pushed from another machine: on origin, not in the clone.
+#[given(expr = "{string} has a branch {string} on origin only")]
+async fn given_origin_branch(w: &mut RubatoWorld, repo: String, branch: String) {
+    RubatoWorld::git(
+        w.repos.get(&repo).unwrap(),
+        &["push", "-q", "origin", &format!("main:refs/heads/{branch}")],
+    );
+}
+
+#[then(expr = "the worktree for branch {string} of {string} tracks {string}")]
+async fn then_tracks(w: &mut RubatoWorld, branch: String, repo: String, upstream: String) {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "@{u}"])
+        .current_dir(worktree_of(w, &repo, &branch))
+        .output()
+        .unwrap();
+    let got = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    assert_eq!(got, upstream);
+}
+
+#[then(expr = "the worktree for branch {string} of {string} has no upstream")]
+async fn then_no_upstream(w: &mut RubatoWorld, branch: String, repo: String) {
+    let ok = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "@{u}"])
+        .current_dir(worktree_of(w, &repo, &branch))
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success();
+    assert!(!ok, "a new branch has no upstream until its first push -u");
+}
+
+/// What a `git worktree add` killed half-way leaves: the directory, not the registration.
+#[given(expr = "a leftover directory at the worktree path for branch {string} of {string}")]
+async fn given_leftover(w: &mut RubatoWorld, branch: String, repo: String) {
+    let dir = worktree_of(w, &repo, &branch);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.md"), "mine\n").unwrap();
+}
+
+#[then(expr = "the leftover directory for branch {string} of {string} is as it was")]
+async fn then_leftover_kept(w: &mut RubatoWorld, branch: String, repo: String) {
+    let dir = worktree_of(w, &repo, &branch);
+    let names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["notes.md"]);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("notes.md")).unwrap(),
+        "mine\n"
+    );
+}
+
+/// A registration whose directory is gone: `git worktree list` still lists it, `prunable`.
+#[given(expr = "a stale worktree registration for branch {string} of {string}")]
+async fn given_stale(w: &mut RubatoWorld, branch: String, repo: String) {
+    let clone = w.repos.get(&repo).unwrap().clone();
+    let dir = worktree_of(w, &repo, &branch);
+    RubatoWorld::git(
+        &clone,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            &branch,
+            &dir.to_string_lossy(),
+            "main",
+        ],
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[then(expr = "the stale worktree registration for branch {string} of {string} is still listed")]
+async fn then_stale_kept(w: &mut RubatoWorld, branch: String, repo: String) {
+    let dir = worktree_of(w, &repo, &branch);
+    let listed = gitx::worktrees(w.repos.get(&repo).unwrap()).unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|(p, b)| p == &dir && b.as_deref() == Some(branch.as_str())),
+        "{listed:?}"
+    );
+}
+
+/// `tmux -V` says `version`; everything else is the real tmux.
+#[given(expr = "a tmux that reports version {string}")]
+async fn given_tmux_version(w: &mut RubatoWorld, version: String) {
+    let body = format!(
+        "#!/bin/sh\n[ \"$1\" = -V ] && {{ echo 'tmux {version}'; exit 0; }}\nexec tmux \"$@\"\n"
+    );
+    let path = script(w, "tmux-versioned", &body);
+    w.workspace.companion.tmux_command = path.to_string_lossy().into_owned();
+}
+
+#[then(expr = "the refusal's detail contains {string} and {string}")]
+async fn then_refusal_detail(w: &mut RubatoWorld, a: String, b: String) {
+    let id = w.last_launch.as_ref().unwrap().id;
+    let got = w
+        .server()
+        .wait_for(Duration::from_secs(30), |m| match m {
+            CompanionMessage::Launch(LaunchResult::Refused {
+                command_id, detail, ..
+            }) if *command_id == id => Some(detail.clone()),
+            _ => None,
+        })
+        .await;
+    let detail = got.expect("a refusal");
+    assert!(detail.contains(&a) && detail.contains(&b), "{detail}");
+}
+
+/// The session's tmux session is gone; the next reconcile marks it ended.
+#[when(expr = "the tmux session for {string} branch {string} ends")]
+async fn when_session_ends(w: &mut RubatoWorld, repo: String, branch: String) {
+    w.tmux()
+        .kill_session(&session_name(&repo, &branch))
+        .unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
 }
