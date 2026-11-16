@@ -151,7 +151,8 @@ agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_st
 `web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, selection, handlers);
 `shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
 `scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
-`motion.ts` the one motion switch, `data-motion` on `<html>`);
+`motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
+its retired parts, for every reader that draws or offers ids, ADR 0077);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
 `features/features.test.ts`:
 
@@ -295,7 +296,7 @@ Each of these has an alert rule committed under `observability/alerts/` and a te
 
 ### Map versus territory
 
-Rubato's map is declared. Production traffic is observed. When the two disagree (a service calls a node the map does not connect it to, or a declared seam carries no traffic), that is a finding, shown on the map, not an error to suppress. The overlay only shows it; nothing acts on it by itself. A person may take a discrepancy into the shared map draft and merge it through the map's pull request like any other change, or dismiss it for the workspace (ADRs 0018, 0059, 0060). A part is matched to the service it says it is, by the `service.namespace` and `service.name` that service emits; Rubato never sets or derives them.
+Rubato's map is declared. Production traffic is observed. When the two disagree (a service calls a node the map does not connect it to, or a declared seam carries no traffic), that is a finding, shown on the map, not an error to suppress. The overlay only shows it; nothing acts on it by itself. A person may take a discrepancy into the shared map draft and merge it through the map's pull request like any other change, or dismiss it for the workspace (ADRs 0018, 0059, 0060). A part nobody runs any more is retired, not removed: `retired: "<ADR>"` on the node or seam keeps the id declared, so plans that named it still check, while the map, the skill and Rubato's menus leave it out (ADR 0077). A part is matched to the service it says it is, by the `service.namespace` and `service.name` that service emits; Rubato never sets or derives them.
 
 ## Conventions
 

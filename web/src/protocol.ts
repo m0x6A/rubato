@@ -996,6 +996,11 @@ path?: (string | null)
  */
 repo?: (string | null)
 /**
+ * The ADR that retired this part (ADR 0077). Still declared, so plans and pins that named
+ * it resolve; drawn, offered and suggested nowhere.
+ */
+retired?: (string | null)
+/**
  * The service this part is, exactly as it emits itself in its telemetry (ADR 0059). No
  * default: a part without it is never matched to observed traffic.
  */
@@ -1025,6 +1030,10 @@ id: string
  * Node id of the owner side; must be `from` or `to`.
  */
 owner: string
+/**
+ * The ADR that retired this seam (ADR 0077); a retired seam declares no flows.
+ */
+retired?: (string | null)
 to: string
 }
 /**

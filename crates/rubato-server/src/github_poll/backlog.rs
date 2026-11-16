@@ -304,6 +304,7 @@ mod tests {
                 path: None,
                 description: None,
                 service: None,
+                retired: None,
             }],
             seams: vec![],
             scenarios: vec![],
@@ -541,6 +542,7 @@ mod workspace_tests {
                     path: None,
                     description: None,
                     service: None,
+                    retired: None,
                 })
                 .collect(),
             seams: vec![],

@@ -14,6 +14,8 @@ export interface MapNode {
   description?: string;
   /** The service this part is, as it emits itself (ADR 0059). */
   service?: ServiceId;
+  /** The ADR that retired this part (ADR 0077): still declared, drawn and offered nowhere. */
+  retired?: string;
 }
 
 /** OpenTelemetry `service.namespace` and `service.name`; no namespace only where none is emitted. */
@@ -32,6 +34,8 @@ export interface Seam {
   description?: string;
   /** What crosses the seam, one entry per thing and direction (ADR 0017). */
   flows?: Flow[];
+  /** The ADR that retired this seam (ADR 0077); a retired seam declares no flows. */
+  retired?: string;
 }
 
 export interface Flow {
@@ -136,6 +140,38 @@ export function structuralProblems(map: SystemMap): string[] {
       }
     }
   }
+  // ADR 0077: a retired part is consistent. Nodes first, then seams, in map order, as
+  // `SystemMap::validate` says it, word for word.
+  const adr = (v: string) => /^[0-9]{4}$/.test(v);
+  const retiredNodes = new Set(map.nodes.filter((n) => n.retired !== undefined).map((n) => n.id));
+  for (const n of map.nodes) {
+    if (n.retired === undefined) {
+      continue;
+    }
+    if (!adr(n.retired)) {
+      problems.push(`node ${JSON.stringify(n.id)} retired ${JSON.stringify(n.retired)} is not an ADR number (four digits)`);
+    }
+    if (n.service) {
+      const shown = n.service.namespace ? `${n.service.namespace}/${n.service.name}` : n.service.name;
+      problems.push(`node ${JSON.stringify(n.id)} is retired but names service ${JSON.stringify(shown)}; a retired part matches no traffic`);
+    }
+  }
+  for (const s of map.seams ?? []) {
+    if (s.retired !== undefined) {
+      if (!adr(s.retired)) {
+        problems.push(`seam ${JSON.stringify(s.id)} retired ${JSON.stringify(s.retired)} is not an ADR number (four digits)`);
+      }
+      if ((s.flows ?? []).length > 0) {
+        problems.push(`seam ${JSON.stringify(s.id)} is retired but declares flows`);
+      }
+    } else {
+      for (const end of [s.from, s.to]) {
+        if (retiredNodes.has(end)) {
+          problems.push(`seam ${JSON.stringify(s.id)} is live but ends at retired node ${JSON.stringify(end)}`);
+        }
+      }
+    }
+  }
   const q = JSON.stringify;
   for (const sc of map.scenarios ?? []) {
     if (sc.steps.length === 0) {
@@ -178,6 +214,11 @@ export function loadMapText(text: string, schemaDir: string): SystemMap {
 
 export function loadMap(path: string, schemaDir: string): SystemMap {
   return loadMapText(readFileSync(path, "utf8"), schemaDir);
+}
+
+/** The retired node and seam ids of a map (ADR 0077): still declared, so in `mapIds` too. */
+export function retiredMapIds(map: SystemMap): Set<string> {
+  return new Set([...map.nodes.filter((n) => n.retired !== undefined).map((n) => n.id), ...(map.seams ?? []).filter((s) => s.retired !== undefined).map((s) => s.id)]);
 }
 
 /** Every id a plan may reference. */

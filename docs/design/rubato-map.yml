@@ -65,6 +65,7 @@ nodes:
 
   - id: tmux-ide
     kind: external
+    retired: "0070"
     description: "Retired by ADR 0070: the companion runs tmux and git itself and no longer calls tmux-ide. The id stays so merged plans that name it still check (plan 147 Q1)."
 
   - id: claude-code
@@ -112,6 +113,7 @@ seams:
   - id: companion-tmux-ide
     from: rubato-companion
     to: tmux-ide
+    retired: "0070"
     carries: nothing; retired by ADR 0070
     owner: rubato-companion
     guard: "the companion's Gherkin suite runs with no tmux-ide installed; rubato.launches by outcome on the Launches by outcome panel"

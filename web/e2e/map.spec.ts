@@ -7,7 +7,7 @@ import WebSocket from "ws";
 import { ghostTraffic, routeOverview } from "./fixtures/traffic.ts";
 
 const root = resolve(import.meta.dirname, "../..");
-const map = parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string }[] };
+const map = parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; retired?: string }[] };
 const base = process.env["RUBATO_E2E_URL"] ?? "http://127.0.0.1:18090";
 
 /** Pair a companion for `user` through the API and keep its websocket open. The companion side of ADR 0011. */
@@ -30,14 +30,19 @@ async function connectCompanion(user: string): Promise<WebSocket> {
 
 test("the map renders every node id from system-map.yml", { tag: "@map.every-part" }, async ({ page }) => {
   await page.goto("/");
-  for (const n of map.nodes) {
+  // Every live part is drawn; a retired one is drawn nowhere (ADR 0077).
+  for (const n of map.nodes.filter((x) => x.retired == null)) {
     await expect(page.getByTestId(`node-${n.id}`)).toBeVisible();
+  }
+  for (const n of map.nodes.filter((x) => x.retired != null)) {
+    await expect(page.getByTestId(`node-${n.id}`)).toHaveCount(0);
   }
   await expect(page.getByText("map rubato @")).toBeVisible();
 });
 
 test("By repo boxes each repo's parts, and the Repos tab says what each repo provides (issue #89)", { tag: ["@map.by-repo", "@repos.what-each-provides"] }, async ({ page }) => {
-  const nodes = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; repo?: string }[] }).nodes;
+  // The drawn parts: a retired one is not on the map (ADR 0077).
+  const nodes = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; repo?: string; retired?: string }[] }).nodes.filter((n) => n.retired == null);
   const owned = nodes.filter((n) => n.repo);
   await page.goto("/");
   await expect(page.getByTestId(`node-${owned[0]!.id}`)).toBeVisible();
@@ -240,7 +245,8 @@ test("a dragged part is in the same place in a second browser and after reload",
 });
 
 test("the data flow lens shows rubato-map.yml's flows with arrowheads", { tag: ["@map.flow-lens", "@map.inspect-part-and-seam"] }, async ({ page }) => {
-  const seams = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { seams: { id: string; flows?: { kind: string; carries: string }[] }[] }).seams;
+  // The drawn seams: a retired one is not on the map (ADR 0077).
+  const seams = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { seams: { id: string; retired?: string; flows?: { kind: string; carries: string }[] }[] }).seams.filter((s) => s.retired == null);
   const flows = (kind: string) => seams.flatMap((s) => (s.flows ?? []).filter((f) => f.kind === kind).map((f) => ({ seam: s.id, ...f })));
   const withHead = page.locator(".react-flow__edge-path[marker-end], .react-flow__edge-path[marker-start]");
   await page.goto("/");
@@ -382,7 +388,7 @@ test("selecting an issue with a plan paints its parts and flows", { tag: "@plans
   await expect(page.getByTestId("node-rubato-server")).toHaveClass(/paint-affected/);
   await expect(page.getByTestId("node-web")).toHaveClass(/paint-affected/);
   await expect(page.getByTestId("node-rubato-server")).not.toHaveClass(/dim/);
-  for (const outside of ["rubato-companion", "github", "plan-file", "tmux-ide"]) {
+  for (const outside of ["rubato-companion", "github", "plan-file"]) {
     await expect(page.getByTestId(`node-${outside}`)).toHaveClass(/dim/);
   }
   // Its two flows move along web-server, one in each direction; no other seam carries one.
