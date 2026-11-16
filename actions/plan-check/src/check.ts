@@ -5,7 +5,7 @@
  * named `rubato.plan.check`, carrying the `rubato.*` attributes from `rubato-protocol::otel`.
  */
 import { readFileSync } from "node:fs";
-import { mapIds, seamJoins, type SystemMap } from "./map.ts";
+import { mapIds, retiredMapIds, seamJoins, type SystemMap } from "./map.ts";
 import { legacyKeys, parsePlan, PlanParseError, type DataModel, type Plan, type PlanFlow } from "./parse-plan.ts";
 import { planSha } from "./plan-sha.ts";
 import { validator } from "./schema.ts";
@@ -34,6 +34,8 @@ export interface PlanCheckResult {
   parseError: string | null;
   schemaErrors: string[];
   unknownIds: string[];
+  /** Retired ids the plan names (ADR 0077): reported, never failed. */
+  retiredIds: string[];
   seamsWithoutORow: string[];
   idsChecked: number;
   /** Rows of the plan's Flows table that were checked (ADR 0021). */
@@ -119,6 +121,7 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
     parseError: null,
     schemaErrors: [],
     unknownIds: [],
+    retiredIds: [],
     seamsWithoutORow: [],
     idsChecked: 0,
     flowsChecked: 0,
@@ -146,6 +149,8 @@ export function checkPlanText(text: string, path: string, map: SystemMap, schema
   const ids = referencedIds(plan);
   result.idsChecked = ids.length;
   result.unknownIds = ids.filter((id) => !known.has(id));
+  const retired = retiredMapIds(map);
+  result.retiredIds = [...new Set(ids.filter((id) => retired.has(id)))].sort();
   result.seamsWithoutORow = seamsWithoutORow(plan);
   result.flowsChecked = plan.flows?.length ?? 0;
   result.flowsOffSeam = flowsOffSeam(plan, map).map((f) => `${f.from} → ${f.to} over ${f.seam}`);
@@ -177,6 +182,7 @@ export function logLine(r: PlanCheckResult): Record<string, unknown> {
     "rubato.issue": r.plan ? `${r.plan.issue.repo}#${r.plan.issue.number}` : null,
     "rubato.plan.path": r.path,
     "rubato.plan.unknown_ids": r.unknownIds,
+    "rubato.plan.retired_ids": r.retiredIds,
     "rubato.plan.o_rows_missing": r.seamsWithoutORow,
     ids_checked: r.idsChecked,
     flows_checked: r.flowsChecked,
