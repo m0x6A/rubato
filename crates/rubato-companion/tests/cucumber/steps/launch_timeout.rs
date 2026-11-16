@@ -15,20 +15,20 @@ fn command_id(r: &LaunchResult) -> uuid::Uuid {
 }
 
 fn marker(w: &RubatoWorld) -> PathBuf {
-    w.root.join("tmux-ide-hung")
+    w.root.join("hung")
 }
 
-/// Wraps the real tmux-ide. On `<sub> <verb>` it records the pid of a 60 s `sleep` and waits for
-/// it; anything else goes to the real one. Written by a child `sh` so this process never holds
-/// it open for writing.
-#[given(expr = "a tmux-ide that hangs on {string}")]
-async fn given_hanging_tmux_ide(w: &mut RubatoWorld, call: String) {
-    let (sub, verb) = call
-        .split_once(' ')
-        .expect("two words, like \"worktree create\"");
-    let script = w.fake_bin.join("tmux-ide-hanging");
+/// Wraps the real `tmux` or `git` (ADR 0070: the launch runs both itself). When its arguments
+/// contain `call` (for example `worktree add` or `new-session`) it records the pid of a 60 s
+/// `sleep` and waits for it; anything else goes to the real one. The companion is pointed at it
+/// through `companion.tmux_command` or `companion.git_command`, so the harness's own git and
+/// tmux calls are not wrapped. Written by a child `sh` so this process never holds it open for
+/// writing.
+#[given(expr = "a {word} that hangs on {string}")]
+async fn given_hanging(w: &mut RubatoWorld, tool: String, call: String) {
+    let script = w.fake_bin.join(format!("{tool}-hanging"));
     let body = format!(
-        "#!/bin/sh\nif [ \"$1\" = '{sub}' ] && [ \"$2\" = '{verb}' ]; then\n  sleep 60 &\n  echo $! > '{}'\n  wait\n  exit 1\nfi\nexec tmux-ide \"$@\"\n",
+        "#!/bin/sh\ncase \" $* \" in\n  *' {call} '*)\n    sleep 60 &\n    echo $! > '{}'\n    wait\n    exit 1;;\nesac\nexec {tool} \"$@\"\n",
         marker(w).display()
     );
     let ok = std::process::Command::new("sh")
@@ -41,7 +41,12 @@ async fn given_hanging_tmux_ide(w: &mut RubatoWorld, call: String) {
         .unwrap()
         .success();
     assert!(ok);
-    w.workspace.companion.tmux_ide_command = script.to_string_lossy().into_owned();
+    let path = script.to_string_lossy().into_owned();
+    match tool.as_str() {
+        "tmux" => w.workspace.companion.tmux_command = path,
+        "git" => w.workspace.companion.git_command = path,
+        other => panic!("no hanging {other}: tmux or git"),
+    }
 }
 
 #[given(expr = "a command timeout of {int} seconds")]
@@ -49,7 +54,7 @@ async fn given_timeout(w: &mut RubatoWorld, secs: u64) {
     w.workspace.companion.command_timeout_secs = secs;
 }
 
-#[when("the launch is inside the hanging tmux-ide")]
+#[when("the launch is inside the hanging command")]
 async fn when_inside(w: &mut RubatoWorld) {
     let m = marker(w);
     for _ in 0..300 {
@@ -58,7 +63,7 @@ async fn when_inside(w: &mut RubatoWorld) {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("the launch never reached the hanging tmux-ide");
+    panic!("the launch never reached the hanging command");
 }
 
 #[then(expr = "the server receives a failed launch result whose error contains {string}")]
@@ -94,7 +99,7 @@ async fn then_hook_first(w: &mut RubatoWorld) {
     );
 }
 
-#[then("the hanging tmux-ide is no longer running")]
+#[then("the hanging command is no longer running")]
 async fn then_gone(w: &mut RubatoWorld) {
     let pid = std::fs::read_to_string(marker(w)).expect("the hanging call ran");
     for _ in 0..100 {
@@ -109,5 +114,5 @@ async fn then_gone(w: &mut RubatoWorld) {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("the hanging tmux-ide's child {pid} still runs");
+    panic!("the hanging command's child {pid} still runs");
 }

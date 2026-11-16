@@ -9,6 +9,7 @@ pub mod app;
 pub mod kernel;
 pub mod tasks;
 
+pub mod agent_reports;
 pub mod approve;
 pub mod auth;
 pub mod companion_link;
@@ -23,6 +24,7 @@ pub mod overview;
 pub mod pairing;
 pub mod pins;
 pub mod plan_drafts;
+pub mod plan_status;
 pub mod plans;
 pub mod pulls;
 pub mod queue;
@@ -31,8 +33,10 @@ pub mod session_log;
 pub mod session_messages;
 pub mod spend_history;
 pub mod traffic;
+pub mod voice;
 pub mod web_link;
 pub mod webhooks;
+pub mod workspace_settings;
 
 #[cfg(test)]
 mod slices;

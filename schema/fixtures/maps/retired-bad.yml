@@ -1,0 +1,33 @@
+# Every way a retired part can be inconsistent (ADR 0077), once each. Read by
+# rubato_protocol::map::tests and actions/plan-check/test: same problems, same order.
+version: 1
+name: retired-bad
+nodes:
+  - id: companion
+    kind: context
+  - id: runner
+    kind: external
+    retired: "70"
+  - id: tracer
+    kind: external
+    retired: "0070"
+    service: { name: tracer }
+  - id: agent
+    kind: external
+seams:
+  - id: companion-runner
+    from: companion
+    to: runner
+    owner: companion
+    retired: "0070"
+    flows:
+      - { kind: control, from: companion, to: runner, carries: worktree create }
+  - id: companion-tracer
+    from: companion
+    to: tracer
+    owner: companion
+  - id: companion-agent
+    from: companion
+    to: agent
+    owner: companion
+    retired: "ADR 70"

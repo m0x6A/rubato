@@ -42,6 +42,21 @@ test("a dashboard without the Map age panel is rejected", () => {
   assert.deepEqual(r.problems, ['the dashboard has no "Map age" panel that queries rubato_map_loaded_at']);
 });
 
+test("a dashboard without the Launches by outcome panel is rejected (#147, ADR 0070)", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Launches by outcome")));
+  assert.deepEqual(r.problems, ['the dashboard has no "Launches by outcome" panel that queries rubato_launches_total']);
+});
+
+test("a dashboard without the MCP calls panel is rejected (#221, ADR 0071)", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "MCP calls by tool and outcome")));
+  assert.deepEqual(r.problems, ['the dashboard has no "MCP calls by tool and outcome" panel that queries rubato_mcp_calls_total']);
+});
+
+test("a dashboard without the Plan status pushes panel is rejected (#228, ADR 0071)", () => {
+  const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Plan status pushes")));
+  assert.deepEqual(r.problems, ['the dashboard has no "Plan status pushes" panel that queries rubato_plan_status_sent_total']);
+});
+
 test("a dashboard without the Backlog age panel is rejected", () => {
   const r = check(rules, tests, changed((panels) => panels.filter((p) => p.title !== "Backlog age")));
   assert.deepEqual(r.problems, ['the dashboard has no "Backlog age" panel that queries rubato_backlog_listed_at']);

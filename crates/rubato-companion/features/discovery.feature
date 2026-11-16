@@ -1,6 +1,6 @@
 Feature: Discovering sessions
   Identity comes from the branch: pane cwd → worktree → branch → issue (ADR 0006). State comes
-  from hooks or from tmux-ide with hook authority; anything else is unknown.
+  from hooks only; a pane is metadata, so anything without a hook is unknown (ADR 0070).
 
   Scenario: A pane in an issue worktree is discovered, untrusted until a hook speaks
     Given a test server that approves pairing for user "m0x6A"
@@ -11,28 +11,29 @@ Feature: Discovering sessions
     Then the server receives a sessions snapshot with issue 9 of "acme/pantry" on branch "issue/9-menu"
     And that snapshot entry has source "scraped" and status "unknown"
 
-  Scenario: tmux-ide team --json from the real tool parses
-    Given a private tmux server
-    When the companion runs tmux-ide team --json
-    Then it parses and the tmux-ide version is at least "2.9.0"
-
-  Scenario: A recorded fleet with hook authority yields a trusted state
-    Given the recorded tmux-ide fleet "team.json"
-    When the companion merges it into an empty registry
-    Then pane "%2" has status "unknown" from source "scraped"
-    And pane "%5" has status "working" from source "tmux_ide"
-
-  Scenario: With no tmux-ide events to follow, discovery runs on the timer and the companion stays up
+  Scenario: A hook from the pane's session makes it trusted
+    A session started by hand reports state once its hooks are opted in (plan 147 Q3).
     Given a test server that approves pairing for user "m0x6A"
     And a paired companion for user "m0x6A"
-    And tmux-ide has no events to follow
     And a temporary repository "acme/pantry" with a bare origin
     And a worktree for branch "issue/9-menu" of "acme/pantry" with a tmux pane running the stand-in claude in it
     And the companion daemon is running and connected
     Then the server receives a sessions snapshot with issue 9 of "acme/pantry" on branch "issue/9-menu"
-    And the companion logs "tmux-ide events unavailable; timer only"
-    When 3 seconds pass
-    Then the companion daemon is still running
+    When Claude Code in the worktree for branch "issue/9-menu" of "acme/pantry" posts the recorded hook "user-prompt-submit.json"
+    Then the server receives a sessions snapshot where issue 9 of "acme/pantry" has source "hook" and status "working"
+
+  Scenario: A session started by hand reports through the hooks render-hooks wrote into its worktree
+    ADR 0078: the opt-in the companion merges into .claude/settings.local.json is what such a
+    session runs; its command posts to the companion like a launched session's.
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And a temporary repository "acme/pantry" with a bare origin
+    And a worktree for branch "issue/9-menu" of "acme/pantry" with a tmux pane running the stand-in claude in it
+    And the companion daemon is running and connected
+    And the developer opts the worktree for branch "issue/9-menu" of "acme/pantry" in by hand
+    Then the server receives a sessions snapshot with issue 9 of "acme/pantry" on branch "issue/9-menu"
+    When Claude Code started by hand in the worktree for branch "issue/9-menu" of "acme/pantry" fires the opted-in hook "user-prompt-submit.json"
+    Then the server receives a sessions snapshot where issue 9 of "acme/pantry" has source "hook" and status "working"
 
   Scenario: A session that checks out an issue branch moves onto that issue
     Issue #80: identity is read again when the worktree's HEAD changes, off the registry lock.

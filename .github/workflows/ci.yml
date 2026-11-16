@@ -12,8 +12,6 @@ permissions:
 env:
   # sha256 GitHub records for the tmux 3.8 release asset; tmux publishes no checksum file.
   TMUX_SHA256: e79c699c7e949dccd0a4a125e17b8d1261e311b16979dbc8eb34542f3966d82e
-  # npm checks the registry's integrity hash; the GitHub release ships no npm tarball to pin.
-  TMUX_IDE_VERSION: 2.9.24
   PROMETHEUS_VERSION: 3.16.0
   # The prometheus-3.16.0.linux-amd64.tar.gz line of that release's sha256sums.txt.
   PROMETHEUS_SHA256: 68727009472a2c02e1ff7f062fd5b3e637285bffc8fc2d340c76fb449d6e0f34
@@ -34,15 +32,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - name: Install tmux 3.8 and tmux-ide for the companion's Gherkin suite
+      - name: Install tmux 3.8 for the companion's Gherkin suite (no tmux-ide, ADR 0070)
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q libevent-dev libncurses-dev bison
           wget -q https://github.com/tmux/tmux/releases/download/3.8/tmux-3.8.tar.gz
           echo "$TMUX_SHA256  tmux-3.8.tar.gz" | sha256sum -c -
           tar xzf tmux-3.8.tar.gz && cd tmux-3.8 && ./configure --prefix="$HOME/.local" -q && make -s -j && make -s install
-          npm install -g "tmux-ide@$TMUX_IDE_VERSION"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: tmux -V && tmux-ide --version
+      - run: tmux -V
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
@@ -120,13 +117,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Install tmux 3.8 and tmux-ide
+      - name: Install tmux 3.8
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q libevent-dev libncurses-dev bison
           wget -q https://github.com/tmux/tmux/releases/download/3.8/tmux-3.8.tar.gz
           echo "$TMUX_SHA256  tmux-3.8.tar.gz" | sha256sum -c -
           tar xzf tmux-3.8.tar.gz && cd tmux-3.8 && ./configure --prefix="$HOME/.local" -q && make -s -j && make -s install
-          npm install -g "tmux-ide@$TMUX_IDE_VERSION"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
       - run: cargo build --workspace

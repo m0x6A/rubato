@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VoiceJoinFailed",
+  "description": "A failed join, reported by the browser (`POST` `routes::VOICE_JOIN_FAILED`): Rubato never sees\nLiveKit, so this is the only signal for a LiveKit that is down or unreachable.",
+  "type": "object",
+  "properties": {
+    "branch": {
+      "type": "string"
+    },
+    "number": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "reason": {
+      "description": "One of `join_reason`; anything else is counted as `other`.",
+      "type": "string"
+    },
+    "repo": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "repo",
+    "number",
+    "branch",
+    "reason"
+  ]
+}

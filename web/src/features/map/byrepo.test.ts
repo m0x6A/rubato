@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { overview, realMap } from "../../../test/fixtures.ts";
+import { liveNodes, overview, realMap } from "../../../test/fixtures.ts";
 import type { SystemMap } from "../../protocol.ts";
 import { NODE_HEIGHT, NODE_WIDTH, buildGraph, layoutByRepo, repoGroupId } from "./graph.ts";
 
@@ -48,7 +48,7 @@ describe("the By repo grouping (issue #89)", () => {
     const out = await layoutByRepo(buildGraph(overview()));
     expect(out.groups.map((b) => b.repo)).toEqual(["m0x6A/rubato"]);
     const inside = [...out.parts.values()].filter((p) => p.parent).length;
-    expect(inside).toBe(realMap().nodes.filter((n) => n.repo).length);
-    expect(out.parts.size).toBe(realMap().nodes.length);
+    expect(inside).toBe(liveNodes().filter((n) => n.repo).length);
+    expect(out.parts.size).toBe(liveNodes().length);
   });
 });

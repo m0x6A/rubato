@@ -18,7 +18,7 @@ Feature: Pairing a companion with a GitHub login
     And a paired companion for user "m0x6A"
     When the companion daemon starts
     Then the server receives a hello for user "m0x6A" with protocol version 1
-    And the server receives a heartbeat naming the tmux-ide version
+    And the server receives a heartbeat naming the tmux version
 
   Scenario: Shutdown stops every task and returns Ok
     Given a test server that approves pairing for user "m0x6A"
@@ -57,3 +57,34 @@ Feature: Pairing a companion with a GitHub login
     When the companion daemon starts
     Then the server receives a hello for user "m0x6A" with protocol version 1
     And the companion has logged 2 warnings mentioning "travel unencrypted"
+
+  Scenario: status says which directories are opted in, and prints no token
+    Sessions started by hand report only through a per-repo opt-in (ADR 0078); status is where a
+    developer sees it, and its token stays in the header file (ADR 0063).
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And a temporary repository "acme/aster" with a bare origin
+    And a temporary repository "acme/birch" with a bare origin
+    And a temporary repository "acme/cedar" with a bare origin
+    And the workspace is written to local.yml
+    And the clone of "acme/cedar" has our hooks on port 1
+    And the companion daemon is running and connected
+    When the developer opts the clone of "acme/aster" in with render-hooks --into
+    And the developer runs rubato-companion status
+    Then status says "opted in" for the clone of "acme/aster"
+    And status says "not opted in; run: rubato-companion render-hooks --into" for the clone of "acme/birch"
+    And status says "opted in, stale port 1" for the clone of "acme/cedar"
+    And status ends with "checked 3 directories: 1 opted in, 1 stale"
+    And status says the hook endpoint is "listening"
+    And status prints no token
+
+  Scenario: status says when nothing listens on the hook port
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And a temporary repository "acme/aster" with a bare origin
+    And the workspace is written to local.yml
+    And the companion daemon is running and connected
+    When the companion is told to shut down
+    Then the daemon returns Ok within 5 seconds
+    When the developer runs rubato-companion status
+    Then status says the hook endpoint is "not listening"

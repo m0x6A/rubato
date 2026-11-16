@@ -9,8 +9,8 @@
 //!   and enforces the spend cap off the loop, #172):
 //!   ending while shutdown is not requested logs `rubato.task.exited` and makes `run` return
 //!   `Err`, which `main` turns into a non-zero exit;
-//! - best-effort (tmux-ide events watcher): ending is normal on a machine with no adopted
-//!   session; discovery runs on the timer;
+//! - best-effort: none since tmux-ide's events watcher went (ADR 0070); discovery runs on the
+//!   reconcile timer and is woken by launches;
 //! - on shutdown every task is aborted and `Cancelled` is clean, so `run` returns `Ok` at once.
 //!
 //! At start (plan 122 §D1) the hook receiver binds the port and token the last run published
@@ -22,7 +22,6 @@ use crate::kernel::claude::Claude;
 use crate::kernel::config::{HookEndpoint, State, Workspace};
 use crate::kernel::telemetry::Metrics;
 use crate::kernel::tmux::Tmux;
-use crate::kernel::tmux_ide::TmuxIde;
 use crate::launch::Launcher;
 use crate::plan_mirror::PlanMirrorTask;
 use crate::server_link::{Client, Identity, Reservation};
@@ -172,11 +171,12 @@ async fn run(
         cfg.workspace.companion.tmux_command.clone(),
         cfg.workspace.companion.tmux_tmpdir.clone(),
     );
-    let tmux_ide = TmuxIde::new(
-        cfg.workspace.companion.tmux_ide_command.clone(),
-        tmux.clone(),
-    )
-    .with_timeout(cfg.workspace.companion.command_timeout());
+    // The launch's tmux calls get the launch deadline, as tmux-ide's did; reconcile keeps
+    // `proc::LOCAL_TIMEOUT` (plan 147 Decision 9).
+    let launch_tmux = Tmux {
+        timeout: cfg.workspace.companion.command_timeout(),
+        ..tmux.clone()
+    };
     // The live limits; a `Welcome` that changes them wakes every reader (#172).
     let (limits, _) = watch::channel(cfg.workspace.companion.limits);
     // What the server announced in its last Welcome (ADR 0051).
@@ -227,13 +227,39 @@ async fn run(
     )
     .allow_plain_http(cfg.state.allow_plain_http);
 
+    // The agent-facing MCP server on the hook receiver (ADR 0071, plan 220 §4). Built before any
+    // launch can run, so launches restored at start count as initialized.
+    let agent_mcp = crate::agent_mcp::AgentMcp::new(
+        registry.clone(),
+        metrics.clone(),
+        server_capabilities.clone(),
+        out_tx.clone(),
+        connected_tx.subscribe(),
+    )
+    .await;
+    let (mcp_open, mcp_guarded) = crate::agent_mcp::routers(agent_mcp.clone());
+
     let mut tasks = Tasks::default();
     tasks.spawn(
         "server_link",
         Kind::Essential,
         client.run(out_rx, in_tx, connected_tx, shutdown.clone()),
     );
-    tasks.spawn("hooks", Kind::Essential, server.serve());
+    tasks.spawn(
+        "hooks",
+        Kind::Essential,
+        server.serve_with(mcp_open, mcp_guarded),
+    );
+    tasks.spawn(
+        "agent_mcp_drain",
+        Kind::Essential,
+        crate::agent_mcp::drain(agent_mcp.clone(), shutdown.clone()),
+    );
+    tasks.spawn(
+        "agent_mcp_watch",
+        Kind::BestEffort,
+        crate::agent_mcp::watch(agent_mcp.clone(), shutdown.clone()),
+    );
     tasks.spawn(
         "heartbeat",
         Kind::Essential,
@@ -242,21 +268,17 @@ async fn run(
             cfg.state.companion_id,
             cfg.state.user.clone(),
             metrics.clone(),
-            tmux_ide.clone(),
+            // A headless companion has no tmux to name (ADR 0062).
+            (!cfg.workspace.companion.is_headless()).then(|| tmux.clone()),
             limits.subscribe(),
             shutdown.clone(),
         ),
     );
-    // Discovery reads tmux and tmux-ide. A headless companion has neither: its registry holds
-    // only what it launched, and the child processes are the authority (plan 122 §D14).
+    // Discovery reads tmux. A headless companion has none: its registry holds only what it
+    // launched, and the child processes are the authority (plan 122 §D14).
     if cfg.workspace.companion.is_headless() {
         drop(poll_rx);
     } else {
-        tasks.spawn(
-            "events",
-            Kind::BestEffort,
-            sessions::watch_events(tmux_ide.clone(), poll_tx.clone(), shutdown.clone()),
-        );
         tasks.spawn(
             "reconcile",
             Kind::Essential,
@@ -265,7 +287,6 @@ async fn run(
                 registry.clone(),
                 metrics.clone(),
                 tmux.clone(),
-                tmux_ide.clone(),
                 limits.subscribe(),
                 poll_rx,
                 shutdown.clone(),
@@ -293,8 +314,7 @@ async fn run(
         paired_user: cfg.state.user.clone(),
         state_dir: cfg.state_dir.clone(),
         hook_endpoint: hook_endpoint.clone(),
-        tmux: tmux.clone(),
-        tmux_ide: tmux_ide.clone(),
+        tmux: launch_tmux,
     });
     let (launch_tx, launch_rx) = mpsc::unbounded_channel::<LaunchCommand>();
     tasks.spawn(
@@ -307,6 +327,7 @@ async fn run(
             out_tx.clone(),
             poll_tx.clone(),
             headless.clone(),
+            metrics.clone(),
         ),
     );
     let (input_tx, input_rx) = mpsc::unbounded_channel::<SessionMessage>();
@@ -409,6 +430,7 @@ async fn run(
         plan_mirror: mirror_tx,
         spend: spend_tx,
         headless,
+        agent_mcp: Some(agent_mcp),
     };
     let supervised = supervise(tasks, shutdown.clone());
     tokio::pin!(supervised);
@@ -433,6 +455,8 @@ pub fn hello_capabilities(skill: Option<&str>, mode: rubato_protocol::ClientKind
         capability::DRAFT_RESTORE.to_owned(),
         capability::SESSION_STOP.to_owned(),
         capability::ROOM_TURNS.to_owned(),
+        // It serves MCP to its launched sessions and takes `PlanStatus` (ADR 0071, plan 220 §6).
+        capability::AGENT_MCP.to_owned(),
     ];
     if mode == rubato_protocol::ClientKind::Headless {
         caps.push(capability::HEADLESS.to_owned());
@@ -467,6 +491,8 @@ struct Dispatch {
     /// Headless mode: turns killed on a revoked pairing (ADR 0062); the spend task kills one on
     /// a cap hit.
     headless: Option<sessions::Headless>,
+    /// Where a `PlanStatus` goes (ADR 0071). `None` in tests that exercise other arms.
+    agent_mcp: Option<Arc<crate::agent_mcp::AgentMcp>>,
 }
 
 impl Dispatch {
@@ -502,6 +528,12 @@ impl Dispatch {
                     // Queued too: one paste at a time, after the Welcome that came before it.
                     ServerMessage::SessionMessage(m) => {
                         let _ = self.session_input.send(m);
+                    }
+                    // The newest per launch answers `plan_status` (ADR 0071, plan 220 §6).
+                    ServerMessage::PlanStatus(s) => {
+                        if let Some(a) = &self.agent_mcp {
+                            a.on_plan_status(*s);
+                        }
                     }
                     ServerMessage::Error { code, .. } if code == "auth" => {
                         tracing::error!("pairing token rejected; re-pair with `rubato-companion pair`");
@@ -653,6 +685,7 @@ mod tests {
             capability::DRAFT_RESTORE,
             capability::SESSION_STOP,
             capability::ROOM_TURNS,
+            capability::AGENT_MCP,
             "skill:0.2.0",
         ] {
             assert!(with.iter().any(|x| x == c), "{c} in {with:?}");
@@ -791,6 +824,7 @@ mod tests {
             plan_mirror: mirror_tx,
             spend: spend_tx,
             headless: None,
+            agent_mcp: None,
         };
         let looped =
             tokio::spawn(

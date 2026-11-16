@@ -483,3 +483,46 @@ tests:
       - eval_time: 12m
         alertname: GitHubWebhooksStuck
         exp_alerts: []
+
+  # #146, ADR 0073: after a restart no call has succeeded yet and every transcription times out:
+  # no `ok` series exists at all, and the rule still fires.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_voice_speech_total{rubato_voice_op="stt",rubato_outcome="timeout",rubato_voice_provider="openai_compatible"}'
+        values: "0+1x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpeechProviderFailing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-speech
+              owner: rubato-server
+            exp_annotations:
+              summary: "Every speech provider call failed in the last 10 minutes"
+              panel: Voice
+
+  # Some calls fail but others succeed: the provider works, no alert. Only `ok`, `empty` and
+  # `busy`: no alert either.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_voice_speech_total{rubato_voice_op="tts",rubato_outcome="status",rubato_voice_provider="openai_compatible"}'
+        values: "0+1x15"
+      - series: 'rubato_voice_speech_total{rubato_voice_op="stt",rubato_outcome="ok",rubato_voice_provider="openai_compatible"}'
+        values: "0+2x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpeechProviderFailing
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'rubato_voice_speech_total{rubato_voice_op="stt",rubato_outcome="ok",rubato_voice_provider="fake"}'
+        values: "0+1x15"
+      - series: 'rubato_voice_speech_total{rubato_voice_op="stt",rubato_outcome="empty",rubato_voice_provider="fake"}'
+        values: "0+1x15"
+      - series: 'rubato_voice_speech_total{rubato_voice_op="stt",rubato_outcome="busy",rubato_voice_provider="fake"}'
+        values: "0+1x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpeechProviderFailing
+        exp_alerts: []

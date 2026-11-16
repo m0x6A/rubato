@@ -23,6 +23,8 @@ export interface MapSummary {
   nodes: { id: string; kind: string; repo?: string; description?: string }[];
   seams: { id: string; from: string; to: string; owner: string; carries?: string; description?: string; flows?: { kind: string; from: string; to: string; carries: string }[] }[];
   scenarios: { id: string; name: string; description?: string; steps: { seam: string; from: string; to: string; kind: string; carries: string; says?: string }[] }[];
+  /** Retired ids (ADR 0077): still declared, so merged plans check, but never ids to name now. */
+  retired: { id: string; what: "node" | "seam"; adr: string }[];
   repo: string | null;
   plan_path_template: string;
 }
@@ -40,7 +42,7 @@ export async function summarize(ws: Workspace, cwd: string, m: MapClone = ws.map
     map_file: file,
     map_version: headSha(m.local),
     name: map.name,
-    nodes: map.nodes.map((n) => {
+    nodes: map.nodes.filter((n) => n.retired === undefined).map((n) => {
       const out: MapSummary["nodes"][number] = { id: n.id, kind: n.kind };
       if (n.repo) {
         out.repo = n.repo;
@@ -50,7 +52,7 @@ export async function summarize(ws: Workspace, cwd: string, m: MapClone = ws.map
       }
       return out;
     }),
-    seams: (map.seams ?? []).map((s) => {
+    seams: (map.seams ?? []).filter((s) => s.retired === undefined).map((s) => {
       const out: MapSummary["seams"][number] = { id: s.id, from: s.from, to: s.to, owner: s.owner };
       if (s.carries) {
         out.carries = s.carries;
@@ -89,6 +91,10 @@ export async function summarize(ws: Workspace, cwd: string, m: MapClone = ws.map
       }
       return out;
     }),
+    retired: [
+      ...map.nodes.flatMap((n) => (n.retired === undefined ? [] : [{ id: n.id, what: "node" as const, adr: n.retired }])),
+      ...(map.seams ?? []).flatMap((s) => (s.retired === undefined ? [] : [{ id: s.id, what: "seam" as const, adr: s.retired }])),
+    ],
     repo,
     plan_path_template: override ?? "docs/plans/{issue}.md",
   };
@@ -99,6 +105,7 @@ export function render(s: MapSummary): string {
     `# System map: ${s.name}`,
     `map: ${s.map_file} @ ${s.map_version} (rubato.map.version)`,
     `repo: ${s.repo ?? "(not a connected repo)"}; plan path: ${s.plan_path_template}`,
+    `${s.nodes.length} nodes, ${s.seams.length} seams, ${s.retired.length} retired`,
     "",
     "## Nodes (use these ids, invent none)",
     ...s.nodes.map((n) => `- ${n.id} [${n.kind}]${n.repo ? ` ${n.repo}` : ""}${n.description ? ` — ${n.description}` : ""}`),
@@ -117,6 +124,14 @@ export function render(s: MapSummary): string {
             `- ${sc.id}: ${sc.name}${sc.description ? ` — ${sc.description}` : ""}`,
             ...sc.steps.map((st, i) => `  ${i + 1}. ${st.kind}: ${st.from} → ${st.to} over ${st.seam}: ${st.carries}${st.says ? ` — ${st.says}` : ""}`),
           ]),
+        ]
+      : []),
+    ...(s.retired.length
+      ? [
+          "",
+          "## Retired (do not use)",
+          "Still declared, so the plans that named them still check (ADR 0077); name none of them now.",
+          ...s.retired.map((r) => `- ${r.id} (${r.what}), retired by ADR ${r.adr}`),
         ]
       : []),
   ];

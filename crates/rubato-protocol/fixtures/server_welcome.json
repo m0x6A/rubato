@@ -23,7 +23,8 @@
     },
     "capabilities": [
       "session_messages",
-      "drafts"
+      "drafts",
+      "agent_mcp"
     ]
   }
 }

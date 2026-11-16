@@ -101,6 +101,11 @@ pub struct DraftSummary {
     /// Who last committed the imported plan file, kept with the draft the importer owns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_author: Option<String>,
+    /// Whether the plan in that revision fits the workspace's map (`plan_fit`), derived on each
+    /// overview build (ADR 0071, plan 226 §4). Absent when it does not parse, or from an older
+    /// server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fits: Option<bool>,
 }
 
 /// One settled revision, without its files.

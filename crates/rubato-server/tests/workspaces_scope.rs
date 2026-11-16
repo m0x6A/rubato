@@ -50,6 +50,7 @@ async fn two_workspaces() -> H {
             map_path: "docs/design/rubato-map.yml".into(),
             map_ref: "main".into(),
             map_file: Some(root.join("docs/design/rubato-map.yml")),
+            settings: Default::default(),
         },
         WorkspaceEntry {
             id: "shop".into(),
@@ -58,6 +59,7 @@ async fn two_workspaces() -> H {
             map_path: "system-map.yml".into(),
             map_ref: "main".into(),
             map_file: Some(shop_file),
+            settings: Default::default(),
         },
     ];
     let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
@@ -308,6 +310,7 @@ async fn shared_auth() -> H {
             map_path: "system-map.yml".into(),
             map_ref: "main".into(),
             map_file: Some(file),
+            settings: Default::default(),
         });
     }
     cfg.workspaces = entries;

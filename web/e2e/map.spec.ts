@@ -7,7 +7,7 @@ import WebSocket from "ws";
 import { ghostTraffic, routeOverview } from "./fixtures/traffic.ts";
 
 const root = resolve(import.meta.dirname, "../..");
-const map = parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string }[] };
+const map = parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; retired?: string }[] };
 const base = process.env["RUBATO_E2E_URL"] ?? "http://127.0.0.1:18090";
 
 /** Pair a companion for `user` through the API and keep its websocket open. The companion side of ADR 0011. */
@@ -30,14 +30,19 @@ async function connectCompanion(user: string): Promise<WebSocket> {
 
 test("the map renders every node id from system-map.yml", { tag: "@map.every-part" }, async ({ page }) => {
   await page.goto("/");
-  for (const n of map.nodes) {
+  // Every live part is drawn; a retired one is drawn nowhere (ADR 0077).
+  for (const n of map.nodes.filter((x) => x.retired == null)) {
     await expect(page.getByTestId(`node-${n.id}`)).toBeVisible();
+  }
+  for (const n of map.nodes.filter((x) => x.retired != null)) {
+    await expect(page.getByTestId(`node-${n.id}`)).toHaveCount(0);
   }
   await expect(page.getByText("map rubato @")).toBeVisible();
 });
 
 test("By repo boxes each repo's parts, and the Repos tab says what each repo provides (issue #89)", { tag: ["@map.by-repo", "@repos.what-each-provides"] }, async ({ page }) => {
-  const nodes = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; repo?: string }[] }).nodes;
+  // The drawn parts: a retired one is not on the map (ADR 0077).
+  const nodes = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; repo?: string; retired?: string }[] }).nodes.filter((n) => n.retired == null);
   const owned = nodes.filter((n) => n.repo);
   await page.goto("/");
   await expect(page.getByTestId(`node-${owned[0]!.id}`)).toBeVisible();
@@ -240,7 +245,8 @@ test("a dragged part is in the same place in a second browser and after reload",
 });
 
 test("the data flow lens shows rubato-map.yml's flows with arrowheads", { tag: ["@map.flow-lens", "@map.inspect-part-and-seam"] }, async ({ page }) => {
-  const seams = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { seams: { id: string; flows?: { kind: string; carries: string }[] }[] }).seams;
+  // The drawn seams: a retired one is not on the map (ADR 0077).
+  const seams = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { seams: { id: string; retired?: string; flows?: { kind: string; carries: string }[] }[] }).seams.filter((s) => s.retired == null);
   const flows = (kind: string) => seams.flatMap((s) => (s.flows ?? []).filter((f) => f.kind === kind).map((f) => ({ seam: s.id, ...f })));
   const withHead = page.locator(".react-flow__edge-path[marker-end], .react-flow__edge-path[marker-start]");
   await page.goto("/");
@@ -314,7 +320,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
     const active = page.locator(".react-flow__edge.step-active");
 
     // Step 1: web tells the server to start. The control pulse is a ring on that one arrow.
-    await expect(caption).toHaveText(/^Step 1 of 11: web → rubato-server, control: LaunchRequest/);
+    await expect(caption).toHaveText(/^Step 1 of 10: web → rubato-server, control: LaunchRequest/);
     await expect(active).toHaveCount(1);
     await expect(pulse).toHaveCount(1);
     await expect(pulse).toHaveClass(/control/);
@@ -328,16 +334,16 @@ for (const motion of ["no-preference", "reduce"] as const) {
 
     // Step 2: the launch goes to the companion; the lit parts follow the step.
     await player.getByRole("button", { name: "Next step" }).click();
-    await expect(caption).toHaveText(/^Step 2 of 11: rubato-server → rubato-companion, control: LaunchCommand/);
+    await expect(caption).toHaveText(/^Step 2 of 10: rubato-server → rubato-companion, control: LaunchCommand/);
     await expect(page.getByTestId("node-rubato-companion")).not.toHaveClass(/dim/);
     await expect(page.getByTestId("node-web")).toHaveClass(/dim/);
     await expect(active).toHaveCount(1);
 
-    // Step 5 is data coming back: a filled dot, not a ring.
-    for (let i = 0; i < 3; i++) {
+    // Step 4 is data coming back: a filled dot, not a ring (ADR 0070 dropped the tmux-ide step).
+    for (let i = 0; i < 2; i++) {
       await player.getByRole("button", { name: "Next step" }).click();
     }
-    await expect(caption).toHaveText(/^Step 5 of 11: rubato-companion → rubato-server, data:/);
+    await expect(caption).toHaveText(/^Step 4 of 10: rubato-companion → rubato-server, data:/);
     await expect(pulse).toHaveClass(/data/);
 
     // Nothing covers the step: its two parts are inside the canvas and clear of the band of
@@ -348,8 +354,8 @@ for (const motion of ["no-preference", "reduce"] as const) {
       await zoomIn.click();
     }
     await player.getByRole("button", { name: "Previous step" }).click();
-    for (let i = 3; i < steps.length; i++) {
-      await expect(caption).toHaveText(new RegExp(`^Step ${i + 1} of 11:`));
+    for (let i = 2; i < steps.length; i++) {
+      await expect(caption).toHaveText(new RegExp(`^Step ${i + 1} of ${steps.length}:`));
       await expectClear(page, [steps[i]!.from, steps[i]!.to]);
       if (i < steps.length - 1) {
         await player.getByRole("button", { name: "Next step" }).click();
@@ -382,7 +388,7 @@ test("selecting an issue with a plan paints its parts and flows", { tag: "@plans
   await expect(page.getByTestId("node-rubato-server")).toHaveClass(/paint-affected/);
   await expect(page.getByTestId("node-web")).toHaveClass(/paint-affected/);
   await expect(page.getByTestId("node-rubato-server")).not.toHaveClass(/dim/);
-  for (const outside of ["rubato-companion", "github", "plan-file", "tmux-ide"]) {
+  for (const outside of ["rubato-companion", "github", "plan-file"]) {
     await expect(page.getByTestId(`node-${outside}`)).toHaveClass(/dim/);
   }
   // Its two flows move along web-server, one in each direction; no other seam carries one.
@@ -453,8 +459,8 @@ test("queue an issue on a paired companion and start it", { tag: ["@queue.queue-
 
   // The companion refuses: the entry stays and says why.
   const answer = (seq: number, message: Record<string, unknown>) => mine.send(JSON.stringify({ seq, sent_at: new Date().toISOString(), message: { type: "launch", command_id: commands.at(-1)!.id, at: new Date().toISOString(), ...message } }));
-  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux-ide 2.9 is needed" });
-  await expect(entry).toContainText("did not start: missing_dependency: tmux-ide 2.9 is needed");
+  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux 3.7 is needed" });
+  await expect(entry).toContainText("did not start: missing_dependency: tmux 3.7 is needed");
 
   // Started the second time: the entry leaves the lane.
   await entry.getByRole("button", { name: "Start m0x6A/rubato#9" }).click();

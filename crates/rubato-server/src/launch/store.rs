@@ -33,15 +33,19 @@ pub struct LaunchTarget {
     /// The branch and plan path the launch was sent with.
     pub branch: Option<String>,
     pub plan_path: Option<String>,
+    /// The workspace the launch was started from (ADR 0047): whose map its parts are checked
+    /// against (ADR 0071).
+    pub workspace: String,
 }
 
 /// The launch with this id, if Rubato started it.
 pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<LaunchTarget>> {
-    let row =
-        sqlx::query("SELECT companion_id, user, repo, number, command FROM launches WHERE id = ?")
-            .bind(launch_id.to_string())
-            .fetch_optional(db)
-            .await?;
+    let row = sqlx::query(
+        "SELECT companion_id, user, repo, number, command, workspace_id FROM launches WHERE id = ?",
+    )
+    .bind(launch_id.to_string())
+    .fetch_optional(db)
+    .await?;
     let Some(r) = row else { return Ok(None) };
     let command: Option<LaunchCommand> = serde_json::from_str(&r.get::<String, _>("command")).ok();
     Ok(Some(LaunchTarget {
@@ -52,6 +56,7 @@ pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<La
         session_id: command.as_ref().map(|c| c.session_id.to_string()),
         branch: command.as_ref().map(|c| c.branch.clone()),
         plan_path: command.and_then(|c| c.plan_path),
+        workspace: r.get("workspace_id"),
     }))
 }
 

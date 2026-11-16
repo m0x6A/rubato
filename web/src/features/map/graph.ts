@@ -5,6 +5,7 @@
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
 import type { Finding, Flow, IssueRef, IssueSummary, MapNode, ObservedTraffic, Overview, PartStatus, ProgressState, Scenario, Seam, SeamTraffic, SessionState, SessionStatus, UndeclaredEdge } from "../../protocol.ts";
 import { issueKey } from "../../shared/format.ts";
+import { liveMap } from "../../shared/map.ts";
 
 export type Paint = PartStatus | null;
 
@@ -58,6 +59,12 @@ export interface Graph {
   traffic?: ObservedTraffic | undefined;
   /** Calls between two parts of the map that no seam joins: drawn in the Traffic lens only, from a fresh report. */
   territory?: UndeclaredEdge[] | undefined;
+  /**
+   * Every part and seam in map order, retired ones included, for the layout only (ADR 0077): a
+   * retired part is drawn nowhere but keeps its place in ELK's input, so retiring one does not
+   * move the others. Absent: the layout uses `nodes` and `edges`.
+   */
+  layoutParts?: { nodes: { id: string; repo?: string | undefined }[]; edges: { id: string; from: string; to: string }[] } | undefined;
 }
 
 const PAINT_RANK: Record<PartStatus, number> = { quiet: 1, affected: 2, new: 3 };
@@ -74,8 +81,10 @@ export function isOpen(state: ProgressState): boolean {
 }
 
 export function buildGraph(ov: Overview): Graph {
-  const seams: Seam[] = ov.map.map.seams ?? [];
-  const nodes: GraphNode[] = ov.map.map.nodes.map((n) => ({
+  // Retired parts are drawn nowhere (ADR 0077); the map rules keep no live seam on one.
+  const live = liveMap(ov.map.map);
+  const seams: Seam[] = live.seams ?? [];
+  const nodes: GraphNode[] = live.nodes.map((n) => ({
     id: n.id,
     kind: n.kind,
     description: n.description ?? undefined,
@@ -177,7 +186,9 @@ export function buildGraph(ov: Overview): Graph {
     }
   }
   const territory = fresh ? (traffic.undeclared ?? []).filter((u) => byId.has(u.from) && byId.has(u.to)) : [];
-  return { nodes, edges, scenarios: ov.map.map.scenarios ?? [], traffic, territory };
+  const full = ov.map.map;
+  const layoutParts = live === full ? undefined : { nodes: full.nodes.map((n) => ({ id: n.id, repo: n.repo ?? undefined })), edges: (full.seams ?? []).map((s) => ({ id: s.id, from: s.from, to: s.to })) };
+  return { nodes, edges, scenarios: ov.map.map.scenarios ?? [], traffic, territory, layoutParts };
 }
 
 export function countBy<T, K extends string>(items: T[], key: (t: T) => K): Partial<Record<K, number>> {
@@ -209,7 +220,16 @@ export function approvalCounts(issues: IssueSummary[]): { approved: number; stal
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 96;
 
-/** ELK layered layout, left to right. Returns positions by node id. */
+/** The parts and seams ELK lays out: the map's own order, retired spacers included (ADR 0077). */
+function layoutNodes(graph: Graph): { id: string; repo?: string | undefined }[] {
+  return graph.layoutParts?.nodes ?? graph.nodes;
+}
+
+function layoutEdges(graph: Graph): { id: string; from: string; to: string }[] {
+  return graph.layoutParts?.edges ?? graph.edges;
+}
+
+/** ELK layered layout, left to right. Returns positions by node id, for drawn parts only. */
 export async function layout(graph: Graph): Promise<Map<string, { x: number; y: number }>> {
   const elk = new ELK();
   const root: ElkNode = {
@@ -222,13 +242,16 @@ export async function layout(graph: Graph): Promise<Map<string, { x: number; y: 
       "elk.layered.spacing.nodeNodeBetweenLayers": "200",
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
     },
-    children: graph.nodes.map((n) => ({ id: n.id, width: NODE_WIDTH, height: NODE_HEIGHT })),
-    edges: graph.edges.map((e) => ({ id: e.id, sources: [e.from], targets: [e.to] })),
+    children: layoutNodes(graph).map((n) => ({ id: n.id, width: NODE_WIDTH, height: NODE_HEIGHT })),
+    edges: layoutEdges(graph).map((e) => ({ id: e.id, sources: [e.from], targets: [e.to] })),
   };
   const out = await elk.layout(root);
+  const drawn = new Set(graph.nodes.map((n) => n.id));
   const pos = new Map<string, { x: number; y: number }>();
   for (const c of out.children ?? []) {
-    pos.set(c.id, { x: c.x ?? 0, y: c.y ?? 0 });
+    if (drawn.has(c.id)) {
+      pos.set(c.id, { x: c.x ?? 0, y: c.y ?? 0 });
+    }
   }
   return pos;
 }
@@ -255,7 +278,8 @@ export function repoGroupId(repo: string): string {
  */
 export async function layoutByRepo(graph: Graph): Promise<{ groups: RepoGroup[]; parts: Map<string, { x: number; y: number; parent?: string }> }> {
   const elk = new ELK();
-  const repos = [...new Set(graph.nodes.map((n) => n.repo).filter((r): r is string => Boolean(r)))];
+  const all = layoutNodes(graph);
+  const repos = [...new Set(all.map((n) => n.repo).filter((r): r is string => Boolean(r)))];
   const leaf = (id: string): ElkNode => ({ id, width: NODE_WIDTH, height: NODE_HEIGHT });
   const root: ElkNode = {
     id: "root",
@@ -275,29 +299,38 @@ export async function layoutByRepo(graph: Graph): Promise<{ groups: RepoGroup[];
         id: repoGroupId(repo),
         // Room at the top for the repo's name. ELK lays out a box's parts with the box's own
         // options, not the root's: without these the parts sat 20 px apart and every badge and
-        // chip between them landed on a card (issue #144).
+        // chip between them landed on a card (issue #144). 120 px between parts in a layer: with
+        // Rubato's own map at 13 parts (issue #146), 60 left a seam that leaves the box no gap to
+        // pass between two parts, and its flow labels sat on their cards.
         layoutOptions: {
           "elk.padding": "[top=48,left=24,bottom=24,right=24]",
-          "elk.spacing.nodeNode": "60",
+          "elk.spacing.nodeNode": "120",
           "elk.layered.spacing.nodeNodeBetweenLayers": "140",
           "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
         },
-        children: graph.nodes.filter((n) => n.repo === repo).map((n) => leaf(n.id)),
+        children: all.filter((n) => n.repo === repo).map((n) => leaf(n.id)),
       })),
-      ...graph.nodes.filter((n) => !n.repo).map((n) => leaf(n.id)),
+      ...all.filter((n) => !n.repo).map((n) => leaf(n.id)),
     ],
-    edges: graph.edges.map((e) => ({ id: e.id, sources: [e.from], targets: [e.to] })),
+    edges: layoutEdges(graph).map((e) => ({ id: e.id, sources: [e.from], targets: [e.to] })),
   };
   const out = await elk.layout(root);
+  const drawn = new Set(graph.nodes.map((n) => n.id));
   const groups: RepoGroup[] = [];
   const parts = new Map<string, { x: number; y: number; parent?: string }>();
   for (const c of out.children ?? []) {
     if (c.id.startsWith("repo:")) {
+      // A box that holds only retired parts is not drawn (ADR 0077).
+      if (!(c.children ?? []).some((k) => drawn.has(k.id))) {
+        continue;
+      }
       groups.push({ id: c.id, repo: c.id.slice("repo:".length), x: c.x ?? 0, y: c.y ?? 0, width: c.width ?? 0, height: c.height ?? 0 });
       for (const k of c.children ?? []) {
-        parts.set(k.id, { x: k.x ?? 0, y: k.y ?? 0, parent: c.id });
+        if (drawn.has(k.id)) {
+          parts.set(k.id, { x: k.x ?? 0, y: k.y ?? 0, parent: c.id });
+        }
       }
-    } else {
+    } else if (drawn.has(c.id)) {
       parts.set(c.id, { x: c.x ?? 0, y: c.y ?? 0 });
     }
   }

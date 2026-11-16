@@ -22,6 +22,9 @@ mod turns;
 mod tests;
 
 pub use callin::{UNKNOWN_AGENT, UNKNOWN_REQUEST, answer, call_in, dismiss, sweep_agents};
-pub use handlers::{post, room};
+pub use handlers::{
+    PostRefused, PostSource, Posted, agents_present, has_plan, message, post, post_as, room,
+    turn_was_spoken,
+};
 pub use notices::{SYSTEM_AUTHOR, post_seam_notices};
-pub use turns::{TURN_LIMIT_TEXT, on_hook, on_room_reply};
+pub use turns::{ASKED_ALOUD, TURN_LIMIT_TEXT, on_hook, on_room_reply};

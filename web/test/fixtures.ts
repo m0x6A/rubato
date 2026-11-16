@@ -9,6 +9,11 @@ export function realMap(): SystemMap {
   return parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as SystemMap;
 }
 
+/** The real map's parts that are drawn: every node but a retired one (ADR 0077). */
+export function liveNodes(): SystemMap["nodes"] {
+  return realMap().nodes.filter((n) => n.retired == null);
+}
+
 export function overview(partial: Partial<Overview> = {}): Overview {
   return {
     map: { map: realMap(), version: "abc1234", loaded_at: new Date().toISOString() },

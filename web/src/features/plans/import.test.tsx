@@ -45,6 +45,13 @@ describe("a plan written outside Rubato (ADR 0058)", () => {
     expect(onDone).toHaveBeenCalledWith("Imported as your draft, revision 1; written by carol.");
   });
 
+  it("draws no retired part on the system strip (ADR 0077)", () => {
+    render(<WhereItFits issue={outside(true)} map={realMap()} me={bob} onNotice={() => {}} approvalsInRubato />);
+    const strip = screen.getByTestId("system-strip");
+    expect(strip).not.toHaveTextContent("tmux-ide");
+    expect(strip).toHaveTextContent("rubato-companion");
+  });
+
   it("says a session of yours rewrites a plan that does not fit", async () => {
     serve(() => json({ outcome: "rewriting", launch_id: "l1", branch: BRANCH } satisfies ImportResponse, 202));
     render(<WhereItFits issue={outside(false)} map={realMap()} me={bob} onNotice={() => {}} approvalsInRubato />);

@@ -97,6 +97,7 @@ export function main(argv: string[]): number {
   let legacy = 0;
   let legacyPlans = 0;
   let approvals = 0;
+  let retiredPlans = 0;
   for (const f of files) {
     let r = call("plan-file", () => checkPlanFile(f, map, args.schemaDir));
     let extra: Record<string, unknown> = {};
@@ -115,12 +116,13 @@ export function main(argv: string[]): number {
     legacy += r.legacyKeys.length;
     legacyPlans += r.legacyKeys.length > 0 ? 1 : 0;
     approvals += r.approval === "none" ? 0 : 1;
+    retiredPlans += r.retiredIds.length > 0 ? 1 : 0;
     if (!r.ok) {
       failed++;
     }
     console.log(JSON.stringify({ ...logLine(r), ...extra }));
   }
-  console.log(`plan-check: checked ${files.length} plan(s), ${ids} id(s), ${flows} flow(s) and ${models} data model(s) against ${map.nodes.length} nodes and ${(map.seams ?? []).length} seams in ${args.map}${others.length ? ` and ${others.length} other map(s)` : ""}; ${approvals} approval record(s); ${legacy} legacy front-matter key(s) in ${legacyPlans} plan(s), not failed; ${failed} failed`);
+  console.log(`plan-check: checked ${files.length} plan(s), ${ids} id(s), ${flows} flow(s) and ${models} data model(s) against ${map.nodes.length} nodes and ${(map.seams ?? []).length} seams in ${args.map}${others.length ? ` and ${others.length} other map(s)` : ""}; ${approvals} approval record(s); ${legacy} legacy front-matter key(s) in ${legacyPlans} plan(s), not failed; ${retiredPlans} plan(s) name retired ids, not failed; ${failed} failed`);
   return failed === 0 ? 0 : 1;
 }
 
