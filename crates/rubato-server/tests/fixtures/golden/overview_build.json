@@ -447,7 +447,9 @@
         ]
       },
       "plan_sha": "sha4",
-      "outside_rubato": true
+      "outside_rubato": true,
+      "closed": true,
+      "finished": true
     },
     {
       "issue": {
@@ -641,7 +643,8 @@
       "fits_in": [
         "app"
       ],
-      "outside_rubato": true
+      "outside_rubato": true,
+      "finished": true
     },
     {
       "issue": {
@@ -712,6 +715,33 @@
         "bundle_hash": "h",
         "live": false
       }
+    },
+    {
+      "issue": {
+        "repo": "acme/app",
+        "number": 12
+      },
+      "pins": [],
+      "progress": {
+        "issue": {
+          "repo": "acme/app",
+          "number": 12
+        },
+        "state": "unknown",
+        "last_seen": "2026-11-08T12:00:00Z",
+        "reason": "issue is not pinned to the map"
+      },
+      "fit": {
+        "fits": false,
+        "reasons": [
+          {
+            "kind": "parse_error",
+            "message": "no Affected parts table"
+          }
+        ]
+      },
+      "plan_sha": "sha12",
+      "outside_rubato": true
     },
     {
       "issue": {
@@ -903,15 +933,6 @@
       "current": "v2"
     },
     {
-      "kind": "plan_parse_error",
-      "issue": {
-        "repo": "acme/app",
-        "number": 4
-      },
-      "path": "docs/plans/4.md",
-      "error": "no Affected parts table"
-    },
-    {
       "kind": "approval_stale",
       "issue": {
         "repo": "acme/app",
@@ -929,6 +950,15 @@
       "branch": "issue/11-x",
       "owner": "m0x6A",
       "other": "alice"
+    },
+    {
+      "kind": "plan_parse_error",
+      "issue": {
+        "repo": "acme/app",
+        "number": 12
+      },
+      "path": "docs/plans/12.md",
+      "error": "no Affected parts table"
     },
     {
       "kind": "approval_stale",
@@ -1094,7 +1124,7 @@
       "in_map": true,
       "covered": true,
       "open_issues": 2,
-      "plans": 4,
+      "plans": 3,
       "sessions": 4,
       "unattributed": 1,
       "open_pulls": 2

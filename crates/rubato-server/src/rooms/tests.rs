@@ -349,6 +349,31 @@ async fn no_notice_when_the_seams_differ_or_one_plan_has_merged() {
     assert_eq!(post_seam_notices(&h.app).await.unwrap(), 2);
 }
 
+/// #265: no notice with a plan whose issue is closed on GitHub, merged or not.
+#[tokio::test]
+async fn no_notice_when_one_issue_is_closed() {
+    let h = harness().await;
+    plan_on(&h, 1, "issue/1-x", "web-server").await;
+    plan_on(&h, 4, "issue/4-m", "web-server").await;
+    let set = async |state: &str| {
+        sqlx::query(
+            "INSERT INTO issue_meta (repo, number, github_state, fetched_at) VALUES (?, 4, ?, ?) \
+             ON CONFLICT(repo, number) DO UPDATE SET github_state = excluded.github_state",
+        )
+        .bind(REPO)
+        .bind(state)
+        .bind(ts(Utc::now()))
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    };
+    set("closed").await;
+    assert_eq!(post_seam_notices(&h.app).await.unwrap(), 0, "#4 is closed");
+    // The same pair with #4 open: the check above is not passing by accident.
+    set("open").await;
+    assert_eq!(post_seam_notices(&h.app).await.unwrap(), 2);
+}
+
 // ---- PR 11: calling an agent in, addressed turns, replies, limits (ADR 0057, plan 122 §D8) ----
 
 mod call_in_tests {

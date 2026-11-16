@@ -15,6 +15,9 @@ pub mod attr {
     pub const SESSION_STATE: &str = "rubato.session.state";
     /// The derived progress state on `rubato.issues.by_state`.
     pub const ISSUE_STATE: &str = "rubato.issue.state";
+    /// Whether the issues counted on `rubato.issues.by_state` are finished (#265): `true` or
+    /// `false`. Every pair of state and finished is recorded, zeros included.
+    pub const ISSUE_FINISHED: &str = "rubato.issue.finished";
     /// The station a blocked issue left from on `rubato.issues.blocked_from` (ADR 0043):
     /// `started`, `designing`, `designed`, `building` or `off_rail`.
     pub const ISSUE_BLOCKED_FROM: &str = "rubato.issue.blocked_from";
@@ -405,6 +408,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::SESSION_SOURCE,
         attr::SESSION_STATE,
         attr::ISSUE_STATE,
+        attr::ISSUE_FINISHED,
         attr::ISSUE_BLOCKED_FROM,
         attr::SESSION_BLOCKED_BY,
         attr::COMPANION_ID,

@@ -328,6 +328,11 @@
           "refId": "A",
           "expr": "sum by (rubato_issue_state) (rubato_issues_by_state)",
           "legendFormat": "__auto"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_issue_finished) (rubato_issues_by_state)",
+          "legendFormat": "finished={{rubato_issue_finished}}"
         }
       ],
       "fieldConfig": {

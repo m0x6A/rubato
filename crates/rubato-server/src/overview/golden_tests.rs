@@ -251,6 +251,12 @@ fn rich() -> OverviewInputs {
     let mut p4 = plan(&a4, &["app-api"], &[], &[]);
     p4.plan = None;
     p4.parse_error = Some("no Affected parts table".into());
+    // #4 is closed, so its plan makes no finding (#265); #12 is open with a plan that does not
+    // parse, so the fixture still makes that finding.
+    let a12 = i("acme/app", 12);
+    let mut p12 = plan(&a12, &["app-api"], &[], &[]);
+    p12.plan = None;
+    p12.parse_error = Some("no Affected parts table".into());
     let mut p7 = plan(&a7, &["app-web"], &["web-api"], &[]);
     p7.approval_sha = Some("sha7-here".into());
     OverviewInputs {
@@ -273,6 +279,7 @@ fn rich() -> OverviewInputs {
             session(None, "u2", "ended", 10, Some(0.1)),
         ],
         plans: vec![
+            p12,
             plan(
                 &a1,
                 &["app-api"],

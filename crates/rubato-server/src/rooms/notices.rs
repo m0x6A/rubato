@@ -25,12 +25,21 @@ fn notice_text(other: &IssueRef, other_branch: &str, seam: &str) -> String {
 
 /// Post the notices still missing. Returns how many were posted.
 pub async fn post_seam_notices(app: &App) -> Result<usize> {
-    let merged: HashSet<IssueRef> = github_poll::all_prs(&app.db)
+    // Merged, or closed on GitHub (#265): neither plan is open any more. A notice is a message
+    // posted once, so a closed issue gets none even while a session still works on it.
+    let mut merged: HashSet<IssueRef> = github_poll::all_prs(&app.db)
         .await?
         .into_iter()
         .filter(|(_, pr)| pr.merged_at.is_some())
         .map(|(issue, _)| issue)
         .collect();
+    merged.extend(
+        github_poll::all_issue_meta(&app.db)
+            .await?
+            .into_iter()
+            .filter(|(_, m)| m.github_state.as_deref() == Some("closed"))
+            .map(|(issue, _)| issue),
+    );
     let mut open: HashMap<IssueRef, (String, Plan)> = HashMap::new();
     for row in plans::all(&app.db).await? {
         if let Some(plan) = row.plan

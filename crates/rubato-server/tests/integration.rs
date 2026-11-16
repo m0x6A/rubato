@@ -2594,12 +2594,21 @@ async fn poll_makes_the_same_github_calls_per_issue() {
     assert_eq!(get(31).progress.state, ProgressState::InReview);
     assert_eq!(get(32).progress.state, ProgressState::Done);
     assert_eq!(get(33).decisions.len(), 1);
+    // #32 merged, so it is finished and its plan makes no finding (#265); the parse failure is
+    // still recorded with the plan, not skipped.
+    assert!(get(32).finished && !get(32).closed);
     assert!(
-        ov.findings
+        !ov.findings
             .iter()
             .any(|f| matches!(f, Finding::PlanParseError { issue, .. } if issue.number == 32)),
-        "parse failure recorded, not skipped: {:?}",
+        "a finished issue's plan is not a finding: {:?}",
         ov.findings
+    );
+    let rows = rubato_server::plans::all(&h.app.db).await.unwrap();
+    assert!(
+        rows.iter()
+            .any(|p| p.issue.number == 32 && p.parse_error.is_some()),
+        "parse failure recorded, not skipped"
     );
     assert_eq!(
         get(31).title.as_deref(),
@@ -4840,6 +4849,54 @@ async fn a_closed_issue_is_settled_until_it_reopens() {
     poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
     assert_eq!(h.call_args("issue_comments"), ["m0x6A/rubato#6"]);
     println!("checked a close and a reopen");
+}
+
+/// #265: GitHub is the source. An issue closed without a merge is closed and finished in the
+/// overview, its progress untouched, and open again when it reopens.
+#[tokio::test]
+async fn a_closed_unmerged_issue_is_closed_in_the_overview_until_it_reopens() {
+    let h = harness().await;
+    h.working_issue(6, false);
+    h.pin_issue(6).await;
+    let mut poller = tasks::Poller::default();
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    let flags = |ov: &Overview| {
+        let i = ov.issues.iter().find(|i| i.issue.number == 6).unwrap();
+        (i.closed, i.finished, i.progress.state)
+    };
+    let (closed, finished, state_open) = flags(&h.overview("m0x6A").await);
+    assert!(!closed && !finished, "open on GitHub");
+    assert_ne!(state_open, ProgressState::Done);
+    h.github.with(|g| {
+        g.open.get_mut("m0x6A/rubato").unwrap().clear();
+        g.issues.insert(
+            ("m0x6A/rubato".into(), 6),
+            IssueInfo {
+                title: "issue 6".into(),
+                state: "closed".into(),
+                url: "u6".into(),
+            },
+        );
+    });
+    poller.tick(&h.app, tasks::Lane::Fast).await.unwrap();
+    assert_eq!(
+        flags(&h.overview("m0x6A").await),
+        (true, true, state_open),
+        "closed and finished; progress is not touched"
+    );
+    h.github.with(|g| {
+        g.open
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push(open_issue(6, "issue 6"));
+    });
+    poller.tick(&h.app, tasks::Lane::Full).await.unwrap();
+    assert_eq!(
+        flags(&h.overview("m0x6A").await),
+        (false, false, state_open),
+        "reopened"
+    );
+    println!("checked a close and a reopen in the overview");
 }
 
 /// S3, N3: the plan file is read again only when the branch head moves.
