@@ -1,7 +1,8 @@
 import { type DragEvent, useState } from "react";
-import type { IssueRef, IssueSummary, Me, Overview, PairingInfo, QueuedIssue, SessionState, SessionStatus } from "../../protocol.ts";
+import type { AgentLine, IssueRef, IssueSummary, Me, Overview, PairingInfo, QueuedIssue, SessionState, SessionStatus } from "../../protocol.ts";
 import { getIssueDrag, hasIssueDrag } from "../../shared/dnd.ts";
 import { issueKey, relative } from "../../shared/format.ts";
+import { AgentLineView, agentLineFor } from "./AgentLine.tsx";
 
 /**
  * A working session whose last signal is older than this is shown as unknown, never as working
@@ -54,6 +55,8 @@ interface LaneProps extends LaneActions {
   companion: PairingInfo;
   own: boolean;
   sessions: SessionState[];
+  /** What launched agents last said (ADR 0071). */
+  agentLines: AgentLine[];
   queue: QueuedIssue[];
   issues: IssueSummary[];
   titles: Map<string, string>;
@@ -61,7 +64,7 @@ interface LaneProps extends LaneActions {
   staleMs: number;
 }
 
-function Lane({ companion: c, own, sessions, queue, issues, titles, staleMs, onQueue, onReorder, onUnqueue, onStart, onRevoke }: LaneProps) {
+function Lane({ companion: c, own, sessions, agentLines, queue, issues, titles, staleMs, onQueue, onReorder, onUnqueue, onStart, onRevoke }: LaneProps) {
   // "yes": an issue is over this lane and it will take it; "no": it is not the caller's lane.
   const [over, setOver] = useState<"yes" | "no" | null>(null);
   const takes = own && !c.revoked_at;
@@ -148,6 +151,7 @@ function Lane({ companion: c, own, sessions, queue, issues, titles, staleMs, onQ
         <ul className="plain">
           {sessions.map((s, i) => {
             const status = shownStatus(s);
+            const line = agentLineFor(agentLines, s);
             return (
               <li key={s.session_id ?? i} className="lane-row" data-testid="lane-session">
                 <span>
@@ -156,6 +160,7 @@ function Lane({ companion: c, own, sessions, queue, issues, titles, staleMs, onQ
                     seen {relative(s.last_seen)}
                     {s.spend_usd !== undefined && s.spend_usd !== null ? ` · $${s.spend_usd.toFixed(2)}` : ""}
                   </div>
+                  {line && <AgentLineView line={line} session={s} />}
                 </span>
                 <span className={`badge ${status}`} data-led={status === "working" ? "breathe" : undefined} title={status === "unknown" && s.status === "working" ? "It reported working, but no signal has arrived for a while" : undefined}>
                   {status}
@@ -260,6 +265,7 @@ export function Lanes({ overview, me, ...actions }: Props) {
           companion={c}
           own={Boolean(me) && c.user === me?.login}
           sessions={sessions.filter((s) => s.companion_id === c.companion_id)}
+          agentLines={overview.agent_lines ?? []}
           queue={(overview.queue ?? []).filter((q) => q.companion_id === c.companion_id).sort((a, b) => a.position - b.position)}
           issues={overview.issues}
           titles={titles}

@@ -13,7 +13,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "dev", testIgnore: /(app-login|room|shots|motion|perf)\.spec\.ts/, use: { browserName: "chromium" } },
+    { name: "dev", testIgnore: /(app-login|room|sessions|shots|motion|perf)\.spec\.ts/, use: { browserName: "chromium" } },
     {
       name: "app",
       testMatch: /app-login\.spec\.ts/,
@@ -21,7 +21,8 @@ export default defineConfig({
     },
     // Issue #122: two people in a plan's room, with a companion that launches #916. Its launch
     // reorders the issue list under other tests' pointers, so it runs after them, alone.
-    { name: "room", testMatch: /room\.spec\.ts/, dependencies: ["dev", "app"], use: { browserName: "chromium" } },
+    // After dev: these pin and launch issues the map tests must not see (916, 919).
+    { name: "room", testMatch: /(room|sessions)\.spec\.ts/, dependencies: ["dev", "app"], use: { browserName: "chromium" } },
     // Issue #81: these change or watch shared state (they pin #901, which other tests expect
     // unpinned; they compare frames), so each runs alone, after every other test, in this order.
     { name: "shots", testMatch: /shots\.spec\.ts/, dependencies: ["room"], use: { browserName: "chromium" } },
