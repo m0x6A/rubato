@@ -14,12 +14,41 @@ use rubato_protocol::otel::attr;
 /// (ADR 0044). An issue two workspaces hold counts once in each, so panels take `max by
 /// (rubato_workspace)` and never sum across workspaces.
 pub async fn refresh_gauges(app: &App) -> Result<()> {
+    let r = refresh(app).await;
+    match r.error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// What one tick's gauge refresh built, by workspace: the overview issues of every workspace
+/// that built, and the first error of one that did not (plan 226 §4). One failing workspace no
+/// longer stops the others; the composition root hands the issues to `plan_status`.
+pub struct Refreshed {
+    pub built: Vec<(String, Vec<rubato_protocol::IssueSummary>)>,
+    pub error: Option<anyhow::Error>,
+}
+
+/// [`refresh_gauges`], keeping what it built.
+pub async fn refresh(app: &App) -> Refreshed {
     // The workspace list and the maps once per tick, not once per workspace (#171).
     let all = crate::map::list_workspaces(app).await;
     let maps = Maps::read(app).await;
     let named = maps.named(&all);
+    let mut out = Refreshed {
+        built: Vec::new(),
+        error: None,
+    };
     for (ws, map) in maps.iter() {
-        refresh_one(app, ws, map, &all, &maps).await?;
+        match refresh_one(app, ws, map, &all, &maps).await {
+            Ok(issues) => out.built.push((ws.to_owned(), issues)),
+            Err(e) => {
+                tracing::warn!(rubato.workspace = ws, error = %format!("{e:#}"), "overview not built");
+                if out.error.is_none() {
+                    out.error = Some(e);
+                }
+            }
+        }
         let name = all
             .iter()
             .find(|w| w.id == ws)
@@ -37,7 +66,7 @@ pub async fn refresh_gauges(app: &App) -> Result<()> {
     app.metrics
         .workspace_shared_repos
         .record(shared_repos(maps.iter().map(|(_, m)| &**m)) as u64, &[]);
-    Ok(())
+    out
 }
 
 /// Repos named by more than one workspace's map (ADR 0048).
@@ -57,7 +86,7 @@ async fn refresh_one(
     map: &LoadedMap,
     all: &[WorkspaceInfo],
     maps: &Maps,
-) -> Result<()> {
+) -> Result<Vec<rubato_protocol::IssueSummary>> {
     let w = || KeyValue::new(attr::WORKSPACE, ws.to_owned());
     let built = build_overview_inputs(app, ws, all, maps).await?;
     let built = build::build(built, Some(map), &app.config.limits, Utc::now());
@@ -119,7 +148,7 @@ async fn refresh_one(
         .filter(|i| i.fit.as_ref().is_some_and(|f| !f.fits) && i.fits_in.is_empty())
         .count();
     app.metrics.plans_fit_none.record(fit_none as u64, &[w()]);
-    Ok(())
+    Ok(built.issues)
 }
 
 #[cfg(test)]

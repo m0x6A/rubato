@@ -198,7 +198,8 @@
         "at": "2026-11-08T11:59:00Z",
         "plan_sha": "sha1",
         "bundle_hash": "h",
-        "live": true
+        "live": true,
+        "fits": true
       }
     },
     {
@@ -682,7 +683,8 @@
         "at": "2026-11-08T11:50:00Z",
         "plan_sha": "sha10",
         "bundle_hash": "h",
-        "live": false
+        "live": false,
+        "fits": true
       }
     },
     {

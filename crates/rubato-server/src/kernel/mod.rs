@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod github;
 pub mod http;
+pub mod secrets;
 pub mod signer;
 pub mod speech;
 pub mod state;

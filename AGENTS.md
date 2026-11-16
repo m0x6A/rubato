@@ -95,7 +95,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
 `/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces, telemetry, db connection, `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073); slices:
+(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -121,9 +121,11 @@ voice           a room's voice channel: LiveKit token, utterances in, spoken rep
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 agent_reports   what each launched agent last said it is doing  agent_reports
+plan_status     plan status pushed to each launched session      (none)
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
+workspace_settings  each workspace's settings, seeded once, set at runtime (ADR 0075)  workspace_settings
 ```
 <!-- /slices -->
 <!-- slices: rubato-companion -->

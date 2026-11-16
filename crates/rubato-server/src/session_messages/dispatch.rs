@@ -262,8 +262,11 @@ pub async fn record_gauges(app: &App, sessions: &[SessionState]) {
     app.metrics
         .session_messages_oldest_idle_queued
         .record(oldest, &[]);
-    for (cap, n) in app.capability_counts(&[capability::SESSION_INPUT, capability::HOOK_ALLOWLIST])
-    {
+    for (cap, n) in app.capability_counts(&[
+        capability::SESSION_INPUT,
+        capability::HOOK_ALLOWLIST,
+        capability::AGENT_MCP,
+    ]) {
         app.metrics
             .companions_by_capability
             .record(n, &[KeyValue::new(attr::CAPABILITY, cap)]);
