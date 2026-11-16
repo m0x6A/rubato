@@ -344,6 +344,7 @@
     {
       "id": 12,
       "title": "Sessions by state",
+      "description": "Sessions of every companion by state, from each companion's latest snapshot (rubato.sessions.by_state, recorded by the server only, #43). A companion whose socket ended counts its sessions that had not ended as unknown, and one silent for RUBATO_COMPANION_SILENT_SECS with its socket open (a laptop asleep) does too, until it says Hello or sends again (#69). A revoked companion counts 0. Unknown is never working: compare with Companions (heartbeat). The log line companion disconnected says what was recorded (sessions=unknown, zeros or left_to_newer); companion quiet, sessions counted unknown marks a silent one.",
       "type": "timeseries",
       "gridPos": {
         "h": 7,
