@@ -9,6 +9,7 @@ pub mod app;
 pub mod kernel;
 pub mod tasks;
 
+pub mod agent_reports;
 pub mod approve;
 pub mod auth;
 pub mod companion_link;
