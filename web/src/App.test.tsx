@@ -19,6 +19,8 @@ let pinAnswer: { status: number; body?: string } | "offline";
 let pinned: Map<number, MapRef[]>;
 /** Tracked issues the overview holds besides the pinned ones. */
 let others: IssueSummary[];
+/** The session has ended: every API call answers 401. */
+let loggedOut: boolean;
 /** The team's stored layout, as `PUT` and `DELETE /api/layout` change it. */
 let layoutStore: Record<string, { x: number; y: number }>;
 let layoutAnswer: { status: number; body?: string };
@@ -28,12 +30,16 @@ beforeEach(() => {
   pinAnswer = { status: 201 };
   pinned = new Map();
   others = [];
+  loggedOut = false;
   layoutStore = {};
   layoutAnswer = { status: 204 };
   vi.stubGlobal("WebSocket", QuietSocket);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
+      if (loggedOut) {
+        return new Response(JSON.stringify({ login_url: "/auth/github/login" }), { status: 401 });
+      }
       if (url === "/api/me") {
         return new Response(JSON.stringify({ login: "m0x6A" }), { status: 200 });
       }
@@ -107,6 +113,19 @@ describe("open on GitHub by default (#265)", () => {
     expect(await screen.findByRole("button", { name: "Issues (1)" })).toBeInTheDocument();
     expect(screen.getByTestId("team-track")).toHaveTextContent("1 issue");
     expect(screen.getByTestId("issues-view-done")).toHaveTextContent("Done (2)");
+  });
+});
+
+describe("without a session", () => {
+  // The shell renders first and the 401 arrives after: every hook must run on both renders.
+  it("the login page replaces the shell without an error", async () => {
+    loggedOut = true;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<App />);
+    expect(await screen.findByRole("link", { name: "Log in with GitHub" })).toBeInTheDocument();
+    expect(screen.queryByTestId("body")).toBeNull();
+    expect(errors.mock.calls.map((c) => String(c[0])).filter((m) => /hooks/i.test(m))).toEqual([]);
+    errors.mockRestore();
   });
 });
 

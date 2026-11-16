@@ -381,15 +381,16 @@ export function App() {
   const marks = useMemo(() => (overview ? draftMarks(overview.map.map, overview.draft) : undefined), [overview]);
   const graph = useMemo(() => (shown ? buildGraph(shown) : null), [shown]);
 
+  // The stored size applies only while the map and the panel sit side by side.
+  const sideBySide = useSideBySide();
+  const [storedPanelSize, setStoredPanelSize] = useState<PanelSize>(readPanelSize);
+  const panelSize: PanelSize = sideBySide ? storedPanelSize : "normal";
+
   // After every hook: the login page replaces the whole shell.
   if (needsLogin) {
     return <LoginPage />;
   }
 
-  // The stored size applies only while the map and the panel sit side by side.
-  const sideBySide = useSideBySide();
-  const [storedPanelSize, setStoredPanelSize] = useState<PanelSize>(readPanelSize);
-  const panelSize: PanelSize = sideBySide ? storedPanelSize : "normal";
   const selected = overview && selectedIssue ? (overview.issues.find((i) => issueKey(i.issue) === issueKey(selectedIssue)) ?? null) : null;
 
   return (
