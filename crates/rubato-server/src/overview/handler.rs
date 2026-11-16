@@ -97,6 +97,10 @@ pub async fn overview(
         // Only when there is a choice: one workspace shows no switcher, and its overview stays as
         // it was before workspaces (the golden test).
         workspaces: if all.len() > 1 { all } else { vec![] },
+        // What each live launched agent last said (ADR 0071): shown with its age, never progress.
+        agent_lines: crate::agent_reports::all(&app)
+            .await
+            .map_err(|e| internal(SLICE, e))?,
         generated_at: Utc::now(),
     }))
 }

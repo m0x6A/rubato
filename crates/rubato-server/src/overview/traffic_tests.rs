@@ -37,17 +37,27 @@ fn overview_only(app: crate::kernel::state::App) -> axum::Router {
         .with_state(app)
 }
 
-/// Every `Changed` event waiting, by reason.
-fn drain(rx: &mut tokio::sync::broadcast::Receiver<WebEvent>) -> Vec<String> {
+/// Every `Changed` event waiting, by reason and the workspace it names (#131).
+fn drain(rx: &mut tokio::sync::broadcast::Receiver<WebEvent>) -> Vec<(String, Option<String>)> {
     let mut out = Vec::new();
     loop {
         match rx.try_recv() {
-            Ok(WebEvent::Changed { reason, .. }) => out.push(reason),
+            Ok(WebEvent::Changed {
+                reason, workspace, ..
+            }) => out.push((reason, workspace)),
             Ok(WebEvent::Updated { .. }) => {}
             Err(TryRecvError::Empty) => return out,
             Err(e) => panic!("{e}"),
         }
     }
+}
+
+/// One `traffic` event per workspace named, in that order.
+fn told(workspaces: &[&str]) -> Vec<(String, Option<String>)> {
+    workspaces
+        .iter()
+        .map(|w| ("traffic".to_owned(), Some((*w).to_owned())))
+        .collect()
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -106,7 +116,7 @@ async fn the_dev_file_feeds_the_overview_and_the_instruments() {
 
     // The fixture: two lit seams, one quiet, one undeclared edge, one unmapped service.
     assert_eq!(fetcher.tick(&app, now()).await, Outcome::Ok);
-    assert_eq!(drain(&mut web), ["traffic"]);
+    assert_eq!(drain(&mut web), told(&["default"]));
     let o = overview().await;
     assert_eq!(o.traffic.state, TrafficState::Fresh);
     let lit: Vec<(&str, u64)> = o
@@ -146,15 +156,11 @@ async fn the_dev_file_feeds_the_overview_and_the_instruments() {
     // Rewritten with the same counts (a newer mtime): no fan-out.
     std::fs::write(&file, FIXTURE).unwrap();
     assert_eq!(fetcher.tick(&app, now()).await, Outcome::Ok);
-    assert_eq!(
-        drain(&mut web),
-        Vec::<String>::new(),
-        "same counts, no notify"
-    );
+    assert_eq!(drain(&mut web), told(&[]), "same counts, no notify");
     // A count changed: fan-out.
     std::fs::write(&file, FIXTURE.replace("1200", "1201")).unwrap();
     assert_eq!(fetcher.tick(&app, now()).await, Outcome::Ok);
-    assert_eq!(drain(&mut web), ["traffic"]);
+    assert_eq!(drain(&mut web), told(&["default"]));
 
     // Outside the limits: rejected whole, with the reason, and the previous report kept.
     let edge = r#"{ "client": "web", "server": "rubato-server", "calls": 1 }"#;
@@ -187,12 +193,12 @@ async fn the_dev_file_feeds_the_overview_and_the_instruments() {
         });
         assert!(logged, "{reason} logged");
     }
-    assert_eq!(drain(&mut web), Vec::<String>::new());
+    assert_eq!(drain(&mut web), told(&[]));
 
     // The file is gone: failing, nothing drawn, no traffic findings, the last good time kept.
     std::fs::remove_file(&file).unwrap();
     assert_eq!(fetcher.tick(&app, now()).await, Outcome::Failed);
-    assert_eq!(drain(&mut web), ["traffic"]);
+    assert_eq!(drain(&mut web), told(&["default"]));
     let o = overview().await;
     assert_eq!(o.traffic.state, TrafficState::Failing);
     assert!(
@@ -263,4 +269,71 @@ async fn without_a_source_traffic_is_not_configured() {
     let (_tx, rx) = tokio::sync::watch::channel(false);
     let r = tokio::time::timeout(Duration::from_secs(1), crate::traffic::run(app, rx)).await;
     assert!(r.expect("returns at once").is_ok());
+}
+
+/// A shop map whose parts emit namespaceless services, so Rubato's own map (`default`) sees
+/// the same edges only as unmapped names, whatever their counts (#131).
+const SHOP: &str = r#"
+version: 1
+name: shop
+repos: [{ name: acme/shop }]
+nodes:
+  - { id: storefront, kind: context, repo: acme/shop, service: { name: storefront } }
+  - { id: checkout, kind: context, repo: acme/shop, service: { name: checkout } }
+seams:
+  - { id: storefront-checkout, from: storefront, to: checkout, owner: checkout }
+"#;
+
+/// Issue #131: a report that changes only shop's derived traffic tells only shop's browsers;
+/// the first report tells each workspace once; the same report again tells nobody.
+#[tokio::test(flavor = "current_thread")]
+async fn a_change_in_one_workspace_tells_only_its_browsers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("traffic.json");
+    let report = |calls: u64| {
+        format!(
+            r#"{{ "window_secs": 3600, "edges": [{{ "client": "storefront", "server": "checkout", "calls": {calls}, "errors": 0 }}] }}"#
+        )
+    };
+    std::fs::write(&file, report(10)).unwrap();
+    let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+    let mut cfg = Config::for_tests(url, "m0x6A");
+    cfg.dev_traffic = Some(file.clone());
+    let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
+    let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
+    for (ws, yaml) in [(rubato_protocol::DEFAULT_WORKSPACE, MAP), ("shop", SHOP)] {
+        let map: SystemMap = serde_yaml_ng::from_str(yaml).unwrap();
+        app.set_map(
+            ws,
+            LoadedMap {
+                map,
+                version: "v".into(),
+                loaded_at: chrono::Utc::now(),
+                yaml: String::new(),
+            },
+        )
+        .await;
+    }
+    let mut web = app.web_tx.subscribe();
+    let mut fetcher = Fetcher::new(DevFileSource::new(file.clone()), chrono::Utc::now());
+    let mut checked = 0;
+
+    // The first report: each workspace has a summary it was not told about.
+    assert_eq!(fetcher.tick(&app, chrono::Utc::now()).await, Outcome::Ok);
+    let first = drain(&mut web);
+    checked += first.len();
+    assert_eq!(first, told(&["default", "shop"]));
+
+    // Only the calls on shop's seam change: default sees the same two unmapped names.
+    std::fs::write(&file, report(20)).unwrap();
+    assert_eq!(fetcher.tick(&app, chrono::Utc::now()).await, Outcome::Ok);
+    let second = drain(&mut web);
+    checked += second.len();
+    assert_eq!(second, told(&["shop"]), "only shop's browsers are told");
+
+    // The same report again: nobody is told.
+    std::fs::write(&file, report(20)).unwrap();
+    assert_eq!(fetcher.tick(&app, chrono::Utc::now()).await, Outcome::Ok);
+    assert_eq!(drain(&mut web), told(&[]));
+    println!("checked {checked} traffic events over 3 reports and 2 workspaces");
 }
