@@ -632,6 +632,8 @@ impl Poller {
             .unwrap_or_default();
         session_messages::record_gauges(app, &sessions).await;
         webhooks::record(app).await;
+        // #69: a companion silent with its socket open counts its sessions as unknown.
+        companion_link::mark_quiet(app, app.clock.now());
         overview::refresh_gauges(app).await?;
         app.notify("poll");
         Ok(())
