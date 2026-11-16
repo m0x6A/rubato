@@ -32,6 +32,8 @@ interface Props {
   onNotice?: ((text: string) => void) | undefined;
   /** Show a seam on the map, from a room's seam notice. */
   onShowSeam?: ((seam: string) => void) | undefined;
+  /** Start your own lead agent on the issue (ADR 0072): offered only with the orchestrator on. */
+  onLaunchLead?: ((issue: IssueRef, companionId: string) => void) | undefined;
 }
 
 /** Companions the current user may queue issues on: their own, paired, not revoked (ADR 0020). */
@@ -52,8 +54,10 @@ export function ownConnectedCompanions(overview: Overview, me: Me | null) {
 
 const ORDER = ["blocked", "unknown", "building", "designing", "designed", "started", "in_review", "planned", "done"] as const;
 
-export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice, onShowSeam }: Props) {
+export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice, onShowSeam, onLaunchLead }: Props) {
   const own = ownConnectedCompanions(overview, me);
+  // A lead only with the server's flag on, on a companion of yours that runs leads (ADR 0072).
+  const leadOn = overview.orchestrator ? own.find((c) => c.can_lead) : undefined;
   // The name of this workspace, when there are several: what "counts in" is told apart from.
   const hereName = (overview.workspaces ?? []).find((w) => w.id === overview.workspace)?.name;
   const lanes = onQueue ? ownLanes(overview, me) : [];
@@ -101,7 +105,18 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           <button className="primary" data-testid="start-session" onClick={() => onLaunch(selected.issue)} disabled={selected.pins.length === 0} title={selected.pins.length === 0 ? "pin the issue to the map first" : `start in your companion ${own[0]?.hostname ?? ""}`}>
             Start session in my tmux
           </button>
-        ) : (
+        ) : null}
+        {own.length > 0 && leadOn && onLaunchLead ? (
+          <button
+            data-testid="start-lead"
+            onClick={() => onLaunchLead(selected.issue, leadOn.companion_id)}
+            disabled={selected.pins.length === 0}
+            title={`a lead agent on ${leadOn.hostname}: it starts, messages and stops only the workers it launches for you; plans still wait for a person`}
+          >
+            Start as lead agent
+          </button>
+        ) : null}
+        {own.length > 0 ? null : (
           <p className="muted" data-testid="no-companion">
             No companion of yours is connected; start one with <code>rubato-companion run</code>.
           </p>

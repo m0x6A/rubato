@@ -27,7 +27,7 @@ Does:
 
 Does not:
 
-- Orchestrate agents across repositories or order cross-repo changes.
+- Orchestrate agents across repositories or order cross-repo changes, except that a person's own lead agent may direct the sessions it launched for them, behind the orchestrator flag (ADR 0072).
 - Run agents itself. Rubato never executes anything on a developer's machine; the companion does, for its own user only.
 - Stream or attach to a colleague's live terminal.
 - Audio, except a plan's room voice channel behind the off-by-default voice flag (ADR 0073); Rubato stores no audio.
@@ -133,7 +133,7 @@ workspace_settings  each workspace's settings, seeded once, set at runtime (ADR 
 `crates/rubato-companion/src/`: composition root `lib.rs`, `main.rs`, `runtime.rs` (channels,
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
 state files, telemetry, tmux, git and `ps` adapters, `proc` for running them with a deadline,
-the `SessionInput` port whose first adapter is the tmux paste, `claude` for headless `claude -p` turns as
+the `SessionInput` port whose first adapter is the tmux paste, `claude_auth` for how Claude is billed (ADR 0076), `claude` for headless `claude -p` turns as
 process groups, ADR 0062);
 slices:
 
@@ -147,7 +147,7 @@ spend          transcript cost, spend cap, CapHit                               
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
 session_input  SessionMessage: own user, launched here, idle, typed once; stop    session input task (essential)
 plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
-agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_status  report drain (essential), not-initialized watch (best-effort)
+agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_status; a lead's fleet tools  report drain (essential), not-initialized watch (best-effort)
 ```
 <!-- /slices -->
 <!-- slices: web -->
@@ -204,6 +204,7 @@ github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord and it
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 pulls      OpenPull, RepoPulls, PullDetail, MergeOffer, PlanGate, plan_gate, merge_refusal, MergeRequest, MergeResponse, reasons; PULL, PULLS_MERGE
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
+fleet      LaunchRole, FleetRequest, FleetAction, FleetResult, FleetOutcome, FleetEntry, LeadView, LEAD_HEADER, reasons, limits (ADR 0072; capability fleet)
 room       RoomMessage (with spoken), RoomAgent, RoomRequest, RoomView, RoomKey, RoomReply, call-in types, addressed_handles, reasons; ROOM, ROOM_MESSAGES, ROOM_AGENTS, ROOM_REQUEST
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
@@ -293,6 +294,7 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A plan whose committed approval record differs from Rubato's.
 - Headless turns killed for running too long or too quiet, or left over from a companion restart (`HeadlessTurnsKilled`; never a stop or a cap hit).
 - A speech provider failing every call for 10 minutes while people use voice (`SpeechProviderFailing`, ADR 0073).
+- A lead agent's request refused for touching another person's agent, or for a forged identity (`FleetCrossOwner`, ADR 0072).
 - A GitHub App webhook that has stopped delivering while the catch-up poll finds changes, or a delivery not applied for 5 minutes (`GitHubWebhooksSilent`, `GitHubWebhooksStuck`, ADR 0074).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
@@ -333,7 +335,7 @@ Every decision that touches a seam, a dependency, a data format or a non-goal is
 
 ## Decisions already made (do not reopen without a superseding ADR)
 
-- Planning-time tool, not an orchestrator.
+- Planning-time tool, not an orchestrator (a person's own lead agent behind a flag, ADR 0072).
 - Rust for companion and server; TypeScript for frontend and skill scripts.
 - Claude Code is the only agent in v0; for interactive companions tmux is required, and the companion runs tmux and git itself (tmux-ide retired, ADR 0070; a headless companion needs no tmux, ADR 0062).
 - A user starts sessions only through their own companion; no inbound access to machines.

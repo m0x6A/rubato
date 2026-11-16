@@ -58,6 +58,10 @@ pnpm e2e                          # two repos, three issues through the flow, no
 
 CI runs all of the above plus Playwright against the server and `promtool test rules` on the alert rules.
 
+### Where a companion runs
+
+On your machine in tmux (the default), as a headless service, or in a container from `Dockerfile.companion`, with Claude Code logged in or using an API key: [docs/design/companion-hosts.md](docs/design/companion-hosts.md) says what each way assumes (ADR 0076).
+
 ### Several agents on one machine
 
 Each agent session in its own worktree runs its own `cargo build` and `rust-analyzer`, so a few at once can use up the machine's memory. The workspace's `[profile.dev]` already keeps line tables for our own crates (backtraces and `tracing` still show file and line) and drops debug info for dependencies. Release builds are unchanged. The rest is per machine and not committed:

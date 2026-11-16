@@ -419,7 +419,7 @@ async fn list(app: &App, owner: &str, ws: &str) -> anyhow::Result<Vec<FleetEntry
         .copied()
         .collect();
     rows.extend(launch::launches_by_id(&app.db, owner, &older).await?);
-    rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    rows.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     rows.truncate(limits::LIST_MAX as usize);
     let ids: Vec<Uuid> = rows.iter().map(|r| r.launch_id).collect();
     let waiting = session_messages::waiting_counts(app, &ids).await?;

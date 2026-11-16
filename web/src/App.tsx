@@ -242,6 +242,17 @@ export function App() {
     }
   };
 
+  /** Start your own lead agent (ADR 0072): only offered while the server's orchestrator flag is on. */
+  const onLaunchLead = async (issue: IssueRef, companionId: string) => {
+    try {
+      const r = await launchApi.launch({ issue, companion_id: companionId, role: "lead" });
+      setNotice(`${launchNotice(r, issue)} It leads only the workers it launches for you.`);
+      await refresh();
+    } catch (e) {
+      setNotice(`No lead agent was started for ${issueKey(issue)}: ${launchFailureText(e)}`);
+    }
+  };
+
   /** Start a session; `branch` resumes one of your drafts on it (ADR 0053). */
   const onLaunch = async (issue: IssueRef, branch?: string) => {
     try {
@@ -488,6 +499,7 @@ export function App() {
               onSelect={setSelectedIssue}
               onClearSelection={() => setSelection(null)}
               onLaunch={onLaunch}
+              onLaunchLead={onLaunchLead}
               onPin={onPin}
               onUnpin={onUnpin}
               onQueue={onQueue}
