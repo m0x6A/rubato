@@ -16,6 +16,9 @@ pub const READ_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The most pages of 100 issue comments read per issue: the newest 500 (design 193 D6).
 pub const MAX_COMMENT_PAGES: usize = 5;
+/// The page size asked of `git/matching-refs`, and the most pages one branch listing reads.
+pub const REFS_PER_PAGE: usize = 100;
+pub const MAX_REF_PAGES: u32 = 10;
 
 /// `#[instrument(name = …)]` takes a bare identifier.
 const GITHUB_CALL: &str = rubato_protocol::otel::span::GITHUB_CALL;
@@ -770,8 +773,12 @@ impl GitHubApi for Octo {
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "branches"))]
     async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>> {
-        // `git/matching-refs` filters by prefix on GitHub's side, so the pages count only the
-        // matching refs, not every branch of the repo (ADR 0032).
+        // `git/matching-refs` filters by prefix on GitHub's side (ADR 0032). It answers with
+        // every matching ref at once and ignores `per_page` and `page` (seen 2026-11-16: 144
+        // refs for any page), so "a full page means there is another" never ends there. A page
+        // of exactly `REFS_PER_PAGE` may be one of several; any other size is the whole answer.
+        // A page that brings no new ref, or `MAX_REF_PAGES`, ends the listing whatever GitHub
+        // does: one listing must never cost more than that many calls.
         #[derive(serde::Deserialize)]
         struct Obj {
             sha: String,
@@ -783,26 +790,48 @@ impl GitHubApi for Octo {
             object: Obj,
         }
         split_repo(repo)?;
-        let mut heads = Vec::new();
-        let mut pages = 0;
-        for page in 1.. {
-            let refs: Vec<Ref> = self
+        let mut heads: Vec<BranchHead> = Vec::new();
+        let mut names = std::collections::HashSet::new();
+        let mut pages = 0u64;
+        for page in 1..=MAX_REF_PAGES {
+            let refs: Vec<Ref> = match self
                 .client
                 .get(
                     format!("/repos/{repo}/git/matching-refs/heads/{prefix}"),
-                    Some(&[("per_page", "100".to_owned()), ("page", page.to_string())]),
+                    Some(&[
+                        ("per_page", REFS_PER_PAGE.to_string()),
+                        ("page", page.to_string()),
+                    ]),
                 )
-                .await?;
+                .await
+            {
+                Ok(refs) => refs,
+                Err(e) => {
+                    count_call("branches", pages + 1);
+                    return Err(e.into());
+                }
+            };
             pages += 1;
-            let full = refs.len() >= 100;
+            let paged = refs.len() == REFS_PER_PAGE;
+            let before = heads.len();
             heads.extend(refs.into_iter().filter_map(|r| {
-                r.name.strip_prefix("refs/heads/").map(|n| BranchHead {
-                    name: n.to_owned(),
+                let name = r.name.strip_prefix("refs/heads/")?;
+                names.insert(name.to_owned()).then(|| BranchHead {
+                    name: name.to_owned(),
                     sha: r.object.sha,
                 })
             }));
-            if !full {
+            if !paged || heads.len() == before {
                 break;
+            }
+            if page == MAX_REF_PAGES {
+                tracing::warn!(
+                    rubato.repo = %repo,
+                    prefix,
+                    read = heads.len(),
+                    pages,
+                    "branch listing cut"
+                );
             }
         }
         count_call("branches", pages);
@@ -1548,6 +1577,78 @@ mod tests {
         assert_eq!(*asked.lock().unwrap(), [1, 2, 3]);
         assert_eq!(got.len(), 300);
         println!("checked a 12-page and a 3-page issue");
+    }
+
+    /// A stand-in for `GET /repos/o/r/git/matching-refs/heads/issue/`. `answer(page)` says
+    /// which ref numbers that page holds. Returns its base URL and the pages it was asked for.
+    async fn matching_refs(
+        answer: fn(u32) -> std::ops::Range<u32>,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<u32>>>) {
+        use axum::extract::Query;
+        use std::collections::HashMap;
+        let asked: std::sync::Arc<std::sync::Mutex<Vec<u32>>> = Default::default();
+        let log = asked.clone();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let router = axum::Router::new().route(
+            "/repos/o/r/git/matching-refs/heads/issue/",
+            axum::routing::get(move |Query(q): Query<HashMap<String, String>>| {
+                let log = log.clone();
+                async move {
+                    let page: u32 = q.get("page").and_then(|p| p.parse().ok()).unwrap_or(1);
+                    log.lock().unwrap().push(page);
+                    let refs: Vec<serde_json::Value> = answer(page)
+                        .map(|n| {
+                            serde_json::json!({
+                                "ref": format!("refs/heads/issue/{n}-x"),
+                                "object": {"sha": format!("s{n}")}
+                            })
+                        })
+                        .collect();
+                    axum::Json(refs)
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (base, asked)
+    }
+
+    /// The loop that used the whole hourly budget (2026-11-16): GitHub answers
+    /// `git/matching-refs` with every ref whatever page is asked, so with 100 refs or more
+    /// "a full page means another" never ended. One listing is now one call there, and never
+    /// more than `MAX_REF_PAGES` whatever the other side answers.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_branch_listing_ends_whatever_github_answers() {
+        let list = |answer: fn(u32) -> std::ops::Range<u32>| async move {
+            let (base, asked) = matching_refs(answer).await;
+            let gh = Octo::with_base_uri("t", &base, Duration::from_secs(5)).unwrap();
+            let heads = gh.branches("o/r", "issue/").await.unwrap();
+            let asked = asked.lock().unwrap().clone();
+            (heads, asked)
+        };
+        // As GitHub does: all 144, on every page.
+        let (heads, asked) = list(|_| 0..144).await;
+        assert_eq!((heads.len(), asked), (144, vec![1]));
+        assert_eq!(
+            (heads[0].name.as_str(), heads[0].sha.as_str()),
+            ("issue/0-x", "s0")
+        );
+        // Exactly a page's worth, on every page: the second page brings nothing new.
+        let (heads, asked) = list(|_| 0..100).await;
+        assert_eq!((heads.len(), asked), (100, vec![1, 2]));
+        // A side that does page: 250 refs in three pages.
+        let (heads, asked) = list(|p| (p - 1) * 100..(p * 100).min(250)).await;
+        assert_eq!((heads.len(), asked), (250, vec![1, 2, 3]));
+        // A side whose pages never end: cut at the limit.
+        let (heads, asked) = list(|p| (p - 1) * 100..p * 100).await;
+        assert_eq!(asked.len(), MAX_REF_PAGES as usize);
+        assert_eq!(heads.len(), MAX_REF_PAGES as usize * REFS_PER_PAGE);
+        // Fewer than a page.
+        let (heads, asked) = list(|_| 0..3).await;
+        assert_eq!((heads.len(), asked), (3, vec![1]));
+        println!("checked 5 branch listings");
     }
 
     #[test]
