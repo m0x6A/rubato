@@ -22,11 +22,11 @@ Why the UI is stale today:
 ## 1. One rule: finished
 
 ```
-closed   = GitHub says the issue is closed            (server fact, on IssueSummary)
+closed   = GitHub says the issue is closed            (a fact, on IssueSummary)
 merged   = progress is Done                           (already derived)
-at_work  = a session of the issue is working or blocked, by its effective status
-           (a session quiet for longer than session_stale_secs is unknown, not working)
-finished = merged or (closed and not at_work)
+at_work  = a session of the issue is working, by its effective status
+           (untrusted, or quiet for longer than session_stale_secs, is unknown, not working)
+finished = merged or (closed and not at_work)         (the decision, on IssueSummary)
 ```
 
 - `closed` is a field, not a progress state. The progress model keeps eight states and Done
@@ -35,18 +35,18 @@ finished = merged or (closed and not at_work)
   draft needs a launch (`plan_drafts/intake.rs`) or an imported branch plan, and both are polled.
 - `at_work` keeps a closed issue visible while an agent still spends on it (plan A1). "Not
   ended" would be wrong: session snapshots are never deleted, so an idle pane or a dead
-  companion's last snapshot would hold an issue open for ever. Idle, ended and stale sessions do
-  not count.
+  companion's last snapshot would hold an issue open for ever. Blocked does not go stale either
+  (`effective_status` ages only Working), so only a fresh working session counts.
 - Merged is finished whatever its sessions, as `group.ts` and `graph.ts` treat it today.
-- The rule exists twice, once in Rust (`build.rs`, a small `fn finished`) and once in the web
-  (`shared/finished.ts`). Both are a few lines over fields that cross the seam; sending a derived
-  `finished` as well would give two facts that can disagree. A test on each side covers the same table of
-  cases.
+- The rule exists once, as `is_finished` in `rubato-protocol/src/progress.rs` (pure, next to
+  `derive_progress`). The server sends its answer as `finished`; the web reads it and derives
+  nothing, because it does not know the stale limit and must not grow a second rule. `closed`
+  travels too, for the *closed* badge. Neither is stored.
 
 ## 2. Server
 
-`rubato-protocol/src/progress.rs`: `IssueSummary.closed: bool`, `#[serde(default,
-skip_serializing_if = "std::ops::Not::not")]`, like `outside_rubato`.
+`rubato-protocol/src/progress.rs`: `IssueSummary.closed` and `.finished`, each `#[serde(default,
+skip_serializing_if = "std::ops::Not::not")]`, like `outside_rubato`; and `is_finished`.
 
 `overview/build.rs`:
 
@@ -80,7 +80,7 @@ is written by this change. A webhook `issues.closed` and the poll both end in th
 
 ## 3. Web: open by default, Done on request
 
-- `shared/finished.ts`: `isFinished(i)`. Callers: `plans/group.ts`, `map/graph.ts` (`isOpen`
+- Every reader filters on `i.finished`: `plans/group.ts`, `map/graph.ts` (`isOpen`
   and the part and seam issue lists), `map/explain.ts` (the Inspector's issues and sessions),
   `map/PartCard.tsx` (the strip), `repos/RepoWork.tsx`, `companions/Lanes.tsx` (a queued issue
   that finished is marked and offers only Remove), `issues/IssuePanel.tsx`,
@@ -148,10 +148,10 @@ file; the diff view stays raw. Reading styles (`.md-body`) come from existing to
 | Risk | Why here | Guard |
 | --- | --- | --- |
 | Everything vanishes | a wrong `closed` hides an open issue | absent meta reads as open; integration test for reopen; the gauge split |
-| Two rules drift | Rust and TS each derive finished | the same table of cases tested on each side; the web grep test |
+| Two rules drift | the web could grow its own filter | the server sends `finished`; the web source test |
 | A hostile plan | plan text from an imported branch | ADR 0079 rules; the four hostile inputs test with its must-fail twin |
 | Hidden spend | a closed issue with an agent at work | `at_work` keeps it in Open (A1) |
-| Held open for ever | snapshots are never deleted | only fresh working or blocked sessions count |
+| Held open for ever | snapshots are never deleted | only a fresh working session counts |
 | Stale gauge series | a synchronous gauge keeps its last value | every pair recorded, zeros included |
 | Approving a finished plan | reused parts carry their actions | `readOnly`, tested in both details |
 | Goldens churn | closed fixtures change shape | re-record once in PR 1, diff read and described in the PR |
