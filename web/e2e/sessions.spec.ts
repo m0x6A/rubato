@@ -1,3 +1,5 @@
+// In the "room" project, after "dev" (playwright.config.ts): it pins and launches issue 919, which
+// the map tests must not see.
 import { expect, test } from "@playwright/test";
 import WebSocket from "ws";
 
