@@ -115,6 +115,29 @@ pub fn seed_from_env(get: impl Fn(&str) -> Option<String>) -> Option<Seed> {
 }
 
 impl PrometheusConfig {
+    /// A workspace's source from its fields and opened secrets (ADR 0075), checked by the same
+    /// rules as the environment was: each field is read as the variable it was seeded from, so
+    /// there is one validator. `fetch_secs` bounds the timeout as in `from_env`.
+    pub fn from_fields(
+        fields: &BTreeMap<String, String>,
+        secrets: &BTreeMap<String, String>,
+        fetch_secs: u32,
+    ) -> Result<Option<Self>, String> {
+        let get = |var: &str| {
+            FIELDS
+                .iter()
+                .find(|(_, v)| *v == var)
+                .and_then(|(f, _)| fields.get(*f).cloned())
+                .or_else(|| {
+                    SECRETS
+                        .iter()
+                        .find(|(_, v)| *v == var)
+                        .and_then(|(f, _)| secrets.get(*f).cloned())
+                })
+        };
+        Self::from_env(get, fetch_secs)
+    }
+
     /// The settings from `get` (the environment in production), or `None` when
     /// `RUBATO_TRAFFIC_PROMETHEUS_URL` is unset. `fetch_secs` bounds the query timeout: both
     /// queries of a fetch fit inside the interval they belong to.
@@ -245,15 +268,37 @@ fn count(v: &str) -> u64 {
 pub struct PrometheusSource {
     config: PrometheusConfig,
     http: reqwest::Client,
+    /// Every connect is checked against `guard::refused` (ADR 0075); off for a local server
+    /// and for the adapter's own tests against a fake on loopback.
+    guarded: bool,
 }
 
 impl PrometheusSource {
+    /// Unguarded: the adapter's tests, against a fake query API on loopback.
     pub fn new(config: PrometheusConfig) -> Self {
-        let http = reqwest::Client::builder()
+        Self::build(config, false)
+    }
+
+    /// A workspace's source (ADR 0075): every address it connects to is checked, unless the
+    /// server is itself local. No proxy from the environment and no redirects either way, so
+    /// the address checked is the one connected to.
+    pub fn guarded(config: PrometheusConfig, server_is_local: bool) -> Self {
+        Self::build(config, !server_is_local)
+    }
+
+    fn build(config: PrometheusConfig, guarded: bool) -> Self {
+        let mut b = reqwest::Client::builder()
             .timeout(config.timeout)
-            .build()
-            .unwrap_or_default();
-        Self { config, http }
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none());
+        if guarded {
+            b = b.dns_resolver(std::sync::Arc::new(super::guard::GuardedResolver));
+        }
+        Self {
+            http: b.build().unwrap_or_default(),
+            config,
+            guarded,
+        }
     }
 
     /// One instant query, the samples keyed by their pair of services.
@@ -275,7 +320,19 @@ impl PrometheusSource {
             req = req.header(k, v);
         }
         let failed = |e: String| SourceError::Failed(format!("prometheus {metric}: {e}"));
+        // An IP literal never reaches the resolver: checked here (ADR 0075).
+        if self.guarded && super::guard::literal_refused(&self.config.url) {
+            return Err(failed(super::guard::REFUSED.into()));
+        }
         let mut res = req.send().await.map_err(|e| {
+            // The guard's refusal is deep in the error's sources (ADR 0075): say it as itself.
+            let mut source = std::error::Error::source(&e);
+            while let Some(s) = source {
+                if s.to_string() == super::guard::REFUSED {
+                    return failed(super::guard::REFUSED.into());
+                }
+                source = s.source();
+            }
             // reqwest's message may carry the URL, never the headers.
             failed(if e.is_timeout() {
                 "timed out".into()
@@ -296,6 +353,12 @@ impl PrometheusSource {
                 )));
             }
             body.extend_from_slice(&chunk);
+        }
+        if status.is_redirection() {
+            return Err(failed(format!(
+                "HTTP {}: redirects are not followed (ADR 0075)",
+                status.as_u16()
+            )));
         }
         if !status.is_success() {
             return Err(failed(format!("HTTP {}", status.as_u16())));

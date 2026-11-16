@@ -80,6 +80,7 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
         loaded_at: stored_at.unwrap_or_else(Utc::now),
         yaml,
     };
+    still_current(app, w)?;
     if stored_at.is_none() {
         store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
     }
@@ -94,6 +95,23 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
     record_loaded_at(app, w, loaded.loaded_at);
     tracing::info!(rubato.workspace = %w.id, version = %version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
     Ok(loaded)
+}
+
+/// A load started for `w` applies only while the registry still holds `w` at the same revision
+/// and ref (ADR 0075): a slow load of an old ref, or of a deleted workspace, never lands after a
+/// change. Dropped loads write neither memory nor the cache.
+fn still_current(app: &App, w: &WorkspaceEntry) -> Result<()> {
+    let current = app.workspace_entries().0.into_iter().any(|e| {
+        e.id == w.id && e.settings.revision == w.settings.revision && e.map_ref == w.map_ref
+    });
+    if !current {
+        tracing::info!(rubato.workspace = %w.id, revision = w.settings.revision, "map load dropped: the workspace changed meanwhile");
+        anyhow::bail!(
+            "map load for {} dropped: the workspace changed meanwhile",
+            w.id
+        );
+    }
+    Ok(())
 }
 
 /// Local-file mode (`RUBATO_MAP_FILE`): the version is a content hash, since there may be no git.
@@ -123,6 +141,7 @@ async fn load_from_file(
         loaded_at: Utc::now(),
         yaml,
     };
+    still_current(app, w)?;
     store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
     let loaded = app.set_map(&w.id, loaded).await;
     app.metrics.map_loaded.record(
@@ -485,5 +504,39 @@ mod tests {
             );
             assert!(a.default_map().await.is_none());
         }
+    }
+
+    /// Plan 189 (ADR 0075): a load for a revision the registry no longer holds is dropped; one
+    /// for the current revision applies.
+    #[tokio::test]
+    async fn a_load_for_a_changed_workspace_is_dropped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("system-map.yml");
+        std::fs::write(&file, MAP).unwrap();
+        let mut cfg = Config::for_tests(
+            format!("sqlite://{}/t.db?mode=rwc", tmp.path().display()),
+            "m0x6A",
+        );
+        cfg.map_file = Some(file);
+        let (a, _reader) = app(cfg, Arc::new(FakeGitHub::new())).await;
+        let (mut entries, source) = a.workspace_entries();
+        let old = entries[0].clone();
+        entries[0].settings.revision = 2;
+        a.set_workspaces(crate::kernel::workspaces::Registry {
+            entries: entries.clone(),
+            source,
+        });
+        let e = reload_ws(&a, &old).await.unwrap_err().to_string();
+        assert!(e.contains("changed meanwhile"), "{e}");
+        assert!(a.map_of("default").await.is_none(), "not applied");
+        assert!(
+            store::load_map(&a.db, "default").await.unwrap().is_none(),
+            "not cached"
+        );
+        assert!(
+            reload_ws(&a, &entries[0]).await.is_ok(),
+            "the current revision applies"
+        );
+        println!("checked a dropped and an applied load");
     }
 }

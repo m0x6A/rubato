@@ -61,6 +61,16 @@ pub struct TrafficLatest {
     pub source: SourceStatus,
 }
 
+impl TrafficLatest {
+    /// A workspace with no traffic source (ADR 0075).
+    pub fn not_configured() -> Self {
+        Self {
+            report: None,
+            source: SourceStatus::NotConfigured,
+        }
+    }
+}
+
 /// The server's clock for receipt times on the companion socket. The system clock, unless a
 /// test sets a time (plan 103: snapshots received 20 minutes apart).
 #[derive(Default)]
@@ -97,7 +107,10 @@ pub struct AppState {
     pub maps: RwLock<BTreeMap<String, Arc<LoadedMap>>>,
     pub metrics: Metrics,
     pub signer: Signer,
-    pub traffic: RwLock<TrafficLatest>,
+    /// Each workspace's latest traffic report and source state, by workspace id (ADR 0075). A
+    /// workspace with no entry has no source. The traffic slice writes it; the overview reads
+    /// its own workspace's with `traffic_of`.
+    pub traffic: RwLock<BTreeMap<String, TrafficLatest>>,
     pub clock: Clock,
     /// Each companion's latest session snapshot, by the pairing's companion id: what
     /// `session_snapshots` holds, kept in memory for slices that may not name `companion_link`
@@ -142,16 +155,28 @@ impl AppState {
     pub fn new(db: SqlitePool, config: Config, github: Arc<dyn GitHubApi>) -> App {
         let (web_tx, _) = broadcast::channel(256);
         let signer = Signer::new(config.session_secret.as_bytes());
-        let traffic = TrafficLatest {
-            report: None,
-            source: if config.traffic_configured() {
-                SourceStatus::Configured {
-                    fetch_secs: config.traffic_fetch_secs,
-                    error: None,
-                }
-            } else {
-                SourceStatus::NotConfigured
-            },
+        // Before the traffic task runs: a source the environment configures is configured for
+        // every workspace held now, the state the seed will copy (ADR 0075, Decision 7).
+        let traffic: BTreeMap<String, TrafficLatest> = if config.traffic_configured() {
+            config
+                .workspace_entries()
+                .0
+                .into_iter()
+                .map(|w| {
+                    (
+                        w.id,
+                        TrafficLatest {
+                            report: None,
+                            source: SourceStatus::Configured {
+                                fetch_secs: config.traffic_fetch_secs,
+                                error: None,
+                            },
+                        },
+                    )
+                })
+                .collect()
+        } else {
+            BTreeMap::new()
         };
         let (entries, source) = config.workspace_entries();
         let (workspaces, _) =
@@ -226,6 +251,16 @@ impl AppState {
         &self,
     ) -> tokio::sync::watch::Receiver<crate::kernel::workspaces::Registry> {
         self.workspaces.subscribe()
+    }
+
+    /// One workspace's latest traffic report and source state; not configured when it has none.
+    pub async fn traffic_of(&self, ws: &str) -> TrafficLatest {
+        self.traffic
+            .read()
+            .await
+            .get(ws)
+            .cloned()
+            .unwrap_or_else(TrafficLatest::not_configured)
     }
 
     /// The speech adapter, if one is configured (ADR 0073).
