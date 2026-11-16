@@ -366,7 +366,7 @@ describe("the two planning modes in the skill and the prompt (ADR 0053)", () => 
 
   it("SKILL.md's Rubato mode pins ADRs before the Summary: reply and lists every handoff exit code", () => {
     const skill = read("SKILL.md");
-    const mode = skill.slice(skill.indexOf("## 9. Rubato mode (`RUBATO_PLANNING=rubato`)"), skill.indexOf("## Don't"));
+    const mode = skill.slice(skill.indexOf("## 9. Rubato mode (`RUBATO_PLANNING=rubato`)"), skill.indexOf("## 10."));
     expect(mode.length).toBeGreaterThan(200);
     expect(mode.indexOf("plan.ts adrs-pin")).toBeGreaterThan(-1);
     expect(mode.indexOf("plan.ts adrs-pin")).toBeLessThan(mode.indexOf("first line `Summary:`"));

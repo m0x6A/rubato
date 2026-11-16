@@ -126,7 +126,7 @@ plan_status     plan status pushed to each launched session      (none)
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
-workspace_settings  each workspace's settings, seeded once, set at runtime (ADR 0075)  workspace_settings
+workspace_settings  each workspace's settings: seeded once, read and changed at runtime, create and delete (ADR 0075)  workspace_settings
 ```
 <!-- /slices -->
 <!-- slices: rubato-companion -->
@@ -165,7 +165,7 @@ auth        who is logged in, the login page                     GET /api/me, /a
 chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout, DELETE /api/layout/grouped; POST, DELETE /api/traffic/dismissals
 issues      issue list, not-pinned backlog, detail, start gate   (none)
-companions  pair with a code, lanes (sessions, queue, headless badge), revoke  POST /api/pair/approve, DELETE /api/pairings/:id
+companions  pair with a code, lanes (sessions, agent line, queue, headless badge), revoke  POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
 queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
 launch      start a session through your own companion           POST /api/launch
@@ -210,6 +210,7 @@ traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPar
 voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
+workspace_settings  WorkspaceSettings, TrafficSourceSettings, SecretState, SourceFields, SourceField, WorkspaceSettingsUpdate, TrafficSourceUpdate, SecretUpdate, NewWorkspace, SettingsRefusal, reasons; SETTINGS, WORKSPACE, TRAFFIC_SOURCES
 ```
 
 The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).

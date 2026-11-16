@@ -11,4 +11,4 @@ mod yaml;
 pub use handlers::{add_op, discard, remove_op, restore};
 pub use poll::{check_proposal, clear_merged, record_gauges};
 pub use propose::{propose, proposed_yaml, withdraw};
-pub use store::snapshot;
+pub use store::{is_open, snapshot};

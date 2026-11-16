@@ -266,7 +266,30 @@ tests:
               seam: web-server
               owner: rubato-server
             exp_annotations:
-              summary: "The traffic report is 700s old: the Traffic lens says unknown"
+              summary: "The traffic report of workspace default is 700s old: the Traffic lens says unknown"
+              panel: Traffic report age
+  # #189 (ADR 0075): one workspace's report goes stale while default's stays fresh: the alert
+  # fires for that workspace alone, and names it.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_traffic_report_age'
+        values: "100x10"
+      - series: 'rubato_traffic_report_age{rubato_workspace="shop"}'
+        values: "100x5 700x5"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TrafficReportStale
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: TrafficReportStale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: web-server
+              owner: rubato-server
+              rubato_workspace: shop
+            exp_annotations:
+              summary: "The traffic report of workspace shop is 700s old: the Traffic lens says unknown"
               panel: Traffic report age
   - interval: 1m
     input_series:

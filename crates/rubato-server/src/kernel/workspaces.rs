@@ -213,6 +213,22 @@ pub async fn report(app: &crate::kernel::state::App) -> Result<u64> {
     Ok(orphans)
 }
 
+/// The first table that still holds a row of workspace `id` (ADR 0075): a deleted workspace's
+/// rows are kept, so its id cannot be created again while one remains.
+pub async fn id_has_rows(db: &sqlx::SqlitePool, id: &str) -> Result<Option<&'static str>> {
+    for t in SCOPED_TABLES {
+        let sql = format!("SELECT EXISTS(SELECT 1 FROM {t} WHERE workspace_id = ?)");
+        if sqlx::query_scalar::<_, bool>(&sql)
+            .bind(id)
+            .fetch_one(db)
+            .await?
+        {
+            return Ok(Some(t));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceFields",
+  "description": "`GET` `routes::TRAFFIC_SOURCES`: one adapter's field list, published by the adapter.",
+  "type": "object",
+  "properties": {
+    "fields": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceField"
+      }
+    },
+    "label": {
+      "type": "string"
+    },
+    "source": {
+      "description": "The adapter's name, as `TrafficSourceSettings.source` carries it.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source",
+    "label",
+    "fields"
+  ],
+  "$defs": {
+    "FieldKind": {
+      "description": "How a text field is drawn.",
+      "type": "string",
+      "enum": [
+        "text",
+        "url",
+        "number"
+      ]
+    },
+    "SourceField": {
+      "description": "One field of a traffic adapter.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FieldKind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "placeholder": {
+          "description": "What the adapter uses when the field is left empty, as text for the form.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "secret": {
+          "description": "A secret is write-only: sent in `TrafficSourceUpdate.secrets`, never in `fields`.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "label",
+        "kind",
+        "required",
+        "secret"
+      ]
+    }
+  }
+}

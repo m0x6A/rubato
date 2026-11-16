@@ -347,3 +347,9 @@ pub async fn live_count(db: &SqlitePool, ws: &str) -> Result<u64> {
     .await?;
     Ok(n as u64)
 }
+
+/// Whether the workspace's draft is open (ADR 0075): it holds a live operation, or a proposal
+/// exists. While it is, the map's ref cannot move under it.
+pub async fn is_open(db: &SqlitePool, ws: &str) -> Result<bool> {
+    Ok(live_count(db, ws).await? > 0 || proposal(db, ws).await?.is_some())
+}

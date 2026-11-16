@@ -38,6 +38,7 @@ pub mod traffic;
 pub mod voice;
 pub mod web_link;
 pub mod workspace;
+pub mod workspace_settings;
 
 pub use agent::{AgentLine, AgentReport, BranchStatus, DraftStatus, PlanStatus};
 pub use approve::{
@@ -131,3 +132,7 @@ pub use voice::{
 };
 pub use web_link::{WebEvent, WebResource};
 pub use workspace::{DEFAULT_WORKSPACE, WorkspaceInfo, is_workspace_id};
+pub use workspace_settings::{
+    FieldKind, NewWorkspace, SecretState, SecretUpdate, SettingsRefusal, SourceField, SourceFields,
+    TrafficSourceSettings, TrafficSourceUpdate, WorkspaceSettings, WorkspaceSettingsUpdate,
+};

@@ -28,6 +28,9 @@ pub mod attr {
     pub const MAP_VERSION: &str = "rubato.map.version";
     /// The workspace a route, map load, gauge or launch belongs to (ADR 0044).
     pub const WORKSPACE: &str = "rubato.workspace";
+    /// The names of the settings a workspace config change touched (ADR 0075), comma-separated.
+    /// Never a value.
+    pub const WORKSPACE_CHANGED_KEYS: &str = "rubato.workspace.changed_keys";
     pub const PLAN_PATH: &str = "rubato.plan.path";
     pub const PLAN_UNKNOWN_IDS: &str = "rubato.plan.unknown_ids";
     pub const PLAN_O_ROWS_MISSING: &str = "rubato.plan.o_rows_missing";
@@ -193,6 +196,9 @@ pub mod metric {
     pub const TRAFFIC_GHOST_PARTS: &str = "rubato.traffic.ghost_parts";
     /// Dismissed discrepancies per workspace (ADR 0060), recorded each fetch.
     pub const TRAFFIC_DISMISSALS: &str = "rubato.traffic.dismissals";
+    /// 1 while a workspace has a traffic source, 0 after it is cleared or the workspace goes
+    /// (ADR 0075): the other traffic gauges keep their last value until restart.
+    pub const TRAFFIC_CONFIGURED: &str = "rubato.traffic.configured";
     /// Writes of an issue's spend history (ADR 0037), by `rubato.outcome`: `stored` (a session's
     /// spend changed and the issue's point was written), `unchanged` (same or older value),
     /// `rejected` (not finite, or negative), `failed` (the write returned an error).
@@ -346,6 +352,9 @@ pub mod span {
     /// Companion: one MCP request on `/mcp` (ADR 0071), with `rubato.mcp.tool`,
     /// `rubato.launch_id`, `rubato.issue`, `rubato.outcome` and `rubato.reason`.
     pub const MCP_CALL: &str = "rubato.mcp.call";
+    /// Server: one stored change to a workspace's settings (ADR 0075), with `rubato.workspace`,
+    /// `rubato.user` and `rubato.workspace.changed_keys`. Key names only, never a value.
+    pub const WORKSPACE_CONFIG_CHANGED: &str = "rubato.workspace.config_changed";
 }
 
 /// Event (log record) names.
@@ -417,6 +426,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::ROUTE,
         attr::OUTCOME,
         attr::WORKSPACE,
+        attr::WORKSPACE_CHANGED_KEYS,
         attr::SESSION_MESSAGE_ID,
         attr::SESSION_MESSAGE_KIND,
         attr::CAPABILITY,
@@ -482,6 +492,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::TRAFFIC_UNMAPPED_SERVICES,
         metric::TRAFFIC_GHOST_PARTS,
         metric::TRAFFIC_DISMISSALS,
+        metric::TRAFFIC_CONFIGURED,
         metric::COMPANION_SILENT_SECS,
         metric::SPEND_POINTS,
         metric::WORKSPACES_CONFIGURED,
@@ -546,6 +557,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::VOICE_TTS,
         span::FLEET_REQUEST,
         span::MCP_CALL,
+        span::WORKSPACE_CONFIG_CHANGED,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,

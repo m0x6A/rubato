@@ -80,14 +80,16 @@ groups:
       # The server reports stale (and draws unknown) past 3 × the fetch interval; this pages on a
       # dead source. With no source the gauge is not exported, so the rule stays silent.
       - alert: TrafficReportStale
-        expr: max(rubato_traffic_report_age) > 600
+        # Per workspace (ADR 0075): each one with a source has its own report; default's series
+        # carries no rubato_workspace label, as before workspaces.
+        expr: max by (rubato_workspace) (rubato_traffic_report_age) > 600
         for: 0m
         labels:
           severity: ticket
           seam: web-server
           owner: rubato-server
         annotations:
-          summary: "The traffic report is {{ $value }}s old: the Traffic lens says unknown"
+          summary: "The traffic report of workspace {{ if $labels.rubato_workspace }}{{ $labels.rubato_workspace }}{{ else }}default{{ end }} is {{ $value }}s old: the Traffic lens says unknown"
           panel: Traffic report age
 
       # #122, ADR 0051: a message has waited more than 10 minutes while its launched session

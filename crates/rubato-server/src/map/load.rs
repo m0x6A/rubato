@@ -80,6 +80,7 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
         loaded_at: stored_at.unwrap_or_else(Utc::now),
         yaml,
     };
+    still_current(app, w)?;
     if stored_at.is_none() {
         store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
     }
@@ -96,6 +97,102 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
     Ok(loaded)
 }
 
+/// A load started for `w` applies only while the registry still holds `w` at the same revision
+/// and ref (ADR 0075): a slow load of an old ref, or of a deleted workspace, never lands after a
+/// change. Dropped loads write neither memory nor the cache.
+fn still_current(app: &App, w: &WorkspaceEntry) -> Result<()> {
+    let current = app.workspace_entries().0.into_iter().any(|e| {
+        e.id == w.id && e.settings.revision == w.settings.revision && e.map_ref == w.map_ref
+    });
+    if !current {
+        tracing::info!(rubato.workspace = %w.id, revision = w.settings.revision, "map load dropped: the workspace changed meanwhile");
+        anyhow::bail!(
+            "map load for {} dropped: the workspace changed meanwhile",
+            w.id
+        );
+    }
+    Ok(())
+}
+
+/// Read and validate one workspace's map fresh, as `w` names it (ADR 0075): no fallback to a
+/// cached copy, and nothing stored, set or counted. A settings change calls it before it stores
+/// a new map source, so a ref that does not load never becomes the workspace's ref.
+pub async fn fetch_and_validate(app: &App, w: &WorkspaceEntry) -> Result<LoadedMap> {
+    let (version, yaml) = match &w.map_file {
+        Some(file) => {
+            let yaml = tokio::fs::read_to_string(file)
+                .await
+                .with_context(|| format!("reading {}", file.display()))?;
+            (file_version(&yaml), yaml)
+        }
+        None => {
+            let sha = app
+                .github
+                .branch_sha(&w.map_repo, &w.map_ref)
+                .await?
+                .context("map ref not found")?;
+            let yaml = app
+                .github
+                .file(&w.map_repo, &w.map_path, &w.map_ref)
+                .await?
+                .context("map file not found")?;
+            (sha, yaml)
+        }
+    };
+    let map = parse(app, w, &yaml, false)?;
+    Ok(LoadedMap {
+        map,
+        version,
+        loaded_at: Utc::now(),
+        yaml,
+    })
+}
+
+/// Make a map read by `fetch_and_validate` the workspace's map: cached, in memory and on the
+/// gauges, if the registry still holds `w` at this revision.
+pub async fn apply(app: &App, w: &WorkspaceEntry, loaded: LoadedMap) -> Result<Arc<LoadedMap>> {
+    still_current(app, w)?;
+    store::store_map(
+        &app.db,
+        &w.id,
+        &loaded.version,
+        &loaded.yaml,
+        loaded.loaded_at,
+    )
+    .await?;
+    let loaded = app.set_map(&w.id, loaded).await;
+    app.metrics.map_loaded.record(
+        1,
+        &[
+            KeyValue::new(attr::MAP_VERSION, loaded.version.clone()),
+            KeyValue::new(attr::WORKSPACE, w.id.clone()),
+        ],
+    );
+    record_loaded_at(app, w, loaded.loaded_at);
+    tracing::info!(rubato.workspace = %w.id, version = %loaded.version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
+    Ok(loaded)
+}
+
+/// A deleted workspace's map leaves memory (ADR 0075). Its cached row is kept, like every row
+/// of a deleted workspace.
+pub async fn forget(app: &App, ws: &str) {
+    app.maps.write().await.remove(ws);
+}
+
+/// A map file's version: a content hash, since there may be no git.
+fn file_version(yaml: &str) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(yaml.as_bytes());
+    format!(
+        "file-{}",
+        digest
+            .iter()
+            .take(4)
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
+}
+
 /// Local-file mode (`RUBATO_MAP_FILE`): the version is a content hash, since there may be no git.
 async fn load_from_file(
     app: &App,
@@ -107,22 +204,14 @@ async fn load_from_file(
         .with_context(|| format!("reading {}", file.display()))
         .inspect_err(|_| app.metrics.map_load_failures.add(1, &ws_attr(w)))?;
     let map = parse(app, w, &yaml, true)?;
-    use sha2::Digest;
-    let digest = sha2::Sha256::digest(yaml.as_bytes());
-    let version = format!(
-        "file-{}",
-        digest
-            .iter()
-            .take(4)
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    );
+    let version = file_version(&yaml);
     let loaded = LoadedMap {
         map,
         version: version.clone(),
         loaded_at: Utc::now(),
         yaml,
     };
+    still_current(app, w)?;
     store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
     let loaded = app.set_map(&w.id, loaded).await;
     app.metrics.map_loaded.record(
@@ -485,5 +574,39 @@ mod tests {
             );
             assert!(a.default_map().await.is_none());
         }
+    }
+
+    /// Plan 189 (ADR 0075): a load for a revision the registry no longer holds is dropped; one
+    /// for the current revision applies.
+    #[tokio::test]
+    async fn a_load_for_a_changed_workspace_is_dropped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("system-map.yml");
+        std::fs::write(&file, MAP).unwrap();
+        let mut cfg = Config::for_tests(
+            format!("sqlite://{}/t.db?mode=rwc", tmp.path().display()),
+            "m0x6A",
+        );
+        cfg.map_file = Some(file);
+        let (a, _reader) = app(cfg, Arc::new(FakeGitHub::new())).await;
+        let (mut entries, source) = a.workspace_entries();
+        let old = entries[0].clone();
+        entries[0].settings.revision = 2;
+        a.set_workspaces(crate::kernel::workspaces::Registry {
+            entries: entries.clone(),
+            source,
+        });
+        let e = reload_ws(&a, &old).await.unwrap_err().to_string();
+        assert!(e.contains("changed meanwhile"), "{e}");
+        assert!(a.map_of("default").await.is_none(), "not applied");
+        assert!(
+            store::load_map(&a.db, "default").await.unwrap().is_none(),
+            "not cached"
+        );
+        assert!(
+            reload_ws(&a, &entries[0]).await.is_ok(),
+            "the current revision applies"
+        );
+        println!("checked a dropped and an applied load");
     }
 }

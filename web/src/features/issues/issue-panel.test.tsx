@@ -195,6 +195,22 @@ describe("messages for launched sessions (plan 122, ADR 0051)", () => {
   });
 });
 
+describe("what a launched agent says it is doing (ADR 0071)", () => {
+  it("shows the agent's line with its age under its session, and nothing under another", () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const now = new Date().toISOString();
+    const launch = "6f1c0c1e-0000-4000-8000-000000000009";
+    const base = { companion_id: "c1", user: "alice", cwd: "/w/9", source: "hook" as const, status: "working" as const, last_seen: now };
+    const launched = issue(9, "web", { sessions: [{ ...base, session_id: "s1", launch_id: launch }, { ...base, session_id: "s2" }] });
+    const line = { companion_id: "c1", launch_id: launch, doing: "designing the auth seam", parts: [], reported_at: now };
+    renderPanel(overview({ issues: [launched], agent_lines: [line] }), launched);
+    const shown = screen.getAllByTestId("agent-line");
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toHaveTextContent('"designing the auth seam" · 0s ago');
+    fetch.mockRestore();
+  });
+});
+
 describe("the draft of an issue (ADR 0053)", () => {
   it("shows a Draft section where the plan shows when the issue has a draft, and none without", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ reason: "unknown_draft" }), { status: 404 }));
