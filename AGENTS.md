@@ -143,6 +143,7 @@ spend          transcript cost, spend cap, CapHit                               
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
 session_input  SessionMessage: own user, launched here, idle, typed once; stop    session input task (essential)
 plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
+agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_status  report drain (essential), not-initialized watch (best-effort)
 ```
 <!-- /slices -->
 <!-- slices: web -->
