@@ -12,6 +12,7 @@ import { pinsApi } from "./features/pins/index.ts";
 import { PlansPanel, groupPlans } from "./features/plans/index.ts";
 import { ConnectedRepos } from "./features/repos/index.ts";
 import { queueApi } from "./features/queue/index.ts";
+import { SettingsView } from "./features/settings/index.ts";
 import { WorkspaceSwitcher } from "./features/workspaces/index.ts";
 import type { DiscrepancyKey, IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
@@ -40,6 +41,8 @@ export function App() {
   // A discrepancy taken from the observed system (issue #140): what the draft's form starts with.
   const [prefill, setPrefill] = useState<DraftPrefill | undefined>(undefined);
   const [trafficBusy, setTrafficBusy] = useState(false);
+  // Configure workspace (issue #189): the panel shows this workspace's settings instead of the tabs.
+  const [configuring, setConfiguring] = useState(false);
   const newPartAt = useRef<{ x: number; y: number } | null>(null);
   // A notice may carry one way back ("Undo"), offered to the person who caused it.
   const [noticeState, setNoticeState] = useState<{ text: string; undo?: (() => void) | undefined } | null>(null);
@@ -348,6 +351,18 @@ export function App() {
     [refresh, setNotice],
   );
 
+  /** Show another workspace: the switcher, a workspace just created, or `default` after a delete. */
+  const switchWorkspace = useCallback(
+    (id: string) => {
+      setWorkspace(id);
+      setSelection(null);
+      setSelectedIssue(null);
+      setEditing(false);
+      void refresh();
+    },
+    [refresh],
+  );
+
   // The draft is an overlay for everyone: what it adds and removes is drawn, marked as draft.
   const shown = useMemo(() => (overview ? withDraft(overview) : null), [overview]);
   const marks = useMemo(() => (overview ? draftMarks(overview.map.map, overview.draft) : undefined), [overview]);
@@ -366,17 +381,12 @@ export function App() {
         <div className="brand">
           <strong>Rubato</strong>
           {overview && <span className="map-version">map {overview.map.map.name} @ {overview.map.version.slice(0, 7)}</span>}
+          {overview && <WorkspaceSwitcher overview={overview} onSwitch={switchWorkspace} />}
+          {/* Always drawn, also with one workspace, where the switcher is not (ADR 0075). */}
           {overview && (
-            <WorkspaceSwitcher
-              overview={overview}
-              onSwitch={(id) => {
-                setWorkspace(id);
-                setSelection(null);
-                setSelectedIssue(null);
-                setEditing(false);
-                void refresh();
-              }}
-            />
+            <button type="button" className="configure-workspace" data-testid="configure-workspace" aria-pressed={configuring} onClick={() => setConfiguring((c) => !c)}>
+              Configure workspace
+            </button>
           )}
           {overview && <TeamTrack issues={overview.issues} />}
         </div>
@@ -420,6 +430,10 @@ export function App() {
           )}
         </section>
         <aside className="panel">
+          {configuring && overview ? (
+            <SettingsView overview={overview} onClose={() => setConfiguring(false)} onChanged={() => void refresh()} onNotice={(text) => setNotice(text)} onSwitch={switchWorkspace} />
+          ) : (
+          <>
           <nav className="tabs">
             <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
               Issues{overview ? ` (${overview.issues.length})` : ""}
@@ -533,6 +547,8 @@ export function App() {
             />
           )}
           {overview && tab === "companions" && <CompanionsPanel overview={overview} me={me} onChanged={refresh} onQueue={onQueue} onReorder={onReorder} onUnqueue={onUnqueue} onStart={onStart} />}
+          </>
+          )}
         </aside>
       </div>
     </div>

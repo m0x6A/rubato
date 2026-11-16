@@ -117,7 +117,9 @@ local (a loopback `RUBATO_BIND` and `RUBATO_PUBLIC_URL`; ADR 0064).
 
 Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
 setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`
-(15–300, default 60).
+(15–300, default 60). The `RUBATO_TRAFFIC_PROMETHEUS_*` and `RUBATO_DEFAULT_*` variables below
+only seed the database, once; after the first start each workspace's source and launch defaults
+are set in Configure workspace (see "Workspace settings live in the database").
 
 **Production: the service graph (ADR 0040).** The server reads the OpenTelemetry servicegraph
 connector's `traces_service_graph_request_total` and `…_request_failed_total` through any
@@ -265,6 +267,40 @@ workspaces:
 
 Migration 0013 is not additive: copy the database file before upgrading, so the previous
 version can be restored.
+
+### Workspace settings live in the database (ADR 0075)
+
+What describes a workspace is set at runtime, from **Configure workspace** in the header: its
+name, its map ref, its traffic source and its launch defaults. A team member can also create a
+workspace there (an id, a name, and a map that their own GitHub login can read, in a map whose
+repos they can read too) and delete any but `default`. Application settings (the bind address,
+the database, the GitHub App, the token key, the poll and stale thresholds) stay in the
+environment and are not shown there.
+
+- **The environment seeds the database once.** The first start after the upgrade writes one row
+  per entry of `RUBATO_WORKSPACES_FILE` (or `default` from `RUBATO_MAP_*`), and copies the
+  `RUBATO_TRAFFIC_*` and `RUBATO_DEFAULT_*` values that are set into every one of them. A
+  running deploy keeps working with no config change. After that the database owns these
+  settings: changing the file or those variables changes nothing.
+- **Every start warns while they are still set**: `workspace setting still set outside the
+  database`, once per variable or file entry, with `differs` saying whether its value is another
+  than the database holds. Remove them when convenient. `map_file`, `RUBATO_MAP_FILE` and
+  `RUBATO_DEV_TRAFFIC` are not seeded: they are paths on the server's disk, read at every start.
+- **Traffic headers are stored sealed** with `RUBATO_TOKEN_KEY`. A start that would seed
+  `RUBATO_TRAFFIC_PROMETHEUS_HEADERS` without the key refuses and says so: set the key, or unset
+  the headers. Rotating the key makes the stored headers unreadable; the source then shows as
+  failing with `secrets_unsealable` until someone sets them again in Configure workspace.
+- **A traffic URL is checked.** It must be http or https with no user or password. Unless the
+  server is local, loopback, link-local (cloud metadata), IPv6 unique-local and `100.64.0.0/10`
+  addresses are refused; the RFC 1918 ranges are allowed.
+- **A server open to any GitHub account** (OAuth without the App, `RUBATO_OPEN_LOGIN=1`) refuses
+  every settings write.
+- **Each change is logged** as `workspace config changed` with who and which keys, never the
+  values (dashboard panel "Workspace config changes").
+
+**Back up the database before this upgrade.** Migration 0027 adds the table, and an older binary
+refuses a database that has it. Rolling back means restoring that backup; workspaces created at
+runtime, and settings changed since, are then lost.
 
 ## 6. Pair and run the companion
 
