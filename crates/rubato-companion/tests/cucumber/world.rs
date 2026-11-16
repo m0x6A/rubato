@@ -191,6 +191,8 @@ pub struct RubatoWorld {
     pub join: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
     pub run_error: Option<String>,
     pub last_launch: Option<LaunchCommand>,
+    /// A lead's fleet request was checked against its launch (features/fleet.feature).
+    pub fleet_request_checked: bool,
     pub last_status: Option<u16>,
     /// What `rubato-companion status` printed (ADR 0078).
     pub status_out: Option<String>,
@@ -292,6 +294,7 @@ impl RubatoWorld {
             join: None,
             run_error: None,
             last_launch: None,
+            fleet_request_checked: false,
             last_status: None,
             status_out: None,
             started_worktree: None,
@@ -391,6 +394,8 @@ impl RubatoWorld {
             plan_path: Some(format!("docs/plans/{issue}.md")),
             draft: None,
             planning: Default::default(),
+            role: Default::default(),
+            lead_launch_id: None,
         }
     }
 

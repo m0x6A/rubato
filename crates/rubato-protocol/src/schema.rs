@@ -79,5 +79,8 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::traffic::DismissRequest>("dismiss_request"),
         one::<crate::agent::AgentReport>("agent_report"),
         one::<crate::agent::PlanStatus>("plan_status"),
+        one::<crate::fleet::FleetRequest>("fleet_request"),
+        one::<crate::fleet::FleetResult>("fleet_result"),
+        one::<crate::fleet::LeadView>("lead_view"),
     ]
 }

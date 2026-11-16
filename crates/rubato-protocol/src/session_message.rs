@@ -331,6 +331,9 @@ pub struct SessionMessageView {
     /// The refusal reason or the error, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// The lead agent that sent this message for its owner (ADR 0072).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via_launch: Option<Uuid>,
 }
 
 /// The messages of one launch, newest last, and whether its companion can take them.

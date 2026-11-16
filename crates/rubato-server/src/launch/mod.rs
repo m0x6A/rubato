@@ -9,7 +9,8 @@ mod store;
 pub use handler::{launch, start};
 pub use prompt::{PROMPT_TEMPLATE, render_prompt, slugify};
 pub use store::{
-    LaunchTarget, companion_launched, issues_with_live_cap_hit, launch_map_versions, launch_target,
-    launched_issues, launched_issues_in, store_cap_hit as record_cap_hit,
-    store_launch_result as record_result,
+    FleetLaunch, LaunchTarget, companion_launched, issues_with_live_cap_hit, launch_map_versions,
+    launch_target, launched_by_another, launched_issues, launched_issues_in, launches_by_id,
+    launches_of, store_cap_hit as record_cap_hit, store_launch,
+    store_launch_result as record_result, workers_of,
 };

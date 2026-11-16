@@ -41,6 +41,14 @@
     "issue": {
       "$ref": "#/$defs/IssueRef"
     },
+    "lead_launch_id": {
+      "description": "The lead that asked for this launch, for a worker a lead started.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
     "map_version": {
       "description": "Git sha of the map the server resolved pins against.",
       "type": [
@@ -80,6 +88,10 @@
     "repo_url": {
       "description": "Clone URL of the repository.",
       "type": "string"
+    },
+    "role": {
+      "description": "A person's lead agent, or an ordinary worker (ADR 0072). Sent as `lead` only to a companion\nthat announced `fleet`.",
+      "$ref": "#/$defs/LaunchRole"
     },
     "session_id": {
       "description": "Claude Code `--session-id` the companion must use, so `session_id → issue` is known up front.",
@@ -171,6 +183,14 @@
       "required": [
         "repo",
         "number"
+      ]
+    },
+    "LaunchRole": {
+      "description": "What a launch is for: an ordinary worker, or a person's lead agent (ADR 0072).",
+      "type": "string",
+      "enum": [
+        "worker",
+        "lead"
       ]
     },
     "PlanningMode": {

@@ -84,6 +84,19 @@ impl Launcher {
                 None,
             );
         }
+        // A lead only with this companion's orchestrator flag on (ADR 0072); the server should
+        // never send one here.
+        if cmd.role == rubato_protocol::LaunchRole::Lead && !self.workspace.companion.orchestrator {
+            tracing::warn!(rubato.launch_id = %cmd.id, "lead launch without orchestrator");
+            return (
+                refused(
+                    cmd,
+                    RefusalReason::OrchestratorOff,
+                    "this companion's orchestrator flag is off",
+                ),
+                None,
+            );
+        }
         if cmd.attempt > cmd.attempt_limit {
             return (
                 refused(
@@ -212,11 +225,18 @@ impl Launcher {
             &hooks_path,
             render_hooks(HOOKS_TEMPLATE, self.hook_endpoint.port, &header_path)?.as_bytes(),
         )?;
+        // A lead's secret, kept in the state dir's `leads.json` and its own `mcp.json` (ADR 0072).
+        let lead_secret = match cmd.role {
+            rubato_protocol::LaunchRole::Lead => {
+                Some(crate::agent_mcp::new_lead_secret(&self.state_dir, cmd.id)?)
+            }
+            rubato_protocol::LaunchRole::Worker => None,
+        };
         // The agent-facing MCP server for this launch (ADR 0071, plan 220 §5): private, like the
         // header file, since it holds the same token.
         write_private(
             &launch_dir.join(MCP_CONFIG_FILE),
-            render_mcp_config(&self.hook_endpoint, cmd.id).as_bytes(),
+            render_mcp_config(&self.hook_endpoint, cmd.id, lead_secret.as_deref()).as_bytes(),
         )?;
         let prompt_path = launch_dir.join("prompt.txt");
         write_private(&prompt_path, cmd.prompt.as_bytes())?;

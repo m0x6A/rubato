@@ -27,6 +27,8 @@ pub struct MessageRow {
     pub pushed_at: Option<DateTime<Utc>>,
     pub outcome_at: Option<DateTime<Utc>>,
     pub detail: Option<String>,
+    /// The lead agent that sent it for its owner (ADR 0072).
+    pub via_launch: Option<Uuid>,
 }
 
 impl MessageRow {
@@ -42,6 +44,7 @@ impl MessageRow {
             pushed_at: self.pushed_at,
             outcome_at: self.outcome_at,
             detail: self.detail.clone(),
+            via_launch: self.via_launch,
         }
     }
 }
@@ -64,10 +67,13 @@ fn row(r: &SqliteRow) -> Result<MessageRow> {
         pushed_at: opt_ts("pushed_at"),
         outcome_at: opt_ts("outcome_at"),
         detail: r.get("detail"),
+        via_launch: r
+            .get::<Option<String>, _>("via_launch")
+            .and_then(|v| v.parse().ok()),
     })
 }
 
-const COLUMNS: &str = "id, launch_id, session_id, companion_id, owner, repo, number, kind, body, author, priority, state, created_at, pushed_at, outcome_at, detail";
+const COLUMNS: &str = "id, launch_id, session_id, companion_id, owner, repo, number, kind, body, author, priority, state, created_at, pushed_at, outcome_at, detail, via_launch";
 
 /// Whether a `plan_approved` for this approval is queued, in flight, typed, or of unknown
 /// outcome (ADR 0055): a later launch must not get a second one. A refused or failed one is not.
@@ -84,7 +90,7 @@ pub async fn plan_approved_open(db: &SqlitePool, approval_id: Uuid) -> Result<bo
 
 pub async fn insert(db: &SqlitePool, m: &MessageRow) -> Result<()> {
     sqlx::query(&format!(
-        "INSERT INTO session_messages ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO session_messages ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ))
     .bind(m.id.to_string())
     .bind(m.launch_id.to_string())
@@ -102,6 +108,7 @@ pub async fn insert(db: &SqlitePool, m: &MessageRow) -> Result<()> {
     .bind(m.pushed_at.map(ts))
     .bind(m.outcome_at.map(ts))
     .bind(&m.detail)
+    .bind(m.via_launch.map(|v| v.to_string()))
     .execute(db)
     .await?;
     Ok(())
@@ -312,4 +319,26 @@ pub async fn queued(db: &SqlitePool) -> Result<Vec<MessageRow>> {
     .fetch_all(db)
     .await?;
     rows.iter().map(row).collect()
+}
+
+/// Messages queued or in flight per launch, in one grouped query (ADR 0072's `fleet_list`).
+pub async fn waiting_counts(db: &SqlitePool, launch_ids: &[Uuid]) -> Result<HashMap<Uuid, u32>> {
+    if launch_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let marks = vec!["?"; launch_ids.len()].join(", ");
+    let sql = format!(
+        "SELECT launch_id, COUNT(*) AS n FROM session_messages WHERE state IN ('queued', 'sent') AND launch_id IN ({marks}) GROUP BY launch_id"
+    );
+    let mut q = sqlx::query(&sql);
+    for id in launch_ids {
+        q = q.bind(id.to_string());
+    }
+    let mut out = HashMap::new();
+    for r in q.fetch_all(db).await? {
+        if let Ok(id) = r.get::<String, _>("launch_id").parse() {
+            out.insert(id, r.get::<i64, _>("n") as u32);
+        }
+    }
+    Ok(out)
 }

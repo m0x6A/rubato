@@ -108,6 +108,8 @@ async fn insert_launch(app: &App, launch: Uuid, companion: Uuid, issue: &IssueRe
         plan_path: Some(PLAN.into()),
         draft: None,
         planning: Default::default(),
+        role: Default::default(),
+        lead_launch_id: None,
     };
     sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)")
         .bind(launch.to_string())

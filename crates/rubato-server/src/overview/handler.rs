@@ -101,6 +101,9 @@ pub async fn overview(
         agent_lines: crate::agent_reports::all(&app)
             .await
             .map_err(|e| internal(SLICE, e))?,
+        // A person's lead agents and their workers, only with the flag on (ADR 0072).
+        orchestrator: app.config.orchestrator,
+        leads: crate::fleet::leads(&app, ws.as_str()).await,
         generated_at: Utc::now(),
     }))
 }

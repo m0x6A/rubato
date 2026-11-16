@@ -80,6 +80,13 @@ pub struct PairingInfo {
         skip_serializing_if = "crate::session::ClientKind::is_interactive"
     )]
     pub client: crate::session::ClientKind,
+    /// The companion announced `fleet` and the server's flag is on: a lead may start here (ADR 0072).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub can_lead: bool,
+    /// How its Claude Code is authenticated: `api_key`, `bedrock`, `vertex` or `login`; absent
+    /// from a companion that does not say (ADR 0076).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_auth: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

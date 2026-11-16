@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FleetResult",
+  "description": "Server → companion: the answer to one `FleetRequest`.",
+  "type": "object",
+  "properties": {
+    "fleet": {
+      "description": "For `list`.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/FleetEntry"
+      }
+    },
+    "launch_id": {
+      "description": "For `launch`: the new worker's launch.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "lead_launch_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "message": {
+      "description": "Words for the agent: why, or what to do next.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message_id": {
+      "description": "For `message` and `stop`: the session message queued or sent.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "outcome": {
+      "$ref": "#/$defs/FleetOutcome"
+    },
+    "reason": {
+      "description": "One of `reason`, when refused.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "request_id",
+    "lead_launch_id",
+    "outcome"
+  ],
+  "$defs": {
+    "ClientKind": {
+      "description": "What kind of client a companion is (ADR 0062). Every client has one owner and never approves.",
+      "oneOf": [
+        {
+          "description": "Sessions in the developer's tmux, input pasted into the pane.",
+          "type": "string",
+          "const": "interactive"
+        },
+        {
+          "description": "No terminal: each turn is a `claude -p` child process the companion holds.",
+          "type": "string",
+          "const": "headless"
+        }
+      ]
+    },
+    "FleetEntry": {
+      "description": "One of the owner's launches, as `fleet_list` shows it: the same data the team already sees.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClientKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "companion_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "issue": {
+          "$ref": "#/$defs/IssueRef"
+        },
+        "last_reply": {
+          "description": "The first line of the last reply, at most `limits::LAST_REPLY_CHARS`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProgressState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queued_messages": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "role": {
+          "$ref": "#/$defs/LaunchRole"
+        },
+        "started_by": {
+          "description": "`person`, or `lead:<launch id>`.",
+          "type": "string"
+        },
+        "state": {
+          "description": "`None` is *unknown*: the session is not in its companion's snapshot.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "launch_id",
+        "issue",
+        "companion_id",
+        "role",
+        "started_by",
+        "queued_messages"
+      ]
+    },
+    "FleetOutcome": {
+      "description": "What a request came to.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "ok",
+            "refused"
+          ]
+        },
+        {
+          "description": "The same request is still being acted on.",
+          "type": "string",
+          "const": "in_progress"
+        },
+        {
+          "description": "It was claimed and never finished (the server stopped in between): never acted on again.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "IssueRef": {
+      "description": "A GitHub issue, addressed as `owner/name#number`.",
+      "type": "object",
+      "properties": {
+        "number": {
+          "description": "Issue number within the repository.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "repo": {
+          "description": "Repository in `owner/name` form.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ]
+    },
+    "LaunchRole": {
+      "description": "What a launch is for: an ordinary worker, or a person's lead agent (ADR 0072).",
+      "type": "string",
+      "enum": [
+        "worker",
+        "lead"
+      ]
+    },
+    "ProgressState": {
+      "oneOf": [
+        {
+          "description": "Issue exists and is pinned to the map.",
+          "type": "string",
+          "const": "planned"
+        },
+        {
+          "description": "Session launched for the issue.",
+          "type": "string",
+          "const": "started"
+        },
+        {
+          "description": "Session working, no plan file yet.",
+          "type": "string",
+          "const": "designing"
+        },
+        {
+          "description": "Plan file on the branch; affected nodes lit.",
+          "type": "string",
+          "const": "designed"
+        },
+        {
+          "description": "Session working after the plan.",
+          "type": "string",
+          "const": "building"
+        },
+        {
+          "description": "Session blocked (hook) or a cap hit.",
+          "type": "string",
+          "const": "blocked"
+        },
+        {
+          "description": "PR open, checks green.",
+          "type": "string",
+          "const": "in_review"
+        },
+        {
+          "description": "Merged.",
+          "type": "string",
+          "const": "done"
+        },
+        {
+          "description": "The signal is not flowing. Trust check first.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "SessionStatus": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "working",
+            "idle",
+            "blocked",
+            "ended"
+          ]
+        },
+        {
+          "description": "No trustworthy signal. Never rendered as working.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    }
+  }
+}

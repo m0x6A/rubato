@@ -56,14 +56,23 @@ pub const TOOLS: &[Tool] = &[
     },
 ];
 
-/// `tools/list`'s result.
-pub(super) fn list() -> Value {
-    json!({"tools": TOOLS.iter().map(|t| json!({
-        "name": t.name,
-        "description": t.description,
-        "inputSchema": (t.schema)(),
-        "annotations": {"readOnlyHint": t.read_only},
-    })).collect::<Vec<_>>()})
+/// `tools/list`'s result: the three tools, and the fleet tools for a lead (ADR 0072).
+pub(super) fn list(lead: bool) -> Value {
+    let mut tools: Vec<Value> = TOOLS
+        .iter()
+        .map(|t| {
+            json!({
+                "name": t.name,
+                "description": t.description,
+                "inputSchema": (t.schema)(),
+                "annotations": {"readOnlyHint": t.read_only},
+            })
+        })
+        .collect();
+    if lead {
+        tools.extend(super::fleet::list());
+    }
+    json!({"tools": tools})
 }
 
 /// What a call came to, for the span and `rubato.mcp.calls`.
@@ -190,11 +199,13 @@ mod tests {
 
     #[test]
     fn no_tool_that_writes_sounds_like_an_approval() {
-        let rows = as_rows(TOOLS);
+        // The three of ADR 0071 and the four fleet tools of ADR 0072.
+        let mut rows = as_rows(TOOLS);
+        rows.extend(crate::agent_mcp::FLEET_TOOLS.iter().copied());
         let problems = approval_problems(&rows);
         println!("checked {} tools", rows.len());
         assert!(problems.is_empty(), "{problems:?}");
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 3 + 4);
     }
 
     #[test]

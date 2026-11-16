@@ -103,6 +103,7 @@ pairing         device-code pairing, the caller's pairings      pairing_codes, p
 companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
 pins            pin an issue to a node or seam, Map: lines      pins, map_line_pins
 launch          start a session through your own companion      launches, cap_hits
+fleet           a person's own lead agent: its requests, its workers, notices  fleet_requests
 layout          where each part sits on the shared map, and in By repo  map_layout, map_layout_grouped
 map             load and serve each workspace's map, the list    map_cache
 map_draft       the shared map draft and its pull request       map_draft_ops, map_proposal

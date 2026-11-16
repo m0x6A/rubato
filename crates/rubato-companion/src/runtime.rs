@@ -212,6 +212,18 @@ async fn run(
     let skill_dir = cfg.workspace.companion.skill_dir();
     let skill = crate::kernel::skill::installed_version(&skill_dir);
     tracing::info!(skill_dir = %skill_dir.display(), skill = ?skill, "rubato skill");
+    // How Claude is billed here, the kind only (ADR 0076); the fleet with the flag on (ADR 0072).
+    let claude_auth = crate::kernel::claude_auth::detect();
+    tracing::info!(
+        rubato.claude.auth = claude_auth.name(),
+        orchestrator = cfg.workspace.companion.orchestrator,
+        "claude auth"
+    );
+    let mut capabilities = hello_capabilities(skill.as_deref(), cfg.workspace.companion.mode);
+    capabilities.extend(extra_capabilities(
+        cfg.workspace.companion.orchestrator,
+        claude_auth,
+    ));
     let client = Client::new(
         cfg.state.server_url.clone(),
         Identity {
@@ -219,7 +231,7 @@ async fn run(
             user: cfg.state.user.clone(),
             version: crate::kernel::VERSION.to_owned(),
             token: cfg.state.pairing_token.clone(),
-            capabilities: hello_capabilities(skill.as_deref(), cfg.workspace.companion.mode),
+            capabilities,
             client: cfg.workspace.companion.mode,
         },
         seq,
@@ -235,6 +247,8 @@ async fn run(
         server_capabilities.clone(),
         out_tx.clone(),
         connected_tx.subscribe(),
+        cfg.workspace.companion.orchestrator,
+        cfg.state_dir.clone(),
     )
     .await;
     let (mcp_open, mcp_guarded) = crate::agent_mcp::routers(agent_mcp.clone());
@@ -467,6 +481,19 @@ pub fn hello_capabilities(skill: Option<&str>, mode: rubato_protocol::ClientKind
     caps
 }
 
+/// What Hello adds beyond [`hello_capabilities`]: `fleet` with the orchestrator flag on (ADR
+/// 0072), and how Claude is authenticated, the kind only (ADR 0076).
+pub fn extra_capabilities(
+    orchestrator: bool,
+    auth: crate::kernel::claude_auth::ClaudeAuth,
+) -> Vec<String> {
+    let mut caps = vec![format!("{}{}", capability::CLAUDE_AUTH_PREFIX, auth.name())];
+    if orchestrator {
+        caps.push(capability::FLEET.to_owned());
+    }
+    caps
+}
+
 /// The select arms, each one call into a slice (design §9.1 keeps their order). Owns what it
 /// holds, and awaits nothing slow: launches, session input, plan mirroring and spend go to
 /// their own tasks' queues (#172).
@@ -533,6 +560,12 @@ impl Dispatch {
                     ServerMessage::PlanStatus(s) => {
                         if let Some(a) = &self.agent_mcp {
                             a.on_plan_status(*s);
+                        }
+                    }
+                    // A lead's fleet tool call waits for this (ADR 0072).
+                    ServerMessage::FleetResult(r) => {
+                        if let Some(a) = &self.agent_mcp {
+                            a.on_fleet_result(*r);
                         }
                     }
                     ServerMessage::Error { code, .. } if code == "auth" => {
@@ -674,6 +707,18 @@ mod tests {
 
     /// ADR 0055: `plan_handoff` always (the `/handoff` route forwards reports), the skill only
     /// when its version is known.
+    /// ADR 0072 and 0076: `fleet` only with the flag on; the auth kind, never a value.
+    #[test]
+    fn hello_adds_the_fleet_only_with_the_flag_and_the_auth_kind() {
+        use crate::kernel::claude_auth::ClaudeAuth;
+        let off = extra_capabilities(false, ClaudeAuth::Login);
+        assert_eq!(off, ["claude_auth:login"]);
+        let on = extra_capabilities(true, ClaudeAuth::ApiKey);
+        assert!(on.contains(&"fleet".to_owned()));
+        assert!(on.contains(&"claude_auth:api_key".to_owned()));
+        assert!(!hello_capabilities(None, ClientKind::Interactive).contains(&"fleet".to_owned()));
+    }
+
     #[test]
     fn hello_announces_the_handoff_and_the_skill_when_known() {
         let with = hello_capabilities(Some("0.2.0"), ClientKind::Interactive);

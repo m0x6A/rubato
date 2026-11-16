@@ -25,14 +25,23 @@ pub const MCP_CONFIG_FILE: &str = "mcp.json";
 /// `mcp.json` for one launch: the receiver's `/mcp` on loopback, its token and the launch id as
 /// headers. Claude Code reads it through `--mcp-config <path>`, so the token is on no command
 /// line (ADR 0063).
-pub fn render_mcp_config(hook: &HookEndpoint, launch_id: uuid::Uuid) -> String {
+pub fn render_mcp_config(
+    hook: &HookEndpoint,
+    launch_id: uuid::Uuid,
+    lead_secret: Option<&str>,
+) -> String {
+    let mut headers = serde_json::json!({
+        "Authorization": format!("Bearer {}", hook.token),
+        "X-Rubato-Launch": launch_id.to_string(),
+    });
+    // A lead's own secret (ADR 0072): only in its own 0600 file, in no environment variable.
+    if let Some(s) = lead_secret {
+        headers[rubato_protocol::fleet::LEAD_HEADER] = serde_json::json!(s);
+    }
     serde_json::json!({"mcpServers": {MCP_SERVER: {
         "type": "http",
         "url": format!("http://127.0.0.1:{}/mcp", hook.port),
-        "headers": {
-            "Authorization": format!("Bearer {}", hook.token),
-            "X-Rubato-Launch": launch_id.to_string(),
-        },
+        "headers": headers,
     }}})
     .to_string()
 }
@@ -222,6 +231,8 @@ mod tests {
             plan_path: None,
             draft: None,
             planning: PlanningMode::Git,
+            role: Default::default(),
+            lead_launch_id: None,
         }
     }
 
@@ -380,6 +391,8 @@ mod tests {
             plan_path: None,
             draft: None,
             planning: PlanningMode::Git,
+            role: Default::default(),
+            lead_launch_id: None,
         }
     }
 
@@ -479,7 +492,7 @@ mod tests {
     fn the_mcp_config_names_this_receiver_and_this_launch() {
         let id = Uuid::from_u128(7);
         let v: serde_json::Value =
-            serde_json::from_str(&render_mcp_config(&endpoint(), id)).unwrap();
+            serde_json::from_str(&render_mcp_config(&endpoint(), id, None)).unwrap();
         let s = &v["mcpServers"][MCP_SERVER];
         assert_eq!(s["type"], "http");
         assert_eq!(s["url"], "http://127.0.0.1:43125/mcp");

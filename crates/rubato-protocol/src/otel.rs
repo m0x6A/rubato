@@ -88,6 +88,15 @@ pub mod attr {
     pub const VOICE_PROVIDER: &str = "rubato.voice.provider";
     /// Bytes sent to or read from the speech provider in one call.
     pub const VOICE_BYTES: &str = "rubato.voice.bytes";
+    /// A fleet request's action (ADR 0072): `list`, `launch`, `message`, `stop`.
+    pub const FLEET_ACTION: &str = "rubato.fleet.action";
+    /// The launch a fleet message or stop is aimed at.
+    pub const TARGET_LAUNCH_ID: &str = "rubato.target_launch_id";
+    /// Whose launch that is: on a refusal, whether the line between people was tested.
+    pub const TARGET_OWNER: &str = "rubato.target_owner";
+    /// How the companion's Claude Code is authenticated (ADR 0076): `api_key`, `bedrock`, `vertex`,
+    /// `login`. Never a value.
+    pub const CLAUDE_AUTH: &str = "rubato.claude.auth";
     /// The MCP tool or method a companion's `rubato.mcp.call` served (ADR 0071): `get_assignment`,
     /// `report_status`, `plan_status`, `initialize`, `ping`, `tools/list`, `discovery` or
     /// `unknown`. Never a client-chosen string.
@@ -275,6 +284,11 @@ pub mod metric {
     pub const VOICE_TOKENS: &str = "rubato.voice.tokens";
     /// Failed voice joins the browser reported, by `rubato.reason`.
     pub const VOICE_JOIN_FAILED: &str = "rubato.voice.join_failed";
+    /// Fleet requests by `rubato.fleet.action`, `rubato.outcome` and `rubato.reason` (ADR 0072);
+    /// alert `FleetCrossOwner` on `other_owner` and `identity`.
+    pub const FLEET_REQUESTS: &str = "rubato.fleet.requests";
+    /// Fleet notices to leads, by `rubato.outcome` (`queued`, `coalesced`).
+    pub const FLEET_NOTICES: &str = "rubato.fleet.notices";
     /// Companion: MCP requests from launched sessions (ADR 0071), by `rubato.mcp.tool`,
     /// `rubato.outcome` (`ok`, `refused`, `coalesced`, `error`) and `rubato.reason`.
     pub const MCP_CALLS: &str = "rubato.mcp.calls";
@@ -327,6 +341,8 @@ pub mod span {
     pub const VOICE_STT: &str = "rubato.voice.stt";
     /// Server: one synthesis call to the speech provider.
     pub const VOICE_TTS: &str = "rubato.voice.tts";
+    /// Server: one fleet request of a lead (ADR 0072).
+    pub const FLEET_REQUEST: &str = "rubato.fleet.request";
     /// Companion: one MCP request on `/mcp` (ADR 0071), with `rubato.mcp.tool`,
     /// `rubato.launch_id`, `rubato.issue`, `rubato.outcome` and `rubato.reason`.
     pub const MCP_CALL: &str = "rubato.mcp.call";
@@ -420,6 +436,10 @@ pub fn all_names() -> Vec<&'static str> {
         attr::VOICE_OP,
         attr::VOICE_PROVIDER,
         attr::VOICE_BYTES,
+        attr::FLEET_ACTION,
+        attr::TARGET_LAUNCH_ID,
+        attr::TARGET_OWNER,
+        attr::CLAUDE_AUTH,
         attr::MCP_TOOL,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
@@ -502,6 +522,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::VOICE_DURATION,
         metric::VOICE_TOKENS,
         metric::VOICE_JOIN_FAILED,
+        metric::FLEET_REQUESTS,
+        metric::FLEET_NOTICES,
         span::LAUNCH,
         span::HOOK_FORWARD,
         span::RECONCILE,
@@ -522,6 +544,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::VOICE_TOKEN,
         span::VOICE_STT,
         span::VOICE_TTS,
+        span::FLEET_REQUEST,
         span::MCP_CALL,
         event::SESSION_STALE,
         event::CAP_HIT,

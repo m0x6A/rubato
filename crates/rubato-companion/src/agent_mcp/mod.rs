@@ -12,14 +12,18 @@
 //! the composition root, which mounts the routers on the receiver and spawns the two tasks.
 
 mod cache;
+mod fleet;
 mod report;
 mod rpc;
 mod tools;
 mod watch;
 
 #[cfg(test)]
+mod fleet_tests;
+#[cfg(test)]
 mod tests;
 
+pub use fleet::{FLEET_TOOLS, leads_path, new_lead_secret};
 pub use tools::{TOOLS, Tool};
 
 use crate::kernel::telemetry::Metrics;
@@ -50,6 +54,11 @@ pub struct AgentMcp {
     out: mpsc::UnboundedSender<CompanionMessage>,
     /// Whether the companion's websocket is up: `plan_status` says so with its answer.
     link: tokio_watch::Receiver<bool>,
+    /// The companion's orchestrator flag (ADR 0072): the fleet tools only with it on.
+    orchestrator: bool,
+    /// Where `leads.json` holds the lead secrets.
+    state_dir: std::path::PathBuf,
+    fleet_waiters: fleet::Waiters,
 }
 
 impl AgentMcp {
@@ -61,6 +70,8 @@ impl AgentMcp {
         server_capabilities: Arc<std::sync::Mutex<Vec<String>>>,
         out: mpsc::UnboundedSender<CompanionMessage>,
         link: tokio_watch::Receiver<bool>,
+        orchestrator: bool,
+        state_dir: std::path::PathBuf,
     ) -> Arc<Self> {
         let (companion_id, restored) = {
             let reg = registry.lock().await;
@@ -77,12 +88,20 @@ impl AgentMcp {
             server_capabilities,
             out,
             link,
+            orchestrator,
+            state_dir,
+            fleet_waiters: fleet::Waiters::default(),
         })
     }
 
     /// A `PlanStatus` from the server: the newest per launch answers `plan_status`.
     pub fn on_plan_status(&self, s: PlanStatus) {
         self.cache.put(s);
+    }
+
+    /// A `FleetResult` from the server: the lead's call waiting for it answers (ADR 0072).
+    pub fn on_fleet_result(&self, r: rubato_protocol::FleetResult) {
+        fleet::on_result(self, r);
     }
 }
 

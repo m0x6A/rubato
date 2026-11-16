@@ -502,6 +502,12 @@ pub struct Overview {
     /// with its age, joined on `(companion_id, launch_id)`, never a progress state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_lines: Vec<crate::agent::AgentLine>,
+    /// The server's orchestrator flag (ADR 0072): the web offers *Start as lead* only while it is on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub orchestrator: bool,
+    /// Each live lead and its live workers, from the current snapshots; empty while the flag is off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leads: Vec<crate::fleet::LeadView>,
     pub generated_at: DateTime<Utc>,
 }
 

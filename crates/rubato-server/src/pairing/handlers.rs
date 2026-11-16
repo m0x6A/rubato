@@ -125,6 +125,7 @@ pub async fn approve(
 
 pub fn to_info(app: &App, r: PairingRow) -> PairingInfo {
     let connected = app.companions.lock().unwrap().contains_key(&r.companion_id);
+    let caps = app.capabilities(r.companion_id);
     PairingInfo {
         companion_id: r.companion_id,
         user: r.user,
@@ -134,6 +135,14 @@ pub fn to_info(app: &App, r: PairingRow) -> PairingInfo {
         revoked_at: r.revoked_at,
         connected,
         client: r.client,
+        // A lead may start here only with both flags on (ADR 0072).
+        can_lead: app.config.orchestrator
+            && caps.iter().any(|c| c == rubato_protocol::capability::FLEET),
+        // The kind only, as the companion announced it (ADR 0076).
+        claude_auth: caps.iter().find_map(|c| {
+            c.strip_prefix(rubato_protocol::capability::CLAUDE_AUTH_PREFIX)
+                .map(str::to_owned)
+        }),
     }
 }
 

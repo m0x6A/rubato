@@ -3,6 +3,17 @@
   "title": "PairingInfo",
   "type": "object",
   "properties": {
+    "can_lead": {
+      "description": "The companion announced `fleet` and the server's flag is on: a lead may start here (ADR 0072).",
+      "type": "boolean"
+    },
+    "claude_auth": {
+      "description": "How its Claude Code is authenticated: `api_key`, `bedrock`, `vertex` or `login`; absent\nfrom a companion that does not say (ADR 0076).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "client": {
       "description": "Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.",
       "$ref": "#/$defs/ClientKind"

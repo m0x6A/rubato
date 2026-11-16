@@ -36,6 +36,10 @@
         "null"
       ]
     },
+    "role": {
+      "description": "`lead` starts a person's lead agent, only while the orchestrator flag is on (ADR 0072).",
+      "$ref": "#/$defs/LaunchRole"
+    },
     "slug": {
       "description": "Branch slug; derived from the issue title when omitted.",
       "type": [
@@ -73,6 +77,14 @@
       "required": [
         "repo",
         "number"
+      ]
+    },
+    "LaunchRole": {
+      "description": "What a launch is for: an ordinary worker, or a person's lead agent (ADR 0072).",
+      "type": "string",
+      "enum": [
+        "worker",
+        "lead"
       ]
     }
   }

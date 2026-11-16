@@ -5,7 +5,7 @@ use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
 use crate::{
-    agent_reports, approve, launch, pairing, plan_drafts, queue, rooms, session_log,
+    agent_reports, approve, fleet, launch, pairing, plan_drafts, queue, rooms, session_log,
     session_messages, spend_history,
 };
 use axum::extract::State;
@@ -274,6 +274,7 @@ async fn on_envelope(
         CompanionMessage::HandoffReport(_) => "handoff_report",
         CompanionMessage::RoomReply(_) => "room_reply",
         CompanionMessage::AgentReport(_) => "agent_report",
+        CompanionMessage::FleetRequest(_) => "fleet_request",
         CompanionMessage::Ack { .. } => "ack",
     };
     // Declared empty so the `agent_report` arm can record them: `tracing` drops a record() of a
@@ -290,6 +291,13 @@ async fn on_envelope(
                     // must still settle its message; applying it twice changes nothing.
                     if let CompanionMessage::SessionMessageResult(r) = &env.message {
                         session_messages::on_result(app, companion_id, r).await;
+                    }
+                    // A replayed fleet request gets its stored answer, never a second action
+                    // (ADR 0072).
+                    if let CompanionMessage::FleetRequest(r) = &env.message
+                        && let Some(res) = fleet::on_replay(app, companion_id, r).await
+                    {
+                        app.send_to_companion(companion_id, ServerMessage::FleetResult(Box::new(res)));
                     }
                     return Some(ServerMessage::Ack { seq: env.seq });
                 }
@@ -369,7 +377,11 @@ async fn on_envelope(
                         rubato_protocol::capability::ROOM_REPLIES.to_owned(),
                         // It takes agent reports and pushes plan statuses (ADR 0071).
                         rubato_protocol::capability::AGENT_MCP.to_owned(),
-                    ],
+                    ]
+                    .into_iter()
+                    // A lead's fleet requests, only with the orchestrator flag on (ADR 0072).
+                    .chain(app.config.orchestrator.then(|| rubato_protocol::capability::FLEET.to_owned()))
+                    .collect(),
                 })
             }
             CompanionMessage::Heartbeat(h) => {
@@ -431,6 +443,8 @@ async fn on_envelope(
                     agent_reports::prune(&app.db, companion_id, &live).await.map(|_| ()),
                 );
                 session_messages::on_sessions(app, &sessions).await;
+                // A lead hears when its workers end, block or go idle (ADR 0072).
+                fleet::on_sessions(app, &sessions).await;
                 app.notify("sessions");
                 Some(ServerMessage::Ack { seq: env.seq })
             }
@@ -556,6 +570,13 @@ async fn on_envelope(
                         span.record("rubato.outcome", "error");
                         observe("accept_agent_report", companion_id, env.seq, Err(e));
                     }
+                }
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
+            // ADR 0072: a lead's fleet tool call; the answer goes back on the same socket.
+            CompanionMessage::FleetRequest(r) => {
+                if let Some(res) = fleet::on_request(app, companion_id, &pairing.user, &r).await {
+                    app.send_to_companion(companion_id, ServerMessage::FleetResult(Box::new(res)));
                 }
                 Some(ServerMessage::Ack { seq: env.seq })
             }
@@ -830,7 +851,8 @@ fn stored_payload(m: &CompanionMessage) -> serde_json::Value {
         }
         CompanionMessage::SessionMessageResult(_)
         | CompanionMessage::Draft(_)
-        | CompanionMessage::AgentReport(_) => {
+        | CompanionMessage::AgentReport(_)
+        | CompanionMessage::FleetRequest(_) => {
             serde_json::json!({})
         }
         other => serde_json::to_value(other).unwrap_or_default(),

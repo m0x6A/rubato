@@ -83,8 +83,10 @@ fn tool_label(method: &str, params: &Value) -> &'static str {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             tools::TOOLS
                 .iter()
-                .find(|t| t.name == name)
-                .map_or("unknown", |t| t.name)
+                .map(|t| t.name)
+                .chain(super::fleet::FLEET_TOOLS.iter().map(|(n, _, _)| *n))
+                .find(|n| *n == name)
+                .unwrap_or("unknown")
         }
         _ => "unknown",
     }
@@ -176,10 +178,19 @@ pub(super) async fn post(
                 (result(&id, r), "ok", "")
             }
             "ping" => (result(&id, json!({})), "ok", ""),
-            "tools/list" => (result(&id, tools::list()), "ok", ""),
+            "tools/list" => {
+                let lead = super::fleet::lead_ok(&st, &view, &headers).is_ok();
+                (result(&id, tools::list(lead)), "ok", "")
+            }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                if super::fleet::is_fleet_tool(name) {
+                    let c = super::fleet::call(&st, &view, name, &args, &headers).await;
+                    span.record("rubato.outcome", c.outcome);
+                    count(&st, tool, c.outcome, c.reason);
+                    return result(&id, c.result);
+                }
                 match tools::call(&st, &view, name, &args) {
                     Some(c) => (result(&id, c.result), c.outcome, c.reason),
                     None => (error(&id, -32602, "unknown tool"), "error", "unknown_tool"),

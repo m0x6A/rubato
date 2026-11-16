@@ -133,6 +133,11 @@
           "description": "tmux or claude missing or below the pinned version.",
           "type": "string",
           "const": "missing_dependency"
+        },
+        {
+          "description": "A lead launch to a companion whose orchestrator flag is off (ADR 0072).",
+          "type": "string",
+          "const": "orchestrator_off"
         }
       ]
     },
