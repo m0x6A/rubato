@@ -7513,3 +7513,126 @@ async fn a_merge_whose_outcome_is_unknown_is_settled_by_the_poll() {
     );
     assert_eq!(merges_sent(&h), 2);
 }
+
+// ----- ADR 0071: no companion message grants an approval (plan 226 §6) ------------------------
+
+const GUARD_LAUNCH: &str = "9b2e4d1a-3c5f-4e6a-9b7c-8d9e0f1a2b3c";
+const GUARD_APPROVAL: &str = "5d3b1f0e-2c4a-4b8e-9f1d-7a6c5e4b3a21";
+
+/// Every column of the two approval tables that grants or describes an approval. The handoff
+/// columns a valid `HandoffReport` writes (`handoff_outcome`, `handoff_at`) are left out.
+async fn approval_rows(db: &sqlx::SqlitePool) -> Vec<String> {
+    use sqlx::Row;
+    let mut out = Vec::new();
+    for r in sqlx::query("SELECT id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at FROM rubato_approvals ORDER BY id")
+        .fetch_all(db).await.unwrap()
+    {
+        let cols: Vec<String> = (0..13).map(|i| r.try_get::<String, _>(i).or_else(|_| r.try_get::<i64, _>(i).map(|n| n.to_string())).unwrap_or_default()).collect();
+        out.push(format!("rubato_approvals {}", cols.join("|")));
+    }
+    for r in sqlx::query("SELECT login, repo, number, sha, branch, state FROM plan_approvals ORDER BY login, repo, number, sha")
+        .fetch_all(db).await.unwrap()
+    {
+        let cols: Vec<String> = (0..6).map(|i| r.try_get::<String, _>(i).or_else(|_| r.try_get::<i64, _>(i).map(|n| n.to_string())).unwrap_or_default()).collect();
+        out.push(format!("plan_approvals {}", cols.join("|")));
+    }
+    out
+}
+
+/// A pairing, a launch of issue 122 sent to it, and a Rubato approval waiting for its handoff:
+/// so a `Launch` result and a `HandoffReport` reach `approve` instead of stopping at a gate.
+async fn seed_guard(h: &Harness, companion_id: Uuid) {
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 122, '{}', ?)")
+        .bind(GUARD_LAUNCH).bind(companion_id.to_string()).bind(&now)
+        .execute(&h.app.db).await.unwrap();
+    sqlx::query("INSERT INTO rubato_approvals (id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at) VALUES (?, 'm0x6A/rubato', 122, 'issue/122-plan-in-rubato', ?, 3, 'abc1234', 'def5678', 'alice', ?, 0, 'ok', ?)")
+        .bind(GUARD_APPROVAL).bind(Uuid::from_u128(77).to_string()).bind(&now).bind(&now)
+        .execute(&h.app.db).await.unwrap();
+}
+
+/// Replay every companion fixture through the websocket as `companion_id`. With `tamper`, a
+/// stand-in for a future message kind that writes an approval inserts one after the draft.
+/// Returns how many fixtures were replayed and how many the server acked.
+async fn replay_every_fixture(
+    h: &Harness,
+    token: &str,
+    companion_id: Uuid,
+    tamper: bool,
+) -> (usize, usize) {
+    let dir = repo_root().join("crates/rubato-protocol/fixtures");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("companion_") && n.ends_with(".json"))
+        .collect();
+    // The Hello first, as a companion sends it; the rest in name order.
+    names.sort_by_key(|n| (!n.starts_with("companion_hello"), n.clone()));
+    let mut ws = h.connect(token).await;
+    let (mut replayed, mut acked) = (0, 0);
+    for (i, name) in names.iter().enumerate() {
+        let mut env = with_companion(Harness::fixture(name), companion_id);
+        env.seq = i as u64 + 1;
+        let reply = send(&mut ws, &env).await;
+        replayed += 1;
+        if matches!(
+            reply,
+            ServerMessage::Ack { .. } | ServerMessage::Welcome { .. }
+        ) {
+            acked += 1;
+        }
+        if tamper && name == "companion_draft.json" {
+            sqlx::query("INSERT INTO plan_approvals (login, repo, number, sha, branch, state, created_at) VALUES ('mallory', 'm0x6A/rubato', 122, 'abc1234', 'issue/122-plan-in-rubato', 'posted', '2026-11-16T00:00:00Z')")
+                .execute(&h.app.db).await.unwrap();
+        }
+    }
+    (replayed, acked)
+}
+
+#[tokio::test]
+async fn no_companion_message_grants_an_approval() {
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    seed_guard(&h, companion_id).await;
+    let before = approval_rows(&h.app.db).await;
+    let (replayed, acked) = replay_every_fixture(&h, &token, companion_id, false).await;
+    let after = approval_rows(&h.app.db).await;
+    println!(
+        "replayed {replayed} companion fixtures, {acked} acked; {} approval rows compared",
+        before.len()
+    );
+    assert!(
+        replayed >= 12,
+        "every fixture, the launch result and the handoff report included"
+    );
+    assert_eq!(
+        before, after,
+        "a companion message granted or changed an approval"
+    );
+    // Did the handoff report reach approve, rather than a gate in front of it?
+    use sqlx::Row;
+    let outcome: Option<String> =
+        sqlx::query("SELECT handoff_outcome FROM rubato_approvals WHERE id = ?")
+            .bind(GUARD_APPROVAL)
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap()
+            .get("handoff_outcome");
+    assert_eq!(
+        outcome.as_deref(),
+        Some("committed"),
+        "the handoff report must reach approve"
+    );
+
+    // Must fail on purpose: a message kind that writes an approval is caught.
+    let h = harness().await;
+    let (companion_id, token) = h.pair("m0x6A").await;
+    seed_guard(&h, companion_id).await;
+    let before = approval_rows(&h.app.db).await;
+    replay_every_fixture(&h, &token, companion_id, true).await;
+    assert_ne!(
+        before,
+        approval_rows(&h.app.db).await,
+        "the guard must see a written approval"
+    );
+}
