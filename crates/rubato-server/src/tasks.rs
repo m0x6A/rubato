@@ -13,7 +13,8 @@
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
     agent_reports, approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue,
-    overview, pairing, pins, plans, pulls, queue, rooms, session_messages, traffic, webhooks,
+    overview, pairing, pins, plan_status, plans, pulls, queue, rooms, session_messages, traffic,
+    webhooks,
 };
 use anyhow::{Result, anyhow};
 use chrono::Utc;
@@ -637,7 +638,13 @@ impl Poller {
         webhooks::record(app).await;
         // #69: a companion silent with its socket open counts its sessions as unknown.
         companion_link::mark_quiet(app, app.clock.now());
-        overview::refresh_gauges(app).await?;
+        // The overviews built for the gauges also tell each launched session where its plan
+        // stands (ADR 0071, plan 226 §4); one workspace failing stops neither.
+        let refreshed = overview::refresh(app).await;
+        plan_status::on_tick(app, &refreshed.built).await;
+        if let Some(e) = refreshed.error {
+            return Err(e);
+        }
         app.notify("poll");
         Ok(())
     }
@@ -888,6 +895,23 @@ pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
         async move {
             session_messages::run_sweep(app, shutdown).await;
             Ok(())
+        }
+    });
+    // Right after a companion is welcomed, its launches' plan statuses (plan 226 §4).
+    tasks.spawn("plan_status_welcome", Kind::BestEffort, {
+        let (app, mut shutdown) = (app.clone(), shutdown.clone());
+        async move {
+            let mut welcomed = app.subscribe_welcomed();
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => return Ok(()),
+                    got = welcomed.recv() => match got {
+                        Ok(c) => plan_status::on_welcome(&app, c).await,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+                    },
+                }
+            }
         }
     });
     tasks.spawn("poll", Kind::Essential, async move {

@@ -1308,6 +1308,12 @@ branch: string
 bundle_hash: string
 draft_id: string
 /**
+ * Whether the plan in that revision fits the workspace's map (`plan_fit`), derived on each
+ * overview build (ADR 0071, plan 226 §4). Absent when it does not parse, or from an older
+ * server.
+ */
+fits?: (boolean | null)
+/**
  * The branch an imported plan was found on (ADR 0058).
  */
 imported_from?: (string | null)

@@ -355,6 +355,8 @@ async fn on_envelope(
                 if let Some(cached) = app.sessions_of(companion_id) {
                     record_sessions_by_state(&app.metrics, companion_id, &cached);
                 }
+                // Its launches' plan statuses follow the Welcome (ADR 0071, plan 226 §4).
+                app.companion_welcomed(companion_id);
                 Some(ServerMessage::Welcome {
                     server_version: crate::kernel::VERSION.to_owned(),
                     protocol_version: PROTOCOL_VERSION,
@@ -365,6 +367,8 @@ async fn on_envelope(
                         rubato_protocol::capability::DRAFTS.to_owned(),
                         rubato_protocol::capability::HANDOFF_REPORTS.to_owned(),
                         rubato_protocol::capability::ROOM_REPLIES.to_owned(),
+                        // It takes agent reports and pushes plan statuses (ADR 0071).
+                        rubato_protocol::capability::AGENT_MCP.to_owned(),
                     ],
                 })
             }
@@ -1180,6 +1184,32 @@ mod tests {
         assert_eq!(cached[0].status, SessionStatus::Idle);
         let stored = store::session_snapshots(&app.db).await.unwrap();
         assert_eq!(stored.get(&c), Some(&cached));
+    }
+
+    /// ADR 0071, plan 226 §5: the Welcome says this server takes agent reports and pushes plan
+    /// statuses, and the kernel hears that the companion was welcomed.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_welcome_announces_agent_mcp_and_is_broadcast() {
+        let (app, _reader, pairing, _tmp) = spend_app().await;
+        let mut welcomed = app.subscribe_welcomed();
+        let mut hello = fixture("companion_hello.json");
+        if let CompanionMessage::Hello {
+            companion_id, user, ..
+        } = &mut hello.message
+        {
+            *companion_id = pairing.companion_id;
+            *user = pairing.user.clone();
+        }
+        match on_envelope(&app, &pairing, hello).await {
+            Some(ServerMessage::Welcome { capabilities, .. }) => assert!(
+                capabilities
+                    .iter()
+                    .any(|c| c == rubato_protocol::capability::AGENT_MCP),
+                "{capabilities:?}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(welcomed.try_recv().unwrap(), pairing.companion_id);
     }
 
     // ----- agent reports (ADR 0071, plan 226 §1) ---------------------------------------------
