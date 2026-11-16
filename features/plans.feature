@@ -56,3 +56,18 @@ Feature: Plans
     When a person opens Plans
     Then the plan is not listed
     And it is still read from the issue under Done, with nothing to accept or approve
+
+  @plans.board
+  Scenario: Plans are read on a board of their own
+    Given plans of issues that are open on GitHub, proposed and open
+    When a person opens Plans with the panel widened
+    Then Proposed and Open are columns side by side, and a plan that is only a draft is among the proposed
+    And a plan opens in the Plans tab, with where it fits and its draft, while the map paints it
+    And the issue is one press away
+
+  @plans.reads-as-markdown
+  Scenario: A plan's text reads as a document
+    Given a plan draft with headings, tables and a task list
+    When a person opens its plan file
+    Then the text is rendered as Markdown, with the raw text one press away
+    And HTML, scripts and images in the plan put nothing on the page but text and links

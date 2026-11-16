@@ -25,6 +25,47 @@ test("plans from voice-note issues show where they fit", { tag: ["@plans.found-b
   await expect(page.getByTestId("node-rubato-companion")).toContainText("planned here");
 });
 
+// Issue #265: the Plans tab is a board. Its columns sit side by side once the panel is wide, a
+// plan opens in the tab (the map still paints it), and the finished plan of #930 is only under Done.
+test("the plans board: columns in a wide panel, a plan read in place, finished plans on request", { tag: ["@plans.board", "@plans.done-view"] }, async ({ page, baseURL }) => {
+  await page.request.post(`${baseURL}/api/pins`, { data: { issue: { repo: "m0x6A/rubato", number: 930 }, target: { kind: "node", id: "plan-check" } } });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("tab-plans").click();
+  await expect(page.getByTestId("plan-row-914")).toBeVisible({ timeout: 30_000 });
+  const tops = () =>
+    page.evaluate(() => ["plans-proposed", "plans-open"].map((id) => Math.round(document.querySelector(`[data-testid="${id}"]`)!.closest(".plan-column")!.getBoundingClientRect().left)));
+  const [narrowProposed, narrowOpen] = await tops();
+  expect(narrowOpen).toBe(narrowProposed);
+  await page.getByTestId("panel-size").click();
+  await expect(page.getByTestId("body")).toHaveAttribute("data-panel", "wide");
+  const [wideProposed, wideOpen] = await tops();
+  console.log(`plan columns: stacked at ${narrowProposed}/${narrowOpen}, side by side at ${wideProposed}/${wideOpen}`);
+  expect(wideOpen!).toBeGreaterThan(wideProposed! + 200);
+
+  // A plan opens here; the tab does not change, and the map paints the plan.
+  await page.getByTestId("plan-row-914").getByRole("button", { name: "m0x6A/rubato#914" }).click();
+  const detail = page.getByTestId("plan-detail");
+  await expect(detail.getByTestId("where-it-fits")).toBeVisible();
+  await expect(page.getByTestId("tab-plans")).toHaveClass(/active/);
+  await expect(page.getByTestId("node-rubato-companion")).toHaveClass(/paint-affected/);
+  await detail.getByRole("button", { name: "← all plans" }).click();
+  await expect(page.getByTestId("plan-columns")).toBeVisible();
+
+  // The finished plan is not on the board until Done is asked for, and has nothing to accept.
+  await expect(page.getByTestId("plan-row-930")).toHaveCount(0);
+  await page.getByTestId("plans-view-done").click();
+  const done = page.getByTestId("plan-row-930");
+  await expect(done).toBeVisible({ timeout: 30_000 });
+  await expect(done).toContainText("closed");
+  await expect(done.getByTestId("accept-plan")).toHaveCount(0);
+  await done.getByRole("button", { name: "m0x6A/rubato#930" }).click();
+  await expect(page.getByTestId("plan-finished-note")).toBeVisible();
+  await expect(page.getByTestId("plan-detail").getByTestId("accept-plan")).toHaveCount(0);
+  await page.getByTestId("plan-open-issue").click();
+  await expect(page.getByTestId("issue-detail").getByTestId("finished-note")).toBeVisible();
+});
+
 test("connected repos list the map's repo", { tag: "@repos.lists-map-repo" }, async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("tab-repos").click();

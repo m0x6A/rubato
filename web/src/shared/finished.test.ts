@@ -32,9 +32,13 @@ describe("finished is the server's word (#265)", () => {
 });
 
 /** Lines that decide by themselves whether an issue is done: a comparison with "done", or a
- * test of `merged_at`. Every list must ask `isFinished` instead. */
+ * test of `merged_at`. Every list must ask `isFinished` instead. The Open / Done switch of a
+ * list compares its own `view`, which is not a rule about an issue. */
 function ownRules(text: string): string[] {
-  return text.split("\n").filter((l) => /[!=]==\s*"done"|"done"\s*[!=]==|merged_at/.test(l) && !/^\s*(\/\/|\*|\/\*)/.test(l));
+  return text
+    .split("\n")
+    .map((l) => l.replace(/\bview\s*[!=]==\s*"done"/g, ""))
+    .filter((l) => /[!=]==\s*"done"|"done"\s*[!=]==|merged_at/.test(l) && !/^\s*(\/\/|\*|\/\*)/.test(l));
 }
 
 /** Files that may name "done" or `merged_at`, and why. Anything else is a second rule. */
@@ -71,5 +75,7 @@ describe("no reader keeps a done rule of its own (#265)", () => {
     expect(ownRules("  .filter((i) => !i.pull_request?.merged_at)")).toHaveLength(1);
     expect(ownRules('  return state !== "done";')).toHaveLength(1);
     expect(ownRules('  // a comment about "done" === nothing\n  { state: "done", label: "Done" },')).toHaveLength(0);
+    expect(ownRules('<button aria-pressed={view === "done"}>')).toHaveLength(0);
+    expect(ownRules('<li hidden={view === "done" && i.progress.state === "done"}>')).toHaveLength(1);
   });
 });
