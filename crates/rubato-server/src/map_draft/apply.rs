@@ -121,6 +121,7 @@ mod tests {
             path: None,
             description: None,
             service: None,
+            retired: None,
         }
     }
 
@@ -134,6 +135,7 @@ mod tests {
             guard: None,
             description: None,
             flows: vec![],
+            retired: None,
         }
     }
 

@@ -4,6 +4,7 @@
  * placed it), the plan's affected parts lit cyan, its new parts violet, its seams lit.
  */
 import type { MapLayout, Plan, SystemMap } from "../../protocol.ts";
+import { liveMap } from "../../shared/map.ts";
 
 type XY = { x: number; y: number };
 
@@ -52,7 +53,9 @@ export function miniPositions(map: SystemMap, layout?: MapLayout): Map<string, X
   return new Map([...raw].map(([id, p]) => [id, { x: PAD + (p.x - minX) * sx, y: PAD + (p.y - minY) * sy }]));
 }
 
-export function MiniMap({ map, layout, plan }: { map: SystemMap; layout?: MapLayout | undefined; plan: Plan }) {
+export function MiniMap({ map: full, layout, plan }: { map: SystemMap; layout?: MapLayout | undefined; plan: Plan }) {
+  // Retired parts are drawn nowhere (ADR 0077).
+  const map = liveMap(full);
   const at = miniPositions(map, layout);
   const status = new Map(plan.affected_parts.map((p) => [p.node, p.status]));
   const litSeams = new Set(plan.affected_parts.flatMap((p) => p.seams ?? []));

@@ -5,6 +5,7 @@ import { relative } from "../../shared/format.ts";
 import { type MapOp, draftsApi } from "./api.ts";
 import { type DiffLine, changedWithContext, lineDiff } from "./diff.ts";
 import { flowsFromText, flowsToText, opSummary } from "./overlay.ts";
+import { liveMap } from "../../shared/map.ts";
 
 interface Props {
   overview: Overview;
@@ -156,7 +157,8 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
     }
     const f = new FormData(e.currentTarget);
     // An update replaces the whole part: its service is sent as the form has it, never dropped.
-    const node: MapNode = compact({ id: selectedNode.id, kind: String(f.get("kind")) as NodeKind, description: blank(String(f.get("description") ?? "")), repo: blank(String(f.get("repo") ?? "")), path: blank(String(f.get("path") ?? "")), service: serviceFrom(f) });
+    // `retired` is not on the form: the part keeps it, or an edit would undo a retirement (ADR 0077).
+    const node: MapNode = compact({ id: selectedNode.id, kind: String(f.get("kind")) as NodeKind, description: blank(String(f.get("description") ?? "")), repo: blank(String(f.get("repo") ?? "")), path: blank(String(f.get("path") ?? "")), service: serviceFrom(f), retired: selectedNode.retired ?? null });
     await post({ op: "update_node", node }, `Part ${node.id} was not changed`);
   };
 
@@ -182,6 +184,7 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
       guard: blank(String(f.get("guard") ?? "")),
       description: blank(String(f.get("description") ?? "")),
       flows,
+      retired: selectedSeam.retired ?? null,
     });
     await post({ op: "update_seam", seam }, `Seam ${seam.id} was not changed`);
   };
@@ -461,15 +464,16 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
             <label>
               From (the part that depends)
               <select ref={addSeamFrom} name="from" required defaultValue={seamPrefill?.from}>
-                {map.nodes.map((n) => (
+                {/* A new seam joins live parts only (ADR 0077: no live seam on a retired part). */}
+                {liveMap(map).nodes.map((n) => (
                   <option key={n.id}>{n.id}</option>
                 ))}
               </select>
             </label>
             <label>
               To (the part depended on)
-              <select name="to" required defaultValue={seamPrefill?.to ?? map.nodes[1]?.id}>
-                {map.nodes.map((n) => (
+              <select name="to" required defaultValue={seamPrefill?.to ?? liveMap(map).nodes[1]?.id}>
+                {liveMap(map).nodes.map((n) => (
                   <option key={n.id}>{n.id}</option>
                 ))}
               </select>

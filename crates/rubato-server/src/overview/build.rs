@@ -1879,6 +1879,7 @@ mod cross_workspace_tests {
                     path: None,
                     description: None,
                     service: None,
+                    retired: None,
                 })
                 .collect(),
             seams: vec![],

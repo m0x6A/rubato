@@ -588,6 +588,7 @@ mod tests {
             path: None,
             description: None,
             service: Some(ServiceId::new(None, id)),
+            retired: None,
         }
     }
 
@@ -601,6 +602,7 @@ mod tests {
             guard: None,
             description: None,
             flows: vec![],
+            retired: None,
         }
     }
 

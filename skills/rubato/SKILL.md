@@ -29,7 +29,8 @@ node --experimental-strip-types scripts/adrs.ts
 `map.ts` prints every node and seam id you may use, the map's git sha, and the plan path
 template for this repo. With several maps in `~/.config/rubato/local.yml` (one per workspace, ADR
 0044) it prints every map that names this repo; the plan may name ids from any of them, and
-`plan.ts check` and `wait` count it as fitting when it fits one (ADR 0045). Do not invent ids. If a node you need is missing, say so in the plan's
+`plan.ts check` and `wait` count it as fitting when it fits one (ADR 0045). Do not invent ids,
+and name none from its "Retired (do not use)" list (ADR 0077). If a node you need is missing, say so in the plan's
 *Assumed, not yet approved* section with scope *seam*; do not add it yourself. `adrs.ts` prints
 the accepted ADRs. A plan that contradicts one is a plan check failure unless it proposes a
 superseding ADR.
