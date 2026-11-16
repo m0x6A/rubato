@@ -531,6 +531,25 @@ mod fit_tests {
         assert_eq!(plan_fit(None, None, &map()), None);
     }
 
+    /// ADR 0077: a retired id is still declared, so a plan that names one still fits.
+    #[test]
+    fn a_plan_that_names_a_retired_id_still_fits() {
+        let mut m = map();
+        for n in &mut m.nodes {
+            n.retired = Some("0070".into());
+        }
+        for s in &mut m.seams {
+            s.retired = Some("0070".into());
+            s.flows.clear();
+        }
+        let fit = plan_fit(Some(&plan()), None, &m).unwrap();
+        assert!(
+            !fit.reasons.iter().any(|r| matches!(r, FitReason::UnknownIds { .. })),
+            "{:?}",
+            fit.reasons
+        );
+    }
+
     #[test]
     fn each_reason_on_its_own() {
         let mut checked = 0;

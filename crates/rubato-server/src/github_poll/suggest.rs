@@ -191,6 +191,7 @@ mod tests {
             path: path.map(str::to_owned),
             description: Some(description.into()),
             service: None,
+            retired: None,
         };
         SystemMap {
             version: 1,
@@ -223,6 +224,7 @@ mod tests {
                 guard: None,
                 description: Some("The browser reads the overview".into()),
                 flows: vec![],
+                retired: None,
             }],
             scenarios: vec![],
         }
