@@ -187,20 +187,36 @@ async fn handle(app: App, mut pairing: pairing::PairingRow, token: String, socke
             }
         }
     };
-    {
+    // #69: what the gauge says now. Read before the lock, recorded under it, so a newer socket's
+    // `Hello` (which records after this socket's entry is replaced) is never overwritten.
+    let cached = app.sessions_of(companion_id).unwrap_or_default();
+    let sessions = {
         let mut companions = app.companions.lock().unwrap();
-        if companions
-            .get(&companion_id)
-            .is_some_and(|c| c.conn == conn)
-        {
-            companions.remove(&companion_id);
+        let left = match companions.get(&companion_id) {
+            Some(c) if c.conn != conn => Left::ToNewer,
+            Some(_) => {
+                companions.remove(&companion_id);
+                if reason == "revoked" {
+                    Left::Revoked
+                } else {
+                    Left::Gone
+                }
+            }
+            // `pairing::revoke` removed the entry before the sender dropped.
+            None => Left::Revoked,
+        };
+        match left {
+            Left::Gone => record_sessions_by_state_unknown(&app.metrics, companion_id, &cached),
+            Left::Revoked => record_sessions_by_state(&app.metrics, companion_id, &[]),
+            Left::ToNewer => {}
         }
-    }
+        left.as_str()
+    };
     app.metrics.ws_clients.record(
         app.companions.lock().unwrap().len() as u64,
         &[KeyValue::new("kind", "companion")],
     );
-    tracing::info!(%companion_id, reason, "companion disconnected");
+    tracing::info!(%companion_id, reason, sessions, "companion disconnected");
     app.notify("companion disconnected");
 }
 
@@ -293,7 +309,12 @@ async fn on_envelope(
             env.seq,
             pairing::touch(&app.db, companion_id, now).await,
         );
-        app.touch_companion(companion_id, now);
+        if app.touch_companion(companion_id, now)
+            && let Some(cached) = app.sessions_of(companion_id)
+        {
+            // It had gone quiet (#69): heard from again, its last snapshot counts again.
+            record_sessions_by_state(&app.metrics, companion_id, &cached);
+        }
         match env.message {
             CompanionMessage::Hello {
                 companion_id: claimed,
@@ -329,6 +350,11 @@ async fn on_envelope(
                 );
                 // Queued here before the Welcome is answered: the socket sends the Welcome first.
                 session_messages::on_hello(app, companion_id).await;
+                // #69: the companion sends `Sessions` only when they changed, so its last
+                // snapshot counts again from here; nothing cached records nothing.
+                if let Some(cached) = app.sessions_of(companion_id) {
+                    record_sessions_by_state(&app.metrics, companion_id, &cached);
+                }
                 Some(ServerMessage::Welcome {
                     server_version: crate::kernel::VERSION.to_owned(),
                     protocol_version: PROTOCOL_VERSION,
@@ -672,6 +698,70 @@ fn refuse_identity(metrics: &Metrics) {
         .add(1, &[KeyValue::new(attr::DROP_REASON, "identity")]);
 }
 
+/// How a socket's end left the gauge (#69), as the disconnect log line says it.
+enum Left {
+    /// This socket was the companion's: its sessions that had not ended count as unknown.
+    Gone,
+    /// The pairing was revoked: the companion is gone, every count is 0.
+    Revoked,
+    /// A newer socket for the companion is live: the counts are its.
+    ToNewer,
+}
+
+impl Left {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Left::Gone => "unknown",
+            Left::Revoked => "zeros",
+            Left::ToNewer => "left_to_newer",
+        }
+    }
+}
+
+/// A companion that went away or quiet (#69): each session of its last snapshot that had not
+/// ended counts as unknown, never as working (AGENTS.md); ended ones stay ended.
+fn record_sessions_by_state_unknown(
+    metrics: &Metrics,
+    companion_id: Uuid,
+    sessions: &[SessionState],
+) {
+    let unknown: Vec<SessionState> = sessions
+        .iter()
+        .cloned()
+        .map(|mut s| {
+            if s.status != SessionStatus::Ended {
+                s.status = SessionStatus::Unknown;
+            }
+            s
+        })
+        .collect();
+    record_sessions_by_state(metrics, companion_id, &unknown);
+}
+
+/// The poll tick's pass (#69): a connected companion silent for `companion_silent_secs` (a
+/// laptop asleep with its socket half-open; the threshold `CompanionSilent` pages on) counts
+/// its sessions as unknown, once, until it sends again (`touch_companion`). How many it marked.
+pub fn mark_quiet(app: &App, now: chrono::DateTime<Utc>) -> usize {
+    let silent = chrono::Duration::seconds(app.config.limits.companion_silent_secs as i64);
+    let marked: Vec<(Uuid, chrono::DateTime<Utc>)> = app
+        .companions
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .filter(|(_, c)| !c.quiet && now - c.last_seen > silent)
+        .map(|(id, c)| {
+            c.quiet = true;
+            (*id, c.last_seen)
+        })
+        .collect();
+    for (id, last_seen) in &marked {
+        let cached = app.sessions_of(*id).unwrap_or_default();
+        record_sessions_by_state_unknown(&app.metrics, *id, &cached);
+        tracing::info!(rubato.companion_id = %id, %last_seen, "companion quiet, sessions counted unknown");
+    }
+    marked.len()
+}
+
 fn record_sessions_by_state(metrics: &Metrics, companion_id: Uuid, sessions: &[SessionState]) {
     for status in SessionStatus::ALL {
         let n = sessions.iter().filter(|s| s.status == status).count();
@@ -986,6 +1076,57 @@ mod tests {
             client: rubato_protocol::ClientKind::Interactive,
         };
         (app, reader, pairing, tmp)
+    }
+
+    /// #69: the quiet pass counts a silent companion's sessions as unknown once, its next
+    /// envelope (`touch_companion`) counts them again, and a companion heard from recently is
+    /// left alone.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_quiet_companion_counts_unknown_until_heard_from() {
+        let (app, reader, pairing, _tmp) = spend_app().await;
+        let id = pairing.companion_id;
+        let fresh = Uuid::new_v4();
+        let now = Utc::now();
+        let silent = chrono::Duration::seconds(app.config.limits.companion_silent_secs as i64);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        for (c, seen) in [
+            (id, now - silent - chrono::Duration::seconds(1)),
+            (fresh, now),
+        ] {
+            app.companions
+                .lock()
+                .unwrap()
+                .insert(c, CompanionConn::new(tx.clone(), seen));
+            app.set_sessions(c, vec![session(c, SessionStatus::Working)]);
+            record_sessions_by_state(&app.metrics, c, &[session(c, SessionStatus::Working)]);
+        }
+        let state = |c: Uuid, s: &str| {
+            reader
+                .points(metric::SESSIONS_BY_STATE)
+                .into_iter()
+                .find(|p| {
+                    p.attrs[attr::COMPANION_ID] == c.to_string()
+                        && p.attrs[attr::SESSION_STATE] == s
+                })
+                .map(|p| p.value)
+        };
+
+        assert_eq!(mark_quiet(&app, now), 1, "only the silent one");
+        assert_eq!(
+            (state(id, "working"), state(id, "unknown")),
+            (Some(0), Some(1))
+        );
+        assert_eq!(
+            state(fresh, "working"),
+            Some(1),
+            "heard from recently: left alone"
+        );
+        assert_eq!(mark_quiet(&app, now), 0, "marked once");
+
+        // Heard from again: the caller records the cached snapshot.
+        assert!(app.touch_companion(id, now), "it had gone quiet");
+        assert!(!app.touch_companion(id, now), "and is not any more");
+        println!("checked 2 companions over 2 quiet passes and 2 touches");
     }
 
     fn spend_snapshot(companion_id: Uuid, seq: u64, usd: f64) -> CompanionEnvelope {
