@@ -25,7 +25,7 @@ fn pids_path(w: &RubatoWorld) -> PathBuf {
     w.fake_bin.join("headless.pids")
 }
 
-#[given("the companion is in headless mode with tmux and tmux-ide unusable")]
+#[given("the companion is in headless mode with tmux unusable")]
 async fn given_headless(w: &mut RubatoWorld) {
     let d = w.fake_bin.display().to_string();
     let script = format!(
@@ -42,9 +42,8 @@ async fn given_headless(w: &mut RubatoWorld) {
     let c = &mut w.workspace.companion;
     c.mode = ClientKind::Headless;
     c.claude_command = claude.display().to_string();
-    // Neither is needed; a call to either fails at once.
+    // Not needed (ADR 0062); a call fails at once.
     c.tmux_command = "/nonexistent/tmux".into();
-    c.tmux_ide_command = "/nonexistent/tmux-ide".into();
 }
 
 #[given(expr = "the headless stand-in takes {int} seconds per turn")]

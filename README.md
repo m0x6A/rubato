@@ -11,13 +11,13 @@ It is a lab to verify a set of theses about agent orchestration, not a product. 
 | Part | Where | Role |
 | --- | --- | --- |
 | `rubato-server` | one instance per team | holds the map and the issue pins, takes signals from companions and GitHub, derives progress per issue, fans changes out to browsers, serves the web view |
-| `rubato-companion` | one per developer machine | pairs with one GitHub login, connects outbound, launches Claude Code on an issue in a git worktree inside the developer's own tmux, forwards Claude Code hook events and tmux-ide session state, stops a session at its spend cap |
+| `rubato-companion` | one per developer machine | pairs with one GitHub login, connects outbound, launches Claude Code on an issue in a git worktree inside the developer's own tmux, forwards Claude Code hook events and tmux pane state, stops a session at its spend cap |
 | `web` | served by the server | the map with issues, sessions and plans painted on nodes and seams; pin an issue; start a session in your own tmux; talk to your own session; read every revision of a plan draft and approve it; the plan's room |
 | `skills/rubato` | installed on each developer machine | the Claude Code skill a session uses to read the map and the ADRs, write its plan at the agreed path, record decisions in it, and hand the approved plan off to Git in one commit |
 | `actions/plan-check` | GitHub Action | fails a PR whose plan names an id the map does not declare or touches a seam without an O-row |
 | `rubato-protocol` | shared crate | the contract between all of the above: serde types, exported JSON Schemas, the progress derivation, the `rubato.*` telemetry names |
 
-The things we stitch rather than build: [tmux-ide](https://tmux-ide.com) runs and discovers sessions, Claude Code is the only agent and its hooks are the event source, GitHub holds code, issues, PRs, checks and the plan files.
+The things we stitch rather than build: tmux runs the sessions and git makes their worktrees (tmux-ide was retired by ADR 0070), Claude Code is the only agent and its hooks are the event source, GitHub holds code, issues, PRs, checks and the plan files.
 
 ## The progress model
 
@@ -45,7 +45,7 @@ AGENTS.md                  how we work; read it first
 
 ## Building and testing
 
-Rust stable (edition 2024), Node 22.6 or newer, pnpm, tmux 3.7 or newer and tmux-ide for the companion's suite.
+Rust stable (edition 2024), Node 22.6 or newer, pnpm, tmux 3.7 or newer and git for the companion's suite.
 
 ```sh
 cargo build --workspace

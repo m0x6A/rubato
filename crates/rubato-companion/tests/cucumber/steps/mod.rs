@@ -1,3 +1,4 @@
+mod agent_mcp;
 mod discovery;
 mod drafts;
 mod fork;

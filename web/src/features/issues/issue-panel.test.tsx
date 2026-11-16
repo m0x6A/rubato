@@ -219,3 +219,17 @@ describe("the plan's room on the issue (ADR 0057)", () => {
     fetch.mockRestore();
   });
 });
+
+describe("the issue's pull request line (issue #82)", () => {
+  it("keeps a merged pull request's state and opens its view on request", async () => {
+    const pr = { repo: "m0x6A/rubato", number: 7, branch: "issue/7-x", open: false, draft: false, head_sha: "h7", merged_at: new Date().toISOString(), checks: "green" as const, url: "https://github.com/m0x6A/rubato/pull/7", updated_at: new Date().toISOString() };
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ reason: "unknown_repo" }), { status: 404 }));
+    renderPanel(overview({ issues: [issue(7, "web", { pull_request: pr })] }));
+    expect(screen.getByTestId("issue-detail")).toHaveTextContent("merged · checks green");
+    expect(screen.queryByTestId("pull-view")).toBeNull();
+    fireEvent.click(screen.getByTestId("open-pull-view"));
+    expect(await screen.findByTestId("pull-view")).toBeInTheDocument();
+    expect(fetch.mock.calls.map((c) => String(c[0]))).toContain("/api/pulls/m0x6A/rubato/7");
+    fetch.mockRestore();
+  });
+});

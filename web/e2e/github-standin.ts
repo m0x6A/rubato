@@ -50,6 +50,30 @@ const ISSUES = [
 /** Calls by path, so the tests can ask what the server did. */
 const calls: Record<string, number> = {};
 
+/** Issue #82: one open pull request from a branch of the repo, and the merges made as a person. */
+const PULL = { number: 920, branch: "issue/920-merge", head: "a920a920a920a920a920a920a920a920a920a920", base: "main", baseSha: "b920b920b920b920b920b920b920b920b920b920", title: "Merged from Rubato", author: "member" };
+let pullMergedAt: string | null = null;
+const merges: { login: string; number: number; sha: string; merge_method: string }[] = [];
+
+function pullJson(full: boolean) {
+  const repo = { full_name: "m0x6A/rubato" };
+  return {
+    id: 90920,
+    number: PULL.number,
+    url: `http://127.0.0.1:${port}/repos/m0x6A/rubato/pulls/${PULL.number}`,
+    html_url: `https://github.com/m0x6A/rubato/pull/${PULL.number}`,
+    state: pullMergedAt ? "closed" : "open",
+    locked: false,
+    draft: false,
+    title: PULL.title,
+    updated_at: "2026-11-15T10:00:00Z",
+    merged_at: pullMergedAt,
+    head: { label: `m0x6A:${PULL.branch}`, ref: PULL.branch, sha: PULL.head, ...(full ? { repo } : {}) },
+    base: { label: "m0x6A:main", ref: PULL.base, sha: PULL.baseSha, ...(full ? { repo } : {}) },
+    ...(full ? { body: "Merges as the person who pressed Merge.", mergeable: true, user: { login: PULL.author } } : {}),
+  };
+}
+
 function send(res: ServerResponse, status: number, body: unknown, type = "application/json"): void {
   res.writeHead(status, { "content-type": type });
   res.end(typeof body === "string" ? body : JSON.stringify(body));
@@ -133,7 +157,9 @@ const server = createServer(async (req, res) => {
     if (!secretOk || !(login in ACCOUNTS)) {
       return send(res, 200, { error: "bad_verification_code", error_description: "The code passed is incorrect or expired." });
     }
-    return send(res, 200, { access_token: `user-token-${login}`, token_type: "bearer", scope: "" });
+    // Expiring user tokens, as an App with "Expire user authorization tokens" on (ADR 0030), so
+    // the server keeps them and can merge as the person (issue #82).
+    return send(res, 200, { access_token: `user-token-${login}`, token_type: "bearer", scope: "", expires_in: 28800, refresh_token: `refresh-${login}`, refresh_token_expires_in: 15897600 });
   }
 
   // api.github.com as the logged-in person.
@@ -168,6 +194,24 @@ const server = createServer(async (req, res) => {
     return isAppJwt(bearer(req)) ? send(res, 200, { id: INSTALLATION, permissions: { issues: "write", contents: "write", pull_requests: "write" } }) : unauthorized();
   }
 
+  // api.github.com as the logged-in person (ADR 0033): their permission, and the merge.
+  const person = accountOf(req);
+  if (person && path === "/repos/m0x6A/rubato" && req.method === "GET") {
+    return send(res, 200, { full_name: "m0x6A/rubato", permissions: { push: true }, allow_merge_commit: true, allow_squash_merge: true, allow_rebase_merge: false });
+  }
+  if (person && path === `/repos/m0x6A/rubato/pulls/${PULL.number}/merge` && req.method === "PUT") {
+    const sent = JSON.parse(await bodyOf(req)) as { sha?: string; merge_method?: string };
+    if (pullMergedAt) {
+      return send(res, 405, { message: "Pull Request is not mergeable" });
+    }
+    if (sent.sha !== PULL.head) {
+      return send(res, 409, { message: "Head branch was modified. Review and try the merge again." });
+    }
+    pullMergedAt = new Date().toISOString();
+    merges.push({ login: person, number: PULL.number, sha: sent.sha, merge_method: sent.merge_method ?? "merge" });
+    return send(res, 200, { sha: "c920c920c920c920c920c920c920c920c920c920", merged: true, message: "Pull Request successfully merged" });
+  }
+
   // api.github.com as the installation.
   if (path === "/installation/repositories" || path === "/rate_limit" || path.startsWith("/repos/")) {
     if (bearer(req) !== INSTALLATION_TOKEN) {
@@ -193,11 +237,29 @@ const server = createServer(async (req, res) => {
     if (path === "/repos/m0x6A/rubato/branches") {
       return send(res, 200, []);
     }
+    if (path === "/repos/m0x6A/rubato/pulls") {
+      return send(res, 200, pullMergedAt && url.searchParams.get("state") !== "all" ? [] : [pullJson(false)]);
+    }
+    if (path === `/repos/m0x6A/rubato/pulls/${PULL.number}`) {
+      return send(res, 200, pullJson(true));
+    }
+    if (path === `/repos/m0x6A/rubato/pulls/${PULL.number}/reviews`) {
+      return send(res, 200, []);
+    }
+    if (path === `/repos/m0x6A/rubato/pulls/${PULL.number}/files`) {
+      return send(res, 200, [{ filename: "README.md", additions: 2, deletions: 0 }]);
+    }
+    if (path === `/repos/m0x6A/rubato/commits/${PULL.head}/check-runs`) {
+      return send(res, 200, { total_count: 1, check_runs: [{ name: "ci", status: "completed", conclusion: "success", html_url: "https://github.com/m0x6A/rubato/runs/1" }] });
+    }
   }
 
   // For the tests only.
   if (path === "/_standin/calls") {
     return send(res, 200, calls);
+  }
+  if (path === "/_standin/merges") {
+    return send(res, 200, merges);
   }
   return send(res, 404, { message: "Not Found", documentation_url: "https://docs.github.com/rest" });
 });

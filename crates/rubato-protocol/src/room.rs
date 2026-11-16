@@ -48,6 +48,9 @@ pub struct RoomMessage {
     /// The turn this message made, or the turn an agent's message answers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<Uuid>,
+    /// Posted from a push-to-talk utterance (ADR 0073); a turn it makes is asked aloud.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub spoken: bool,
 }
 
 /// An agent called into a room (ADR 0057): who is in, called by whom, since when.
@@ -288,8 +291,13 @@ mod tests {
             }),
             addressed: vec![],
             turn_id: None,
+            spoken: false,
         };
         let v = serde_json::to_value(&m).unwrap();
+        assert!(
+            v.get("spoken").is_none(),
+            "a typed message serialises as before"
+        );
         assert_eq!(v["author_kind"], "system");
         assert_eq!(serde_json::from_value::<RoomMessage>(v).unwrap(), m);
         let person = RoomMessage {
@@ -309,5 +317,12 @@ mod tests {
                 .get("notice")
                 .is_none()
         );
+        let spoken = RoomMessage {
+            spoken: true,
+            ..person
+        };
+        let v = serde_json::to_value(&spoken).unwrap();
+        assert_eq!(v["spoken"], true);
+        assert_eq!(serde_json::from_value::<RoomMessage>(v).unwrap(), spoken);
     }
 }

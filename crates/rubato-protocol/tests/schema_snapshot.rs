@@ -102,8 +102,8 @@ fn tampered_snapshot_is_detected() {
 }
 
 /// ADR 0030 and 0004: a person's GitHub token never leaves the server. No wire type has a
-/// property named like a token, except the companion's pairing token (ADR 0011). Fails on
-/// purpose for `{"github_token": ...}`.
+/// property named like a token, except the companion's pairing token (ADR 0011) and a LiveKit join
+/// token (ADR 0073). Fails on purpose for `{"github_token": ...}`.
 #[test]
 fn no_wire_type_carries_a_token() {
     fn names(v: &serde_json::Value, out: &mut Vec<String>) {
@@ -129,7 +129,10 @@ fn no_wire_type_carries_a_token() {
     let mut checked = 0;
     for (name, schema) in &all {
         let schema = serde_json::to_value(schema).unwrap();
-        let allowed: &[&str] = if *name == "pair_poll_response" {
+        // The companion's pairing token (ADR 0011), and a LiveKit join token Rubato mints for
+        // the person who asked, valid ten minutes for one room (ADR 0073): neither is a GitHub
+        // credential.
+        let allowed: &[&str] = if *name == "pair_poll_response" || *name == "voice_token" {
             &["token"]
         } else {
             &[]

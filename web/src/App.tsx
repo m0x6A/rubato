@@ -121,7 +121,7 @@ export function App() {
         if (e instanceof ApiError && e.status === 401) {
           return;
         }
-        setNotice(`The new position of ${Object.keys(moved.positions ?? {}).join(", ")} was not saved: ${failureText(e)}`);
+        setNotice(`The new position of ${[...Object.keys(moved.positions ?? {}), ...Object.keys(moved.grouped ?? {}), ...Object.keys(moved.boxes ?? {})].join(", ")} was not saved: ${failureText(e)}`);
       }
     },
     [refresh, setNotice],
@@ -140,12 +140,14 @@ export function App() {
     [refresh, setNotice],
   );
 
-  const onAutoArrange = useCallback(async () => {
+  /** Auto-arrange the flat map, or only the By repo arrangement (ADR 0068); Undo puts back what was removed. */
+  const onAutoArrange = useCallback(async (arrangement: "flat" | "grouped") => {
     try {
-      const removed = await mapApi.clearLayout();
+      const removed = arrangement === "grouped" ? await mapApi.clearGrouped() : await mapApi.clearLayout();
       await refresh();
-      const n = Object.keys(removed.positions ?? {}).length;
-      setNotice(`Auto-arranged for everyone: ${n} saved position${n === 1 ? "" : "s"} removed`, () => void restoreLayout(removed));
+      const n = Object.keys(removed.positions ?? {}).length + Object.keys(removed.grouped ?? {}).length + Object.keys(removed.boxes ?? {}).length;
+      const what = arrangement === "grouped" ? "By repo auto-arranged for everyone" : "Auto-arranged for everyone";
+      setNotice(`${what}: ${n} saved position${n === 1 ? "" : "s"} removed`, () => void restoreLayout(removed));
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         return;
@@ -401,7 +403,7 @@ export function App() {
       <div className="body">
         <section className="map">
           {graph && overview ? (
-            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={() => void onAutoArrange()} plan={selected?.plan ? { issue: selected.issue, plan: selected.plan } : null}
+            <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={(arrangement) => void onAutoArrange(arrangement)} plan={selected?.plan ? { issue: selected.issue, plan: selected.plan } : null}
               draftMarks={marks}
               editing={editing}
               onToggleEdit={() => setEditing((e) => !e)}
@@ -509,7 +511,16 @@ export function App() {
               }}
             />
           )}
-          {overview && tab === "repos" && <ConnectedRepos overview={overview} />}
+          {overview && tab === "repos" && (
+            <ConnectedRepos
+              overview={overview}
+              onPin={onPin}
+              onOpenIssue={(issue) => {
+                setTab("issues");
+                setSelectedIssue(issue);
+              }}
+            />
+          )}
           {/* An open issue with a plan: the map shows the plan, and below the issue this says what the plan says. */}
           {overview && tab === "issues" && selected?.plan && (
             <PlanInspector

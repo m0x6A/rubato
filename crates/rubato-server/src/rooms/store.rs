@@ -45,6 +45,7 @@ fn message(r: &SqliteRow) -> Result<RoomMessage> {
             .get::<Option<String>, _>("turn_id")
             .map(|t| t.parse())
             .transpose()?,
+        spoken: r.get::<i64, _>("spoken") != 0,
     })
 }
 
@@ -53,8 +54,8 @@ fn message(r: &SqliteRow) -> Result<RoomMessage> {
 pub async fn insert(db: &SqlitePool, room: &RoomKey, m: &RoomMessage) -> Result<bool> {
     let n = m.notice.as_ref();
     let r = sqlx::query(
-        "INSERT OR IGNORE INTO room_messages (id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO room_messages (id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(m.id.to_string())
     .bind(&room.repo)
@@ -74,6 +75,7 @@ pub async fn insert(db: &SqlitePool, room: &RoomKey, m: &RoomMessage) -> Result<
         Some(serde_json::to_string(&m.addressed)?)
     })
     .bind(m.turn_id.map(|t| t.to_string()))
+    .bind(i64::from(m.spoken))
     .execute(db)
     .await?;
     Ok(r.rows_affected() == 1)
@@ -82,7 +84,7 @@ pub async fn insert(db: &SqlitePool, room: &RoomKey, m: &RoomMessage) -> Result<
 /// The room's messages, oldest first.
 pub async fn messages(db: &SqlitePool, room: &RoomKey) -> Result<Vec<RoomMessage>> {
     let rows = sqlx::query(
-        "SELECT id, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id \
+        "SELECT id, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken \
          FROM room_messages WHERE repo = ? AND number = ? AND branch = ? ORDER BY at, rowid",
     )
     .bind(&room.repo)
@@ -91,4 +93,41 @@ pub async fn messages(db: &SqlitePool, room: &RoomKey) -> Result<Vec<RoomMessage
     .fetch_all(db)
     .await?;
     rows.iter().map(message).collect()
+}
+
+/// One message by id, with the room it is in.
+pub async fn by_id(db: &SqlitePool, id: uuid::Uuid) -> Result<Option<(RoomKey, RoomMessage)>> {
+    let row = sqlx::query(
+        "SELECT id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken \
+         FROM room_messages WHERE id = ?",
+    )
+    .bind(id.to_string())
+    .fetch_optional(db)
+    .await?;
+    row.map(|r| {
+        Ok((
+            RoomKey {
+                repo: r.get("repo"),
+                number: r.get::<i64, _>("number") as u64,
+                branch: r.get("branch"),
+            },
+            message(&r)?,
+        ))
+    })
+    .transpose()
+}
+
+/// Whether a person's spoken message in `room` made turn `turn_id` (ADR 0073).
+pub async fn turn_was_spoken(db: &SqlitePool, room: &RoomKey, turn_id: uuid::Uuid) -> Result<bool> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM room_messages WHERE repo = ? AND number = ? AND branch = ? \
+         AND turn_id = ? AND author_kind = 'person' AND spoken = 1",
+    )
+    .bind(&room.repo)
+    .bind(room.number as i64)
+    .bind(&room.branch)
+    .bind(turn_id.to_string())
+    .fetch_one(db)
+    .await?;
+    Ok(n > 0)
 }

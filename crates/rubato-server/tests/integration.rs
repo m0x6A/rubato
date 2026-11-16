@@ -3058,6 +3058,7 @@ fn layout_of(pairs: &[(&str, f64, f64)]) -> MapLayout {
             .iter()
             .map(|(id, x, y)| ((*id).to_owned(), Position { x: *x, y: *y }))
             .collect(),
+        ..Default::default()
     }
 }
 
@@ -3136,6 +3137,151 @@ async fn layout_put_is_in_overview_and_notifies() {
     assert_eq!(left, 0);
     println!(
         "checked 4 accepted and {} refused layout writes",
+        refused.len()
+    );
+}
+
+/// The By repo grouping (ADR 0068): parts relative to their box, boxes by repo; kept apart from
+/// the flat map in both directions, cleared on its own route, and refused whole like the flat map.
+#[tokio::test]
+async fn grouped_layout_is_its_own_arrangement() {
+    let h = harness().await;
+    let mut web = h.web_ws().await;
+    let put = |layout: MapLayout| {
+        h.http
+            .put(format!("{}{}", h.url, layout_routes::LAYOUT))
+            .json(&layout)
+            .send()
+    };
+    let delete = |route: &'static str| h.http.delete(format!("{}{route}", h.url)).send();
+    let at = |x: f64, y: f64| Position { x, y };
+    let grouped = |parts: &[(&str, f64, f64)], boxes: &[(&str, f64, f64)]| MapLayout {
+        grouped: parts
+            .iter()
+            .map(|(id, x, y)| ((*id).to_owned(), at(*x, *y)))
+            .collect(),
+        boxes: boxes
+            .iter()
+            .map(|(id, x, y)| ((*id).to_owned(), at(*x, *y)))
+            .collect(),
+        ..Default::default()
+    };
+
+    // A flat position first: the grouping must never touch it.
+    assert_eq!(
+        put(layout_of(&[("web", 300.0, 40.0)]))
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    await_reason(&mut web, "layout").await;
+    let r = put(grouped(
+        &[("web", 24.0, 48.0), ("github", 900.0, 10.0)],
+        &[("m0x6A/rubato", -50.0, 20.0)],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 204);
+    await_reason(&mut web, "layout").await;
+    let served = h.overview("m0x6A").await.layout;
+    assert_eq!(
+        served.positions,
+        layout_of(&[("web", 300.0, 40.0)]).positions,
+        "the flat map is untouched"
+    );
+    assert_eq!(
+        served.grouped,
+        grouped(&[("web", 24.0, 48.0), ("github", 900.0, 10.0)], &[]).grouped
+    );
+    assert_eq!(
+        served.boxes,
+        grouped(&[], &[("m0x6A/rubato", -50.0, 20.0)]).boxes
+    );
+
+    // Refused whole: a part the map lacks, a repo no part names (a part id is not a repo), a
+    // position off the canvas; and a good entry in the same write is not stored.
+    let refused = [
+        grouped(&[("web", 1.0, 1.0), ("no-such-part", 1.0, 1.0)], &[]),
+        grouped(&[], &[("acme/elsewhere", 0.0, 0.0)]),
+        grouped(&[], &[("web", 0.0, 0.0)]),
+        grouped(&[("web", 1.0e9, 0.0)], &[]),
+    ];
+    for bad in &refused {
+        let r = put(bad.clone()).await.unwrap();
+        let status = r.status();
+        let body = r.text().await.unwrap();
+        assert_eq!(status, 422, "{bad:?}: {body}");
+        assert!(!body.is_empty(), "the answer says why");
+    }
+    assert_eq!(
+        h.overview("m0x6A").await.layout,
+        served,
+        "a refused write stores nothing"
+    );
+
+    // Clearing the flat map leaves the grouping; clearing the grouping leaves the flat map.
+    let removed: MapLayout = delete(layout_routes::LAYOUT)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(removed.positions.len(), 1);
+    assert!(removed.grouped.is_empty() && removed.boxes.is_empty());
+    assert_eq!(h.overview("m0x6A").await.layout.grouped, served.grouped);
+    assert_eq!(put(removed).await.unwrap().status(), 204, "undo");
+    let removed: MapLayout = delete(layout_routes::LAYOUT_GROUPED)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!((removed.grouped.len(), removed.boxes.len()), (2, 1));
+    assert!(removed.positions.is_empty());
+    let now = h.overview("m0x6A").await.layout;
+    assert!(now.grouped.is_empty() && now.boxes.is_empty());
+    assert_eq!(now.positions, served.positions);
+    // Undo is a PUT of what was removed.
+    assert_eq!(put(removed).await.unwrap().status(), 204);
+    assert_eq!(h.overview("m0x6A").await.layout, served);
+
+    // Rows for a part or repo the map no longer has are not served, and the next write drops them.
+    sqlx::query("INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at) VALUES ('default', 'part', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z'), ('default', 'box', 'acme/gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(h.overview("m0x6A").await.layout, served);
+    put(grouped(&[("web", 30.0, 60.0)], &[])).await.unwrap();
+    let left: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM map_layout_grouped WHERE id IN ('gone', 'acme/gone')",
+    )
+    .fetch_one(&h.app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, 0);
+
+    // A clear answers only with rows for parts and repos there are now, so its Undo is never
+    // refused for a stale row.
+    sqlx::query("INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at) VALUES ('default', 'part', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z'), ('default', 'box', 'acme/gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    let removed: MapLayout = delete(layout_routes::LAYOUT_GROUPED)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!removed.grouped.contains_key("gone") && !removed.boxes.contains_key("acme/gone"));
+    assert!(removed.grouped.contains_key("web"));
+    assert_eq!(
+        put(removed).await.unwrap().status(),
+        204,
+        "undo is accepted"
+    );
+    println!(
+        "checked 3 accepted and {} refused grouped writes, 3 clears",
         refused.len()
     );
 }
@@ -3386,7 +3532,7 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
         message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Refused {
             command_id: first,
             reason: rubato_protocol::RefusalReason::MissingDependency,
-            detail: "tmux-ide 2.9 is needed".into(),
+            detail: "tmux 3.7 is needed".into(),
             at: chrono::Utc::now(),
         }),
     };
@@ -3395,7 +3541,7 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
     assert_eq!(ov.queue.len(), 1);
     assert_eq!(
         ov.queue[0].last_start_error.as_deref(),
-        Some("missing_dependency: tmux-ide 2.9 is needed")
+        Some("missing_dependency: tmux 3.7 is needed")
     );
     assert_eq!(progress_of(&h, &issue).await.state, before.state);
 
@@ -3974,7 +4120,7 @@ async fn propose_opens_one_pr_and_freezes_the_draft() {
     assert!(proposed.node("billing").is_some());
     assert_eq!(proposed.seam("server-billing").unwrap().owner, "billing");
     assert_eq!(proposed.validate(), Ok(()));
-    assert_eq!(proposed.nodes.len(), 12, "everything else is kept");
+    assert_eq!(proposed.nodes.len(), 14, "everything else is kept");
     let pull = &h.call_args("create_pull")[0];
     assert!(
         pull.starts_with(&format!("m0x6A/rubato {} main Map: 2 changes", p.branch)),
@@ -6879,4 +7025,440 @@ async fn the_tick_posts_seam_notices_and_the_room_is_read_by_the_team() {
         seen.last().map(|m| (m.author.as_str(), m.text.as_str())),
         Some(("alice", "Shall we share the comments pass?"))
     );
+}
+
+// ----- issue #82: the merge gate through the overview (plan 82 Decisions 1, 3) ----------------
+
+/// Plan 71 on `branch` at `s71`, an open green pull request #171 from it, the comments given,
+/// pinned and polled once; then the view as m0x6A, who has a token.
+async fn view_71(
+    cutover: Option<chrono::DateTime<chrono::Utc>>,
+    branch: &str,
+    head_plan: &str,
+    comments: Vec<Comment>,
+) -> rubato_protocol::pulls::PullDetail {
+    let h = harness_with(|c| {
+        c.github_app = Some(rubato_server::kernel::config::GitHubApp {
+            app_id: 1,
+            private_key: "unused".into(),
+            installation_id: 34,
+        });
+        c.token_key = Some(rubato_server::kernel::config::TokenKey::from_hex(TOKEN_KEY).unwrap());
+        c.comment_approvals_until = cutover;
+    })
+    .await;
+    give_token(&h, "m0x6A", 8 * 3600).await;
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push((branch.into(), "s71".into()));
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/71.md".into(),
+                branch.into(),
+            ),
+            head_plan.to_owned(),
+        );
+        let mut pr = open_pull(171, "s71");
+        pr.base = Some("main".into());
+        g.pulls.insert(("m0x6A/rubato".into(), branch.into()), pr);
+        g.checks.insert("s71".into(), ChecksStatus::Green);
+        g.check_runs.insert(
+            "s71".into(),
+            vec![rubato_protocol::pulls::CheckRun {
+                name: "ci".into(),
+                status: "completed".into(),
+                conclusion: Some("success".into()),
+                url: "u".into(),
+            }],
+        );
+        g.comments.insert(("m0x6A/rubato".into(), 71), comments);
+    });
+    h.pin_issue(71).await;
+    tasks::poll_once(&h.app).await.unwrap();
+    let r = h
+        .http
+        .get(format!("{}/api/pulls/m0x6A/rubato/171", h.url))
+        .header("x-rubato-dev-user", "m0x6A")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+fn gate_why(d: &rubato_protocol::pulls::PullDetail) -> Option<String> {
+    match &d.merge.plan_gate {
+        rubato_protocol::pulls::PlanGate::NotApproved { why } => Some(why.clone()),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn the_merge_gate_reads_the_counted_approval_and_the_plan_at_the_head() {
+    use rubato_protocol::pulls::plan_why;
+    let sha = rubato_server::plans::approval_hash(PLAN_71);
+    let approved = |body: String| vec![comment(1, "m0x6A", "OWNER", false, &body)];
+    let mut checked = 0;
+
+    // A counted comment approval of the plan at the head opens the gate.
+    let d = view_71(
+        None,
+        "issue/71-plan",
+        PLAN_71,
+        approved(format!("Approved: plan {sha}")),
+    )
+    .await;
+    assert_eq!(gate_why(&d), None, "{:?}", d.merge);
+    assert!(d.merge.can_merge, "{:?}", d.merge);
+    checked += 1;
+
+    // The same comment after the cutover does not count: closed (ADR 0054).
+    let past = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+    let d = view_71(
+        past,
+        "issue/71-plan",
+        PLAN_71,
+        approved(format!("Approved: plan {sha}")),
+    )
+    .await;
+    assert_eq!(gate_why(&d).as_deref(), Some(plan_why::NO_APPROVAL));
+    assert_eq!(d.merge.why_not.as_deref(), Some("plan_not_approved"));
+    checked += 1;
+
+    // No approval at all, with a plan on the branch: closed.
+    let d = view_71(None, "issue/71-plan", PLAN_71, vec![]).await;
+    assert_eq!(gate_why(&d).as_deref(), Some(plan_why::NO_APPROVAL));
+    checked += 1;
+
+    // The plan at the head edited after approval: closed.
+    let edited = PLAN_71.replace("| x |", "| changed |");
+    let d = view_71(
+        None,
+        "issue/71-plan",
+        &edited,
+        approved(format!("Approved: plan {sha}")),
+    )
+    .await;
+    assert_eq!(gate_why(&d).as_deref(), Some(plan_why::CHANGED_AT_HEAD));
+    checked += 1;
+
+    // Stacked: approved on a branch that is gone; the head carries the same plan. The overview's
+    // version reads NoPlan for that branch, and the gate still opens on the plan at the head.
+    let d = view_71(
+        None,
+        "issue/71-b",
+        PLAN_71,
+        approved(format!("Approved: plan {sha} on issue/71-a")),
+    )
+    .await;
+    assert_eq!(gate_why(&d), None, "{:?}", d.merge);
+    checked += 1;
+    println!("checked {checked} merge gate cases through the overview");
+}
+
+// ----- issue #82: merge as the person (ADR 0033, design 82 §4) ---------------------------------
+
+/// Pull request #171 from `issue/71-plan` at `s71`, open and green, with no plan anywhere (the
+/// gate is `NoPlan`), in a harness that keeps tokens; m0x6A has one.
+async fn merging_harness() -> Harness {
+    let h = harness_with(|c| {
+        c.github_app = Some(rubato_server::kernel::config::GitHubApp {
+            app_id: 1,
+            private_key: "unused".into(),
+            installation_id: 34,
+        });
+        c.token_key = Some(rubato_server::kernel::config::TokenKey::from_hex(TOKEN_KEY).unwrap());
+    })
+    .await;
+    give_token(&h, "m0x6A", 8 * 3600).await;
+    h.github.with(|g| {
+        g.branches
+            .get_mut("m0x6A/rubato")
+            .unwrap()
+            .push(("issue/71-plan".into(), "s71".into()));
+        let mut pr = open_pull(171, "s71");
+        pr.base = Some("main".into());
+        g.pulls
+            .insert(("m0x6A/rubato".into(), "issue/71-plan".into()), pr);
+        g.check_runs.insert(
+            "s71".into(),
+            vec![rubato_protocol::pulls::CheckRun {
+                name: "ci".into(),
+                status: "completed".into(),
+                conclusion: Some("success".into()),
+                url: "u".into(),
+            }],
+        );
+    });
+    h
+}
+
+async fn press_merge(
+    h: &Harness,
+    head: &str,
+    method: &str,
+    origin: Option<&str>,
+) -> (u16, serde_json::Value) {
+    let mut req = h
+        .http
+        .post(format!("{}{}", h.url, rubato_protocol::pulls::routes::PULLS_MERGE))
+        .header("x-rubato-dev-user", "m0x6A")
+        .json(&serde_json::json!({"repo": "m0x6A/rubato", "number": 171, "head_sha": head, "method": method}));
+    if let Some(o) = origin {
+        req = req.header("origin", o);
+    }
+    let r = req.send().await.unwrap();
+    (r.status().as_u16(), r.json().await.unwrap_or_default())
+}
+
+fn merges_sent(h: &Harness) -> usize {
+    h.github
+        .calls()
+        .iter()
+        .filter(|(k, _)| *k == "merge_as")
+        .count()
+}
+
+/// Each refusal on its own case, nothing sent for any of them, and the case that merges last so
+/// none of them can pass by accident.
+#[tokio::test]
+async fn merge_is_refused_and_sends_nothing_unless_it_should() {
+    use rubato_server::kernel::github::RepoAccess;
+    let h = merging_harness().await;
+    let mut checked = 0;
+    let expect = |(status, body): (u16, serde_json::Value), want: &str| {
+        assert_eq!(
+            (status, body["reason"].as_str()),
+            (409, Some(want)),
+            "{body}"
+        );
+    };
+    let set = |f: fn(&mut rubato_server::kernel::github::FakeInner)| h.github.with(f);
+
+    // The head the person saw moved.
+    expect(press_merge(&h, "s70", "squash", None).await, "head_changed");
+    checked += 1;
+    // Draft.
+    set(|g| g.pulls.values_mut().for_each(|p| p.draft = true));
+    expect(press_merge(&h, "s71", "squash", None).await, "draft");
+    set(|g| g.pulls.values_mut().for_each(|p| p.draft = false));
+    checked += 1;
+    // Checks red, then pending.
+    set(|g| g.check_runs.get_mut("s71").unwrap()[0].conclusion = Some("failure".into()));
+    expect(
+        press_merge(&h, "s71", "squash", None).await,
+        "checks_not_green",
+    );
+    set(|g| {
+        let r = &mut g.check_runs.get_mut("s71").unwrap()[0];
+        r.status = "in_progress".into();
+        r.conclusion = None;
+    });
+    expect(
+        press_merge(&h, "s71", "squash", None).await,
+        "checks_not_green",
+    );
+    set(|g| {
+        let r = &mut g.check_runs.get_mut("s71").unwrap()[0];
+        r.status = "completed".into();
+        r.conclusion = Some("success".into());
+    });
+    checked += 2;
+    // Not mergeable, and fork, through the pull's own read.
+    for (fork, mergeable, want) in [
+        (false, Some(false), "not_mergeable"),
+        (false, None, "not_mergeable"),
+        (true, Some(true), "fork"),
+    ] {
+        h.github.with(|g| {
+            let info = g.pulls[&("m0x6A/rubato".to_owned(), "issue/71-plan".to_owned())].clone();
+            g.pull_details.insert(
+                ("m0x6A/rubato".into(), 171),
+                rubato_server::kernel::github::PullFull {
+                    info,
+                    branch: "issue/71-plan".into(),
+                    body: String::new(),
+                    fork,
+                    mergeable,
+                    base_sha: "base-main".into(),
+                },
+            );
+        });
+        expect(press_merge(&h, "s71", "squash", None).await, want);
+        checked += 1;
+    }
+    set(|g| g.pull_details.clear());
+    // A plan on the branch with no approval.
+    set(|g| {
+        g.files.insert(
+            (
+                "m0x6A/rubato".into(),
+                "docs/plans/71.md".into(),
+                "issue/71-plan".into(),
+            ),
+            PLAN_71.to_owned(),
+        );
+    });
+    expect(
+        press_merge(&h, "s71", "squash", None).await,
+        "plan_not_approved",
+    );
+    set(|g| g.files.retain(|(_, p, _), _| p != "docs/plans/71.md"));
+    checked += 1;
+    // No push permission; a method the repo does not allow.
+    set(|g| {
+        g.access.insert(
+            ("m0x6A".into(), "m0x6A/rubato".into()),
+            RepoAccess {
+                push: false,
+                methods: vec![rubato_protocol::MergeMethod::Squash],
+            },
+        );
+    });
+    expect(
+        press_merge(&h, "s71", "squash", None).await,
+        "no_push_permission",
+    );
+    set(|g| {
+        g.access.insert(
+            ("m0x6A".into(), "m0x6A/rubato".into()),
+            RepoAccess {
+                push: true,
+                methods: vec![rubato_protocol::MergeMethod::Merge],
+            },
+        );
+    });
+    expect(
+        press_merge(&h, "s71", "squash", None).await,
+        "method_not_allowed",
+    );
+    checked += 2;
+    // From another site: refused before the handler (ADR 0066).
+    let (status, body) = press_merge(&h, "s71", "merge", Some("https://evil.example")).await;
+    assert_eq!(
+        (status, body["reason"].as_str()),
+        (403, Some("cross_origin")),
+        "{body}"
+    );
+    checked += 1;
+    assert_eq!(merges_sent(&h), 0, "nothing sent for {checked} refusals");
+    // Closed: GitHub reports it closed.
+    set(|g| g.pulls.values_mut().for_each(|p| p.open = false));
+    expect(press_merge(&h, "s71", "merge", None).await, "not_open");
+    set(|g| g.pulls.values_mut().for_each(|p| p.open = true));
+    checked += 1;
+    // No token for this person.
+    let r = h
+        .http
+        .post(format!("{}{}", h.url, rubato_protocol::pulls::routes::PULLS_MERGE))
+        .header("x-rubato-dev-user", "teammate")
+        .json(&serde_json::json!({"repo": "m0x6A/rubato", "number": 171, "head_sha": "s71", "method": "merge"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 409);
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(body["reason"], "needs_github_authorization");
+    checked += 1;
+    assert_eq!(merges_sent(&h), 0);
+
+    // And the case that merges, as the person, at the head, with the method.
+    let (status, body) = press_merge(&h, "s71", "merge", None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["state"], "merged");
+    let merged = h.github.inner.lock().unwrap().merged.clone();
+    assert_eq!(
+        merged,
+        [(
+            "m0x6A".to_owned(),
+            "m0x6A/rubato".to_owned(),
+            171,
+            "s71".to_owned(),
+            "merge"
+        )]
+    );
+    // A retry finds the row: merged, not `not_open`, and nothing sent again.
+    let (status, body) = press_merge(&h, "s71", "merge", None).await;
+    assert_eq!((status, body["state"].as_str()), (200, Some("merged")));
+    assert_eq!(merges_sent(&h), 1);
+    println!("checked {checked} merge refusals with nothing sent");
+}
+
+#[tokio::test]
+async fn two_merges_at_once_on_one_head_send_once() {
+    let h = merging_harness().await;
+    h.github
+        .with(|g| g.merge_delay = Some(std::time::Duration::from_millis(300)));
+    let (a, b) = tokio::join!(
+        press_merge(&h, "s71", "squash", None),
+        press_merge(&h, "s71", "squash", None)
+    );
+    assert_eq!(merges_sent(&h), 1, "{a:?} {b:?}");
+    for (status, body) in [a, b] {
+        assert!(matches!(status, 200 | 202), "{status} {body}");
+    }
+}
+
+#[tokio::test]
+async fn githubs_refusal_leaves_nothing_behind() {
+    let h = merging_harness().await;
+    h.github
+        .with(|g| g.merge_refused = Some((405, "Base branch was modified".into())));
+    let (status, body) = press_merge(&h, "s71", "squash", None).await;
+    assert_eq!(
+        (status, body["reason"].as_str()),
+        (502, Some("github_refused"))
+    );
+    assert_eq!(body["message"], "Base branch was modified");
+    h.github.with(|g| g.merge_refused = None);
+    let (status, _) = press_merge(&h, "s71", "squash", None).await;
+    assert_eq!(status, 200, "a second press sends again");
+    assert_eq!(merges_sent(&h), 2);
+}
+
+/// A timeout that merged: opening, then the poll confirms it. A timeout that did not merge:
+/// dropped after two complete listings that still show it open, and a second Merge sends once.
+/// A truncated listing proves nothing.
+#[tokio::test]
+async fn a_merge_whose_outcome_is_unknown_is_settled_by_the_poll() {
+    let h = merging_harness().await;
+    h.github.with(|g| g.merge_times_out = Some(true));
+    let (status, body) = press_merge(&h, "s71", "squash", None).await;
+    assert_eq!((status, body["state"].as_str()), (202, Some("opening")));
+    tasks::poll_once(&h.app).await.unwrap();
+    let (status, body) = press_merge(&h, "s71", "squash", None).await;
+    assert_eq!(
+        (status, body["state"].as_str()),
+        (200, Some("merged")),
+        "confirmed by the poll"
+    );
+    assert_eq!(merges_sent(&h), 1);
+
+    let h = merging_harness().await;
+    h.github.with(|g| g.merge_times_out = Some(false));
+    let (status, _) = press_merge(&h, "s71", "squash", None).await;
+    assert_eq!(status, 202);
+    // A truncated listing: nothing learnt, however often.
+    h.github.with(|g| g.open_pulls_truncated = true);
+    for _ in 0..3 {
+        tasks::poll_once(&h.app).await.unwrap();
+    }
+    let (status, _) = press_merge(&h, "s71", "squash", None).await;
+    assert_eq!(status, 202, "still opening after truncated listings");
+    h.github.with(|g| g.open_pulls_truncated = false);
+    tasks::poll_once(&h.app).await.unwrap();
+    let (status, _) = press_merge(&h, "s71", "squash", None).await;
+    assert_eq!(status, 202, "one complete listing is not enough");
+    tasks::poll_once(&h.app).await.unwrap();
+    assert_eq!(merges_sent(&h), 1);
+    h.github.with(|g| g.merge_times_out = None);
+    let (status, body) = press_merge(&h, "s71", "squash", None).await;
+    assert_eq!(
+        status, 200,
+        "dropped after two listings, so Merge sends again: {body}"
+    );
+    assert_eq!(merges_sent(&h), 2);
 }

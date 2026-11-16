@@ -763,4 +763,17 @@ not json at all
         assert!(!text.lines().any(|l| l.starts_with("RUBATO_")), "{text}");
         assert!(!text.contains("--fork-session"), "{text}");
     }
+    /// Plan 220 §5, an N-guard (true today, kept true): a room's fork turn gets no MCP server and
+    /// no pre-approved tools (ADR 0057, ADR 0071).
+    #[test]
+    fn a_fork_turn_names_no_mcp_config_and_no_allowed_tools() {
+        for fork in [true, false] {
+            let a = turn_args("s", fork);
+            assert!(
+                !a.iter()
+                    .any(|x| x == "--mcp-config" || x == "--allowedTools"),
+                "{a:?}"
+            );
+        }
+    }
 }

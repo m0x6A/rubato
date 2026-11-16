@@ -144,6 +144,53 @@ pub struct OpenPulls {
     pub truncated: bool,
 }
 
+/// One pull request read on its own (`GET /repos/{o}/{r}/pulls/{n}`), for its view (ADR 0034).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullFull {
+    pub info: PullInfo,
+    /// The head branch.
+    pub branch: String,
+    pub body: String,
+    /// The head is in another repo than the base.
+    pub fork: bool,
+    /// GitHub's `mergeable`: `None` while it is computing.
+    pub mergeable: Option<bool>,
+    /// The base commit GitHub reports, for "does the repo run checks at all" (design 82 A6).
+    pub base_sha: String,
+}
+
+/// One review of a pull request, with what decides whether its author is on the team.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewInfo {
+    pub author: String,
+    pub author_association: String,
+    pub author_is_bot: bool,
+    pub state: String,
+    pub submitted_at: DateTime<Utc>,
+}
+
+/// What the person may do on a repo, read with their token (ADR 0033).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoAccess {
+    pub push: bool,
+    /// The merge methods the repo allows, in the order merge, squash, rebase.
+    pub methods: Vec<rubato_protocol::pulls::MergeMethod>,
+}
+
+/// How a merge as the person failed (ADR 0033). `Refused` sent nothing that took effect: GitHub
+/// answered 405 (not mergeable), 409 (the head moved), 403, 422. `Unknown` may have merged: the
+/// caller must not send again and lets the poll find out.
+#[derive(Debug, thiserror::Error)]
+pub enum MergeError {
+    #[error("GitHub refused the merge ({status}): {message}")]
+    Refused { status: u16, message: String },
+    #[error("the merge may have happened: {0}")]
+    Unknown(String),
+}
+
+/// One page of changed files per view (design 82 A3).
+pub const FILES_PER_PAGE: usize = rubato_protocol::pulls::FILES_PER_PAGE_HINT;
+
 /// A comment posted as a person through their user-to-server token (ADR 0030).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostedComment {
@@ -192,6 +239,59 @@ pub trait GitHubApi: Send + Sync {
     /// The newest PR whose head is `branch`.
     async fn pull_for_branch(&self, repo: &str, branch: &str) -> Result<Option<PullInfo>>;
     async fn checks(&self, repo: &str, sha: &str) -> Result<ChecksStatus>;
+    /// One pull request, any state; None when it does not exist (ADR 0034, read for a view).
+    async fn pull(&self, _repo: &str, _number: u64) -> Result<Option<PullFull>> {
+        Err(anyhow::anyhow!(
+            "this GitHub connection cannot read a pull request"
+        ))
+    }
+    /// One page of a pull request's reviews, oldest first.
+    async fn pull_reviews(&self, _repo: &str, _number: u64) -> Result<Vec<ReviewInfo>> {
+        Ok(Vec::new())
+    }
+    /// One page of [`FILES_PER_PAGE`] changed files.
+    async fn pull_files(
+        &self,
+        _repo: &str,
+        _number: u64,
+    ) -> Result<Vec<rubato_protocol::pulls::ChangedFile>> {
+        Ok(Vec::new())
+    }
+    /// One page of check runs at `sha`, each with its link.
+    async fn check_runs(
+        &self,
+        _repo: &str,
+        _sha: &str,
+    ) -> Result<Vec<rubato_protocol::pulls::CheckRun>> {
+        Ok(Vec::new())
+    }
+    /// The person's permission on the repo and the merge methods it allows, read with their
+    /// user-to-server token (ADR 0033). Retries off, as every call as the person.
+    async fn repo_as(&self, _token: &str, _repo: &str) -> Result<RepoAccess> {
+        Err(anyhow::anyhow!(
+            "this GitHub connection cannot act as a person"
+        ))
+    }
+    /// Merge `number` at `sha` with `method`, as the person whose user-to-server token this is
+    /// (ADR 0033): `PUT …/pulls/{n}/merge`. Sent once, retries off, [`USER_WRITE_TIMEOUT`]. The
+    /// merge commit's sha.
+    async fn merge_as(
+        &self,
+        _token: &str,
+        _repo: &str,
+        _number: u64,
+        _sha: &str,
+        _method: rubato_protocol::pulls::MergeMethod,
+    ) -> std::result::Result<String, MergeError> {
+        Err(MergeError::Refused {
+            status: 501,
+            message: "this GitHub connection cannot merge".into(),
+        })
+    }
+    /// The local stand-in has one person and no tokens: it acts for whoever is logged in.
+    fn acts_without_token(&self) -> bool {
+        false
+    }
     /// (remaining, limit) of the core REST budget.
     async fn rate_limit(&self) -> Result<(u64, u64)>;
     /// Open issues of a repo, pull requests excluded, at most `max` (ADR 0019).
@@ -331,6 +431,128 @@ pub fn issues_from_page(page: &serde_json::Value) -> Vec<OpenIssueInfo> {
             })
         })
         .collect()
+}
+
+/// From `GET /repos/{o}/{r}/pulls/{n}`.
+pub fn pull_from_json(v: &serde_json::Value) -> Option<PullFull> {
+    let s = |p: &str| v.pointer(p).and_then(|x| x.as_str()).map(str::to_owned);
+    let ts = |p: &str| {
+        v.pointer(p)
+            .and_then(|x| x.as_str())
+            .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.with_timezone(&Utc))
+    };
+    let head_repo = s("/head/repo/full_name");
+    let base_repo = s("/base/repo/full_name");
+    Some(PullFull {
+        info: PullInfo {
+            number: v.get("number")?.as_u64()?,
+            open: s("/state").as_deref() == Some("open"),
+            draft: v.get("draft").and_then(|d| d.as_bool()).unwrap_or(false),
+            head_sha: s("/head/sha")?,
+            merged_at: ts("/merged_at"),
+            updated_at: ts("/updated_at").unwrap_or_else(Utc::now),
+            url: s("/html_url").unwrap_or_default(),
+            base: s("/base/ref"),
+            title: s("/title").unwrap_or_default(),
+            author: s("/user/login").unwrap_or_default(),
+        },
+        branch: s("/head/ref")?,
+        body: s("/body").unwrap_or_default(),
+        // A head repo that was deleted reads as null: not this repo, so a fork.
+        fork: match (&head_repo, &base_repo) {
+            (Some(h), Some(b)) => !h.eq_ignore_ascii_case(b),
+            _ => true,
+        },
+        mergeable: v.get("mergeable").and_then(|m| m.as_bool()),
+        base_sha: s("/base/sha").unwrap_or_default(),
+    })
+}
+
+/// From one page of `GET …/pulls/{n}/reviews`. Pending reviews (not submitted) are left out.
+pub fn reviews_from_page(v: &serde_json::Value) -> Vec<ReviewInfo> {
+    v.as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|r| {
+            Some(ReviewInfo {
+                author: r.pointer("/user/login")?.as_str()?.to_owned(),
+                author_association: r
+                    .get("author_association")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("NONE")
+                    .to_owned(),
+                author_is_bot: r.pointer("/user/type").and_then(|t| t.as_str()) == Some("Bot"),
+                state: r.get("state")?.as_str()?.to_owned(),
+                submitted_at: r
+                    .get("submitted_at")?
+                    .as_str()
+                    .and_then(|t| DateTime::parse_from_rfc3339(t).ok())?
+                    .with_timezone(&Utc),
+            })
+        })
+        .collect()
+}
+
+/// From one page of `GET …/pulls/{n}/files`.
+pub fn files_from_page(v: &serde_json::Value) -> Vec<rubato_protocol::pulls::ChangedFile> {
+    v.as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|f| {
+            Some(rubato_protocol::pulls::ChangedFile {
+                path: f.get("filename")?.as_str()?.to_owned(),
+                additions: f.get("additions").and_then(|x| x.as_u64()).unwrap_or(0),
+                deletions: f.get("deletions").and_then(|x| x.as_u64()).unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
+/// From `GET …/commits/{sha}/check-runs`.
+pub fn check_runs_from_page(v: &serde_json::Value) -> Vec<rubato_protocol::pulls::CheckRun> {
+    v.get("check_runs")
+        .and_then(|c| c.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|r| {
+            Some(rubato_protocol::pulls::CheckRun {
+                name: r.get("name")?.as_str()?.to_owned(),
+                status: r.get("status")?.as_str()?.to_owned(),
+                conclusion: r
+                    .get("conclusion")
+                    .and_then(|c| c.as_str())
+                    .map(str::to_owned),
+                url: r
+                    .get("html_url")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// From `GET /repos/{o}/{r}` as the person: `permissions.push` and `allow_*_merge`.
+pub fn access_from_repo(v: &serde_json::Value) -> RepoAccess {
+    use rubato_protocol::pulls::MergeMethod;
+    let on = |k: &str| v.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+    let methods = [
+        ("allow_merge_commit", MergeMethod::Merge),
+        ("allow_squash_merge", MergeMethod::Squash),
+        ("allow_rebase_merge", MergeMethod::Rebase),
+    ]
+    .into_iter()
+    .filter(|(k, _)| on(k))
+    .map(|(_, m)| m)
+    .collect();
+    RepoAccess {
+        push: v.pointer("/permissions/push").and_then(|p| p.as_bool()) == Some(true),
+        methods,
+    }
 }
 
 /// `owner/name`, each half of `[A-Za-z0-9_.-]+` and neither `.` nor `..`, so no repo string
@@ -746,6 +968,107 @@ impl GitHubApi for Octo {
                 run.get("conclusion").and_then(|s| s.as_str()),
             )
         })))
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pull"))]
+    async fn pull(&self, repo: &str, number: u64) -> Result<Option<PullFull>> {
+        count_call("pull", 1);
+        let (o, r) = split_repo(repo)?;
+        let route = format!("/repos/{o}/{r}/pulls/{number}");
+        match self
+            .client
+            .get::<serde_json::Value, _, ()>(route, None::<&()>)
+            .await
+        {
+            Ok(v) => Ok(Some(
+                pull_from_json(&v).context("a pull request without a number or head")?,
+            )),
+            Err(octocrab::Error::GitHub { source, .. }) if source.status_code.as_u16() == 404 => {
+                Ok(None)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pull_reviews"))]
+    async fn pull_reviews(&self, repo: &str, number: u64) -> Result<Vec<ReviewInfo>> {
+        count_call("pull_reviews", 1);
+        let (o, r) = split_repo(repo)?;
+        let route = format!("/repos/{o}/{r}/pulls/{number}/reviews?per_page=100");
+        let v: serde_json::Value = self.client.get(route, None::<&()>).await?;
+        Ok(reviews_from_page(&v))
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pull_files"))]
+    async fn pull_files(
+        &self,
+        repo: &str,
+        number: u64,
+    ) -> Result<Vec<rubato_protocol::pulls::ChangedFile>> {
+        count_call("pull_files", 1);
+        let (o, r) = split_repo(repo)?;
+        let route = format!("/repos/{o}/{r}/pulls/{number}/files?per_page={FILES_PER_PAGE}");
+        let v: serde_json::Value = self.client.get(route, None::<&()>).await?;
+        Ok(files_from_page(&v))
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "check-runs"))]
+    async fn check_runs(
+        &self,
+        repo: &str,
+        sha: &str,
+    ) -> Result<Vec<rubato_protocol::pulls::CheckRun>> {
+        count_call("check-runs", 1);
+        let (o, r) = split_repo(repo)?;
+        let route = format!("/repos/{o}/{r}/commits/{sha}/check-runs?per_page=100");
+        let v: serde_json::Value = self.client.get(route, None::<&()>).await?;
+        Ok(check_runs_from_page(&v))
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, token), err, fields(rubato.github.endpoint = "repo"))]
+    async fn repo_as(&self, token: &str, repo: &str) -> Result<RepoAccess> {
+        count_call("repo", 1);
+        let (o, r) = split_repo(repo)?;
+        let crab = user_client(token, self.base.as_deref())?;
+        let v: serde_json::Value = crab.get(format!("/repos/{o}/{r}"), None::<&()>).await?;
+        Ok(access_from_repo(&v))
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, token), err, fields(rubato.github.endpoint = "merge"))]
+    async fn merge_as(
+        &self,
+        token: &str,
+        repo: &str,
+        number: u64,
+        sha: &str,
+        method: rubato_protocol::pulls::MergeMethod,
+    ) -> std::result::Result<String, MergeError> {
+        count_call("merge", 1);
+        let (o, r) = split_repo(repo).map_err(|e| MergeError::Refused {
+            status: 400,
+            message: e.to_string(),
+        })?;
+        let crab = user_client(token, self.base.as_deref())
+            .map_err(|e| MergeError::Unknown(format!("{e:#}")))?;
+        let body = serde_json::json!({ "sha": sha, "merge_method": method.as_str() });
+        match crab
+            .put::<serde_json::Value, _, _>(
+                format!("/repos/{o}/{r}/pulls/{number}/merge"),
+                Some(&body),
+            )
+            .await
+        {
+            Ok(v) => Ok(v
+                .get("sha")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_owned()),
+            Err(octocrab::Error::GitHub { source, .. }) => Err(MergeError::Refused {
+                status: source.status_code.as_u16(),
+                message: source.message.clone(),
+            }),
+            Err(e) => Err(MergeError::Unknown(e.to_string())),
+        }
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "rate_limit"))]
@@ -1284,6 +1607,55 @@ mod tests {
             "cut before the é"
         );
         assert!(issues[2].body.chars().all(|c| c == 'a'));
+    }
+
+    /// The shapes GitHub answers, as in its REST docs: a fork's head repo differs from the
+    /// base, a deleted head repo is null, pending reviews have no `submitted_at`.
+    #[test]
+    fn pull_detail_pages_parse() {
+        use serde_json::json;
+        let pull = |head_repo: serde_json::Value| {
+            json!({"number": 5, "state": "open", "draft": false, "title": "T", "body": "B",
+              "html_url": "https://github.com/o/r/pull/5", "mergeable": null,
+              "user": {"login": "ann"}, "updated_at": "2026-11-15T10:00:00Z",
+              "head": {"ref": "issue/7-x", "sha": "h1", "repo": head_repo},
+              "base": {"ref": "main", "sha": "b1", "repo": {"full_name": "O/R"}}})
+        };
+        let p = pull_from_json(&pull(json!({"full_name": "o/r"}))).unwrap();
+        assert_eq!(
+            (p.info.number, p.branch.as_str(), p.base_sha.as_str()),
+            (5, "issue/7-x", "b1")
+        );
+        assert!(p.info.open && !p.fork && p.mergeable.is_none());
+        assert_eq!(p.info.base.as_deref(), Some("main"));
+        assert!(
+            pull_from_json(&pull(json!({"full_name": "x/r"})))
+                .unwrap()
+                .fork
+        );
+        assert!(pull_from_json(&pull(serde_json::Value::Null)).unwrap().fork);
+
+        let reviews = reviews_from_page(&json!([
+            {"user": {"login": "m0x6A", "type": "User"}, "author_association": "OWNER", "state": "APPROVED", "submitted_at": "2026-11-15T10:00:00Z"},
+            {"user": {"login": "bot", "type": "Bot"}, "author_association": "NONE", "state": "COMMENTED", "submitted_at": "2026-11-15T10:01:00Z"},
+            {"user": {"login": "m0x6A"}, "state": "PENDING"}
+        ]));
+        assert_eq!(reviews.len(), 2);
+        assert!(reviews[1].author_is_bot);
+
+        let files = files_from_page(&json!([{"filename": "a.rs", "additions": 3, "deletions": 1}]));
+        assert_eq!(files[0].additions, 3);
+        let runs = check_runs_from_page(&json!({"check_runs": [
+            {"name": "ci", "status": "completed", "conclusion": "success", "html_url": "u"}]}));
+        assert_eq!(runs[0].conclusion.as_deref(), Some("success"));
+
+        use rubato_protocol::pulls::MergeMethod;
+        let a = access_from_repo(&json!({"permissions": {"push": true},
+            "allow_merge_commit": true, "allow_squash_merge": true, "allow_rebase_merge": false}));
+        assert!(a.push);
+        assert_eq!(a.methods, [MergeMethod::Merge, MergeMethod::Squash]);
+        assert!(!access_from_repo(&json!({})).push);
+        println!("checked 5 page shapes");
     }
 
     #[test]

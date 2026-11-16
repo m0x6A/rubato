@@ -1,5 +1,5 @@
 import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
-import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { caption, playerReducer, resolveScenario } from "./scenario.ts";
 import { mergeNodes } from "./nodes.ts";
 import type { IssueRef, MapLayout, MapRef, Plan } from "../../protocol.ts";
@@ -8,8 +8,12 @@ import { planLens } from "./lens.ts";
 import { type XY, placePart, positionsToSave } from "./layout.ts";
 import { lit } from "./explain.ts";
 import { type Arrow, LENSES, type Lens, arrowsFor, flowCounts } from "./flows.ts";
-import type { OnPin } from "./drop.ts";
-import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, type RepoGroup, layout, layoutByRepo } from "./graph.ts";
+import { type OnPin, useIssueDrop } from "./drop.ts";
+import { hasIssueDrag } from "../../shared/dnd.ts";
+import { type Grouping, boxRepo, clampInBox, groupedToSave, placeGrouped, refitBoxes, savedIds, settle, settledGrouped } from "./grouped.ts";
+import { type Bundle, badgeState, bundleKey, bundlesOf, isOpen as bundleIsOpen } from "./bundles.ts";
+import { type LabelStack, type Rect, bezierAt, placeLabels, textWidth } from "./labels.ts";
+import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, NODE_HEIGHT, NODE_WIDTH, layout, layoutByRepo } from "./graph.ts";
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 import { FlowParticles, type ParticleMode, particleBudget, particleMode } from "./particles.tsx";
@@ -21,8 +25,8 @@ import { useReducedMotion } from "../../shared/motion.ts";
 
 type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
 type MapFlowNode = Node<MapNodeData, "map">;
-/** A repo's box in the By repo grouping (issue #89): a label behind its parts, never selected or moved. */
-type RepoFlowNode = Node<{ repo: string }, "repo">;
+/** A repo's box in the By repo grouping (issue #89): behind its parts, never selected; moved by its name bar (issue #144). */
+type RepoFlowNode = Node<{ repo: string; movable: boolean }, "repo">;
 /** A service seen in telemetry that no part names (issue #140): drawn in the Traffic lens, never a part. */
 type GhostFlowNode = Node<{ ghost: GhostPart; windowSecs: number }, "ghost">;
 type AnyFlowNode = MapFlowNode | RepoFlowNode | GhostFlowNode;
@@ -43,8 +47,14 @@ type SeamEdgeData = {
   chevrons: { forward: number; reverse: number } | null;
   /** In the Traffic lens: what the chip adds, the rate or "no calls in 1 h". */
   chipTraffic: string | undefined;
+  /** In the By repo grouping, the bundle this seam belongs to while it is open (issue #144): pointing at it keeps it open. */
+  bundle?: string | undefined;
+  /** In the By repo grouping: where along the curve the labels sit, clear of cards and other labels (labels.ts). */
+  labelT?: number | undefined;
 };
 type SeamFlowEdge = Edge<SeamEdgeData, "seam">;
+type BundleEdgeData = { labelT: number | undefined; onPin: OnPin | undefined; bundle: Bundle; inDraft: (id: string) => boolean; dim: boolean; onToggle: (key: string, fromKeyboard: boolean) => void; onDragOpen: (key: string) => void };
+type BundleFlowEdge = Edge<BundleEdgeData, "bundle">;
 type TerritoryEdgeData = { edge: UndeclaredEdge; windowSecs: number; reduced: boolean; still: boolean };
 type TerritoryFlowEdge = Edge<TerritoryEdgeData, "territory">;
 
@@ -61,8 +71,6 @@ function MapNodeCard({ data }: NodeProps<MapFlowNode>) {
 
 /** How far above a flow's own label the seam's chip sits. */
 const CHIP_ABOVE_FLOW = 24;
-// A label must fit between two columns of parts (200 px apart); the title carries the whole text.
-const FLOW_LABEL_MAX = 28;
 
 /**
  * One arrow of a seam: the seam itself, or one declared flow. The path keeps the seam's own
@@ -72,9 +80,14 @@ const FLOW_LABEL_MAX = 28;
  */
 function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, markerStart, data }: EdgeProps<SeamFlowEdge>) {
   const offset = data?.arrow.offset ?? 0;
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY: sourceY + offset, targetX, targetY: targetY + offset, sourcePosition, targetPosition });
+  const [path, midX, midY] = getBezierPath({ sourceX, sourceY: sourceY + offset, targetX, targetY: targetY + offset, sourcePosition, targetPosition });
+  const at = data?.labelT !== undefined ? bezierAt({ x: sourceX, y: sourceY + offset }, { x: targetX, y: targetY + offset }, data.labelT) : { x: midX, y: midY };
+  const [labelX, labelY] = [at.x, at.y];
   const flow = data && data.arrow.kind !== "structure" ? data.arrow : null;
   const label = flow?.label ?? "";
+  // An open bundle stays open while the pointer is on one of its labels (issue #144): the
+  // pointer tracker in the map reads `data-bundle` under the pointer.
+  const keepOpen = data?.bundle ? { "data-bundle": data.bundle } : {};
   return (
     <>
       <path d={path} className="conduit" />
@@ -91,15 +104,17 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
             <FlowParticles id={flow.id} path={path} kind={flow.kind} reversed={flow.reversed} mode={data.particles} reduced={data.still} length={Math.hypot(targetX - sourceX, targetY - sourceY) * 1.15} />
           )}
           {flow && (
-            <div className={`seam-label flow-label ${flow.kind}`} data-testid={`flow-${flow.id}`} title={`${flow.kind} flow over ${data.seam.id}: ${label}`} style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
+            // The whole text is in the label; CSS clips it to a layer's gap and lifts the clip while
+            // it is hovered or focused, so every label can be read in place (issue #144).
+            <div className={`seam-label flow-label ${flow.kind}`} data-testid={`flow-${flow.id}`} tabIndex={0} title={`${flow.kind} flow over ${data.seam.id}: ${label}`} style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }} {...keepOpen}>
               <span aria-hidden="true">{flow.reversed ? "← " : ""}</span>
               {flow.moving && <span className="proposed-tag">proposed</span>}
-              {label.length > FLOW_LABEL_MAX ? `${label.slice(0, FLOW_LABEL_MAX - 1)}…` : label}
+              <span className="flow-text">{label}</span>
               <span aria-hidden="true">{flow.reversed ? "" : " →"}</span>
             </div>
           )}
           {data.chip && (
-            <div className="seam-label" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - (flow ? CHIP_ABOVE_FLOW : 0)}px)` }}>
+            <div className="seam-label" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - (flow ? CHIP_ABOVE_FLOW : 0)}px)` }} {...keepOpen}>
               <SeamChip seam={data.seam} selected={data.selected} onSelect={data.onSelect} onPin={data.onPin} draft={data.draft} traffic={data.chipTraffic} />
             </div>
           )}
@@ -151,16 +166,76 @@ function GhostCard({ data }: NodeProps<GhostFlowNode>) {
   );
 }
 
+/**
+ * The seams between two parts of one repo, folded (issue #144, decision 3): one plain line and a
+ * badge that says how many and keeps the strongest warning. Pointing at it opens it; a click (or
+ * Enter) keeps it open; an issue dragged over it opens it until the drop.
+ */
+function BundleEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<BundleFlowEdge>) {
+  const [path, midX, midY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  // A bundle of one seam takes an issue dropped on its badge for that seam, as the seam's chip
+  // would: nothing has to open under the dragged issue. A bundle of several opens instead, and
+  // stays open until the drop, so the issue can be taken to the right chip.
+  const only = data && data.bundle.seams.length === 1 ? data.bundle.seams[0] : undefined;
+  const drop = useIssueDrop<HTMLButtonElement>({ kind: "seam", id: only?.id ?? "" }, only && !data?.inDraft(only.id) ? data?.onPin : undefined);
+  if (!data) {
+    return null;
+  }
+  const { x: labelX, y: labelY } = data.labelT !== undefined ? bezierAt({ x: sourceX, y: sourceY }, { x: targetX, y: targetY }, data.labelT) : { x: midX, y: midY };
+  const b = data.bundle;
+  const st = badgeState(b, data.inDraft);
+  const classes = ["seam-chip", "bundle-badge", "nodrag", "nopan", st.tone, st.draft ? "draft" : "", drop.over ? "drop-over" : ""].filter(Boolean).join(" ");
+  return (
+    <>
+      <BaseEdge path={path} className="bundle-line" />
+      <EdgeLabelRenderer>
+        <div className={data.dim ? "seam-label bundle-label dim" : "seam-label bundle-label"} data-bundle={b.key} style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
+          <button
+            type="button"
+            className={classes}
+            data-testid={`bundle-${b.key}`}
+            title={st.title}
+            aria-label={`${st.text} between ${b.from} and ${b.to}${st.warn ? ", with a warning" : ""}: show`}
+            onClick={(e) => {
+              e.stopPropagation();
+              // A click from the keyboard has no pointer position: detail is 0.
+              data.onToggle(b.key, e.detail === 0);
+            }}
+            {...(only
+              ? drop.handlers
+              : {
+                  onDragEnter: (e: DragEvent<HTMLButtonElement>) => {
+                    if (hasIssueDrag(e)) {
+                      data.onDragOpen(b.key);
+                    }
+                  },
+                })}
+          >
+            {st.text}
+            {st.warn && <span aria-hidden="true"> ⚠</span>}
+          </button>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
 function RepoBox({ data }: NodeProps<RepoFlowNode>) {
   return (
     <div className="repo-box" data-testid={`repo-box-${data.repo}`}>
-      <span className="repo-box-name">{data.repo}</span>
+      {/* The name bar is the box's handle: the box's body lets clicks and pans through to the canvas. */}
+      <span className={data.movable ? "repo-box-name repo-box-frame" : "repo-box-name"} title={data.movable ? "Drag to move this repo with its parts, for everyone" : undefined}>
+        {data.repo}
+      </span>
     </div>
   );
 }
 
 const nodeTypes = { map: MapNodeCard, repo: RepoBox, ghost: GhostCard };
-const edgeTypes = { seam: SeamEdge, territory: TerritoryEdge };
+const edgeTypes = { seam: SeamEdge, territory: TerritoryEdge, bundle: BundleEdge };
+
+/** How long a bundle stays open after the pointer leaves it, so the pointer can reach a chip (A2). */
+const BUNDLE_CLOSE_MS = 400;
 
 interface Props {
   graph: Graph;
@@ -173,8 +248,8 @@ interface Props {
   layout?: MapLayout | undefined;
   /** Parts came to rest somewhere new. Resolves once the write is answered and the overview is fresh. Without it parts do not move. */
   onMove?: ((moved: MapLayout) => Promise<void>) | undefined;
-  /** Remove every stored position for the team. */
-  onAutoArrange?: (() => void) | undefined;
+  /** Remove every stored position for the team, of the flat map or of the By repo grouping (ADR 0068). */
+  onAutoArrange?: ((arrangement: "flat" | "grouped") => void) | undefined;
   /** The selected issue's plan: the map shows it and nothing else (the plan lens, design S11). */
   plan?: { issue: IssueRef; plan: Plan } | null | undefined;
   /** What the shared draft adds, changes or removes, by id (ADR 0018). */
@@ -222,10 +297,10 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shape]);
 
-  // The By repo grouping (issue #89): each repo's parts in one box. Laid out by ELK only; the
-  // team's saved positions are for the flat map, so parts do not move while it is on.
+  // The By repo grouping (issue #89): each repo's parts in one box. ELK places it; the team's own
+  // arrangement of it (ADR 0068) is stored apart from the flat map's, which it never touches.
   const [byRepo, setByRepo] = useState(false);
-  const [grouped, setGrouped] = useState<{ groups: RepoGroup[]; parts: Map<string, XY & { parent?: string }> } | null>(null);
+  const [grouped, setGrouped] = useState<Grouping | null>(null);
   useEffect(() => {
     if (!byRepo) {
       setGrouped(null);
@@ -236,7 +311,10 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       .then((g) => {
         if (!cancelled) {
           setGrouped(g);
-          setTimeout(() => fitView({ padding: 0.15 }), 0);
+          // Fit once the boxes are on the canvas: two frames, so React has committed them and
+          // React Flow has measured them. A timeout of 0 could fit the flat map's bounds, and a
+          // tall box then sat with its name bar above the visible canvas (issue #146).
+          requestAnimationFrame(() => requestAnimationFrame(() => void fitView({ padding: 0.15 })));
         }
       })
       .catch(() => {
@@ -250,6 +328,115 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shape, byRepo]);
   const grouping = byRepo && grouped !== null && !editing;
+  // Where this browser holds a grouped part or box (by node id) while it drags it or waits for its write.
+  const heldGrouped = useRef(new Map<string, XY>());
+  const [groupedRevision, setGroupedRevision] = useState(0);
+  const placed = useMemo(
+    () => (grouped ? placeGrouped({ elk: grouped, layout: stored, held: heldGrouped.current }) : null),
+    // `groupedRevision` stands for `heldGrouped`, a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [grouped, stored, groupedRevision],
+  );
+  const placedRef = useRef(placed);
+  placedRef.current = placed;
+  const shownGrouped = useMemo(() => (grouped ? settledGrouped(grouped, stored) : new Map<string, XY>()), [grouped, stored]);
+  const shownGroupedRef = useRef(shownGrouped);
+  shownGroupedRef.current = shownGrouped;
+  // Bundles of seams inside one repo (issue #144): which are open, and why.
+  const [hoveredBundles, setHoveredBundles] = useState<ReadonlySet<string>>(new Set());
+  const [pinnedBundles, setPinnedBundles] = useState<ReadonlySet<string>>(new Set());
+  const [dragBundle, setDragBundle] = useState<string | null>(null);
+  const closeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const onBundleHover = useCallback((key: string, on: boolean) => {
+    const t = closeTimers.current.get(key);
+    if (on) {
+      if (t) {
+        clearTimeout(t);
+        closeTimers.current.delete(key);
+      }
+      setHoveredBundles((s) => (s.has(key) ? s : new Set([...s, key])));
+      return;
+    }
+    if (t) {
+      return;
+    }
+    closeTimers.current.set(
+      key,
+      setTimeout(() => {
+        closeTimers.current.delete(key);
+        setHoveredBundles((s) => new Set([...s].filter((k) => k !== key)));
+      }, BUNDLE_CLOSE_MS),
+    );
+  }, []);
+  const focusAfterOpen = useRef<string | null>(null);
+  const onBundleToggle = useCallback((key: string, fromKeyboard: boolean) => {
+    setPinnedBundles((s) => (s.has(key) ? new Set([...s].filter((k) => k !== key)) : new Set([...s, key])));
+    // From the keyboard, the badge gives way to the chips: focus moves to the first one.
+    focusAfterOpen.current = fromKeyboard ? key : null;
+  }, []);
+  // Which bundles the pointer is on, read from what lies under it on every move: a badge that
+  // gives way to its chips is gone before it could hear the pointer leave, and a chip that
+  // appears under a still pointer never hears it enter.
+  const hoveredRef = useRef(hoveredBundles);
+  hoveredRef.current = hoveredBundles;
+  useEffect(() => {
+    if (!grouping) {
+      return;
+    }
+    let frame = 0;
+    let at: { x: number; y: number } | null = null;
+    const check = () => {
+      frame = 0;
+      if (!at) {
+        return;
+      }
+      const under = new Set(
+        document
+          .elementsFromPoint(at.x, at.y)
+          .map((e) => e.closest("[data-bundle]")?.getAttribute("data-bundle"))
+          .filter((k): k is string => Boolean(k)),
+      );
+      for (const k of under) {
+        onBundleHover(k, true);
+      }
+      for (const k of hoveredRef.current) {
+        if (!under.has(k)) {
+          onBundleHover(k, false);
+        }
+      }
+    };
+    const move = (e: PointerEvent) => {
+      at = { x: e.clientX, y: e.clientY };
+      if (!frame) {
+        frame = requestAnimationFrame(check);
+      }
+    };
+    window.addEventListener("pointermove", move);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      if (frame) {
+        cancelAnimationFrame(frame);
+      }
+    };
+  }, [grouping, onBundleHover]);
+  // Pointer events do not fire during a native drag: a bundle an issue was dragged onto stays open until the drop or the end of the drag.
+  useEffect(() => {
+    const end = () => setDragBundle(null);
+    document.addEventListener("drop", end);
+    document.addEventListener("dragend", end);
+    return () => {
+      document.removeEventListener("drop", end);
+      document.removeEventListener("dragend", end);
+    };
+  }, []);
+  useEffect(
+    () => () => {
+      for (const t of closeTimers.current.values()) {
+        clearTimeout(t);
+      }
+    },
+    [],
+  );
 
   const [chosenLens, setLens] = useState<Exclude<Lens, "plan">>("structure");
   const planView = useMemo(() => (plan ? planLens(plan.plan, graph.edges) : null), [plan, graph]);
@@ -340,11 +527,22 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   const wanted: AnyFlowNode[] = useMemo(
     () => [
       // Boxes first: React Flow draws a parent before its children.
-      ...(grouping ? grouped.groups : []).map(
-        (g): RepoFlowNode => ({ id: g.id, type: "repo", position: { x: g.x, y: g.y }, data: { repo: g.repo }, style: { width: g.width, height: g.height }, selectable: false, draggable: false, focusable: false, zIndex: -1 }),
+      ...(grouping && placed ? placed.groups : []).map(
+        (g): RepoFlowNode => ({
+          id: g.id,
+          type: "repo",
+          position: { x: g.x, y: g.y },
+          data: { repo: g.repo, movable: Boolean(onMove) },
+          style: { width: g.width, height: g.height },
+          selectable: false,
+          draggable: Boolean(onMove),
+          dragHandle: ".repo-box-frame",
+          focusable: false,
+          zIndex: -1,
+        }),
       ),
       ...graph.nodes.map((n): MapFlowNode => {
-        const box = grouping ? grouped.parts.get(n.id) : undefined;
+        const box = grouping && placed ? placed.parts.get(n.id) : undefined;
         return {
         id: n.id,
         type: "map",
@@ -368,7 +566,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     ],
     // `heldRevision` stands for `held`, a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing, grouping, grouped, ghostView, ghostAt],
+    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing, grouping, placed, onMove, ghostView, ghostAt],
   );
   // React Flow draws an edge only between parts it has measured, and it reports a measurement
   // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
@@ -378,7 +576,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   const groupingRef = useRef(grouping);
   groupingRef.current = grouping;
   useEffect(() => setNodes((current) => mergeNodes(current, wanted)), [wanted]);
-  const toSave = useRef<Record<string, XY>>({});
+  const toSave = useRef<{ positions: Record<string, XY>; grouped: Record<string, XY>; boxes: Record<string, XY> }>({ positions: {}, grouped: {}, boxes: {} });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settledRef = useRef(settled);
   settledRef.current = settled;
@@ -386,22 +584,35 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   onMoveRef.current = onMove;
   const save = useCallback(() => {
     saveTimer.current = null;
-    const positions = toSave.current;
-    toSave.current = {};
+    const { positions, grouped: groupedMoves, boxes } = toSave.current;
+    toSave.current = { positions: {}, grouped: {}, boxes: {} };
     const move = onMoveRef.current;
-    if (!move || Object.keys(positions).length === 0) {
+    const some = (r: Record<string, XY>) => Object.keys(r).length > 0;
+    if (!move || (!some(positions) && !some(groupedMoves) && !some(boxes))) {
       return;
     }
+    const body: MapLayout = { ...(some(positions) ? { positions } : {}), ...(some(groupedMoves) ? { grouped: groupedMoves } : {}), ...(some(boxes) ? { boxes } : {}) };
     // Answered (saved and the overview fresh, or refused): let go of the parts, unless they
     // moved again meanwhile. A refused part goes back to where the team has it.
-    void move({ positions }).finally(() => {
-      for (const [id, p] of Object.entries(positions)) {
-        const now = held.current.get(id);
+    void move(body).finally(() => {
+      const release = (from: Map<string, XY>, id: string, p: XY) => {
+        const now = from.get(id);
         if (now && now.x === p.x && now.y === p.y) {
-          held.current.delete(id);
+          from.delete(id);
+        }
+      };
+      for (const [id, p] of Object.entries(positions)) {
+        release(held.current, id, p);
+      }
+      for (const id of savedIds({ grouped: groupedMoves, boxes })) {
+        const repo = boxRepo(id);
+        const p = repo !== undefined ? boxes[repo] : groupedMoves[id];
+        if (p) {
+          release(heldGrouped.current, id, p);
         }
       }
       setHeldRevision((r) => r + 1);
+      setGroupedRevision((r) => r + 1);
     });
   }, []);
   useEffect(
@@ -412,13 +623,74 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     },
     [],
   );
+  // Where each grouped node was when its drag began, for the snap-back.
+  const dragFrom = useRef(new Map<string, XY>());
+  const sizeOf = useCallback((id: string) => {
+    const n = getNode(id);
+    return { width: n?.measured?.width ?? NODE_WIDTH, height: n?.measured?.height ?? NODE_HEIGHT };
+  }, [getNode]);
   const onNodesChange = useCallback(
     (changes: NodeChange<AnyFlowNode>[]) => {
-      setNodes((current) => applyNodeChanges(changes, current));
-      // Grouped positions are ELK's, relative to a box: never the team's layout.
       if (groupingRef.current) {
+        // The By repo grouping (ADR 0068): a part stays inside its box's left and top edge; a
+        // node that comes to rest on a box it does not belong to goes back; the boxes refit to
+        // their parts; moves are written as the grouping, never as the flat map.
+        const now = placedRef.current;
+        const shown = shownGroupedRef.current;
+        const fixed = changes.map((c) => {
+          if (c.type !== "position" || !c.position || isGhostId(c.id)) {
+            return c;
+          }
+          const parent = now?.parts.get(c.id)?.parent;
+          let position = parent ? clampInBox(c.position) : c.position;
+          if (c.dragging) {
+            if (!dragFrom.current.has(c.id)) {
+              dragFrom.current.set(c.id, heldGrouped.current.get(c.id) ?? shown.get(c.id) ?? position);
+            }
+          } else if (now) {
+            const from = dragFrom.current.get(c.id) ?? heldGrouped.current.get(c.id) ?? shown.get(c.id) ?? position;
+            dragFrom.current.delete(c.id);
+            position = settle(c.id, position, from, now, sizeOf);
+          }
+          return { ...c, position };
+        });
+        setNodes((current) => refitBoxes(applyNodeChanges(fixed, current)));
+        for (const c of fixed) {
+          if (c.type === "position" && c.position && c.dragging) {
+            heldGrouped.current.set(c.id, c.position);
+          }
+        }
+        const moved = groupedToSave(fixed.filter((c) => !("id" in c && isGhostId(c.id))), shown);
+        // Every node that came to rest is held where it is saved, or let go if it rests where the
+        // team has it (it did not move, or it snapped back).
+        for (const c of fixed) {
+          if (c.type !== "position" || c.dragging || isGhostId(c.id)) {
+            continue;
+          }
+          const repo = boxRepo(c.id);
+          const p = moved ? (repo !== undefined ? moved.boxes?.[repo] : moved.grouped?.[c.id]) : undefined;
+          if (!p) {
+            heldGrouped.current.delete(c.id);
+          } else if (repo !== undefined) {
+            heldGrouped.current.set(c.id, p);
+            toSave.current.boxes[repo] = p;
+          } else {
+            heldGrouped.current.set(c.id, p);
+            toSave.current.grouped[c.id] = p;
+          }
+        }
+        if (fixed.some((c) => c.type === "position" && !c.dragging)) {
+          setGroupedRevision((r) => r + 1);
+        }
+        if (moved) {
+          if (saveTimer.current) {
+            clearTimeout(saveTimer.current);
+          }
+          saveTimer.current = setTimeout(save, SAVE_AFTER_MS);
+        }
         return;
       }
+      setNodes((current) => applyNodeChanges(changes, current));
       // A ghost is not a part: nothing about it is held or saved (ADR 0016 stores map ids only).
       const parts = changes.filter((c) => !("id" in c && isGhostId(c.id)));
       for (const c of parts) {
@@ -431,7 +703,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         for (const [id, p] of Object.entries(moved.positions)) {
           if (p) {
             held.current.set(id, p);
-            toSave.current[id] = p;
+            toSave.current.positions[id] = p;
           }
         }
         if (saveTimer.current) {
@@ -440,12 +712,69 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         saveTimer.current = setTimeout(save, SAVE_AFTER_MS);
       }
     },
-    [save],
+    [save, sizeOf],
   );
   const traffic = graph.traffic ?? { state: "not_configured" as const };
   const windowSecs = traffic.window_secs ?? 3600;
   const showTraffic = chevronsOn(lens, traffic.state);
-  const edges: (SeamFlowEdge | TerritoryFlowEdge)[] = useMemo(() => {
+  // In the grouping, the seams inside one repo fold into bundles (issue #144); an open bundle
+  // draws its seams as the flat map does.
+  const { bundles, closed, folded } = useMemo(() => {
+    const bundles = grouping ? bundlesOf(graph.nodes, graph.edges) : new Map<string, Bundle>();
+    const openBy = { lit: litNow?.seams ?? null, hovered: dragBundle ? new Set([...hoveredBundles, dragBundle]) : hoveredBundles, pinned: pinnedBundles };
+    const closed = [...bundles.values()].filter((b) => !bundleIsOpen(b, openBy));
+    return { bundles, closed, folded: new Set(closed.flatMap((b) => b.seams.map((sm) => sm.id))) };
+  }, [grouping, graph, litNow, hoveredBundles, pinnedBundles, dragBundle]);
+  // Where along its curve each seam's labels and each bundle's badge sit in the grouping: clear of
+  // the part cards and of each other (labels.ts). The flat map keeps every label at its middle.
+  const labelTs = useMemo(() => {
+    if (!grouping) {
+      return new Map<string, number>();
+    }
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const cards = new Map<string, Rect>();
+    for (const n of nodes) {
+      if (n.type !== "map") {
+        continue;
+      }
+      const parent = n.parentId ? byId.get(n.parentId) : undefined;
+      cards.set(n.id, { x: n.position.x + (parent?.position.x ?? 0), y: n.position.y + (parent?.position.y ?? 0), width: n.measured?.width ?? NODE_WIDTH, height: n.measured?.height ?? NODE_HEIGHT });
+    }
+    // Every bundle has one place along its curve, open or closed: an opened bundle's chips sit
+    // where its badge was, so opening it moves nothing under the pointer or a dragged issue.
+    const inBundle = new Map<string, string>();
+    for (const b of bundles.values()) {
+      for (const sm of b.seams) {
+        inBundle.set(sm.id, b.key);
+      }
+    }
+    const stacks: LabelStack[] = graph.edges
+      .filter((e) => !inBundle.has(e.id))
+      .map((e) => {
+        const arrows = arrowsFor(planView ? { ...e, flows: planView.flows.get(e.id) } : e, lens);
+        const chipChars = e.id.length + (e.openPlans.length ? 9 : 0) + (e.issues.length ? 10 : 0) + (e.collision || e.findings.length || e.quietFor !== undefined ? 3 : 0) + (draftMarks?.has(e.id) ? 24 : 0);
+        return {
+          key: e.id,
+          from: e.from,
+          to: e.to,
+          arrows: arrows.map((a) => ({ offset: a.offset, label: a.kind === "structure" ? null : { width: textWidth(Math.min((a.label ?? "").length, 27) + 4 + (a.moving ? 9 : 0), 10.5, 16), height: 17 } })),
+          chip: { width: textWidth(chipChars, 11, 22), height: 26 },
+          chipAbove: CHIP_ABOVE_FLOW,
+        };
+      });
+    for (const b of bundles.values()) {
+      stacks.push({ key: `bundle-${b.key}`, from: b.from, to: b.to, arrows: [{ offset: 0, label: null }], chip: { width: textWidth(9, 10.5, 20), height: 22 }, chipAbove: 0 });
+    }
+    const placed = placeLabels(stacks, cards);
+    for (const [seam, key] of inBundle) {
+      const t = placed.get(`bundle-${key}`);
+      if (t !== undefined) {
+        placed.set(seam, t);
+      }
+    }
+    return placed;
+  }, [grouping, nodes, graph, bundles, lens, planView, draftMarks]);
+  const edges: (SeamFlowEdge | BundleFlowEdge | TerritoryFlowEdge)[] = useMemo(() => {
     const chevronsFor = (e: GraphEdge) => {
       if (!showTraffic || !e.traffic) {
         return null;
@@ -454,8 +783,22 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       return c.forward + c.reverse > 0 ? c : null;
     };
     const chipFor = (e: GraphEdge) => (!showTraffic ? undefined : e.quietFor !== undefined ? `no calls in ${windowText(e.quietFor)}` : e.traffic ? chipTraffic(e.traffic, windowSecs) : undefined);
+    const bundleEdges: BundleFlowEdge[] = [];
+    for (const b of closed) {
+      bundleEdges.push({
+        id: `bundle-${b.key}`,
+        type: "bundle" as const,
+        source: b.from,
+        target: b.to,
+        className: litNow !== null ? "bundle dim" : "bundle",
+        selectable: false,
+        focusable: false,
+        data: { labelT: labelTs.get(`bundle-${b.key}`), onPin, bundle: b, inDraft: (id: string) => draftMarks?.has(id) ?? false, dim: litNow !== null, onToggle: onBundleToggle, onDragOpen: setDragBundle },
+      });
+    }
+    const bundleOf = (e: GraphEdge) => (bundles.has(bundleKey(e.from, e.to)) ? bundleKey(e.from, e.to) : undefined);
     const drawn: SeamFlowEdge[] =
-      graph.edges.flatMap((e) =>
+      graph.edges.filter((e) => !folded.has(e.id)).flatMap((e) =>
         arrowsFor(planView ? { ...e, flows: planView.flows.get(e.id) } : e, lens).map((arrow, i) => {
           const marker = { type: MarkerType.ArrowClosed, width: 18, height: 18 };
           return {
@@ -478,7 +821,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               .filter(Boolean)
               .join(" "),
             ...(arrow.reversed ? { markerStart: marker } : { markerEnd: marker }),
-            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id), particles: particleMode(arrow, lens, step?.arrow === arrow.id), still: reducedMotion, chevrons: chevronsFor(e), chipTraffic: chipFor(e) },
+            data: { seam: e, arrow, chip: i === 0, selected: selectedSeam === e.id, onSelect: (id: string) => onSelect({ kind: "seam", id }), onPin, draft: draftMarks?.get(e.id), particles: particleMode(arrow, lens, step?.arrow === arrow.id), still: reducedMotion, chevrons: chevronsFor(e), chipTraffic: chipFor(e), bundle: bundleOf(e), labelT: labelTs.get(e.id) },
           };
         }),
       );
@@ -519,10 +862,21 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     ];
     const moving = particleBudget(ambient);
     return [
+      ...bundleEdges,
       ...drawn.map((ed) => (ed.data && (ed.data.particles === "ambient" || ed.data.chevrons) && !moving.has(ed.id) ? { ...ed, data: { ...ed.data, still: true } } : ed)),
       ...territory.map((t) => (t.data && !moving.has(t.id) ? { ...t, data: { ...t.data, still: true } } : t)),
     ];
-  }, [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion, showTraffic, windowSecs, ghostView]);
+  }, [graph, lens, selectedSeam, onSelect, onPin, litNow, planView, draftMarks, step, reducedMotion, showTraffic, windowSecs, ghostView, bundles, closed, folded, labelTs, onBundleToggle]);
+  // A bundle opened from the keyboard: focus its first chip once it is drawn.
+  useEffect(() => {
+    const key = focusAfterOpen.current;
+    if (!key || !pinnedBundles.has(key)) {
+      return;
+    }
+    focusAfterOpen.current = null;
+    const first = graph.edges.find((e) => bundleKey(e.from, e.to) === key);
+    setTimeout(() => (first ? document.querySelector<HTMLElement>(`[data-testid="seam-${first.id}"]`)?.focus() : undefined), 0);
+  }, [pinnedBundles, graph]);
   // Particles and halos rest while a part is dragged or the page is hidden.
   const [dragging, setDragging] = useState(false);
   const [hidden, setHidden] = useState(typeof document !== "undefined" && document.visibilityState === "hidden");
@@ -563,7 +917,13 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               </button>
             )}
             {onAutoArrange && (
-              <button type="button" className="map-action" onClick={onAutoArrange} disabled={Object.keys(stored?.positions ?? {}).length === 0} title="Remove every saved position, for the whole team, and lay the map out automatically">
+              <button
+                type="button"
+                className="map-action"
+                onClick={() => onAutoArrange(grouping ? "grouped" : "flat")}
+                disabled={grouping ? Object.keys(stored?.grouped ?? {}).length + Object.keys(stored?.boxes ?? {}).length === 0 : Object.keys(stored?.positions ?? {}).length === 0}
+                title={grouping ? "Remove every saved position of the By repo arrangement, for the whole team, and lay it out automatically. The flat map stays as it is." : "Remove every saved position, for the whole team, and lay the map out automatically"}
+              >
                 Auto-arrange
               </button>
             )}
@@ -689,7 +1049,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
             onNodesChange={onNodesChange}
             onNodeDragStart={() => setDragging(true)}
             onNodeDragStop={() => setDragging(false)}
-            nodesDraggable={Boolean(onMove) && !grouping}
+            nodesDraggable={Boolean(onMove)}
             nodesConnectable={editing}
             onConnect={(c) => onConnectParts?.(c.source, c.target)}
             zoomOnDoubleClick={!editing}
@@ -712,7 +1072,10 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
                 onSelect({ kind: "seam", id: (edge as SeamFlowEdge).data?.seam.id ?? edge.id });
               }
             }}
-            onPaneClick={() => onSelect(null)}
+            onPaneClick={() => {
+              onSelect(null);
+              setPinnedBundles(new Set());
+            }}
             proOptions={{ hideAttribution: true }}
             minZoom={0.2}
           >

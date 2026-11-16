@@ -1,5 +1,5 @@
 Feature: A launch runs only on the issue's own branch, with every server value as text
-  The branch names the worktree folder, goes to tmux-ide and into the launch script, so the
+  The branch names the worktree folder, goes to git and into the launch script, so the
   companion launches only on `issue/<n>-<slug>` for the command's own issue (ADR 0006, #155).
   Values from the server, such as a map node id, stay text in the launch script.
 

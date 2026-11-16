@@ -6,7 +6,7 @@ use crate::kernel::state::{LoadedMap, TrafficLatest};
 use crate::plans::{PlanRow, approval_names};
 use chrono::{DateTime, Utc};
 use rubato_protocol::QueuedIssue;
-use rubato_protocol::layout::MapLayout;
+use rubato_protocol::layout::{MapLayout, Position};
 use rubato_protocol::{
     ApprovalRecord, ApprovalState, ApprovalVersion, Backlog, BacklogRepo, CapKind, ConnectedRepo,
     DecisionRecord, Finding, IssuePin, IssueRef, IssueSummary, Limits, MapRef, ObservedTraffic,
@@ -669,20 +669,30 @@ pub fn build(
             None => listings,
         },
     };
-    // Positions only for parts the map has now: a row for a removed part is not served (and
-    // is deleted by the next layout write). With no map loaded there is nothing to place.
-    let layout = MapLayout {
-        positions: match map {
-            Some(m) => {
-                let parts = m.map.node_ids();
-                layout
-                    .positions
-                    .into_iter()
-                    .filter(|(id, _)| parts.contains(id.as_str()))
+    // Positions only for parts the map has now, and boxes only for repos its parts name (ADR
+    // 0068): a row for a removed part or repo is not served (and is deleted by the next layout
+    // write). With no map loaded there is nothing to place.
+    let layout = match map {
+        Some(m) => {
+            let parts = m.map.node_ids();
+            let repos: BTreeSet<&str> = m
+                .map
+                .nodes
+                .iter()
+                .filter_map(|n| n.repo.as_deref())
+                .collect();
+            let keep = |from: BTreeMap<String, Position>, known: &dyn Fn(&str) -> bool| {
+                from.into_iter()
+                    .filter(|(id, _)| known(id.as_str()))
                     .collect()
+            };
+            MapLayout {
+                positions: keep(layout.positions, &|id| parts.contains(id)),
+                grouped: keep(layout.grouped, &|id| parts.contains(id)),
+                boxes: keep(layout.boxes, &|id| repos.contains(id)),
             }
-            None => Default::default(),
-        },
+        }
+        None => MapLayout::default(),
     };
     Built {
         issues: out,
@@ -1305,6 +1315,17 @@ mod tests {
             ("gone".to_owned(), at(9.0)),
         ]
         .into();
+        // The By repo grouping (ADR 0068): the same rule, and a box only for a repo a part names.
+        inputs.layout.grouped = [
+            ("rubato-server".to_owned(), at(6.0)),
+            ("gone".to_owned(), at(9.0)),
+        ]
+        .into();
+        inputs.layout.boxes = [
+            ("m0x6A/rubato".to_owned(), at(7.0)),
+            ("acme/gone".to_owned(), at(9.0)),
+        ]
+        .into();
         let after = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         let placed: Vec<&str> = after.layout.positions.keys().map(String::as_str).collect();
         assert_eq!(
@@ -1312,6 +1333,10 @@ mod tests {
             ["rubato-server"],
             "a part the map lacks is left out"
         );
+        let grouped: Vec<&str> = after.layout.grouped.keys().map(String::as_str).collect();
+        assert_eq!(grouped, ["rubato-server"]);
+        let boxes: Vec<&str> = after.layout.boxes.keys().map(String::as_str).collect();
+        assert_eq!(boxes, ["m0x6A/rubato"], "a repo no part names is left out");
         assert_eq!(
             after.issues, before.issues,
             "a position is not a progress signal"
@@ -1319,7 +1344,7 @@ mod tests {
         assert_eq!(after.findings, before.findings);
         // With no map there is nothing to place.
         let none = build(inputs.clone(), None, &Limits::default(), now());
-        assert!(none.layout.positions.is_empty());
+        assert!(none.layout.is_empty());
     }
 
     #[test]
@@ -1343,11 +1368,13 @@ mod tests {
             queued_by: "m0x6A".into(),
             queued_at: now(),
             position,
-            last_start_error: Some("missing_dependency: tmux-ide".into()),
+            last_start_error: Some("missing_dependency: tmux 3.7 is needed".into()),
         };
         inputs.queue = vec![queued(pinned.clone(), 0), queued(IssueRef::new(repo, 2), 1)];
         inputs.layout.positions =
             [("rubato-server".to_owned(), Position { x: 1.0, y: 2.0 })].into();
+        inputs.layout.grouped = [("web".to_owned(), Position { x: 3.0, y: 4.0 })].into();
+        inputs.layout.boxes = [("m0x6A/rubato".to_owned(), Position { x: 5.0, y: 6.0 })].into();
         let after = build(inputs.clone(), Some(&map()), &Limits::default(), now());
         assert_eq!(
             after.issues, before.issues,

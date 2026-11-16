@@ -8,8 +8,10 @@
 use crate::kernel::config::HookEndpoint;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use chrono::Utc;
 use rand::RngCore;
@@ -22,6 +24,14 @@ use uuid::Uuid;
 
 /// The header a launched session's hook command sends with its launch id.
 pub const LAUNCH_HEADER: &str = "x-rubato-launch";
+
+/// The largest body a guarded route (`/mcp`, ADR 0071) takes; larger is 413.
+pub const MCP_BODY_LIMIT: usize = 64 * 1024;
+
+/// The launch `X-Rubato-Launch` named on a guarded request, after the token check: what a
+/// guarded route knows about who is calling. `None` when the header is absent or not a UUID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaunchHeader(pub Option<Uuid>);
 
 /// Where `plan.ts handoff` posts its `rubato.plan.handoff` line: `$RUBATO_HOOK_URL/handoff`,
 /// with `Authorization: Bearer $RUBATO_HOOK_TOKEN` and `X-Rubato-Launch: $RUBATO_LAUNCH_ID`.
@@ -115,14 +125,48 @@ impl HookServer {
     }
 
     pub async fn serve(self) -> anyhow::Result<()> {
-        let app = Router::new()
-            .route("/hook", post(receive))
-            .route(HANDOFF_ROUTE, post(receive_handoff))
-            .route("/healthz", get(|| async { "ok" }))
-            .with_state(self.state);
+        self.serve_with(Router::new(), Router::new()).await
+    }
+
+    /// Serve `/hook`, `/handoff` and `/healthz`, plus routes another slice brings through the
+    /// composition root (plan 220 §3): `guarded` behind the same token, compared in constant
+    /// time (401 and `rubato.events.dropped{rubato.reason="mcp_auth"}` otherwise), with
+    /// [`LaunchHeader`] as an extension and bodies up to [`MCP_BODY_LIMIT`]; `open` with no
+    /// check, for what a client asks before it sends headers (OAuth discovery).
+    pub async fn serve_with(self, open: Router, guarded: Router) -> anyhow::Result<()> {
+        let app = router(self.state, open, guarded);
         axum::serve(self.listener, app).await?;
         Ok(())
     }
+}
+
+fn router(state: AppState, open: Router, guarded: Router) -> Router {
+    let guard_state = state.clone();
+    let guarded = guarded
+        .layer(DefaultBodyLimit::max(MCP_BODY_LIMIT))
+        .layer(middleware::from_fn(move |req: Request, next: Next| {
+            let st = guard_state.clone();
+            async move { guard(&st, req, next).await }
+        }));
+    Router::new()
+        .route("/hook", post(receive))
+        .route(HANDOFF_ROUTE, post(receive_handoff))
+        .route("/healthz", get(|| async { "ok" }))
+        .with_state(state)
+        .merge(open)
+        .merge(guarded)
+}
+
+/// The token check of a guarded route, apart from `/hook`'s `auth` count so on-call can tell a
+/// stale `mcp.json` from a stale hooks file.
+async fn guard(st: &AppState, mut req: Request, next: Next) -> Response {
+    if !authorized(st, req.headers()) {
+        let _ = st.dropped.send("mcp_auth");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let id = launch_id(req.headers());
+    req.extensions_mut().insert(LaunchHeader(id));
+    next.run(req).await
 }
 
 /// Compare without stopping at the first differing byte, so the time taken does not tell how
@@ -267,6 +311,205 @@ mod tests {
         assert_eq!(with(""), None);
         assert_eq!(with("not-a-uuid"), None);
         assert_eq!(launch_id(&HeaderMap::new()), None);
+    }
+
+    // ----- `/mcp` on the same listener (ADR 0071, plan 220 §3) -------------------------------
+
+    use axum::Extension;
+    use axum::routing::{get as g, post as p};
+
+    /// A stand-in for `agent_mcp`: echoes the launch header it was given, takes any body.
+    fn stand_in() -> (Router, Router) {
+        let guarded = Router::new().route(
+            "/mcp",
+            p(
+                |Extension(LaunchHeader(id)): Extension<LaunchHeader>, body: Bytes| async move {
+                    format!(
+                        "{}:{}",
+                        id.map(|u| u.to_string()).unwrap_or_default(),
+                        body.len()
+                    )
+                },
+            ),
+        );
+        let open = Router::new().route(
+            "/.well-known/{*rest}",
+            g(|| async { StatusCode::NOT_FOUND }),
+        );
+        (open, guarded)
+    }
+
+    struct Running {
+        base: String,
+        token: String,
+        hooks: mpsc::UnboundedReceiver<HookEvent>,
+        handoffs: mpsc::UnboundedReceiver<HandoffReport>,
+        dropped: mpsc::UnboundedReceiver<&'static str>,
+    }
+
+    async fn running() -> Running {
+        let (tx, hooks) = mpsc::unbounded_channel();
+        let (dtx, dropped) = mpsc::unbounded_channel();
+        let (htx, handoffs) = mpsc::unbounded_channel();
+        let server = HookServer::bind(tx, dtx).await.unwrap().with_handoff(htx);
+        let base = format!("http://127.0.0.1:{}", server.endpoint.port);
+        let token = server.endpoint.token.clone();
+        let (open, guarded) = stand_in();
+        tokio::spawn(server.serve_with(open, guarded));
+        Running {
+            base,
+            token,
+            hooks,
+            handoffs,
+            dropped,
+        }
+    }
+
+    fn drained(rx: &mut mpsc::UnboundedReceiver<&'static str>) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        while let Ok(r) = rx.try_recv() {
+            out.push(r);
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn mcp_without_the_token_is_401_and_counted_apart_from_hooks() {
+        let mut r = running().await;
+        let c = reqwest::Client::new();
+        let res = c
+            .post(format!("{}/mcp", r.base))
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 401);
+        let res = c
+            .post(format!("{}/mcp", r.base))
+            .bearer_auth("wrong")
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 401);
+        assert_eq!(drained(&mut r.dropped), vec!["mcp_auth", "mcp_auth"]);
+    }
+
+    #[tokio::test]
+    async fn mcp_with_the_token_reaches_the_route_with_its_launch_header() {
+        let r = running().await;
+        let c = reqwest::Client::new();
+        let id = Uuid::from_u128(7);
+        let res = c
+            .post(format!("{}/mcp", r.base))
+            .bearer_auth(&r.token)
+            .header(LAUNCH_HEADER, id.to_string())
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        assert_eq!(res.text().await.unwrap(), format!("{id}:2"));
+        let res = c
+            .post(format!("{}/mcp", r.base))
+            .bearer_auth(&r.token)
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.text().await.unwrap(), ":2", "no header: none");
+    }
+
+    #[tokio::test]
+    async fn an_mcp_body_over_64_kib_is_413_and_discovery_needs_no_token() {
+        let mut r = running().await;
+        let c = reqwest::Client::new();
+        let res = c
+            .post(format!("{}/mcp", r.base))
+            .bearer_auth(&r.token)
+            .body(vec![b'x'; MCP_BODY_LIMIT + 1])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 413);
+        let res = c
+            .post(format!("{}/mcp", r.base))
+            .bearer_auth(&r.token)
+            .body(vec![b'x'; MCP_BODY_LIMIT])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200, "exactly the limit passes");
+        let res = c
+            .get(format!("{}/.well-known/oauth-authorization-server", r.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 404, "the open route answers without a token");
+        assert!(
+            drained(&mut r.dropped).is_empty(),
+            "discovery is not an auth drop"
+        );
+    }
+
+    /// Plan 220 §3: `/mcp` under load never stops `/hook` or `/handoff`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn hooks_and_handoffs_keep_flowing_while_mcp_is_flooded() {
+        let mut r = running().await;
+        let c = reqwest::Client::new();
+        let mut jobs = tokio::task::JoinSet::new();
+        for i in 0..1000 {
+            let (c, base, token) = (c.clone(), r.base.clone(), r.token.clone());
+            jobs.spawn(async move {
+                let body = if i % 2 == 0 {
+                    vec![b'x'; MCP_BODY_LIMIT + 1]
+                } else {
+                    b"{}".to_vec()
+                };
+                c.post(format!("{base}/mcp"))
+                    .bearer_auth(token)
+                    .body(body)
+                    .send()
+                    .await
+                    .map(|r| r.status().as_u16())
+            });
+        }
+        const HOOKS: usize = 100;
+        for i in 0..HOOKS {
+            let (ch, base, token) = (c.clone(), r.base.clone(), r.token.clone());
+            jobs.spawn(async move {
+                let hook = serde_json::json!({"session_id": format!("s{i}"), "hook_event_name": "Stop", "cwd": "/w"});
+                ch.post(format!("{base}/hook")).bearer_auth(&token).json(&hook).send().await.map(|r| r.status().as_u16())
+            });
+            let (ch, base, token) = (c.clone(), r.base.clone(), r.token.clone());
+            jobs.spawn(async move {
+                let line = serde_json::json!({"event": "rubato.plan.handoff", "outcome": "committed", "approval": Uuid::from_u128(1)});
+                ch.post(format!("{base}{HANDOFF_ROUTE}"))
+                    .bearer_auth(&token)
+                    .header(LAUNCH_HEADER, Uuid::from_u128(i as u128 + 1).to_string())
+                    .json(&line)
+                    .send()
+                    .await
+                    .map(|r| r.status().as_u16())
+            });
+        }
+        let mut statuses = std::collections::BTreeMap::<u16, usize>::new();
+        while let Some(done) = jobs.join_next().await {
+            *statuses
+                .entry(done.unwrap().expect("every request answered"))
+                .or_default() += 1;
+        }
+        assert_eq!(statuses.get(&413), Some(&500), "{statuses:?}");
+        assert_eq!(statuses.get(&202), Some(&(2 * HOOKS)), "{statuses:?}");
+        let mut hooks = 0;
+        while r.hooks.try_recv().is_ok() {
+            hooks += 1;
+        }
+        let mut handoffs = 0;
+        while r.handoffs.try_recv().is_ok() {
+            handoffs += 1;
+        }
+        assert_eq!((hooks, handoffs), (HOOKS, HOOKS));
     }
 
     /// The port and token come back when the port is free; a taken port gets a new port and a

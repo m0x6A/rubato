@@ -15,8 +15,8 @@ const map = loadMap(resolve(root, "docs/design/rubato-map.yml"), schemaDir);
 
 describe("map", () => {
   it("loads Rubato's own map", () => {
-    expect(map.nodes.length).toBe(11);
-    expect(map.seams?.length).toBe(11);
+    expect(map.nodes.length).toBe(13);
+    expect(map.seams?.length).toBe(14);
   });
 
   it("rejects a map that fails the schema or the structural checks", () => {
@@ -117,8 +117,11 @@ describe("map", () => {
     expect(() => loadMapText("version: 1\nname: x\nnodes:\n  - {id: a, kind: context}\n  - {id: b, kind: context}\nseams:\n  - {id: a-b, from: a, to: b, owner: a, flows: [{kind: magic, from: a, to: b, carries: x}]}\n", schemaDir)).toThrow(MapError);
     // The plan fixture from before the Flows table still passes.
     expect(checkPlanFile(resolve(fixtures, "valid.md"), map, schemaDir).ok).toBe(true);
-    // The team's own map declares flows on every seam.
-    expect((map.seams ?? []).filter((s) => !s.flows?.length || !s.description).map((s) => s.id)).toEqual([]);
+    // The team's own map declares flows on every seam but a retired one, which carries nothing
+    // (ADR 0070: tmux-ide); every seam has a description.
+    const retired = ["companion-tmux-ide"];
+    expect((map.seams ?? []).filter((s) => !s.description || (!s.flows?.length && !retired.includes(s.id))).map((s) => s.id)).toEqual([]);
+    expect((map.seams ?? []).filter((s) => retired.includes(s.id) && s.flows?.length).map((s) => s.id)).toEqual([]);
   });
 
   it("rejects a map with a wrong kind", () => {

@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "title": "x.spec.ts",
+      "specs": [
+        { "title": "cites nothing", "file": "x.spec.ts", "line": 1, "tags": [], "tests": [{ "projectName": "dev", "status": "expected", "results": [{ "status": "passed" }] }] },
+        { "title": "must fail: cites only selftest", "file": "x.spec.ts", "line": 5, "tags": ["selftest"], "tests": [{ "projectName": "dev", "status": "expected", "results": [{ "status": "passed" }] }] }
+      ]
+    }
+  ]
+}

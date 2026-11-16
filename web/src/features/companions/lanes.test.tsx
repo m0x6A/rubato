@@ -179,9 +179,9 @@ describe("the queue on a lane (S14 to S16)", () => {
   });
 
   it("a refused launch keeps the entry and shows the reason", () => {
-    show(overview({ companions: [mine], issues: [issue(48, "web")], queue: [queued(48, MINE, 0, { last_start_error: "missing_dependency: tmux-ide 2.9 is needed" })] }));
+    show(overview({ companions: [mine], issues: [issue(48, "web")], queue: [queued(48, MINE, 0, { last_start_error: "missing_dependency: tmux 3.7 is needed" })] }));
     const entry = within(lane(MINE)).getByTestId("queued-48");
-    expect(entry).toHaveTextContent("did not start: missing_dependency: tmux-ide 2.9 is needed");
+    expect(entry).toHaveTextContent("did not start: missing_dependency: tmux 3.7 is needed");
     // Still queued, and it can be started again.
     expect(within(entry).getByRole("button", { name: "Start m0x6A/rubato#48" })).toBeEnabled();
   });

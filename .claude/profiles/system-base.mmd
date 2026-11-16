@@ -13,9 +13,9 @@ flowchart LR
     end
     subgraph machine [Developer machine]
         Comp[rubato-companion]:::quiet
-        Tide[tmux-ide · tmux]:::ext
+        Tide[tmux · git]:::ext
         CC[claude-code]:::ext
-        Comp -- companion-tmux-ide --> Tide
+        Comp -- runs --> Tide
         Comp -- companion-claude-code · hooks --> CC
     end
     Comp -- companion-server · ws --> Srv

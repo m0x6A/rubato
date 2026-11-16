@@ -41,7 +41,7 @@ impl Registry {
 pub async fn sweep(
     out: mpsc::UnboundedSender<CompanionMessage>,
     registry: Arc<Mutex<Registry>>,
-    limits: Arc<std::sync::Mutex<Limits>>,
+    mut limits: watch::Receiver<Limits>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     loop {
@@ -49,7 +49,7 @@ pub async fn sweep(
             _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             _ = shutdown.changed() => return Ok(()),
         }
-        let stale_secs = limits.lock().unwrap().session_stale_secs;
+        let stale_secs = limits.borrow_and_update().session_stale_secs;
         let mut reg = registry.lock().await;
         let stale = reg.stale(Utc::now(), stale_secs);
         for s in stale {

@@ -4,6 +4,7 @@
 use crate::kernel::config::Config;
 use crate::kernel::github::GitHubApi;
 use crate::kernel::signer::Signer;
+use crate::kernel::speech::Speech;
 use crate::kernel::telemetry::Metrics;
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
@@ -94,6 +95,33 @@ pub struct AppState {
     /// (approval's "is the owner's session working", plan 122 §D6). `companion_link` writes it
     /// on every snapshot; the composition root fills it once at start.
     pub sessions: Mutex<HashMap<Uuid, Vec<SessionState>>>,
+    /// Woken by an accepted webhook delivery; the poll loop reads what it names (ADR 0074).
+    pub webhook_wake: tokio::sync::Notify,
+    /// Lower case: the repos the last poll tick read (the union of workspace repos and tracked
+    /// issues' repos), so a delivery for any other repo is ignored. Empty before the first tick.
+    pub polled_repos: Mutex<BTreeSet<String>>,
+    /// In-memory state a slice keeps for this server, one value per type (the pull request view
+    /// cache, issue #82). Never a table; gone on restart.
+    pub slots: Slots,
+    /// The speech adapter while voice is on with a provider configured (ADR 0073). Tests swap it
+    /// for a counting or blocking fake with `set_speech`.
+    speech: std::sync::RwLock<Option<Arc<dyn Speech>>>,
+}
+
+/// One value per type, made on first use: lets a slice keep in-memory state on the `App`
+/// without the kernel naming the slice.
+#[derive(Default)]
+pub struct Slots(Mutex<HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>);
+
+impl Slots {
+    pub fn get<T: Default + Send + Sync + 'static>(&self) -> Arc<T> {
+        let mut m = self.0.lock().unwrap();
+        let v = m
+            .entry(std::any::TypeId::of::<T>())
+            .or_insert_with(|| Arc::new(T::default()))
+            .clone();
+        v.downcast::<T>().expect("one value per type")
+    }
 }
 
 pub type App = Arc<AppState>;
@@ -113,7 +141,13 @@ impl AppState {
                 SourceStatus::NotConfigured
             },
         };
+        let speech = config
+            .voice
+            .as_ref()
+            .and_then(|v| v.speech.as_ref())
+            .map(crate::kernel::speech::from_config);
         Arc::new(Self {
+            speech: std::sync::RwLock::new(speech),
             db,
             config: Arc::new(config),
             github,
@@ -126,7 +160,20 @@ impl AppState {
             traffic: RwLock::new(traffic),
             clock: Clock::default(),
             sessions: Mutex::new(HashMap::new()),
+            webhook_wake: tokio::sync::Notify::new(),
+            polled_repos: Mutex::new(BTreeSet::new()),
+            slots: Slots::default(),
         })
+    }
+
+    /// The speech adapter, if one is configured (ADR 0073).
+    pub fn speech(&self) -> Option<Arc<dyn Speech>> {
+        self.speech.read().unwrap().clone()
+    }
+
+    /// Replace the speech adapter: tests use a counting or blocking fake.
+    pub fn set_speech(&self, s: Option<Arc<dyn Speech>>) {
+        *self.speech.write().unwrap() = s;
     }
 
     /// A companion's latest snapshot replaces its earlier one.
@@ -164,6 +211,19 @@ impl AppState {
             .await
             .insert(ws.to_string(), Arc::clone(&map));
         map
+    }
+
+    /// The repos a webhook delivery may name (ADR 0074), lower case: what the last tick read, and
+    /// every repo the loaded maps name.
+    pub async fn read_repos(&self) -> BTreeSet<String> {
+        let mut out = self.polled_repos.lock().unwrap().clone();
+        out.extend(
+            self.union_repos()
+                .await
+                .into_iter()
+                .map(|r| r.to_ascii_lowercase()),
+        );
+        out
     }
 
     /// Every distinct repo the loaded maps name, each once (ADR 0048), in order.

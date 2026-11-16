@@ -88,7 +88,7 @@
       "minimum": 0
     },
     "team_poll_interval_secs": {
-      "description": "Reconciliation poll of `tmux-ide team --json`.",
+      "description": "Reconcile interval: `tmux list-panes` and identity, every this many seconds. The name is\nkept from the retired `tmux-ide team --json` poll (ADR 0070).",
       "type": "integer",
       "format": "uint64",
       "default": 30,
