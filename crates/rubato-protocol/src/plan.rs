@@ -544,7 +544,9 @@ mod fit_tests {
         }
         let fit = plan_fit(Some(&plan()), None, &m).unwrap();
         assert!(
-            !fit.reasons.iter().any(|r| matches!(r, FitReason::UnknownIds { .. })),
+            !fit.reasons
+                .iter()
+                .any(|r| matches!(r, FitReason::UnknownIds { .. })),
             "{:?}",
             fit.reasons
         );

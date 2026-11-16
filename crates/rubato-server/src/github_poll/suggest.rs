@@ -128,12 +128,13 @@ fn score_one(
 }
 
 /// The best place on the map for an issue with this title and body, if any scores at least
-/// [`SUGGEST_THRESHOLD`]. Ties go to nodes before seams, then to the lower id.
+/// [`SUGGEST_THRESHOLD`]. Ties go to nodes before seams, then to the lower id. A retired part is
+/// never suggested (ADR 0077).
 pub fn suggest(map: &SystemMap, title: &str, body: &str) -> Option<PinSuggestion> {
     let text = format!("{title}\n{body}").to_ascii_lowercase();
     let words = tokens(&text);
     let mut scored: Vec<(u8, u8, String, PinSuggestion)> = Vec::new();
-    for n in &map.nodes {
+    for n in map.nodes.iter().filter(|n| !n.is_retired()) {
         let (score, why) = score_one(
             &n.id,
             n.path.as_deref(),
@@ -152,7 +153,7 @@ pub fn suggest(map: &SystemMap, title: &str, body: &str) -> Option<PinSuggestion
             },
         ));
     }
-    for s in &map.seams {
+    for s in map.seams.iter().filter(|s| !s.is_retired()) {
         let description = [s.description.as_deref(), s.carries.as_deref()]
             .into_iter()
             .flatten()
@@ -328,6 +329,28 @@ mod tests {
         assert_eq!(
             p.suggestion.map(|s| s.target),
             Some(MapRef::node("rubato-server"))
+        );
+    }
+
+    /// ADR 0077: a retired id is never suggested, even when the issue names it by its id.
+    #[test]
+    fn a_retired_id_is_never_suggested() {
+        let map: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../../docs/design/rubato-map.yml"))
+                .unwrap();
+        assert!(
+            map.node("tmux-ide").is_some_and(|n| n.is_retired()),
+            "precondition"
+        );
+        let got = suggest(
+            &map,
+            "Retire tmux-ide",
+            "The companion still calls tmux-ide and companion-tmux-ide carries worktree create.",
+        );
+        let id = got.as_ref().map(|s| s.target.id());
+        assert!(
+            !matches!(id, Some("tmux-ide" | "companion-tmux-ide")),
+            "suggested a retired id: {got:?}"
         );
     }
 }

@@ -104,7 +104,8 @@
         {
           "description": "Retired by ADR 0070: the companion runs tmux and git itself and no longer calls tmux-ide. The id stays so merged plans that name it still check (plan 147 Q1).",
           "id": "tmux-ide",
-          "kind": "external"
+          "kind": "external",
+          "retired": "0070"
         },
         {
           "description": "The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Exports its own OTel.",
@@ -536,6 +537,7 @@
           "guard": "the companion's Gherkin suite runs with no tmux-ide installed; rubato.launches by outcome on the Launches by outcome panel",
           "id": "companion-tmux-ide",
           "owner": "rubato-companion",
+          "retired": "0070",
           "to": "tmux-ide"
         },
         {
