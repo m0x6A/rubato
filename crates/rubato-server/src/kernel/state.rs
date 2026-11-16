@@ -25,6 +25,9 @@ pub struct CompanionConn {
     /// When this connection last sent an envelope: a socket left open by a laptop that went to
     /// sleep looks connected, so "live" also needs a recent envelope (ADR 0051).
     pub last_seen: DateTime<Utc>,
+    /// Silent for `companion_silent_secs` with the socket still open: its sessions are counted
+    /// unknown until it sends again (#69).
+    pub quiet: bool,
 }
 
 impl CompanionConn {
@@ -34,6 +37,7 @@ impl CompanionConn {
             tx,
             conn: Uuid::new_v4(),
             last_seen: now,
+            quiet: false,
         }
     }
 }
@@ -343,10 +347,20 @@ impl AppState {
     }
 
     /// An envelope arrived from this companion.
-    pub fn touch_companion(&self, companion_id: Uuid, now: DateTime<Utc>) {
-        if let Some(c) = self.companions.lock().unwrap().get_mut(&companion_id) {
-            c.last_seen = now;
+    /// Heard from now. Whether it had gone quiet (#69): the caller records its sessions again.
+    pub fn touch_companion(&self, companion_id: Uuid, now: DateTime<Utc>) -> bool {
+        match self.companions.lock().unwrap().get_mut(&companion_id) {
+            Some(c) => {
+                c.last_seen = now;
+                std::mem::take(&mut c.quiet)
+            }
+            None => false,
         }
+    }
+
+    /// The latest cached snapshot of one companion, if it sent one (or one was stored).
+    pub fn sessions_of(&self, companion_id: Uuid) -> Option<Vec<SessionState>> {
+        self.sessions.lock().unwrap().get(&companion_id).cloned()
     }
 
     /// Connected, announcing `cap`, and heard from within two heartbeat intervals (ADR 0051).

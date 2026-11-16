@@ -23,6 +23,17 @@ function fillRequired() {
   fill("What it must not break", "Progress latency");
 }
 
+describe("New issue here offers live parts only (ADR 0077)", () => {
+  it("lists no retired part or seam where it fits", () => {
+    renderForm();
+    const where = screen.getByLabelText("Where it fits") as HTMLSelectElement;
+    const values = [...where.options].map((o) => o.textContent);
+    expect(values).not.toContain("tmux-ide");
+    expect(values).not.toContain("companion-tmux-ide");
+    expect(values).toContain("rubato-companion");
+  });
+});
+
 describe("New issue here (ADR 0025)", () => {
   it("sends the sections as lines, to the owner's repo, pinned to the seam it started on", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ state: "created", issue: { repo: "m0x6A/rubato", number: 501 }, url: "u" }), { status: 201 }));

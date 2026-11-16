@@ -146,6 +146,7 @@ mod tests {
                     path: None,
                     description: None,
                     service: None,
+                    retired: None,
                 },
             },
         };

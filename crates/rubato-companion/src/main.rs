@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use rubato_companion::hooks::{HOOKS_TEMPLATE, render_hooks};
+use rubato_companion::hooks::{HOOKS_TEMPLATE, render_manual_hooks, write_into};
 use rubato_companion::kernel::config::{HookEndpoint, State, Workspace, state_dir};
 use rubato_companion::kernel::telemetry;
 use rubato_companion::runtime::{DaemonConfig, start};
@@ -36,8 +36,13 @@ enum Cmd {
     Run,
     /// Show pairing and hook endpoint state.
     Status,
-    /// Render hooks.json for the current hook endpoint (for a manual session).
-    RenderHooks,
+    /// Render the hooks for a session started by hand (ADR 0078): to stdout, or merged into a
+    /// repo's or worktree's `.claude/settings.local.json` with --into, keeping its other settings.
+    RenderHooks {
+        /// The settings file to merge into, such as `<repo>/.claude/settings.local.json`.
+        #[arg(long)]
+        into: Option<PathBuf>,
+    },
     /// Stay in the foreground doing nothing. The Gherkin suite copies this binary under the name
     /// `claude` as a stand-in pane process; it must not depend on coreutils.
     #[command(hide = true)]
@@ -124,16 +129,56 @@ async fn main() -> Result<()> {
                 ),
                 None => println!("not paired"),
             }
-            let ep = HookEndpoint::path(&state_dir);
-            match std::fs::read_to_string(&ep) {
-                Ok(t) => {
-                    println!("hook endpoint: {}", t.trim());
-                    println!(
-                        "hook header file: {}",
-                        HookEndpoint::header_path(&state_dir).display()
-                    );
+            // The port and the header file's path, never the endpoint file: it holds the token
+            // (ADR 0063).
+            let Some(ep) = HookEndpoint::load(&state_dir) else {
+                println!("hook endpoint: daemon not running");
+                return Ok(());
+            };
+            let listening = std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], ep.port)),
+                std::time::Duration::from_millis(300),
+            )
+            .is_ok();
+            println!(
+                "hook endpoint: port {} ({})",
+                ep.port,
+                if listening {
+                    "listening"
+                } else {
+                    "not listening"
                 }
-                Err(_) => println!("hook endpoint: daemon not running"),
+            );
+            println!(
+                "hook header file: {}",
+                HookEndpoint::header_path(&state_dir).display()
+            );
+            let workspace = match Workspace::load(&ws_path) {
+                Ok(w) => w,
+                Err(e) => {
+                    println!(
+                        "no workspace at {}: directories not checked ({e:#})",
+                        ws_path.display()
+                    );
+                    return Ok(());
+                }
+            };
+            // Each repo's clone and its worktrees: where a session may be started by hand.
+            let mut dirs = Vec::new();
+            for r in &workspace.repos {
+                match rubato_companion::kernel::gitx::worktrees(&r.local) {
+                    Ok(list) => dirs.extend(list.into_iter().map(|(p, _)| p)),
+                    Err(_) => dirs.push(r.local.clone()),
+                }
+            }
+            if !listening {
+                println!(
+                    "the directories below are judged against port {}, which nothing listens on: start the companion with `rubato-companion run`",
+                    ep.port
+                );
+            }
+            for line in rubato_companion::hooks::report(&dirs, ep.port) {
+                println!("{line}");
             }
             Ok(())
         }
@@ -145,18 +190,22 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             }
         }
-        Cmd::RenderHooks => {
+        Cmd::RenderHooks { into } => {
             let text = std::fs::read_to_string(HookEndpoint::path(&state_dir))
                 .context("daemon not running (no hook endpoint file)")?;
             let ep: HookEndpoint = serde_json::from_str(&text)?;
-            print!(
-                "{}",
-                render_hooks(
-                    HOOKS_TEMPLATE,
-                    ep.port,
-                    &HookEndpoint::header_path(&state_dir)
-                )?
-            );
+            let hooks = render_manual_hooks(
+                HOOKS_TEMPLATE,
+                ep.port,
+                &HookEndpoint::header_path(&state_dir),
+            )?;
+            match into {
+                Some(path) => {
+                    write_into(&path, &hooks)?;
+                    println!("hooks for port {} written into {}", ep.port, path.display());
+                }
+                None => println!("{hooks}"),
+            }
             Ok(())
         }
     }

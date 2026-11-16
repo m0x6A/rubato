@@ -2,14 +2,16 @@ import { describe, expect, it } from "vitest";
 import { issue, overview, realMap } from "../../../test/fixtures.ts";
 import { parseIssueKey } from "../../shared/format.ts";
 import { findingText } from "../findings/index.ts";
-import { buildGraph, issueCounts, layout, sessionCounts } from "./graph.ts";
+import { buildGraph, issueCounts, layout, layoutByRepo, sessionCounts } from "./graph.ts";
 
 describe("buildGraph from docs/design/rubato-map.yml", () => {
-  it("has every node and seam of the real map", () => {
+  it("has every live node and seam of the real map, and no retired one (ADR 0077)", () => {
     const g = buildGraph(overview());
-    expect(g.nodes.map((n) => n.id).sort()).toEqual(realMap().nodes.map((n) => n.id).sort());
-    expect(g.nodes.length).toBe(13);
-    expect(g.edges.length).toBe(14);
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(realMap().nodes.filter((n) => n.retired == null).map((n) => n.id).sort());
+    expect(g.nodes.length).toBe(12);
+    expect(g.edges.length).toBe(13);
+    expect(g.nodes.map((n) => n.id)).not.toContain("tmux-ide");
+    expect(g.edges.map((e) => e.id)).not.toContain("companion-tmux-ide");
     expect(g.edges.find((e) => e.id === "companion-server")).toMatchObject({ from: "rubato-companion", to: "rubato-server", owner: "rubato-server" });
   });
 
@@ -49,9 +51,28 @@ describe("buildGraph from docs/design/rubato-map.yml", () => {
 
   it("lays out every node with ELK", async () => {
     const pos = await layout(buildGraph(overview()));
-    expect(pos.size).toBe(13);
+    expect(pos.size).toBe(12);
     const xs = new Set([...pos.values()].map((p) => Math.round(p.x)));
     expect(xs.size).toBeGreaterThan(1);
+  });
+
+  it("retiring a part moves no other part, flat and By repo (ADR 0077)", async () => {
+    const retired = overview();
+    const m = realMap();
+    const unretired = overview({ map: { ...retired.map, map: { ...m, nodes: m.nodes.map(({ retired: _, ...n }) => n), seams: (m.seams ?? []).map(({ retired: _, ...s }) => s) } } });
+    const before = await layout(buildGraph(unretired));
+    const after = await layout(buildGraph(retired));
+    expect(after.has("tmux-ide")).toBe(false);
+    for (const [id, p] of after) {
+      expect(p, id).toEqual(before.get(id));
+    }
+    const groupedBefore = await layoutByRepo(buildGraph(unretired));
+    const groupedAfter = await layoutByRepo(buildGraph(retired));
+    expect(groupedAfter.parts.has("tmux-ide")).toBe(false);
+    for (const [id, p] of groupedAfter.parts) {
+      expect(p, id).toEqual(groupedBefore.parts.get(id));
+    }
+    console.log(`checked ${after.size + groupedAfter.parts.size} positions with a retired part laid out but not drawn`);
   });
 
   it("counts and parses", () => {

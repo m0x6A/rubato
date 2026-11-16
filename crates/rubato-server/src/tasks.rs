@@ -637,6 +637,8 @@ impl Poller {
             tracing::error!(error = %format!("{e:#}"), "pruning agent reports failed");
         }
         webhooks::record(app).await;
+        // #69: a companion silent with its socket open counts its sessions as unknown.
+        companion_link::mark_quiet(app, app.clock.now());
         // The overviews built for the gauges also tell each launched session where its plan
         // stands (ADR 0071, plan 226 §4); one workspace failing stops neither.
         let refreshed = overview::refresh(app).await;

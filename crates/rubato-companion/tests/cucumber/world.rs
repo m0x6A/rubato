@@ -192,6 +192,8 @@ pub struct RubatoWorld {
     pub run_error: Option<String>,
     pub last_launch: Option<LaunchCommand>,
     pub last_status: Option<u16>,
+    /// What `rubato-companion status` printed (ADR 0078).
+    pub status_out: Option<String>,
     pub started_worktree: Option<PathBuf>,
     /// The last session message the server pushed (`session-messages.feature`).
     pub last_message: Option<SessionMessage>,
@@ -291,6 +293,7 @@ impl RubatoWorld {
             run_error: None,
             last_launch: None,
             last_status: None,
+            status_out: None,
             started_worktree: None,
             last_message: None,
             typing_id: None,
