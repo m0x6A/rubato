@@ -1,8 +1,8 @@
 # 0077. A map id is retired, not removed: drawn and offered nowhere, and history still checks
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, m0x6A/rubato#247), asked by Mattias Jonsson; a human accepts
+- **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-16; drafted by agent
 - **Seam:** skill-system-map, server-system-map, web-server, plan-check-plan-file
 - **Issue:** m0x6A/rubato#247
 
