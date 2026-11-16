@@ -177,6 +177,7 @@ repos       connected repos, what each provides, their open pull requests and is
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
 room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
 workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
+settings    Configure workspace: name, map ref, traffic source from the adapter's field list, launch defaults, create, delete  GET, PUT /api/settings; GET /api/traffic/sources; POST /api/workspaces; DELETE /api/w/{ws}
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->

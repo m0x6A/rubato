@@ -971,7 +971,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, unknown_repo (an issue of a repo no map names, on pins, launch and queue), not_on_team, team_record_stale, installation_lookup_failed, token_exchange_failed and user_lookup_failed (login, log line 'login failed' with step), session_expired, companion_taken (on /api/pair/approve: a code for a companion paired to another person, #160), field_too_long and pending_cap (on /api/pair/start: a hostname or version over 255 characters, or too many codes waiting for approval, #168; logged as user anonymous), cross_origin (a write or websocket from another origin, ADR 0066; warn line 'cross-origin request refused' with origin and sec_fetch_site; behind a proxy, check RUBATO_PUBLIC_URL is the origin the browser sees). Each has an info log line 'web write rejected' with the user.",
+      "description": "Web requests refused by a rule, by route and reason: unknown_id, kind_mismatch, unknown_repo (an issue of a repo no map names, on pins, launch and queue), not_on_team, team_record_stale, installation_lookup_failed, token_exchange_failed and user_lookup_failed (login, log line 'login failed' with step), session_expired, companion_taken (on /api/pair/approve: a code for a companion paired to another person, #160), field_too_long and pending_cap (on /api/pair/start: a hostname or version over 255 characters, or too many codes waiting for approval, #168; logged as user anonymous), cross_origin (a write or websocket from another origin, ADR 0066; warn line 'cross-origin request refused' with origin and sec_fetch_site; behind a proxy, check RUBATO_PUBLIC_URL is the origin the browser sees)., and on the settings routes (/api/settings, /api/workspaces, /api/w/{ws}; ADR 0075): bad_id, duplicate, same_map, default_kept, id_has_rows, map_source_fixed, map_file, draft_open, map_invalid, repo_unreadable (the member's own GitHub token cannot read the map repo or a repo the map names, or Rubato holds no token for them), url_refused, no_token_key, dev_traffic_set, changed_meanwhile (a stale edit), open_login and bad_value. Each has an info log line 'web write rejected' with the user.",
       "targets": [
         {
           "refId": "A",
@@ -1487,12 +1487,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Seconds since the latest good traffic report was observed (ADR 0039). The first question at 3 am: is it fresh? Past 3 × RUBATO_TRAFFIC_FETCH_SECS (default 180 s) the overview says stale and the Traffic lens draws unknown; alert TrafficReportStale fires past 600 s. No value means no source is configured (neither RUBATO_TRAFFIC_PROMETHEUS_URL nor RUBATO_DEV_TRAFFIC set), which is not a fault. If it climbs, look for the log lines 'traffic source failing' and 'traffic report rejected' (with rubato.reason) and the span rubato.traffic.fetch.",
+      "description": "Seconds since the latest good traffic report was observed (ADR 0039). The first question at 3 am: is it fresh? Past 3 × the source's fetch interval (default 180 s) the overview says stale and the Traffic lens draws unknown; alert TrafficReportStale fires past 600 s. One value per workspace with a traffic source (ADR 0075). No value for a workspace means it has no source set in Configure workspace (and RUBATO_DEV_TRAFFIC is unset), which is not a fault. If it climbs, look for the log lines 'traffic source failing' and 'traffic report rejected' (with rubato.reason) and the span rubato.traffic.fetch.",
       "targets": [
         {
           "refId": "A",
-          "expr": "max(rubato_traffic_report_age)",
-          "legendFormat": "report age"
+          "expr": "max by (rubato_workspace) (rubato_traffic_report_age)",
+          "legendFormat": "{{rubato_workspace}}"
         }
       ],
       "fieldConfig": {
@@ -1543,32 +1543,32 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Map versus territory (AGENTS.md): declared seams with no calls while both parts show traffic (finding SeamQuiet), calls between parts no seam joins (UndeclaredTraffic), ghost parts: services that emit a namespace but no part names (ObservedOnlyPart, ADR 0059), discrepancies a person dismissed for the workspace (ADR 0060), and unidentified ends: no namespace and no part declaring that name. Only meaningful while the report is fresh: a stale or failing source yields 0 of each. Ghosts above 0 with nothing lit usually means the parts do not declare `service` yet; unidentified ends above 0 mean a caller's peer.service names something no part declares. Dismissals are logged with who: 'traffic dismissal added' / 'removed'.",
+      "description": "Map versus territory (AGENTS.md): declared seams with no calls while both parts show traffic (finding SeamQuiet), calls between parts no seam joins (UndeclaredTraffic), ghost parts: services that emit a namespace but no part names (ObservedOnlyPart, ADR 0059), discrepancies a person dismissed for the workspace (ADR 0060), and unidentified ends: no namespace and no part declaring that name. Only meaningful while the report is fresh: a stale or failing source yields 0 of each. Ghosts above 0 with nothing lit usually means the parts do not declare `service` yet; unidentified ends above 0 mean a caller's peer.service names something no part declares. Dismissals are logged with who: 'traffic dismissal added' / 'removed'. One series per workspace (ADR 0075).",
       "targets": [
         {
           "refId": "A",
-          "expr": "max(rubato_traffic_seams_quiet)",
-          "legendFormat": "quiet seams"
+          "expr": "max by (rubato_workspace) (rubato_traffic_seams_quiet)",
+          "legendFormat": "quiet seams · {{rubato_workspace}}"
         },
         {
           "refId": "B",
-          "expr": "max(rubato_traffic_undeclared_edges)",
-          "legendFormat": "undeclared edges"
+          "expr": "max by (rubato_workspace) (rubato_traffic_undeclared_edges)",
+          "legendFormat": "undeclared edges · {{rubato_workspace}}"
         },
         {
           "refId": "C",
-          "expr": "max(rubato_traffic_unmapped_services)",
-          "legendFormat": "unidentified ends"
+          "expr": "max by (rubato_workspace) (rubato_traffic_unmapped_services)",
+          "legendFormat": "unidentified ends · {{rubato_workspace}}"
         },
         {
           "refId": "D",
-          "expr": "max(rubato_traffic_ghost_parts)",
-          "legendFormat": "ghost parts"
+          "expr": "max by (rubato_workspace) (rubato_traffic_ghost_parts)",
+          "legendFormat": "ghost parts · {{rubato_workspace}}"
         },
         {
           "refId": "E",
-          "expr": "max(rubato_traffic_dismissals)",
-          "legendFormat": "dismissed"
+          "expr": "max by (rubato_workspace) (rubato_traffic_dismissals)",
+          "legendFormat": "dismissed · {{rubato_workspace}}"
         }
       ],
       "fieldConfig": {
@@ -1593,12 +1593,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Traffic report fetches per hour by outcome: ok, rejected (outside the limits: too_many_edges, bad_window, name_too_long, parse; the previous report is kept) and failed (the source did not answer; the state turns failing). One fetch every RUBATO_TRAFFIC_FETCH_SECS. Split by rubato_traffic_source (prometheus or dev_file, ADR 0040). For prometheus, failed means the query API did not answer, answered non-2xx or status error; the log line traffic source failing carries which.",
+      "description": "Traffic report fetches per hour by outcome: ok, rejected (outside the limits: too_many_edges, bad_window, name_too_long, parse; the previous report is kept) and failed (the source did not answer; the state turns failing). One fetch per workspace every fetch interval of its source. Split by workspace (ADR 0075) and by rubato_traffic_source (prometheus or dev_file, ADR 0040). A source whose stored secrets no longer open is failing with secrets_unsealable. For prometheus, failed means the query API did not answer, answered non-2xx or status error; the log line traffic source failing carries which.",
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (rubato_outcome, rubato_traffic_source) (increase(rubato_traffic_fetches_total[1h]))",
-          "legendFormat": "{{rubato_traffic_source}} {{rubato_outcome}}"
+          "expr": "sum by (rubato_workspace, rubato_outcome, rubato_traffic_source) (increase(rubato_traffic_fetches_total[1h]))",
+          "legendFormat": "{{rubato_workspace}} {{rubato_traffic_source}} {{rubato_outcome}}"
         }
       ],
       "fieldConfig": {
@@ -2066,13 +2066,40 @@
     },
     {
       "id": 115,
+      "title": "Workspace config changes",
+      "type": "logs",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 151
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${DS_LOKI}"
+      },
+      "description": "Every stored change to a workspace's settings (ADR 0075): the info line 'workspace config changed' with rubato.workspace, rubato.user and keys, the names of what changed (name, map_ref, traffic.url, traffic.secrets.headers, default_spend_cap_usd, created, deleted). Never a value. The same change is the span rubato.workspace.config_changed. A refused change is not here: see Web writes rejected.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"rubato-server\"} |= \"workspace config changed\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 116,
       "title": "Fleet requests by action and outcome",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 151
+        "y": 158
       },
       "datasource": {
         "type": "prometheus",

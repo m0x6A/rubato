@@ -74,6 +74,28 @@ async function pinFromTheMenu(target: RegExp) {
   fireEvent.click(screen.getByRole("menuitem", { name: target }));
 }
 
+describe("Configure workspace in the shell (issue #189)", () => {
+  it("the header item is drawn with one workspace, opens the view in place of the tabs and closes it", async () => {
+    render(<App />);
+    // One workspace: no switcher, and the item is there all the same.
+    const item = await screen.findByRole("button", { name: "Configure workspace" });
+    expect(screen.queryByRole("combobox", { name: "Workspace" })).toBeNull();
+    expect(item).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /^Issues/ })).toBeInTheDocument();
+
+    fireEvent.click(item);
+    expect(item).toHaveAttribute("aria-pressed", "true");
+    const view = await screen.findByRole("region", { name: "Configure workspace" });
+    expect(screen.queryByRole("button", { name: /^Issues/ })).toBeNull();
+    // This stub serves no settings: the view says so instead of drawing an empty form.
+    expect(await within(view).findByRole("alert")).toHaveTextContent("The settings could not be read");
+
+    fireEvent.click(within(view).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("region", { name: "Configure workspace" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Issues/ })).toBeInTheDocument();
+  });
+});
+
 describe("pinning from the shell (S3, N16)", () => {
   it("a pin is announced and focus lands on the issue's heading", async () => {
     await pinFromTheMenu(/^rubato-server\b/);

@@ -13,10 +13,11 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "dev", testIgnore: /(app-login|room|sessions|shots|motion|perf)\.spec\.ts/, use: { browserName: "chromium" } },
+    { name: "dev", testIgnore: /(app-login|room|sessions|shots|motion|perf|settings)\.spec\.ts/, use: { browserName: "chromium" } },
     {
       name: "app",
-      testMatch: /app-login\.spec\.ts/,
+      // settings.spec.ts: its single-workspace test runs here, its other test in "settings".
+      testMatch: /(app-login|settings)\.spec\.ts/,
       use: { browserName: "chromium", baseURL: process.env["RUBATO_E2E_APP_URL"] ?? "http://127.0.0.1:18091" },
     },
     // Issue #122: two people in a plan's room, with a companion that launches #916. Its launch
@@ -28,6 +29,9 @@ export default defineConfig({
     { name: "shots", testMatch: /shots\.spec\.ts/, dependencies: ["room"], use: { browserName: "chromium" } },
     { name: "motion", testMatch: /motion\.spec\.ts/, dependencies: ["shots"], use: { browserName: "chromium" } },
     { name: "perf", testMatch: /perf\.spec\.ts/, dependencies: ["motion"], use: { browserName: "chromium" } },
+    // Issue #189: it renames a workspace and moves default's map ref (and puts both back), so it
+    // runs last, alone, against the dev server.
+    { name: "settings", testMatch: /settings\.spec\.ts/, dependencies: ["perf"], use: { browserName: "chromium" } },
   ],
   // The JSON report feeds the scenario coverage report (pnpm scenarios report, issue #198).
   reporter: [["list"], ["json", { outputFile: "../e2e/results/playwright.json" }]],
