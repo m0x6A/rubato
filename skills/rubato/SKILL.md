@@ -206,8 +206,37 @@ accepts each pinned ADR still at its blob (in the map repo only; elsewhere it li
 After the handoff git owns the plan. A later change to it is an ordinary commit, which makes the
 approval stale; Rubato shows that, and a new approval sends the handoff again.
 
+## 10. Rubato's MCP server (a session Rubato launched)
+
+A session Rubato launched has an MCP server named `rubato-companion`, served by its own companion
+(ADR 0071). Without that server, skip this section; that covers a session started by hand, and a
+room's forked turn (ADR 0057). It has three tools and no others:
+
+- `get_assignment`: call it first. It says what this session was launched for: the repo, the
+  issue, the branch, the map parts the issue is pinned to, the map version, the plan path, the
+  planning mode, the spend cap, and the attempt with its limit. The ids you may name still come
+  from `map.ts` (§1).
+- `report_status`: one line of what you are doing and the map ids you are on, for example
+  "designing the auth seam" on `companion-server`. Call it when the work moves to another phase
+  (designing, reviewing, building) or another part, and when you wait on a person. The team sees
+  the newest line next to this session, with its age. It is a signal, not progress. It does not
+  replace the plan, a `Review:` reply, or a question in the plan's room.
+- `plan_status`: where the plan stands as Rubato last sent it. That covers the draft's revision
+  and whether it fits the map, the newest review, the counted approval with its version, and the
+  plan on the branch.
+  - An approval covers the plan as it is only when its `version` is `current`.
+  - `unknown`, or `link_up: false`, means "not known", not "not approved".
+  - Its `as_of` is when Rubato last saw a change. Its age is information, not a verdict.
+
+The approval reaches this session as §6 says for its mode: as a prompt with a `plan.ts handoff`
+command in Rubato mode (§9), and through push and Import in git mode. `plan_status` never starts
+the tasks, never replaces `plan.ts handoff` or Import, and is not a reason to run either. No
+tool approves, reviews, decides or pins; don't look for one.
+
 ## Don't
 
+- Don't treat `report_status` as progress or as the place for a question, and don't start the
+  tasks on a `plan_status`.
 - Don't invent node ids; read the map.
 - Don't write the plan anywhere but the agreed path.
 - Don't write track, review, approval or status into the plan's front matter. In Rubato mode
