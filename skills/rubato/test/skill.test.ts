@@ -418,3 +418,48 @@ describe("hooks.ts", () => {
     expect(errors.join("\n")).toMatch(/--header-file/);
   });
 });
+
+// ----- §10: the companion's MCP server (ADR 0071, plan #230) -------------------------------------
+
+const MCP_TOOLS = ["get_assignment", "report_status", "plan_status"];
+
+/** What is wrong with SKILL.md's §10, and the tool names it found there. */
+function mcpSectionProblems(text: string): { problems: string[]; names: string[] } {
+  const start = text.indexOf("## 10.");
+  const end = text.indexOf("## Don't");
+  if (start < 0 || end < start) {
+    return { problems: ["no §10 before ## Don't"], names: [] };
+  }
+  const s = text.slice(start, end);
+  const names = new Set<string>();
+  for (const m of s.matchAll(/mcp__rubato-companion__(\w+)/g)) names.add(m[1]!);
+  for (const m of s.matchAll(/^\s*[-*] `([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`/gm)) names.add(m[1]!);
+  const problems: string[] = [];
+  const found = [...names].sort();
+  if (found.join(",") !== [...MCP_TOOLS].sort().join(",")) {
+    problems.push(`tool names in §10 are ${found.join(", ")}, not ${MCP_TOOLS.join(", ")}`);
+  }
+  // Phrases are matched across line breaks: the file is wrapped at 100 columns.
+  const flat = s.replace(/\s+/g, " ");
+  if (!/version` is `current`/.test(flat)) problems.push("§10 must say an approval counts only at version `current`");
+  if (!flat.includes("§6")) problems.push("§10 must send the approval to §6 for the session's mode");
+  if (!flat.includes("`plan_status` never starts the tasks")) problems.push("§10 must say `plan_status` never starts the tasks");
+  return { problems, names: found };
+}
+
+describe("SKILL.md §10, the companion's MCP server (ADR 0071)", () => {
+  it("describes the three tools, how an approval counts, and no tool that approves", () => {
+    const { problems, names } = mcpSectionProblems(readFileSync(join(root, "skills/rubato/SKILL.md"), "utf8"));
+    console.log(`checked ${names.length} tool names in §10`);
+    expect(problems).toEqual([]);
+  });
+
+  it("fails on an approval tool, by its MCP name or as a list item", () => {
+    const skill = readFileSync(join(root, "skills/rubato/SKILL.md"), "utf8");
+    const at = skill.indexOf("## Don't");
+    for (const extra of ["- Call `mcp__rubato-companion__approve_plan` when done.\n\n", "- `approve_plan` approves the draft.\n\n"]) {
+      const bad = skill.slice(0, at) + extra + skill.slice(at);
+      expect(mcpSectionProblems(bad).problems.join(" "), extra).toContain("approve_plan");
+    }
+  });
+});

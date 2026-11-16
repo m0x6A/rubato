@@ -1,6 +1,6 @@
 {
   "name": "@rubato/skill",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Claude Code skill installed in every connected repo: map, node ids, ADRs, plan path, plan format, hook config.",
