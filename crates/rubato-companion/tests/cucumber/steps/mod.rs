@@ -8,6 +8,7 @@ mod hooks;
 mod launch_branch;
 mod launch_refusal;
 mod launch_timeout;
+mod opt_in;
 mod pairing;
 mod restart;
 mod restore;

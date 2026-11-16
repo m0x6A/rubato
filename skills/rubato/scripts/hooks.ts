@@ -46,6 +46,24 @@ export function renderHooks(template: string, port: number, headerFile: string):
   return out;
 }
 
+/**
+ * The prefix of every hook command written for a session started by hand (ADR 0078): inside a
+ * launched session `launch.sh` exports `RUBATO_LAUNCH_ID` and the launch's own `--settings`
+ * hooks deliver, so this one stands down. The same words as the companion's `STAND_DOWN`.
+ */
+export const STAND_DOWN = '[ -n "${RUBATO_LAUNCH_ID:-}" ] || ';
+
+/** The hooks for a session started by hand: `renderHooks`, each command behind `STAND_DOWN`. */
+export function renderManualHooks(template: string, port: number, headerFile: string): string {
+  const parsed = JSON.parse(renderHooks(template, port, headerFile)) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+  for (const entries of Object.values(parsed.hooks)) {
+    for (const h of entries.flatMap((e) => e.hooks)) {
+      h.command = STAND_DOWN + h.command;
+    }
+  }
+  return JSON.stringify(parsed, null, 2);
+}
+
 function opt(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
@@ -59,7 +77,8 @@ export function main(argv: string[], err: (s: string) => void = (s) => console.e
   const port = Number(opt(argv, "--port"));
   const headerFile = opt(argv, "--header-file") ?? "";
   try {
-    const rendered = renderHooks(readFileSync(templatePath(), "utf8"), port, headerFile);
+    // A manual session's hooks stand down inside a launched one (ADR 0078).
+    const rendered = renderManualHooks(readFileSync(templatePath(), "utf8"), port, headerFile);
     const out = opt(argv, "--out");
     if (out) {
       writeFileSync(out, rendered);
