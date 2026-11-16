@@ -1,8 +1,8 @@
 # 0078. A session started by hand reports state only through a per-repo opt-in
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-15
-- **Decided by:** agent (Claude Code, m0x6A/rubato#248), asked by Mattias Jonsson; a human accepts
+- **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-16; drafted by agent
 - **Seam:** companion-claude-code
 - **Issue:** m0x6A/rubato#248
 
