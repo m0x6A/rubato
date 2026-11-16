@@ -40,13 +40,13 @@ for n in 914 915; do
   cp "e2e/fixtures/$n.md" "$SEED/docs/plans/$n.md"
   g add -A && g commit -q -m "plan for #$n"
 done
-# Issue #265: a plan on issue/919-closed, whose issue is closed on GitHub (label dev:closed in
+# Issue #265: a plan on issue/930-closed, whose issue is closed on GitHub (label dev:closed in
 # fixtures/issues.json): finished, so in no default list.
 g switch -q main
-g switch -q -c issue/919-closed
+g switch -q -c issue/930-closed
 mkdir -p "$SEED/docs/plans"
-cp e2e/fixtures/919.md "$SEED/docs/plans/919.md"
-g add -A && g commit -q -m "plan for #919"
+cp e2e/fixtures/930.md "$SEED/docs/plans/930.md"
+g add -A && g commit -q -m "plan for #930"
 # Issue #122: a plan with a room, on issue/916-room.
 g switch -q main
 g switch -q -c issue/916-room

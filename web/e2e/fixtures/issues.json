@@ -9,6 +9,6 @@
     { "number": 915, "title": "Voice: a plan that does not fit", "url": "https://github.com/m0x6A/rubato/issues/915", "labels": [], "author": "m0x6A", "author_association": "OWNER", "body": "## Summary\nA plan with no O-row.\n" },
     { "number": 917, "title": "Backlog: dropped on a part in a box", "url": "https://github.com/m0x6A/rubato/issues/917", "labels": [] },
     { "number": 918, "title": "Backlog: dropped on a seam in a box", "url": "https://github.com/m0x6A/rubato/issues/918", "labels": [] },
-    { "number": 919, "title": "Closed: a plan of an issue closed on GitHub", "url": "https://github.com/m0x6A/rubato/issues/919", "labels": ["dev:closed"] }
+    { "number": 930, "title": "Closed: a plan of an issue closed on GitHub", "url": "https://github.com/m0x6A/rubato/issues/930", "labels": ["dev:closed"] }
   ]
 }
