@@ -346,6 +346,20 @@
           ]
         },
         {
+          "description": "A lead launch's fleet tool call (ADR 0072). Sent only to a server that announced `fleet`,\nonly while the link is up, and never kept in the outbox.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "fleet_request"
+            }
+          },
+          "$ref": "#/$defs/FleetRequest",
+          "required": [
+            "type"
+          ]
+        },
+        {
           "description": "Acknowledges a server envelope by sequence.",
           "type": "object",
           "properties": {
@@ -453,6 +467,118 @@
           "type": "string",
           "const": "too_large"
         }
+      ]
+    },
+    "FleetAction": {
+      "description": "What a lead asks for.",
+      "oneOf": [
+        {
+          "description": "Its owner's launches in the lead's workspace.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "list"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A worker on an issue, as its owner, on one of the owner's connected companions.",
+          "type": "object",
+          "properties": {
+            "companion_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "issue": {
+              "$ref": "#/$defs/IssueRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "launch"
+            },
+            "slug": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "issue"
+          ]
+        },
+        {
+          "description": "A chat message to a worker this lead launched.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "message"
+            },
+            "launch_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "launch_id",
+            "text"
+          ]
+        },
+        {
+          "description": "A stop for a worker this lead launched.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "stop"
+            },
+            "launch_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "launch_id"
+          ]
+        }
+      ]
+    },
+    "FleetRequest": {
+      "description": "Companion → server: one fleet tool call of a lead launch. Sent only while the link is up and\nnever kept in the outbox, so a reconnect never replays it late.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/FleetAction"
+        },
+        "lead_launch_id": {
+          "description": "The launch the call came from: the companion took it from `X-Rubato-Launch`.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "request_id": {
+          "description": "The agent's own id when it retries a pending call, else a new one the companion made.",
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "request_id",
+        "lead_launch_id",
+        "action"
       ]
     },
     "HandoffOutcome": {
@@ -884,6 +1010,11 @@
           "description": "tmux or claude missing or below the pinned version.",
           "type": "string",
           "const": "missing_dependency"
+        },
+        {
+          "description": "A lead launch to a companion whose orchestrator flag is off (ADR 0072).",
+          "type": "string",
+          "const": "orchestrator_off"
         }
       ]
     },

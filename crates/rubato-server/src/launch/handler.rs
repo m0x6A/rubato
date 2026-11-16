@@ -1,6 +1,8 @@
 //! `POST /api/launch`: start a session on an issue through one of the caller's own companions.
 
-use super::prompt::{PROMPT_TEMPLATE, RUBATO_PROMPT_TEMPLATE, is_slug, render_prompt, slugify};
+use super::prompt::{
+    LEAD_PROMPT_TEMPLATE, PROMPT_TEMPLATE, RUBATO_PROMPT_TEMPLATE, is_slug, render_prompt, slugify,
+};
 use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
@@ -10,12 +12,13 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::Utc;
+use rubato_protocol::fleet::reason as fleet_reason;
 use rubato_protocol::launch::reason as launch_reason;
 use rubato_protocol::launch::routes;
 use rubato_protocol::otel::{attr, event, span};
 use rubato_protocol::{
-    CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, PlanningMode,
-    ServerMessage, capability, skill_has_handoff,
+    CapHit, CapKind, IssueRef, LaunchCommand, LaunchRequest, LaunchResponse, LaunchRole,
+    PlanningMode, ServerMessage, capability, skill_has_handoff,
 };
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;
@@ -56,7 +59,9 @@ pub async fn launch(
     CurrentUser(user): CurrentUser,
     Json(req): Json<LaunchRequest>,
 ) -> Result<Json<LaunchResponse>, (StatusCode, String)> {
-    start(&app, ws.as_str(), &user, req, None).await.map(Json)
+    start(&app, ws.as_str(), &user, req, None, None)
+        .await
+        .map(Json)
 }
 
 /// A launch for `user` in workspace `ws`, as the route makes it; `note` is added to the
@@ -67,7 +72,20 @@ pub async fn start(
     user: &str,
     req: LaunchRequest,
     note: Option<&str>,
+    // The owner's lead agent that asked for this worker (ADR 0072); `None` from the web.
+    lead_launch_id: Option<Uuid>,
 ) -> Result<LaunchResponse, (StatusCode, String)> {
+    // A lead only while the orchestrator flag is on (ADR 0072); a lead never starts a lead.
+    if req.role == LaunchRole::Lead && (!app.config.orchestrator || lead_launch_id.is_some()) {
+        app.reject(routes::LAUNCH, fleet_reason::ORCHESTRATOR_OFF, user);
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "{}: a lead agent needs RUBATO_ORCHESTRATOR=1",
+                fleet_reason::ORCHESTRATOR_OFF
+            ),
+        ));
+    }
     let map = app
         .map_of(ws)
         .await
@@ -114,6 +132,17 @@ pub async fn start(
             }
         },
     };
+    // A lead goes only to a companion whose own orchestrator flag is on (ADR 0072).
+    if req.role == LaunchRole::Lead && !app.announced(companion.companion_id, capability::FLEET) {
+        app.reject(routes::LAUNCH, fleet_reason::COMPANION_CANNOT_LEAD, user);
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "{}: that companion does not run lead agents",
+                fleet_reason::COMPANION_CANNOT_LEAD
+            ),
+        ));
+    }
     let pins: Vec<String> = pins::list(&app.db, ws)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
@@ -242,9 +271,10 @@ pub async fn start(
         app.config.comment_approvals_until.is_some(),
         &app.capabilities(companion.companion_id),
     );
-    let template = match planning {
-        PlanningMode::Rubato => RUBATO_PROMPT_TEMPLATE,
-        PlanningMode::Git => PROMPT_TEMPLATE,
+    let template = match (req.role, planning) {
+        (LaunchRole::Lead, _) => LEAD_PROMPT_TEMPLATE,
+        (_, PlanningMode::Rubato) => RUBATO_PROMPT_TEMPLATE,
+        (_, PlanningMode::Git) => PROMPT_TEMPLATE,
     };
     let command = LaunchCommand {
         id: Uuid::new_v4(),
@@ -273,6 +303,8 @@ pub async fn start(
         plan_path: Some(plan_path),
         draft: restore,
         planning,
+        role: req.role,
+        lead_launch_id,
     };
     store::store_launch(&app.db, ws, companion.companion_id, &command)
         .await

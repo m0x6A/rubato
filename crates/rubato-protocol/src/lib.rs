@@ -7,6 +7,7 @@
 pub mod agent;
 pub mod approve;
 pub mod auth;
+pub mod fleet;
 pub mod github;
 pub mod handoff;
 pub mod hook;
@@ -44,6 +45,9 @@ pub use approve::{
     ApproveRequest, ApproveResponse, ApproveState, DraftApproveRequest, DraftApproveResponse,
 };
 pub use auth::Me;
+pub use fleet::{
+    FleetAction, FleetEntry, FleetOutcome, FleetRequest, FleetResult, LaunchRole, LeadView,
+};
 pub use github::{
     ApprovalBody, ApprovalRecord, ApprovalSource, ApprovalState, ApprovalVersion, ChecksStatus,
     DecisionBody, DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, comment_counts,

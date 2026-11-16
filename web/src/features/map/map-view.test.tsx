@@ -52,7 +52,7 @@ describe("MapView", () => {
     expect(live).toHaveTextContent("Step 1 of 10: web → rubato-server, control: LaunchRequest");
     expect(within(player).getByRole("button", { name: "Previous step" })).toBeDisabled();
     fireEvent.click(within(player).getByRole("button", { name: "Next step" }));
-    expect(live).toHaveTextContent("Step 2 of 10: rubato-server → rubato-companion, control: LaunchCommand, for the paired user only — the server sends the launch to your own companion only");
+    expect(live).toHaveTextContent("Step 2 of 10: rubato-server → rubato-companion, control: LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072) — the server sends the launch to your own companion only");
     // The keyboard steps too.
     fireEvent.keyDown(player, { key: "ArrowRight" });
     expect(live).toHaveTextContent("Step 3 of 10");

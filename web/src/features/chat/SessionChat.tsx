@@ -213,6 +213,12 @@ function Message({ launchId, m, live, turn, onSendAgain }: { launchId: string; m
     <li className="chat-msg" id={messageDomId(launchId, m.id)} tabIndex={-1} data-testid={`message-${m.id}`}>
       <div className="chat-meta">
         <strong>{m.author}</strong>
+        {/* Sent for its owner by the owner's own lead agent (ADR 0072). */}
+        {m.via_launch && (
+          <span className="badge" data-testid={`via-lead-${m.id}`} title={`Sent by ${m.author}'s lead agent (launch ${m.via_launch.slice(0, 8)})`}>
+            via lead agent
+          </span>
+        )}
         <time className="muted" dateTime={m.created_at} title={new Date(m.created_at).toLocaleString()}>
           {relative(m.created_at)}
         </time>

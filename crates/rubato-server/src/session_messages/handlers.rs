@@ -38,37 +38,48 @@ pub async fn stop(
     CurrentUser(user): CurrentUser,
     Path(launch_id): Path<Uuid>,
 ) -> Result<Json<SessionMessageView>, Refused> {
-    let refuse_stop = |app: &App, status, why: &str| {
-        app.reject(routes::LAUNCH_STOP, why, &user);
-        (status, Json(json!({ "reason": why })))
-    };
+    match stop_as(&app, &user, launch_id, None).await {
+        Ok(v) => Ok(Json(v)),
+        Err(StopRefused::Internal(e)) => Err(internal(e)),
+        Err(StopRefused::No(status, why)) => {
+            app.reject(routes::LAUNCH_STOP, why, &user);
+            Err((status, Json(json!({ "reason": why }))))
+        }
+    }
+}
+
+/// Why `stop_as` sent nothing: a status and a `reason`, or a store error.
+#[derive(Debug)]
+pub enum StopRefused {
+    No(StatusCode, &'static str),
+    Internal(anyhow::Error),
+}
+
+/// A stop for `launch_id`, as its owner `user`, sent past the queue (ADR 0062). `via` is the
+/// owner's lead agent that asked (ADR 0072); the web route passes `None`. The caller counts a
+/// refusal under its own route.
+pub async fn stop_as(
+    app: &App,
+    user: &str,
+    launch_id: Uuid,
+    via: Option<Uuid>,
+) -> Result<SessionMessageView, StopRefused> {
+    let no = |status, why| StopRefused::No(status, why);
     let Some(target) = launch::launch_target(&app.db, launch_id)
         .await
-        .map_err(internal)?
+        .map_err(StopRefused::Internal)?
     else {
-        return Err(refuse_stop(
-            &app,
-            StatusCode::NOT_FOUND,
-            reason::UNKNOWN_LAUNCH,
-        ));
+        return Err(no(StatusCode::NOT_FOUND, reason::UNKNOWN_LAUNCH));
     };
-    if !target.user.eq_ignore_ascii_case(&user) {
-        return Err(refuse_stop(
-            &app,
-            StatusCode::FORBIDDEN,
-            reason::NOT_YOUR_SESSION,
-        ));
+    if !target.user.eq_ignore_ascii_case(user) {
+        return Err(no(StatusCode::FORBIDDEN, reason::NOT_YOUR_SESSION));
     }
     if !app.announced(target.companion_id, capability::SESSION_STOP) {
-        return Err(refuse_stop(&app, StatusCode::CONFLICT, reason::CANNOT_STOP));
+        return Err(no(StatusCode::CONFLICT, reason::CANNOT_STOP));
     }
     let now = app.clock.now();
     if !app.companion_live(target.companion_id, capability::SESSION_STOP, now) {
-        return Err(refuse_stop(
-            &app,
-            StatusCode::CONFLICT,
-            reason::COMPANION_OFFLINE,
-        ));
+        return Err(no(StatusCode::CONFLICT, reason::COMPANION_OFFLINE));
     }
     let row = MessageRow {
         id: Uuid::new_v4(),
@@ -78,9 +89,9 @@ pub async fn stop(
         owner: target.user.clone(),
         issue: target.issue.clone(),
         kind: SessionMessageKind::Stop {
-            requested_by: user.clone(),
+            requested_by: user.to_owned(),
         },
-        author: user.clone(),
+        author: user.to_owned(),
         priority: 0,
         // Recorded as pushed: it bypasses the queue, so dispatch never pushes it again.
         state: SessionMessageState::Sent,
@@ -88,8 +99,11 @@ pub async fn stop(
         pushed_at: Some(now),
         outcome_at: None,
         detail: None,
+        via_launch: via,
     };
-    store::insert(&app.db, &row).await.map_err(internal)?;
+    store::insert(&app.db, &row)
+        .await
+        .map_err(StopRefused::Internal)?;
     if !app.send_to_companion(target.companion_id, dispatch::wire(&row)) {
         let _ = store::settle(
             &app.db,
@@ -100,15 +114,11 @@ pub async fn stop(
             now,
         )
         .await;
-        return Err(refuse_stop(
-            &app,
-            StatusCode::CONFLICT,
-            reason::COMPANION_OFFLINE,
-        ));
+        return Err(no(StatusCode::CONFLICT, reason::COMPANION_OFFLINE));
     }
-    tracing::info!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, rubato.user = %user, "session stop sent");
+    tracing::info!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, rubato.user = %user, via_launch = ?via, "session stop sent");
     app.notify_resource(WebResource::LaunchMessages { launch_id });
-    Ok(Json(row.view()))
+    Ok(row.view())
 }
 
 type Refused = (StatusCode, Json<Value>);
@@ -219,6 +229,7 @@ pub async fn send(
         pushed_at: None,
         outcome_at: None,
         detail: None,
+        via_launch: None,
     };
     store::insert(&app.db, &row).await.map_err(internal)?;
     tracing::info!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, rubato.user = %user, "session message queued");

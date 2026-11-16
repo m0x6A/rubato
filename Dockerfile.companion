@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+# A headless rubato-companion (ADR 0062, ADR 0076): no tmux, one `claude -p` turn at a time, for one
+# person who pairs it by device code. CI does not build or publish this image; build it from the
+# repository root:
+#   docker build -f Dockerfile.companion -t local/rubato-companion:sha-$(git rev-parse --short HEAD) .
+# Pair, then run (docs/design/companion-hosts.md):
+#   docker run -it --rm -v rubato-home:/home/rubato local/rubato-companion:<tag> rubato-companion pair --server https://rubato.example
+#   docker run -d --name rubato-companion -v rubato-home:/home/rubato --env-file companion.env local/rubato-companion:<tag>
+
+FROM rust:1-bookworm AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+# The hooks template is embedded at compile time (the map and schema fixtures only in tests).
+COPY skills/rubato skills/rubato
+# The target dir is a cache mount, so the binary is copied out of it in the same step.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked -p rubato-companion \
+    && cp target/release/rubato-companion /rubato-companion
+
+FROM node:22-bookworm-slim
+# Claude Code at a pinned version, at least two weeks old; bump it by hand.
+ARG CLAUDE_CODE_VERSION=2.1.317
+# git for worktrees, ca-certificates for the server's wss:// and the API, procps for `ps`.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && npm cache clean --force \
+    && userdel --remove node \
+    && useradd --uid 1000 --user-group --create-home --home-dir /home/rubato rubato
+COPY --from=build /rubato-companion /usr/local/bin/rubato-companion
+# The rubato skill, copied into the volume's ~/.claude/skills on first start.
+COPY skills/rubato /opt/rubato-skill
+RUN cd /opt/rubato-skill && rm -rf node_modules test && npm install --omit=dev --no-audit --no-fund && chown -R rubato:rubato /opt/rubato-skill
+COPY --chmod=0755 <<'EOF' /usr/local/bin/rubato-companion-entry
+#!/bin/sh
+# First start: the skill into the volume, as Claude Code looks for it under ~/.claude/skills.
+set -e
+if [ ! -d "$HOME/.claude/skills/rubato" ]; then
+  mkdir -p "$HOME/.claude/skills"
+  cp -r /opt/rubato-skill "$HOME/.claude/skills/rubato"
+fi
+exec "$@"
+EOF
+# Headless only: `rubato-companion run` refuses `mode: interactive` here (no tmux in the image).
+ENV RUBATO_IN_CONTAINER=1
+USER rubato
+WORKDIR /home/rubato
+# The config, the state dir, the clones and the worktrees: as sensitive as a home directory.
+VOLUME /home/rubato
+ENTRYPOINT ["/usr/local/bin/rubato-companion-entry"]
+CMD ["rubato-companion", "run"]

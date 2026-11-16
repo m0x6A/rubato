@@ -403,6 +403,8 @@ mod call_in_tests {
             plan_path: Some(format!("docs/plans/{n}.md")),
             draft: None,
             planning: Default::default(),
+            role: Default::default(),
+            lead_launch_id: None,
         };
         sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)")
             .bind(id.to_string())

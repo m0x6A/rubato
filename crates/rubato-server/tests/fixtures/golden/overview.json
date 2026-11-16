@@ -108,7 +108,7 @@
           "retired": "0070"
         },
         {
-          "description": "The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Exports its own OTel.",
+          "description": "The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Authenticated by the developer's login or an API key (ADR 0076). Exports its own OTel.",
           "id": "claude-code",
           "kind": "external"
         },
@@ -148,7 +148,7 @@
               "to": "rubato-server"
             },
             {
-              "carries": "LaunchCommand, for the paired user only",
+              "carries": "LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072)",
               "from": "rubato-server",
               "kind": "control",
               "says": "the server sends the launch to your own companion only",
@@ -346,7 +346,7 @@
               "to": "rubato-server"
             },
             {
-              "carries": "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn",
+              "carries": "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn; a lead's chat to a worker it launched, and fleet notices to a lead (ADR 0072)",
               "from": "rubato-server",
               "kind": "control",
               "says": "the message goes to your own companion, for your own session",
@@ -396,7 +396,7 @@
               "to": "rubato-server"
             },
             {
-              "carries": "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn",
+              "carries": "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn; a lead's chat to a worker it launched, and fleet notices to a lead (ADR 0072)",
               "from": "rubato-server",
               "kind": "control",
               "says": "the approval goes to your session ahead of anything else",
@@ -447,19 +447,19 @@
           "description": "Each companion reports what its sessions are doing, and receives launch commands and messages for its own user's sessions only. The companion always dials out.",
           "flows": [
             {
-              "carries": "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071)",
+              "carries": "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071), FleetRequest from a person's own lead launch behind the orchestrator flag (ADR 0072)",
               "from": "rubato-companion",
               "kind": "data",
               "to": "rubato-server"
             },
             {
-              "carries": "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071)",
+              "carries": "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071); FleetResult to a lead's request (ADR 0072)",
               "from": "rubato-server",
               "kind": "data",
               "to": "rubato-companion"
             },
             {
-              "carries": "LaunchCommand, for the paired user only",
+              "carries": "LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072)",
               "from": "rubato-server",
               "kind": "control",
               "to": "rubato-companion"
@@ -471,7 +471,7 @@
               "to": "rubato-companion"
             },
             {
-              "carries": "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn",
+              "carries": "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn; a lead's chat to a worker it launched, and fleet notices to a lead (ADR 0072)",
               "from": "rubato-server",
               "kind": "control",
               "to": "rubato-companion"
@@ -564,11 +564,11 @@
           "to": "claude-code"
         },
         {
-          "carries": "MCP over loopback HTTP (POST /mcp on the hook receiver, the hook token from a 0600 mcp.json, X-Rubato-Launch): get_assignment, report_status, plan_status",
+          "carries": "MCP over loopback HTTP (POST /mcp on the hook receiver, the hook token from a 0600 mcp.json, X-Rubato-Launch): get_assignment, report_status, plan_status; for a person's lead launch behind the orchestrator flag, fleet_list, fleet_launch, fleet_message, fleet_stop with its X-Rubato-Lead secret (ADR 0072)",
           "description": "A session Rubato launched asks its own companion what it is assigned to and where its plan stands, and says what it is doing. What it says is a signal with a last-seen time, never a progress state; hooks stay the evidence (ADR 0071).",
           "flows": [
             {
-              "carries": "get_assignment and plan_status calls, with the launch id the companion wrote into mcp.json",
+              "carries": "get_assignment and plan_status calls, with the launch id the companion wrote into mcp.json; a lead's fleet calls with its secret (ADR 0072)",
               "from": "claude-code",
               "kind": "control",
               "to": "rubato-companion"
@@ -580,7 +580,7 @@
               "to": "rubato-companion"
             },
             {
-              "carries": "the assignment (repo, issue, branch, map parts, plan path, caps) and the plan status Rubato last sent, with its age; refusals with a reason",
+              "carries": "the assignment (repo, issue, branch, map parts, plan path, caps) and the plan status Rubato last sent, with its age; refusals with a reason; to a lead, its fleet and the server's answers, or pending (ADR 0072)",
               "from": "rubato-companion",
               "kind": "data",
               "to": "claude-code"
@@ -717,7 +717,7 @@
           "description": "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map.",
           "flows": [
             {
-              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073)",
+              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073); behind the orchestrator flag, each lead and its workers, and who sent a message for a lead; how each companion's Claude is billed (ADR 0072, ADR 0076)",
               "from": "rubato-server",
               "kind": "data",
               "to": "web"
@@ -735,7 +735,7 @@
               "to": "rubato-server"
             },
             {
-              "carries": "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan",
+              "carries": "LaunchRequest: start a session on your own companion, or your own lead agent behind the orchestrator flag (ADR 0072); propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan",
               "from": "web",
               "kind": "control",
               "to": "rubato-server"

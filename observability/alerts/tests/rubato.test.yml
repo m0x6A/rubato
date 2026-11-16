@@ -549,3 +549,50 @@ tests:
       - eval_time: 10m
         alertname: SpeechProviderFailing
         exp_alerts: []
+
+  # #134, ADR 0072: a lead asked to message another person's session: pages at once.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_fleet_requests_total{rubato_fleet_action="message",rubato_outcome="refused",rubato_reason="other_owner"}'
+        values: "0 0 1 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FleetCrossOwner
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FleetCrossOwner
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: companion-server
+              owner: rubato-server
+            exp_annotations:
+              summary: "A lead agent's fleet request named another person's session or a lead it does not own"
+              panel: Fleet requests by action and outcome
+
+  # A forged lead identity fires too; the owner's own session (not_led) and ok calls do not.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_fleet_requests_total{rubato_fleet_action="list",rubato_outcome="refused",rubato_reason="identity"}'
+        values: "0 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FleetCrossOwner
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              seam: companion-server
+              owner: rubato-server
+            exp_annotations:
+              summary: "A lead agent's fleet request named another person's session or a lead it does not own"
+              panel: Fleet requests by action and outcome
+  - interval: 1m
+    input_series:
+      - series: 'rubato_fleet_requests_total{rubato_fleet_action="message",rubato_outcome="refused",rubato_reason="not_led"}'
+        values: "0+1x10"
+      - series: 'rubato_fleet_requests_total{rubato_fleet_action="message",rubato_outcome="ok",rubato_reason=""}'
+        values: "0+3x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FleetCrossOwner
+        exp_alerts: []

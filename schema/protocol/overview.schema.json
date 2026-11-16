@@ -72,8 +72,19 @@
         "positions": {}
       }
     },
+    "leads": {
+      "description": "Each live lead and its live workers, from the current snapshots; empty while the flag is off.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LeadView"
+      }
+    },
     "map": {
       "$ref": "#/$defs/MapResponse"
+    },
+    "orchestrator": {
+      "description": "The server's orchestrator flag (ADR 0072): the web offers *Start as lead* only while it is on.",
+      "type": "boolean"
     },
     "pulls": {
       "description": "Open pull requests per map repo (ADR 0034). Never an input to progress.",
@@ -1809,6 +1820,31 @@
         "progress"
       ]
     },
+    "LeadView": {
+      "description": "A lead and its live workers, for the web (`Overview.leads`).",
+      "type": "object",
+      "properties": {
+        "launch_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "workers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "required": [
+        "launch_id",
+        "owner",
+        "workers"
+      ]
+    },
     "MapDraft": {
       "description": "The draft as every browser sees it.",
       "type": "object",
@@ -2331,6 +2367,17 @@
     "PairingInfo": {
       "type": "object",
       "properties": {
+        "can_lead": {
+          "description": "The companion announced `fleet` and the server's flag is on: a lead may start here (ADR 0072).",
+          "type": "boolean"
+        },
+        "claude_auth": {
+          "description": "How its Claude Code is authenticated: `api_key`, `bedrock`, `vertex` or `login`; absent\nfrom a companion that does not say (ADR 0076).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "client": {
           "description": "Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.",
           "$ref": "#/$defs/ClientKind"

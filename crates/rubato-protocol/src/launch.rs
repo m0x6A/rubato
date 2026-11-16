@@ -50,6 +50,13 @@ pub struct LaunchCommand {
     /// How the session plans (ADR 0053): `git` (default, today's flow) or `rubato`.
     #[serde(default, skip_serializing_if = "crate::handoff::PlanningMode::is_git")]
     pub planning: crate::handoff::PlanningMode,
+    /// A person's lead agent, or an ordinary worker (ADR 0072). Sent as `lead` only to a companion
+    /// that announced `fleet`.
+    #[serde(default, skip_serializing_if = "crate::fleet::LaunchRole::is_worker")]
+    pub role: crate::fleet::LaunchRole,
+    /// The lead that asked for this launch, for a worker a lead started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_launch_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -62,6 +69,8 @@ pub enum RefusalReason {
     AlreadyRunning,
     /// tmux or claude missing or below the pinned version.
     MissingDependency,
+    /// A lead launch to a companion whose orchestrator flag is off (ADR 0072).
+    OrchestratorOff,
 }
 
 /// Companion → server: what happened to a launch command.
@@ -133,6 +142,9 @@ pub struct LaunchRequest {
     pub attempt_limit: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// `lead` starts a person's lead agent, only while the orchestrator flag is on (ADR 0072).
+    #[serde(default, skip_serializing_if = "crate::fleet::LaunchRole::is_worker")]
+    pub role: crate::fleet::LaunchRole,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

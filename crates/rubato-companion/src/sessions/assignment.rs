@@ -5,7 +5,7 @@
 
 use super::Registry;
 use chrono::{DateTime, Utc};
-use rubato_protocol::{IssueRef, LaunchCommand, PlanningMode};
+use rubato_protocol::{IssueRef, LaunchCommand, LaunchRole, PlanningMode};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -24,6 +24,12 @@ pub struct Assignment {
     pub attempt_limit: u32,
     /// When the companion began (pending) or recorded (started) the launch.
     pub launched_at: DateTime<Utc>,
+    /// A person's lead agent, or a worker (ADR 0072). Absent from an older file: a worker.
+    #[serde(default, skip_serializing_if = "LaunchRole::is_worker")]
+    pub role: LaunchRole,
+    /// The lead that asked for this worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_launch_id: Option<Uuid>,
 }
 
 impl Assignment {
@@ -35,6 +41,8 @@ impl Assignment {
             attempt: cmd.attempt,
             attempt_limit: cmd.attempt_limit,
             launched_at: now,
+            role: cmd.role,
+            lead_launch_id: cmd.lead_launch_id,
         }
     }
 }
@@ -147,6 +155,8 @@ mod tests {
             plan_path: Some("docs/plans/7.md".into()),
             draft: None,
             planning: PlanningMode::Rubato,
+            role: Default::default(),
+            lead_launch_id: None,
         }
     }
 

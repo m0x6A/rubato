@@ -33,6 +33,8 @@ fn command(n: u128) -> LaunchCommand {
         plan_path: Some(format!("docs/plans/{n}.md")),
         draft: None,
         planning: PlanningMode::Git,
+        role: Default::default(),
+        lead_launch_id: None,
     }
 }
 
@@ -62,7 +64,16 @@ async fn world(now: DateTime<Utc>, pending: bool) -> World {
     let (out_tx, out) = mpsc::unbounded_channel();
     // Built on an empty registry, so launch 7 does not count as restored.
     let (link, link_rx) = tokio_watch::channel(true);
-    let st = AgentMcp::new(registry.clone(), metrics, caps.clone(), out_tx, link_rx).await;
+    let st = AgentMcp::new(
+        registry.clone(),
+        metrics,
+        caps.clone(),
+        out_tx,
+        link_rx,
+        false,
+        std::env::temp_dir(),
+    )
+    .await;
     *registry.lock().await = reg;
     if pending {
         registry.lock().await.begin_launch(&command(8), now);
@@ -429,6 +440,8 @@ async fn a_launch_restored_at_start_is_not_counted() {
         Default::default(),
         out,
         tokio_watch::channel(true).1,
+        false,
+        std::env::temp_dir(),
     )
     .await;
     watch::tick(&st, now()).await;

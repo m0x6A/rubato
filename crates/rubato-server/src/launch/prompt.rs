@@ -9,6 +9,10 @@ pub const PROMPT_TEMPLATE: &str = include_str!("../../../../skills/rubato/prompt
 /// review and summary are replies, and the approval arrives as a prompt to hand off.
 pub const RUBATO_PROMPT_TEMPLATE: &str = include_str!("../../../../skills/rubato/prompt-rubato.md");
 
+/// The prompt of a person's lead agent (ADR 0072): the fleet tools, their boundary, and that
+/// approval waits for a person.
+pub const LEAD_PROMPT_TEMPLATE: &str = include_str!("../../../../skills/rubato/prompt-lead.md");
+
 /// Slug from a title: kebab-case, at most four words.
 pub fn slugify(title: &str) -> String {
     let words: Vec<String> = title

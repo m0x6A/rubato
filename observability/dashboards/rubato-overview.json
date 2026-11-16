@@ -2090,6 +2090,39 @@
         "wrapLogMessage": true,
         "dedupStrategy": "none"
       }
+    },
+    {
+      "id": 116,
+      "title": "Fleet requests by action and outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 158
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "A person's own lead agent and its workers (ADR 0072), absent while RUBATO_ORCHESTRATOR is off. Fleet requests per minute by action (list, launch, message, stop), outcome and reason, and fleet notices queued and coalesced. other_owner or identity fires FleetCrossOwner: a lead named another person's session or a lead it does not own. not_led is the owner's own session the lead did not start; fleet_full and someone_elses_issue are a lead asking for too much.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_fleet_action, rubato_outcome, rubato_reason) (rate(rubato_fleet_requests_total[5m]) * 60)",
+          "legendFormat": "{{rubato_fleet_action}} {{rubato_outcome}} {{rubato_reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_outcome) (increase(rubato_fleet_notices_total[10m]))",
+          "legendFormat": "notices {{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

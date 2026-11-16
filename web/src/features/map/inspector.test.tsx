@@ -35,7 +35,7 @@ describe("the inspector explains what is selected (S9, S26)", () => {
     const sends = within(box).getByRole("heading", { name: "Sends" }).nextElementSibling as HTMLElement;
     expect(receives).toHaveTextContent("PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages; behind the voice flag, a push-to-talk utterance for a room (ADR 0073) from web over web-server");
     expect(sends).toHaveTextContent(/Overview: map, issues.* to web over web-server/);
-    expect(sends).toHaveTextContent("LaunchCommand, for the paired user only to rubato-companion over companion-server");
+    expect(sends).toHaveTextContent("LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072) to rubato-companion over companion-server");
     // Dependencies from seam direction.
     expect(within(box).getByRole("heading", { name: "Depends on" }).nextElementSibling).toHaveTextContent("github over server-github");
     expect(within(box).getByRole("heading", { name: "Depended on by" }).nextElementSibling).toHaveTextContent("web over web-server");

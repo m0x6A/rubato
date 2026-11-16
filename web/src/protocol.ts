@@ -45,7 +45,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | AgentReport1 | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | AgentReport1 | FleetRequest | {
 seq: number
 type: "ack"
 })
@@ -93,7 +93,7 @@ outcome: "failed"
  * Why a companion did not write a launch's draft (ADR 0053, plan 122 §D5).
  */
 export type RestoreSkipped = ("worktree_differs" | "path_outside")
-export type RefusalReason = ("attempt_limit_reached" | "not_paired_user" | "already_running" | "missing_dependency")
+export type RefusalReason = ("attempt_limit_reached" | "not_paired_user" | "already_running" | "missing_dependency" | "orchestrator_off")
 /**
  * The answer to one `SessionMessage` (ADR 0051).
  */
@@ -262,6 +262,37 @@ kind: "id_collision"
 workspaces: string[]
 })
 /**
+ * What a lead asks for.
+ */
+export type FleetAction = ({
+kind: "list"
+} | {
+companion_id?: (string | null)
+issue: IssueRef
+kind: "launch"
+slug?: (string | null)
+} | {
+kind: "message"
+launch_id: string
+text: string
+} | {
+kind: "stop"
+launch_id: string
+})
+/**
+ * What kind of client a companion is (ADR 0062). Every client has one owner and never approves.
+ */
+export type ClientKind = ("interactive" | "headless")
+export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
+/**
+ * What a launch is for: an ordinary worker, or a person's lead agent (ADR 0072).
+ */
+export type LaunchRole = ("worker" | "lead")
+/**
+ * What a request came to.
+ */
+export type FleetOutcome = (("ok" | "refused") | "in_progress" | "unknown")
+/**
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
  */
 export type HookEventKind = ("SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "Notification" | "Stop" | "StopFailure" | "SessionEnd" | "Unknown")
@@ -322,7 +353,6 @@ export type PartStatus = ("affected" | "new" | "quiet")
 export type AssumptionScope = ("node" | "seam")
 export type ModelChange = ("new" | "changed" | "removed")
 export type DataModelKind = ("table" | "type" | "schema" | "event" | "file")
-export type ProgressState = ("planned" | "started" | "designing" | "designed" | "building" | "blocked" | "in_review" | "done" | "unknown")
 export type ChecksStatus = (("green" | "red" | "pending") | "none")
 /**
  * What a reply is, by its first line (ADR 0056): the design review, the discussion summary, or
@@ -489,7 +519,7 @@ limits: Limits
 protocol_version: number
 server_version: string
 type: "welcome"
-} | LaunchCommand1 | SessionMessage | PlanStatus1 | {
+} | LaunchCommand1 | SessionMessage | PlanStatus1 | FleetResult1 | {
 seq: number
 type: "ack"
 } | {
@@ -617,6 +647,8 @@ DraftOpRequest?: DraftOpRequest
 DraftRevision?: DraftRevision
 DraftView?: DraftView
 Finding?: Finding
+FleetRequest?: FleetRequest1
+FleetResult?: FleetResult
 Heartbeat?: Heartbeat1
 HookEvent?: HookEvent1
 ImportRequest?: ImportRequest
@@ -630,6 +662,7 @@ LaunchMessages?: LaunchMessages
 LaunchRequest?: LaunchRequest
 LaunchResponse?: LaunchResponse
 LaunchResult?: LaunchResult1
+LeadView?: LeadView
 Limits?: Limits
 MapLayout?: MapLayout
 MapRef?: MapRef
@@ -924,6 +957,13 @@ launch_id: string
 parts?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]
 }
 /**
+ * A lead launch's fleet tool call (ADR 0072). Sent only to a server that announced `fleet`,
+ * only while the link is up, and never kept in the outbox.
+ */
+export interface FleetRequest {
+type: "fleet_request"
+}
+/**
  * A decision recorded as an issue comment with the `Decision:` template (ADR 0014).
  */
 export interface DecisionRecord {
@@ -1116,6 +1156,74 @@ parse_error?: (string | null)
 plan_sha: string
 rev: number
 session_id?: (string | null)
+}
+/**
+ * Companion → server: one fleet tool call of a lead launch. Sent only while the link is up and
+ * never kept in the outbox, so a reconnect never replays it late.
+ */
+export interface FleetRequest1 {
+action: FleetAction
+/**
+ * The launch the call came from: the companion took it from `X-Rubato-Launch`.
+ */
+lead_launch_id: string
+/**
+ * The agent's own id when it retries a pending call, else a new one the companion made.
+ */
+request_id: string
+}
+/**
+ * Server → companion: the answer to one `FleetRequest`.
+ */
+export interface FleetResult {
+/**
+ * For `list`.
+ */
+fleet?: (FleetEntry[] | null)
+/**
+ * For `launch`: the new worker's launch.
+ */
+launch_id?: (string | null)
+lead_launch_id: string
+/**
+ * Words for the agent: why, or what to do next.
+ */
+message?: (string | null)
+/**
+ * For `message` and `stop`: the session message queued or sent.
+ */
+message_id?: (string | null)
+outcome: FleetOutcome
+/**
+ * One of `reason`, when refused.
+ */
+reason?: (string | null)
+request_id: string
+}
+/**
+ * One of the owner's launches, as `fleet_list` shows it: the same data the team already sees.
+ */
+export interface FleetEntry {
+branch?: (string | null)
+client?: (ClientKind | null)
+companion_id: string
+issue: IssueRef
+/**
+ * The first line of the last reply, at most `limits::LAST_REPLY_CHARS`.
+ */
+last_reply?: (string | null)
+launch_id: string
+progress?: (ProgressState | null)
+queued_messages: number
+role: LaunchRole
+/**
+ * `person`, or `lead:<launch id>`.
+ */
+started_by: string
+/**
+ * `None` is *unknown*: the session is not in its companion's snapshot.
+ */
+state?: (SessionStatus | null)
 }
 /**
  * The companion's liveness signal.
@@ -1600,6 +1708,10 @@ draft?: (DraftRestore | null)
 id: string
 issue: IssueRef
 /**
+ * The lead that asked for this launch, for a worker a lead started.
+ */
+lead_launch_id?: (string | null)
+/**
  * Git sha of the map the server resolved pins against.
  */
 map_version?: (string | null)
@@ -1630,6 +1742,10 @@ prompt: string
  * Clone URL of the repository.
  */
 repo_url: string
+/**
+ * What a launch is for: an ordinary worker, or a person's lead agent (ADR 0072).
+ */
+role?: ("worker" | "lead")
 /**
  * Claude Code `--session-id` the companion must use, so `session_id → issue` is known up front.
  */
@@ -1725,6 +1841,10 @@ outcome_at?: (string | null)
 pushed_at?: (string | null)
 state: SessionMessageState
 text: string
+/**
+ * The lead agent that sent this message for its owner (ADR 0072).
+ */
+via_launch?: (string | null)
 }
 /**
  * Start a session on an issue. Only the caller's own companions are eligible (ADR 0004).
@@ -1743,6 +1863,10 @@ companion_id?: (string | null)
 issue: IssueRef
 prompt?: (string | null)
 /**
+ * What a launch is for: an ordinary worker, or a person's lead agent (ADR 0072).
+ */
+role?: ("worker" | "lead")
+/**
  * Branch slug; derived from the issue title when omitted.
  */
 slug?: (string | null)
@@ -1751,6 +1875,14 @@ spend_cap_usd?: (number | null)
 export interface LaunchResponse {
 command: LaunchCommand
 companion_id: string
+}
+/**
+ * A lead and its live workers, for the web (`Overview.leads`).
+ */
+export interface LeadView {
+launch_id: string
+owner: string
+workers: string[]
 }
 export interface Limits {
 /**
@@ -2083,7 +2215,15 @@ findings: Finding[]
 generated_at: string
 issues: IssueSummary[]
 layout?: MapLayout1
+/**
+ * Each live lead and its live workers, from the current snapshots; empty while the flag is off.
+ */
+leads?: LeadView[]
 map: MapResponse
+/**
+ * The server's orchestrator flag (ADR 0072): the web offers *Start as lead* only while it is on.
+ */
+orchestrator?: boolean
 /**
  * Open pull requests per map repo (ADR 0034). Never an input to progress.
  */
@@ -2197,7 +2337,16 @@ truncated?: boolean
 }
 export interface PairingInfo {
 /**
- * Interactive or headless (ADR 0062): what the web shows on the lane. Older servers omit it.
+ * The companion announced `fleet` and the server's flag is on: a lead may start here (ADR 0072).
+ */
+can_lead?: boolean
+/**
+ * How its Claude Code is authenticated: `api_key`, `bedrock`, `vertex` or `login`; absent
+ * from a companion that does not say (ADR 0076).
+ */
+claude_auth?: (string | null)
+/**
+ * What kind of client a companion is (ADR 0062). Every client has one owner and never approves.
  */
 client?: ("interactive" | "headless")
 companion_id: string
@@ -2866,6 +3015,10 @@ draft?: (DraftRestore | null)
 id: string
 issue: IssueRef
 /**
+ * The lead that asked for this launch, for a worker a lead started.
+ */
+lead_launch_id?: (string | null)
+/**
  * Git sha of the map the server resolved pins against.
  */
 map_version?: (string | null)
@@ -2896,6 +3049,10 @@ prompt: string
  * Clone URL of the repository.
  */
 repo_url: string
+/**
+ * What a launch is for: an ordinary worker, or a person's lead agent (ADR 0072).
+ */
+role?: ("worker" | "lead")
 /**
  * Claude Code `--session-id` the companion must use, so `session_id → issue` is known up front.
  */
@@ -2941,6 +3098,34 @@ launch_id: string
  * The issue's newest counted design review.
  */
 review?: (ReviewRecord | null)
+}
+/**
+ * Server → companion: the answer to one `FleetRequest`.
+ */
+export interface FleetResult1 {
+/**
+ * For `list`.
+ */
+fleet?: (FleetEntry[] | null)
+/**
+ * For `launch`: the new worker's launch.
+ */
+launch_id?: (string | null)
+lead_launch_id: string
+/**
+ * Words for the agent: why, or what to do next.
+ */
+message?: (string | null)
+/**
+ * For `message` and `stop`: the session message queued or sent.
+ */
+message_id?: (string | null)
+outcome: FleetOutcome
+/**
+ * One of `reason`, when refused.
+ */
+reason?: (string | null)
+request_id: string
 }
 /**
  * Web → server: send this text to the launch's session.

@@ -3,7 +3,7 @@
 use crate::kernel::db::{parse_ts, ts};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rubato_protocol::{CapHit, CapKind, IssueRef, LaunchCommand, LaunchResult};
+use rubato_protocol::{CapHit, CapKind, IssueRef, LaunchCommand, LaunchResult, LaunchRole};
 use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -15,8 +15,11 @@ pub async fn store_launch(
     companion_id: Uuid,
     cmd: &LaunchCommand,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    // `role` and `lead_launch_id` as columns too (ADR 0072): the fleet reads them by index.
+    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at, role, lead_launch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(ws).bind(cmd.id.to_string()).bind(companion_id.to_string()).bind(&cmd.user).bind(&cmd.issue.repo).bind(cmd.issue.number as i64).bind(serde_json::to_string(cmd)?).bind(ts(Utc::now()))
+        .bind((!cmd.role.is_worker()).then(|| cmd.role.name()))
+        .bind(cmd.lead_launch_id.map(|l| l.to_string()))
         .execute(db).await?;
     Ok(())
 }
@@ -36,12 +39,16 @@ pub struct LaunchTarget {
     /// The workspace the launch was started from (ADR 0047): whose map its parts are checked
     /// against (ADR 0071).
     pub workspace: String,
+    /// A person's lead agent, or a worker (ADR 0072).
+    pub role: LaunchRole,
+    /// The lead that asked for this worker.
+    pub lead_launch_id: Option<Uuid>,
 }
 
 /// The launch with this id, if Rubato started it.
 pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<LaunchTarget>> {
     let row = sqlx::query(
-        "SELECT companion_id, user, repo, number, command, workspace_id FROM launches WHERE id = ?",
+        "SELECT companion_id, user, repo, number, command, workspace_id, role, lead_launch_id FROM launches WHERE id = ?",
     )
     .bind(launch_id.to_string())
     .fetch_optional(db)
@@ -57,6 +64,10 @@ pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<La
         branch: command.as_ref().map(|c| c.branch.clone()),
         plan_path: command.and_then(|c| c.plan_path),
         workspace: r.get("workspace_id"),
+        role: role_of(r.get("role")),
+        lead_launch_id: r
+            .get::<Option<String>, _>("lead_launch_id")
+            .and_then(|l| l.parse().ok()),
     }))
 }
 
@@ -240,4 +251,111 @@ fn hit_is_live(
             .any(|l| l.started && l.created_at > own.created_at),
         None => launches.iter().all(|l| received >= l.created_at),
     }
+}
+
+fn role_of(v: Option<String>) -> LaunchRole {
+    match v.as_deref() {
+        Some("lead") => LaunchRole::Lead,
+        _ => LaunchRole::Worker,
+    }
+}
+
+/// One launch as the fleet reads it (ADR 0072).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FleetLaunch {
+    pub launch_id: Uuid,
+    pub companion_id: Uuid,
+    pub issue: IssueRef,
+    pub branch: Option<String>,
+    pub role: LaunchRole,
+    pub lead_launch_id: Option<Uuid>,
+    /// `started`, `refused`, `failed`, or `None` while the companion has not answered.
+    pub outcome: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+fn launch_row(r: &sqlx::sqlite::SqliteRow) -> Result<FleetLaunch> {
+    let command: Option<LaunchCommand> = serde_json::from_str(&r.get::<String, _>("command")).ok();
+    let outcome = r
+        .get::<Option<String>, _>("result")
+        .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
+        .and_then(|v| v.get("outcome").and_then(|o| o.as_str()).map(str::to_owned));
+    Ok(FleetLaunch {
+        launch_id: r.get::<String, _>("id").parse()?,
+        companion_id: r.get::<String, _>("companion_id").parse()?,
+        issue: IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64),
+        branch: command.map(|c| c.branch),
+        role: role_of(r.get("role")),
+        lead_launch_id: r
+            .get::<Option<String>, _>("lead_launch_id")
+            .and_then(|l| l.parse().ok()),
+        outcome,
+        created_at: parse_ts(&r.get::<String, _>("created_at")),
+    })
+}
+
+const ROW_COLUMNS: &str =
+    "id, companion_id, repo, number, command, role, lead_launch_id, result, created_at";
+
+/// The workers lead `lead` asked for, newest first (index `launches_by_lead`).
+pub async fn workers_of(db: &SqlitePool, lead: Uuid) -> Result<Vec<FleetLaunch>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {ROW_COLUMNS} FROM launches WHERE lead_launch_id = ? ORDER BY created_at DESC"
+    ))
+    .bind(lead.to_string())
+    .fetch_all(db)
+    .await?;
+    rows.iter().map(launch_row).collect()
+}
+
+/// `user`'s launches in workspace `ws` since `since`, newest first, at most `limit` (index
+/// `launches_by_user`).
+pub async fn launches_of(
+    db: &SqlitePool,
+    user: &str,
+    ws: &str,
+    since: DateTime<Utc>,
+    limit: u32,
+) -> Result<Vec<FleetLaunch>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {ROW_COLUMNS} FROM launches WHERE user = ? AND workspace_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?"
+    ))
+    .bind(user)
+    .bind(ws)
+    .bind(ts(since))
+    .bind(i64::from(limit))
+    .fetch_all(db)
+    .await?;
+    rows.iter().map(launch_row).collect()
+}
+
+/// `user`'s launches with these ids (the live ones a list adds), in no order.
+pub async fn launches_by_id(db: &SqlitePool, user: &str, ids: &[Uuid]) -> Result<Vec<FleetLaunch>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let marks = vec!["?"; ids.len()].join(", ");
+    let sql = format!("SELECT {ROW_COLUMNS} FROM launches WHERE user = ? AND id IN ({marks})");
+    let mut q = sqlx::query(&sql).bind(user);
+    for id in ids {
+        q = q.bind(id.to_string());
+    }
+    q.fetch_all(db).await?.iter().map(launch_row).collect()
+}
+
+/// Whether anyone but `user` launched `issue` since `since`: a lead may not take it (ADR 0072).
+pub async fn launched_by_another(
+    db: &SqlitePool,
+    issue: &IssueRef,
+    user: &str,
+    since: DateTime<Utc>,
+) -> Result<bool> {
+    let r = sqlx::query("SELECT EXISTS (SELECT 1 FROM launches WHERE repo = ? COLLATE NOCASE AND number = ? AND user <> ? COLLATE NOCASE AND created_at >= ?) AS yes")
+        .bind(&issue.repo)
+        .bind(issue.number as i64)
+        .bind(user)
+        .bind(ts(since))
+        .fetch_one(db)
+        .await?;
+    Ok(r.get::<i64, _>("yes") != 0)
 }

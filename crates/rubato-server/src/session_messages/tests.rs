@@ -69,6 +69,8 @@ async fn harness() -> H {
         plan_path: None,
         draft: None,
         planning: Default::default(),
+        role: Default::default(),
+        lead_launch_id: None,
     };
     sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, 'm0x6A/rubato', 122, ?, ?)")
         .bind(launch.to_string())
@@ -312,6 +314,7 @@ async fn two_dispatches_at_once_push_one_message() {
             pushed_at: None,
             outcome_at: None,
             detail: None,
+            via_launch: None,
         };
         store::insert(&h.app.db, &row).await.unwrap();
     }

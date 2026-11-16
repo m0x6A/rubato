@@ -1,6 +1,7 @@
 mod agent_mcp;
 mod discovery;
 mod drafts;
+mod fleet;
 mod fork;
 mod handoff;
 mod headless;

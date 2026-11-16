@@ -197,3 +197,17 @@ groups:
         annotations:
           summary: "Every speech provider call failed in the last 10 minutes"
           panel: Voice
+
+      # #134, ADR 0072: a person's lead agent asked to act on another person's session, or a
+      # request named a lead this companion's pairing does not own. The line between people was
+      # tested: page at once. `not_led` (the owner's own session the lead did not start) is
+      # counted only, and does not fire this.
+      - alert: FleetCrossOwner
+        expr: sum(increase(rubato_fleet_requests_total{rubato_reason=~"other_owner|identity"}[10m])) > 0
+        labels:
+          severity: page
+          seam: companion-server
+          owner: rubato-server
+        annotations:
+          summary: "A lead agent's fleet request named another person's session or a lead it does not own"
+          panel: Fleet requests by action and outcome

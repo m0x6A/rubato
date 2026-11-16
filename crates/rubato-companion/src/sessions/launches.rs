@@ -204,6 +204,8 @@ mod tests {
                 attempt: 1,
                 attempt_limit: 3,
                 launched_at: now(),
+                role: Default::default(),
+                lead_launch_id: None,
             }),
         }
     }

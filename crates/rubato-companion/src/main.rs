@@ -89,6 +89,13 @@ async fn main() -> Result<()> {
         Cmd::Run => {
             let workspace = Workspace::load(&ws_path)
                 .with_context(|| format!("loading {}", ws_path.display()))?;
+            // ADR 0076: the container image runs headless only.
+            if let Some(why) = rubato_companion::kernel::config::container_refusal(
+                workspace.companion.mode,
+                std::env::var("RUBATO_IN_CONTAINER").ok().as_deref(),
+            ) {
+                bail!("{why}");
+            }
             let _g = telemetry::init(
                 "rubato-companion",
                 workspace.otel.as_ref().map(|o| o.endpoint.as_str()),

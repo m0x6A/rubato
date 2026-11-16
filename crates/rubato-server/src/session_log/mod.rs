@@ -22,3 +22,11 @@ pub async fn prompt_message(
 ) -> anyhow::Result<Option<uuid::Uuid>> {
     store::prompt_message(db, launch_id, session_id, prompt_id).await
 }
+
+/// The newest reply's text of each of `launch_ids`, in one query (ADR 0072's `fleet_list`).
+pub async fn last_replies(
+    db: &sqlx::SqlitePool,
+    launch_ids: &[uuid::Uuid],
+) -> anyhow::Result<std::collections::HashMap<uuid::Uuid, String>> {
+    store::last_replies(db, launch_ids).await
+}

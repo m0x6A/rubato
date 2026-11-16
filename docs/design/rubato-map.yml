@@ -70,7 +70,7 @@ nodes:
 
   - id: claude-code
     kind: external
-    description: The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Exports its own OTel.
+    description: The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Authenticated by the developer's login or an API key (ADR 0076). Exports its own OTel.
 
   - id: livekit
     kind: external
@@ -89,11 +89,11 @@ seams:
     guard: protocol JSON Schema snapshot test; both suites replay crates/rubato-protocol/fixtures/
     description: "Each companion reports what its sessions are doing, and receives launch commands and messages for its own user's sessions only. The companion always dials out."
     flows:
-      - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071)" }
-      - { kind: data, from: rubato-server, to: rubato-companion, carries: "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071)" }
-      - { kind: control, from: rubato-server, to: rubato-companion, carries: "LaunchCommand, for the paired user only" }
+      - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071), FleetRequest from a person's own lead launch behind the orchestrator flag (ADR 0072)" }
+      - { kind: data, from: rubato-server, to: rubato-companion, carries: "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071); FleetResult to a lead's request (ADR 0072)" }
+      - { kind: control, from: rubato-server, to: rubato-companion, carries: "LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072)" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "Welcome with limits, server capabilities and the last sequence seen; acks" }
-      - { kind: control, from: rubato-server, to: rubato-companion, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn" }
+      - { kind: control, from: rubato-server, to: rubato-companion, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn; a lead's chat to a worker it launched, and fleet notices to a lead (ADR 0072)" }
 
   - id: server-github
     from: rubato-server
@@ -133,14 +133,14 @@ seams:
   - id: companion-mcp
     from: rubato-companion
     to: claude-code
-    carries: "MCP over loopback HTTP (POST /mcp on the hook receiver, the hook token from a 0600 mcp.json, X-Rubato-Launch): get_assignment, report_status, plan_status"
+    carries: "MCP over loopback HTTP (POST /mcp on the hook receiver, the hook token from a 0600 mcp.json, X-Rubato-Launch): get_assignment, report_status, plan_status; for a person's lead launch behind the orchestrator flag, fleet_list, fleet_launch, fleet_message, fleet_stop with its X-Rubato-Lead secret (ADR 0072)"
     owner: rubato-companion
     guard: "agent_mcp tests: identity from the launch id only, a call naming another issue refused and counted, no tool name or description that writes an approval; Gherkin calls each tool against a launched session"
     description: "A session Rubato launched asks its own companion what it is assigned to and where its plan stands, and says what it is doing. What it says is a signal with a last-seen time, never a progress state; hooks stay the evidence (ADR 0071)."
     flows:
-      - { kind: control, from: claude-code, to: rubato-companion, carries: "get_assignment and plan_status calls, with the launch id the companion wrote into mcp.json" }
+      - { kind: control, from: claude-code, to: rubato-companion, carries: "get_assignment and plan_status calls, with the launch id the companion wrote into mcp.json; a lead's fleet calls with its secret (ADR 0072)" }
       - { kind: data, from: claude-code, to: rubato-companion, carries: "report_status: one line of what the agent is doing and the map parts it is on" }
-      - { kind: data, from: rubato-companion, to: claude-code, carries: "the assignment (repo, issue, branch, map parts, plan path, caps) and the plan status Rubato last sent, with its age; refusals with a reason" }
+      - { kind: data, from: rubato-companion, to: claude-code, carries: "the assignment (repo, issue, branch, map parts, plan path, caps) and the plan status Rubato last sent, with its age; refusals with a reason; to a lead, its fleet and the server's answers, or pending (ADR 0072)" }
 
   - id: skill-plan-file
     from: skill-rubato
@@ -213,10 +213,10 @@ seams:
     guard: generated web/src/protocol.ts diffed in CI
     description: "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map."
     flows:
-      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073)" }
+      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073); behind the orchestrator flag, each lead and its workers, and who sent a message for a lead; how each companion's Claude is billed (ADR 0072, ADR 0076)" }
       - { kind: control, from: rubato-server, to: web, carries: "WebEvent Changed over /ws/web: fetch the overview again; Updated: fetch one draft, log or room" }
       - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages; behind the voice flag, a push-to-talk utterance for a room (ADR 0073)" }
-      - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan" }
+      - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion, or your own lead agent behind the orchestrator flag (ADR 0072); propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan" }
 
   - id: web-livekit
     from: web
@@ -249,7 +249,7 @@ scenarios:
     description: "A person starts a Claude Code session on a pinned issue, on their own companion, and sees it working on the map."
     steps:
       - { seam: web-server, from: web, to: rubato-server, kind: control, says: "you press Start on a pinned issue" }
-      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "LaunchCommand, for the paired user only", says: "the server sends the launch to your own companion only" }
+      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072)", says: "the server sends the launch to your own companion only" }
       - { seam: companion-claude-code, from: rubato-companion, to: claude-code, kind: control, says: "Claude Code starts with hooks and telemetry attributes" }
       - { seam: companion-server, from: rubato-companion, to: rubato-server, kind: data, says: "the launch result and the new session come back" }
       - { seam: web-server, from: rubato-server, to: web, kind: control, says: "every browser is told something changed" }
@@ -286,14 +286,14 @@ scenarios:
     description: "A person talks to their own planning agent from the plan, a teammate approves the settled draft, and the agent hands it off to Git in one commit that the issue links to."
     steps:
       - { seam: web-server, from: web, to: rubato-server, kind: data, says: "you ask your agent to change the plan" }
-      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn", says: "the message goes to your own companion, for your own session" }
+      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn; a lead's chat to a worker it launched, and fleet notices to a lead (ADR 0072)", says: "the message goes to your own companion, for your own session" }
       - { seam: companion-claude-code, from: rubato-companion, to: claude-code, kind: control, says: "it is typed into the session when the session waits for input" }
       - { seam: companion-claude-code, from: claude-code, to: rubato-companion, kind: data, says: "the reply comes back with the Stop hook" }
       - { seam: companion-server, from: rubato-companion, to: rubato-server, kind: data, says: "the reply and the new draft revision reach the server" }
       - { seam: web-server, from: rubato-server, to: web, kind: control, says: "the plan's viewers are told" }
       - { seam: web-server, from: rubato-server, to: web, kind: data, says: "everyone sees the reply and what changed in the draft" }
       - { seam: web-server, from: web, to: rubato-server, kind: control, says: "a teammate approves the settled draft" }
-      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn", says: "the approval goes to your session ahead of anything else" }
+      - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn; a lead's chat to a worker it launched, and fleet notices to a lead (ADR 0072)", says: "the approval goes to your session ahead of anything else" }
       - { seam: companion-claude-code, from: rubato-companion, to: claude-code, kind: control, says: "the approval is typed into the session" }
       - { seam: skill-plan-file, from: skill-rubato, to: plan-file, kind: data, says: "the agent commits the plan once, with the approval record" }
       - { seam: server-plan-file, from: plan-file, to: rubato-server, kind: data, says: "the server reads the plan at the new head" }

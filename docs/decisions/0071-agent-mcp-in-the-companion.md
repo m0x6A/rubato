@@ -1,6 +1,6 @@
 # 0071. Agents report on purpose through one MCP server in their own companion
 
-- **Status:** accepted
+- **Status:** accepted; superseded in part by 0072
 - **Date:** 2026-11-15
 - **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-15; drafted by agent (Claude Code, m0x6A/rubato#197), whose answers to the six questions were agent choices under delegation
 - **Seam:** companion-mcp, companion-claude-code, companion-server, web-server

@@ -456,3 +456,14 @@ describe("stop your own session (ADR 0062)", () => {
     expect(screen.queryByRole("button", { name: /stop this session/i })).toBeNull();
   });
 });
+
+describe("a message a lead agent sent (ADR 0072)", () => {
+  it("is marked via lead agent, and a person's own message is not", async () => {
+    serve(launch({ messages: [msg("delivered", { id: "m-lead", via_launch: "aaaaaaaa-0000-4000-8000-000000000001" }), msg("queued", { id: "m-own" })] }));
+    // Your own session starts open.
+    render(<SessionChat session={session()} me={owner} />);
+    await screen.findByTestId("message-m-lead");
+    expect(screen.getByTestId("via-lead-m-lead")).toHaveTextContent("via lead agent");
+    expect(screen.queryByTestId("via-lead-m-own")).toBeNull();
+  });
+});

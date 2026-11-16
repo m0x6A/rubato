@@ -36,6 +36,8 @@ const REQUIRED = [
   "GitHubWebhooksStuck",
   // Issue #146 (ADR 0073).
   "SpeechProviderFailing",
+  // Issue #134 (ADR 0072).
+  "FleetCrossOwner",
 ];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
@@ -89,6 +91,8 @@ const INTERACTIVE_MAP: [string, string][] = [
   // Issue #146 (ADR 0073): the O-rows of server-speech and web-livekit name this panel.
   ["Voice", "rubato_voice_speech_total"],
   ["Voice", "rubato_voice_join_failed_total"],
+  // Issue #134 (ADR 0072): the O-row of seam companion-server names this panel.
+  ["Fleet requests by action and outcome", "rubato_fleet_requests_total"],
 ];
 
 type Panel = { id?: number; title: string; type?: string; targets?: { expr?: string }[] };

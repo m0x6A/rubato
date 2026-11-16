@@ -197,11 +197,15 @@ impl Client {
                 }
                 out = rx.recv() => {
                     let Some(msg) = out else { return Ok(()); };
+                    // A fleet request is never replayed late (ADR 0072): sent now or not at all.
+                    let keep = kept_in_outbox(&msg);
                     let env = self.envelope(msg)?;
                     let text = serde_json::to_string(&env)?;
-                    self.outbox.push_back(env);
-                    if self.outbox.len() > 10_000 {
-                        self.outbox.pop_front();
+                    if keep {
+                        self.outbox.push_back(env);
+                        if self.outbox.len() > 10_000 {
+                            self.outbox.pop_front();
+                        }
                     }
                     sink.send(Message::Text(text.into())).await.context("send")?;
                 }
@@ -257,6 +261,12 @@ impl Client {
     }
 }
 
+/// Whether a message waits in the outbox for a replay after reconnect. A fleet request never
+/// does (ADR 0072): a lead's request acted on minutes later would surprise everyone.
+fn kept_in_outbox(m: &CompanionMessage) -> bool {
+    !matches!(m, CompanionMessage::FleetRequest(_))
+}
+
 /// Drop what an ack covers. The outbox is in seq order (each envelope takes the next number as
 /// it is pushed), so this pops from the front instead of scanning up to 10,000 entries.
 fn drop_acked(outbox: &mut VecDeque<CompanionEnvelope>, acked: u64) {
@@ -269,6 +279,18 @@ fn drop_acked(outbox: &mut VecDeque<CompanionEnvelope>, acked: u64) {
 mod tests {
     use super::*;
     use crate::kernel::telemetry::capture;
+
+    #[test]
+    fn a_fleet_request_is_never_kept_for_a_replay() {
+        use rubato_protocol::{FleetAction, FleetRequest};
+        let fleet = CompanionMessage::FleetRequest(FleetRequest {
+            request_id: uuid::Uuid::nil(),
+            lead_launch_id: uuid::Uuid::nil(),
+            action: FleetAction::List,
+        });
+        assert!(!kept_in_outbox(&fleet));
+        assert!(kept_in_outbox(&CompanionMessage::Ack { seq: 1 }));
+    }
 
     #[test]
     fn an_ack_pops_only_what_it_covers() {

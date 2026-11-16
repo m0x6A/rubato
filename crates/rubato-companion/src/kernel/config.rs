@@ -96,6 +96,22 @@ pub struct CompanionConfig {
     /// Deadline for one read-only fork turn of a room agent (ADR 0057). Its first turn re-reads
     /// the whole session uncached, so it gets longer than other commands.
     pub fork_timeout_secs: u64,
+    /// A person's lead agent may run here (ADR 0072): the companion announces `fleet` and serves
+    /// the fleet tools to a lead launch. Off by default.
+    pub orchestrator: bool,
+}
+
+/// Why `run` refuses to start in a container (ADR 0076): the image has no tmux, so only
+/// `mode: headless` runs there. `None` outside a container or in headless mode.
+pub fn container_refusal(
+    mode: rubato_protocol::ClientKind,
+    in_container: Option<&str>,
+) -> Option<String> {
+    let inside = matches!(in_container.map(str::trim), Some("1") | Some("true"));
+    (inside && mode != rubato_protocol::ClientKind::Headless).then(|| {
+        "headless only in a container: set `companion.mode: headless` in local.yml (ADR 0076)"
+            .to_owned()
+    })
 }
 
 impl CompanionConfig {
@@ -132,6 +148,7 @@ impl Default for CompanionConfig {
             headless_turn_max_secs: 4 * 60 * 60,
             headless_quiet_max_secs: 15 * 60,
             fork_timeout_secs: 600,
+            orchestrator: false,
         }
     }
 }
@@ -694,6 +711,25 @@ mod tests {
         assert_eq!(
             std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
             0o600
+        );
+    }
+}
+
+#[cfg(test)]
+mod container_tests {
+    use super::*;
+    use rubato_protocol::ClientKind;
+
+    #[test]
+    fn a_container_runs_headless_only() {
+        let msg = container_refusal(ClientKind::Interactive, Some("1")).unwrap();
+        assert!(msg.starts_with("headless only in a container"), "{msg}");
+        assert_eq!(container_refusal(ClientKind::Headless, Some("1")), None);
+        assert_eq!(container_refusal(ClientKind::Interactive, None), None);
+        assert_eq!(container_refusal(ClientKind::Interactive, Some("0")), None);
+        assert!(
+            !CompanionConfig::default().orchestrator,
+            "the orchestrator is off by default"
         );
     }
 }

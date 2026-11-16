@@ -281,7 +281,7 @@ test("the data flow lens shows rubato-map.yml's flows with arrowheads", { tag: [
   const inspector = page.getByTestId("inspector");
   await expect(inspector.getByRole("heading", { name: "rubato-companion" })).toBeVisible();
   await expect(inspector).toContainText("One per developer machine.");
-  await expect(inspector).toContainText("LaunchCommand, for the paired user only from rubato-server over companion-server");
+  await expect(inspector).toContainText("LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072) from rubato-server over companion-server");
   await expect(page.getByTestId("node-rubato-server")).not.toHaveClass(/dim/);
   await expect(page.getByTestId("node-web")).toHaveClass(/dim/);
   // Walk the map from the inspector: to the seam, which explains itself.

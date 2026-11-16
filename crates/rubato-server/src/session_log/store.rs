@@ -93,3 +93,29 @@ pub async fn for_launch(db: &SqlitePool, launch_id: Uuid) -> Result<Vec<SessionL
         })
         .collect()
 }
+
+/// The newest assistant entry's text per launch, for these launches only.
+pub async fn last_replies(
+    db: &SqlitePool,
+    launch_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, String>> {
+    let mut out = std::collections::HashMap::new();
+    if launch_ids.is_empty() {
+        return Ok(out);
+    }
+    let marks = vec!["?"; launch_ids.len()].join(", ");
+    let sql = format!(
+        "SELECT launch_id, text FROM session_log_entries e WHERE role = 'assistant' AND launch_id IN ({marks}) \
+         AND at = (SELECT MAX(at) FROM session_log_entries x WHERE x.launch_id = e.launch_id AND x.role = 'assistant')"
+    );
+    let mut q = sqlx::query(&sql);
+    for id in launch_ids {
+        q = q.bind(id.to_string());
+    }
+    for r in q.fetch_all(db).await? {
+        if let Ok(id) = r.get::<String, _>("launch_id").parse() {
+            out.insert(id, r.get("text"));
+        }
+    }
+    Ok(out)
+}

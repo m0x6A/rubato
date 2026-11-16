@@ -47,6 +47,12 @@ pub mod capability {
     /// Companion: it serves MCP to its launched sessions and takes `ServerMessage::PlanStatus`.
     /// Server: it takes `CompanionMessage::AgentReport` (ADR 0071). One name both ways.
     pub const AGENT_MCP: &str = "agent_mcp";
+    /// Companion: its orchestrator flag is on and it serves the fleet tools to a lead launch.
+    /// Server: `RUBATO_ORCHESTRATOR=1`; it takes `FleetRequest` and sends `FleetResult` (ADR 0072).
+    pub const FLEET: &str = "fleet";
+    /// Prefix of how the companion's Claude Code is authenticated, `claude_auth:api_key`: the kind
+    /// only, never a value (ADR 0076).
+    pub const CLAUDE_AUTH_PREFIX: &str = "claude_auth:";
     /// Prefix of the installed skill's version, `skill:0.2.0`.
     pub const SKILL_PREFIX: &str = "skill:";
 }
@@ -90,6 +96,9 @@ pub enum CompanionMessage {
     /// What a launched session's agent said it is doing, through MCP (ADR 0071). Sent only to a
     /// server that announced `agent_mcp`.
     AgentReport(AgentReport),
+    /// A lead launch's fleet tool call (ADR 0072). Sent only to a server that announced `fleet`,
+    /// only while the link is up, and never kept in the outbox.
+    FleetRequest(crate::fleet::FleetRequest),
     /// Acknowledges a server envelope by sequence.
     Ack {
         seq: u64,
@@ -117,6 +126,8 @@ pub enum ServerMessage {
     /// Where the plan of one session this companion launched stands (ADR 0071). Sent only to a
     /// companion that announced `agent_mcp`.
     PlanStatus(Box<PlanStatus>),
+    /// The answer to one `FleetRequest` (ADR 0072). Sent only to a companion that announced `fleet`.
+    FleetResult(Box<crate::fleet::FleetResult>),
     Ack {
         seq: u64,
     },

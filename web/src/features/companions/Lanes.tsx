@@ -62,9 +62,29 @@ interface LaneProps extends LaneActions {
   titles: Map<string, string>;
   /** The server's companion stale threshold N, in milliseconds: the bar is empty past it. */
   staleMs: number;
+  /** Each session's part in a fleet (ADR 0072), by launch id: `lead`, or the lead it works for. */
+  fleet: Map<string, FleetPart>;
 }
 
-function Lane({ companion: c, own, sessions, agentLines, queue, issues, titles, staleMs, onQueue, onReorder, onUnqueue, onStart, onRevoke }: LaneProps) {
+/** A launch's part in a person's fleet: their lead agent, or a worker it started. */
+export type FleetPart = { kind: "lead" } | { kind: "worker"; lead: string };
+
+/** The fleet parts of the overview's leads (ADR 0072): empty while the orchestrator flag is off. */
+export function fleetParts(overview: Overview): Map<string, FleetPart> {
+  const out = new Map<string, FleetPart>();
+  for (const l of overview.leads ?? []) {
+    out.set(l.launch_id, { kind: "lead" });
+    for (const w of l.workers) {
+      out.set(w, { kind: "worker", lead: l.launch_id });
+    }
+  }
+  return out;
+}
+
+/** How a companion's Claude Code is billed, when not the developer's own login (ADR 0076). */
+export const AUTH_LABEL: Record<string, string> = { api_key: "API key", bedrock: "Bedrock", vertex: "Vertex" };
+
+function Lane({ companion: c, own, sessions, agentLines, queue, issues, titles, staleMs, fleet, onQueue, onReorder, onUnqueue, onStart, onRevoke }: LaneProps) {
   // "yes": an issue is over this lane and it will take it; "no": it is not the caller's lane.
   const [over, setOver] = useState<"yes" | "no" | null>(null);
   const takes = own && !c.revoked_at;
@@ -128,6 +148,11 @@ function Lane({ companion: c, own, sessions, agentLines, queue, issues, titles, 
               headless
             </span>
           )}
+          {c.claude_auth && AUTH_LABEL[c.claude_auth] && (
+            <span className="badge" data-testid={`auth-${c.companion_id}`} title={`Claude Code here is billed through ${AUTH_LABEL[c.claude_auth]}: spend is real money per token`}>
+              {AUTH_LABEL[c.claude_auth]}
+            </span>
+          )}
           <div className={c.connected && !c.revoked_at ? "muted" : "warn"}>{state}</div>
           {!c.revoked_at && (
             <span className="fresh" data-testid={`fresh-${c.companion_id}`} data-share={share.toFixed(2)} aria-hidden="true">
@@ -151,11 +176,22 @@ function Lane({ companion: c, own, sessions, agentLines, queue, issues, titles, 
         <ul className="plain">
           {sessions.map((s, i) => {
             const status = shownStatus(s);
+            const part = s.launch_id ? fleet.get(s.launch_id) : undefined;
             const line = agentLineFor(agentLines, s);
             return (
               <li key={s.session_id ?? i} className="lane-row" data-testid="lane-session">
                 <span>
                   {s.issue ? issueKey(s.issue) : <span className="warn">no issue{s.branch ? ` (branch ${s.branch})` : ""}</span>}
+                  {part?.kind === "lead" && (
+                    <span className="badge" data-testid="fleet-lead" title={`${c.user}'s lead agent: it starts, messages and stops only the workers it launched for ${c.user}`}>
+                      lead
+                    </span>
+                  )}
+                  {part?.kind === "worker" && (
+                    <span className="badge" data-testid="fleet-worker" title={`Started by ${c.user}'s lead agent (launch ${part.lead.slice(0, 8)})`}>
+                      via lead
+                    </span>
+                  )}
                   <div className="muted">
                     seen {relative(s.last_seen)}
                     {s.spend_usd !== undefined && s.spend_usd !== null ? ` · $${s.spend_usd.toFixed(2)}` : ""}
@@ -254,6 +290,7 @@ export function Lanes({ overview, me, ...actions }: Props) {
   const sessions = [...overview.issues.flatMap((i) => i.sessions ?? []), ...(overview.unpinned_sessions ?? [])];
   const titles = new Map((overview.backlog?.issues ?? []).map((i) => [issueKey(i.issue), i.title]));
   const staleMs = (overview.companion_silent_secs ?? DEFAULT_COMPANION_SILENT_SECS) * 1000;
+  const fleet = fleetParts(overview);
   if (lanes.length === 0) {
     return <p className="muted">No companions paired yet.</p>;
   }
@@ -270,6 +307,7 @@ export function Lanes({ overview, me, ...actions }: Props) {
           issues={overview.issues}
           titles={titles}
           staleMs={staleMs}
+          fleet={fleet}
           {...actions}
         />
       ))}

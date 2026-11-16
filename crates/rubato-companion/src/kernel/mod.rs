@@ -2,6 +2,7 @@
 //! adapters to tmux, git, `ps` and `claude`. The kernel names no slice (ADR 0015, design D2).
 
 pub mod claude;
+pub mod claude_auth;
 pub mod config;
 pub mod gitx;
 pub mod proc;

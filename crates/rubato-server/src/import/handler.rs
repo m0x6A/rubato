@@ -193,8 +193,10 @@ pub async fn import(
             spend_cap_usd: None,
             attempt_limit: None,
             prompt: None,
+            role: Default::default(),
         },
         Some(&rewrite_note(&req.branch, &path, &reasons)),
+        None,
     )
     .await
     .map_err(|(status, detail)| {

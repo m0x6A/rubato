@@ -265,6 +265,8 @@ mod tests {
             plan_path: None,
             draft: None,
             planning: Default::default(),
+            role: Default::default(),
+            lead_launch_id: None,
         }
     }
 

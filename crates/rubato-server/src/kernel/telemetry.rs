@@ -174,6 +174,9 @@ pub struct Metrics {
     /// Voice join tokens by outcome, and failed joins the browser reported, by reason.
     pub voice_tokens: Counter<u64>,
     pub voice_join_failed: Counter<u64>,
+    /// Fleet requests by action, outcome and reason, and fleet notices (ADR 0072).
+    pub fleet_requests: Counter<u64>,
+    pub fleet_notices: Counter<u64>,
 }
 
 impl Metrics {
@@ -277,6 +280,8 @@ impl Metrics {
                 .build(),
             voice_tokens: m.u64_counter(otel::metric::VOICE_TOKENS).build(),
             voice_join_failed: m.u64_counter(otel::metric::VOICE_JOIN_FAILED).build(),
+            fleet_requests: m.u64_counter(otel::metric::FLEET_REQUESTS).build(),
+            fleet_notices: m.u64_counter(otel::metric::FLEET_NOTICES).build(),
         }
     }
 

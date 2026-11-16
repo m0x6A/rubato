@@ -49,6 +49,14 @@
     },
     "text": {
       "type": "string"
+    },
+    "via_launch": {
+      "description": "The lead agent that sent this message for its owner (ADR 0072).",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
     }
   },
   "required": [

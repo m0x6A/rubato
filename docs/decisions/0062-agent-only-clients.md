@@ -1,6 +1,6 @@
 # 0062. An agent-only client is a headless companion, owned by one person; the client contract does not depend on how it pairs
 
-- **Status:** accepted; superseded in part by 0071
+- **Status:** accepted; superseded in part by 0071 and 0072
 - **Date:** 2026-11-14
 - **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/122#issuecomment-6891477242 (self); drafted by agent (Claude Code, claude-opus-5-5, issue #122), from Mattias Jonsson's answer of 2026-11-14 on #138 ("start by 1 but dont rule out 2": a headless companion first, a token client with the agent elsewhere kept open)
 - **Seam:** companion-server, companion-claude-code, web-server

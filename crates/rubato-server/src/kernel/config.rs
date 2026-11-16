@@ -464,6 +464,10 @@ pub struct Config {
     pub voice: Option<VoiceConfig>,
     /// Problems found while reading the environment. `main` logs each as `warn!` once the
     /// subscriber exists, since `from_env` runs before it does (design D14).
+    /// A person's lead agent and its workers (`RUBATO_ORCHESTRATOR=1`, ADR 0072); off by default.
+    pub orchestrator: bool,
+    /// Live workers per lead (`RUBATO_FLEET_MAX`, default 4).
+    pub fleet_max: u32,
     pub warnings: Vec<String>,
 }
 
@@ -604,6 +608,8 @@ impl Config {
                 &mut warnings,
             ),
             voice: voice_from(env, env("RUBATO_DEV_USER").is_some())?,
+            orchestrator: orchestrator_on(env("RUBATO_ORCHESTRATOR").as_deref())?,
+            fleet_max: fleet_max(env("RUBATO_FLEET_MAX").as_deref(), &mut warnings),
             warnings,
         };
         let open = exposure(
@@ -794,6 +800,8 @@ impl Config {
             github_webhook_secret: None,
             github_catchup_secs: CATCHUP_SECS.1,
             voice: None,
+            orchestrator: false,
+            fleet_max: rubato_protocol::fleet::limits::FLEET_MAX_DEFAULT,
             warnings: Vec::new(),
         }
     }
@@ -906,9 +914,48 @@ fn insecure_cookie_warning(public_url: &str, warnings: &mut Vec<String>) {
     }
 }
 
+/// `RUBATO_ORCHESTRATOR`: `1` or `true` turns the lead agent on (ADR 0072); unset, `0` or `false`
+/// leaves it off. Anything else stops the start.
+fn orchestrator_on(v: Option<&str>) -> Result<bool> {
+    match v.map(str::trim) {
+        None | Some("0") | Some("false") => Ok(false),
+        Some("1") | Some("true") => Ok(true),
+        Some(other) => anyhow::bail!("RUBATO_ORCHESTRATOR={other:?}: use 1 or 0"),
+    }
+}
+
+/// `RUBATO_FLEET_MAX`: live workers per lead, 1 to 16; default 4.
+fn fleet_max(v: Option<&str>, warnings: &mut Vec<String>) -> u32 {
+    let default = rubato_protocol::fleet::limits::FLEET_MAX_DEFAULT;
+    match v.map(|s| s.trim().parse::<u32>()) {
+        None => default,
+        Some(Ok(n)) if (1..=16).contains(&n) => n,
+        Some(_) => {
+            warnings.push(format!("RUBATO_FLEET_MAX must be 1 to 16; using {default}"));
+            default
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0072: the lead agent is off by default, here and in the test config.
+    #[test]
+    fn the_orchestrator_is_off_by_default() {
+        assert!(!orchestrator_on(None).unwrap());
+        assert!(!orchestrator_on(Some("0")).unwrap());
+        assert!(orchestrator_on(Some("1")).unwrap());
+        assert!(orchestrator_on(Some("yes")).is_err());
+        let c = Config::for_tests("sqlite::memory:".into(), "m0x6A");
+        assert!(!c.orchestrator);
+        assert_eq!(c.fleet_max, 4);
+        let mut w = Vec::new();
+        assert_eq!(fleet_max(Some("40"), &mut w), 4);
+        assert_eq!(w.len(), 1);
+        assert_eq!(fleet_max(Some("2"), &mut w), 2);
+    }
 
     fn addr(s: &str) -> SocketAddr {
         s.parse().unwrap()
