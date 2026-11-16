@@ -59,6 +59,61 @@ fn is_metric_prefix(s: &str) -> bool {
         && c.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
 }
 
+/// The adapter's name in a workspace's settings (ADR 0075).
+pub const SOURCE: &str = "prometheus";
+
+/// Each text field of a workspace's Prometheus source and the variable that seeds it once
+/// (ADR 0075). Only this adapter knows what they mean (ADR 0040).
+pub const FIELDS: [(&str, &str); 5] = [
+    ("url", "RUBATO_TRAFFIC_PROMETHEUS_URL"),
+    (
+        "namespace_labels",
+        "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACE_LABELS",
+    ),
+    ("metric_prefix", "RUBATO_TRAFFIC_PROMETHEUS_METRIC_PREFIX"),
+    ("timeout_secs", "RUBATO_TRAFFIC_PROMETHEUS_TIMEOUT_SECS"),
+    ("window_secs", "RUBATO_TRAFFIC_WINDOW_SECS"),
+];
+
+/// Each secret of a workspace's Prometheus source and the variable that seeds it once.
+pub const SECRETS: [(&str, &str); 1] = [("headers", "RUBATO_TRAFFIC_PROMETHEUS_HEADERS")];
+
+/// A traffic source as the environment describes it, for the first start's seed (ADR 0075):
+/// the adapter's name, its fields and its secrets (in the clear: the caller seals them).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Seed {
+    pub source: String,
+    pub fields: BTreeMap<String, String>,
+    pub secrets: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for Seed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Seed")
+            .field("source", &self.source)
+            .field("fields", &self.fields.keys().collect::<Vec<_>>())
+            .field("secrets", &self.secrets.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+/// The Prometheus source the environment sets, as a workspace's fields and secrets, or `None`
+/// when `RUBATO_TRAFFIC_PROMETHEUS_URL` is unset. Only variables that are set are copied.
+pub fn seed_from_env(get: impl Fn(&str) -> Option<String>) -> Option<Seed> {
+    get("RUBATO_TRAFFIC_PROMETHEUS_URL")?;
+    let pick = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .filter_map(|(field, var)| get(var).map(|v| ((*field).to_owned(), v)))
+            .collect()
+    };
+    Some(Seed {
+        source: SOURCE.to_owned(),
+        fields: pick(&FIELDS),
+        secrets: pick(&SECRETS),
+    })
+}
+
 impl PrometheusConfig {
     /// The settings from `get` (the environment in production), or `None` when
     /// `RUBATO_TRAFFIC_PROMETHEUS_URL` is unset. `fetch_secs` bounds the query timeout: both

@@ -377,3 +377,58 @@ fn config_is_checked_and_headers_never_print() {
         assert!(!e.contains("czNjcmV0"), "{e}");
     }
 }
+
+/// Plan 189 N5: the fields and secrets a workspace is seeded with describe the same source as
+/// the environment did, so the switch of the settings' origin (PR 2) cannot change it. Each
+/// field maps back to its variable; an unset variable is not copied.
+#[test]
+fn the_seeded_fields_describe_the_source_the_environment_did() {
+    use super::prometheus::{FIELDS, SECRETS, seed_from_env};
+    let vars: HashMap<&str, &str> = [
+        ("RUBATO_TRAFFIC_PROMETHEUS_URL", "http://prom.lan:9090/"),
+        (
+            "RUBATO_TRAFFIC_PROMETHEUS_HEADERS",
+            "X-Scope-OrgID=shop,Authorization=Bearer czNjcmV0",
+        ),
+        (
+            "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACE_LABELS",
+            "client_ns,server_ns",
+        ),
+        ("RUBATO_TRAFFIC_WINDOW_SECS", "1800"),
+    ]
+    .into();
+    let get = |k: &str| vars.get(k).map(|v| (*v).to_owned());
+    let seed = seed_from_env(get).expect("a URL is set");
+    assert_eq!(seed.source, "prometheus");
+    assert!(
+        !seed.fields.contains_key("metric_prefix"),
+        "unset: not copied"
+    );
+    // Back from the seed to the variables, through the adapter's own mapping.
+    let back = |k: &str| {
+        FIELDS
+            .iter()
+            .find(|(_, v)| *v == k)
+            .and_then(|(f, _)| seed.fields.get(*f).cloned())
+            .or_else(|| {
+                SECRETS
+                    .iter()
+                    .find(|(_, v)| *v == k)
+                    .and_then(|(f, _)| seed.secrets.get(*f).cloned())
+            })
+    };
+    assert_eq!(
+        PrometheusConfig::from_env(back, 60).unwrap(),
+        PrometheusConfig::from_env(get, 60).unwrap()
+    );
+    assert!(
+        !format!("{seed:?}").contains("czNjcmV0"),
+        "Debug prints no secret"
+    );
+    assert_eq!(seed_from_env(|_| None), None, "no URL, no source");
+    println!(
+        "checked {} fields and {} secret",
+        seed.fields.len(),
+        seed.secrets.len()
+    );
+}
