@@ -30,7 +30,7 @@ pub async fn map_reload(
     ws: Ws,
     _user: CurrentUser,
 ) -> Result<Json<MapResponse>, StatusCode> {
-    let (entries, _) = app.config.workspace_entries();
+    let (entries, _) = app.workspace_entries();
     let entry = entries
         .iter()
         .find(|w| w.id == ws.as_str())
@@ -49,7 +49,7 @@ pub async fn map_reload(
 
 /// Every configured workspace in switcher order, named by its entry or else by its map.
 pub async fn list(app: &App) -> Vec<WorkspaceInfo> {
-    let (entries, _) = app.config.workspace_entries();
+    let (entries, _) = app.workspace_entries();
     // One read guard for every workspace, and only the fields the list shows (#171).
     let maps = app.maps.read().await;
     let mut out = Vec::with_capacity(entries.len());

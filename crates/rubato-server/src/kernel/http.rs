@@ -49,7 +49,7 @@ pub async fn check_workspace(
         .find(|(k, _)| *k == "ws")
         .map(|(_, v)| v.to_string())
         .unwrap_or_default();
-    let (entries, _) = app.config.workspace_entries();
+    let (entries, _) = app.workspace_entries();
     if !entries.iter().any(|w| w.id == ws) {
         // The route template, not the path: the id in the URL is not a label.
         let route = req

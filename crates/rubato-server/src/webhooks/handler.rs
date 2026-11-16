@@ -156,7 +156,6 @@ pub async fn receive(
     };
     let read_repos = app.read_repos().await;
     let maps: Vec<(String, String)> = app
-        .config
         .workspace_entries()
         .0
         .into_iter()
