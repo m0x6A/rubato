@@ -5,8 +5,8 @@ use super::store;
 use crate::kernel::state::{App, CompanionConn};
 use crate::kernel::telemetry::Metrics;
 use crate::{
-    approve, launch, pairing, plan_drafts, queue, rooms, session_log, session_messages,
-    spend_history,
+    agent_reports, approve, launch, pairing, plan_drafts, queue, rooms, session_log,
+    session_messages, spend_history,
 };
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -276,7 +276,9 @@ async fn on_envelope(
         CompanionMessage::AgentReport(_) => "agent_report",
         CompanionMessage::Ack { .. } => "ack",
     };
-    let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
+    // Declared empty so the `agent_report` arm can record them: `tracing` drops a record() of a
+    // field the span did not declare (plan 226 §1).
+    let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq, rubato.launch_id = tracing::field::Empty, rubato.issue = tracing::field::Empty, rubato.outcome = tracing::field::Empty);
     async move {
         let now = app.clock.now();
         if !matches!(env.message, CompanionMessage::Ack { .. }) {
@@ -416,6 +418,14 @@ async fn on_envelope(
                         .await,
                 );
                 record_sessions_by_state(&app.metrics, companion_id, &sessions);
+                // A launch out of this snapshot loses its agent line (ADR 0071, plan 226 §1).
+                let live: Vec<Uuid> = sessions.iter().filter_map(|s| s.launch_id).collect();
+                observe(
+                    "prune_agent_reports",
+                    companion_id,
+                    env.seq,
+                    agent_reports::prune(&app.db, companion_id, &live).await.map(|_| ()),
+                );
                 session_messages::on_sessions(app, &sessions).await;
                 app.notify("sessions");
                 Some(ServerMessage::Ack { seq: env.seq })
@@ -512,13 +522,37 @@ async fn on_envelope(
                 session_messages::on_result(app, companion_id, &r).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
-            // ADR 0071: this server does not announce `agent_mcp` yet, so a companion should not
-            // send one; if it does, it is dropped and counted (plan 226 takes it).
+            // ADR 0071, plan 226 §1: a launch this pairing started and still runs, parts its
+            // workspace map has, text bounded again, the server's clock.
             CompanionMessage::AgentReport(r) => {
-                tracing::warn!(rubato.companion_id = %companion_id, rubato.launch_id = %r.launch_id, "agent report dropped: this server does not take agent_mcp");
-                app.metrics
-                    .events_dropped
-                    .add(1, &[KeyValue::new(attr::DROP_REASON, "agent_report")]);
+                let span = tracing::Span::current();
+                span.record("rubato.launch_id", r.launch_id.to_string());
+                match accept_report(app, companion_id, &r).await {
+                    Ok(Accepted::Yes { issue, doing, parts }) => {
+                        span.record("rubato.issue", issue.to_string());
+                        span.record("rubato.outcome", "stored");
+                        observe(
+                            "record_agent_report",
+                            companion_id,
+                            env.seq,
+                            agent_reports::record(&app.db, companion_id, r.launch_id, &doing, &parts, now)
+                                .await
+                                .map(|_| ()),
+                        );
+                        app.notify("agent report");
+                    }
+                    Ok(Accepted::No(reason)) => {
+                        span.record("rubato.outcome", "dropped");
+                        tracing::warn!(rubato.companion_id = %companion_id, rubato.launch_id = %r.launch_id, reason, "agent report refused");
+                        app.metrics
+                            .events_dropped
+                            .add(1, &[KeyValue::new(attr::DROP_REASON, "agent_report")]);
+                    }
+                    Err(e) => {
+                        span.record("rubato.outcome", "error");
+                        observe("accept_agent_report", companion_id, env.seq, Err(e));
+                    }
+                }
                 Some(ServerMessage::Ack { seq: env.seq })
             }
             CompanionMessage::Ack { .. } => None,
@@ -526,6 +560,80 @@ async fn on_envelope(
     }
     .instrument(span)
     .await
+}
+
+enum Accepted {
+    Yes {
+        issue: rubato_protocol::IssueRef,
+        doing: String,
+        parts: Vec<String>,
+    },
+    No(&'static str),
+}
+
+/// One line, at most `AGENT_DOING_MAX_CHARS` characters, newlines as spaces: the companion
+/// bounds it too, and is not trusted to.
+fn bounded_line(doing: &str) -> String {
+    use rubato_protocol::limits::AGENT_DOING_MAX_CHARS;
+    let flat: String = doing
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    let flat = flat.trim();
+    if flat.chars().count() <= AGENT_DOING_MAX_CHARS {
+        return flat.to_owned();
+    }
+    let mut cut: String = flat.chars().take(AGENT_DOING_MAX_CHARS - 1).collect();
+    cut.push('…');
+    cut
+}
+
+/// Whether `r` is a report this pairing may make (ADR 0071): its launch went to this companion
+/// (the server's `launches` row, never a snapshot's claim) and is in this companion's newest
+/// snapshot. Parts the launch's workspace map does not have are dropped and counted.
+async fn accept_report(
+    app: &App,
+    companion_id: Uuid,
+    r: &rubato_protocol::AgentReport,
+) -> anyhow::Result<Accepted> {
+    let Some(target) = launch::launch_target(&app.db, r.launch_id).await? else {
+        return Ok(Accepted::No("not_this_companion"));
+    };
+    if target.companion_id != companion_id {
+        return Ok(Accepted::No("not_this_companion"));
+    }
+    let live = app
+        .latest_sessions()
+        .iter()
+        .any(|s| s.companion_id == companion_id && s.launch_id == Some(r.launch_id));
+    if !live {
+        return Ok(Accepted::No("not_live"));
+    }
+    let map = app.map_of(&target.workspace).await;
+    let known = |id: &str| {
+        map.as_ref().is_some_and(|m| {
+            m.map.nodes.iter().any(|n| n.id == id) || m.map.seams.iter().any(|s| s.id == id)
+        })
+    };
+    let mut parts = Vec::new();
+    for p in r
+        .parts
+        .iter()
+        .take(rubato_protocol::limits::AGENT_PARTS_MAX)
+    {
+        if known(p) {
+            parts.push(p.clone());
+        } else {
+            app.metrics
+                .events_dropped
+                .add(1, &[KeyValue::new(attr::DROP_REASON, "agent_report_part")]);
+        }
+    }
+    Ok(Accepted::Yes {
+        issue: target.issue,
+        doing: bounded_line(&r.doing),
+        parts,
+    })
 }
 
 /// `rubato.sessions.by_state` for one companion's snapshot: every status, zero included. A
@@ -1074,36 +1182,190 @@ mod tests {
         assert_eq!(stored.get(&c), Some(&cached));
     }
 
-    /// ADR 0071, plan 220: until the server takes `agent_mcp` (plan 226) it drops an
-    /// `AgentReport`, counts it, stores no payload (ADR 0052) and leaves the sessions alone.
-    #[tokio::test(flavor = "current_thread")]
-    async fn an_agent_report_is_dropped_counted_and_stored_without_its_text() {
-        let (app, reader, pairing, _tmp) = spend_app().await;
-        let c = pairing.companion_id;
-        on_envelope(&app, &pairing, spend_snapshot(c, 1, 1.0)).await;
-        let before = app.latest_sessions();
-        let mut env = fixture("companion_agent_report.json");
-        env.seq = 2;
-        let reply = on_envelope(&app, &pairing, env).await;
-        assert!(
-            matches!(reply, Some(ServerMessage::Ack { seq: 2 })),
-            "{reply:?}"
-        );
-        let dropped: u64 = reader
+    // ----- agent reports (ADR 0071, plan 226 §1) ---------------------------------------------
+
+    const LAUNCH: Uuid = Uuid::from_u128(0x9b2e4d1a_3c5f_4e6a_9b7c_8d9e0f1a2b3c);
+
+    /// `spend_app` plus the map of workspace `default` (Rubato's own) and a launch of issue 7 sent
+    /// to `launched_to`.
+    async fn report_app(
+        launched_to: Option<Uuid>,
+    ) -> (
+        App,
+        metric_reader::Reader,
+        pairing::PairingRow,
+        tempfile::TempDir,
+    ) {
+        let (app, reader, pairing, tmp) = spend_app().await;
+        let yaml = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/design/rubato-map.yml"),
+        )
+        .unwrap();
+        app.set_map(
+            "default",
+            crate::kernel::state::LoadedMap {
+                map: serde_yaml_ng::from_str(&yaml).unwrap(),
+                version: "v".into(),
+                loaded_at: Utc::now(),
+                yaml,
+            },
+        )
+        .await;
+        let target = launched_to.unwrap_or(pairing.companion_id);
+        sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 7, '{}', ?)")
+            .bind(LAUNCH.to_string())
+            .bind(target.to_string())
+            .bind(crate::kernel::db::ts(Utc::now()))
+            .execute(&app.db)
+            .await
+            .unwrap();
+        (app, reader, pairing, tmp)
+    }
+
+    fn live_snapshot(companion_id: Uuid, seq: u64, launch: Option<Uuid>) -> CompanionEnvelope {
+        let mut s = session(companion_id, SessionStatus::Working);
+        s.issue = Some(IssueRef::new("m0x6A/rubato", 7));
+        s.launch_id = launch;
+        CompanionEnvelope {
+            seq,
+            sent_at: Utc::now(),
+            message: CompanionMessage::Sessions { sessions: vec![s] },
+        }
+    }
+
+    fn report(seq: u64, doing: &str, parts: &[&str]) -> CompanionEnvelope {
+        CompanionEnvelope {
+            seq,
+            sent_at: Utc::now(),
+            message: CompanionMessage::AgentReport(rubato_protocol::AgentReport {
+                launch_id: LAUNCH,
+                doing: doing.into(),
+                parts: parts.iter().map(|p| (*p).to_owned()).collect(),
+                at: Utc::now() + chrono::Duration::days(1),
+            }),
+        }
+    }
+
+    fn dropped(reader: &metric_reader::Reader, reason: &str) -> u64 {
+        reader
             .points(metric::EVENTS_DROPPED)
             .iter()
-            .filter(|p| p.attrs[attr::DROP_REASON] == "agent_report")
+            .filter(|p| p.attrs[attr::DROP_REASON] == reason)
             .map(|p| p.value)
-            .sum();
-        assert_eq!(dropped, 1);
-        assert_eq!(app.latest_sessions(), before, "sessions unchanged");
+            .sum()
+    }
+
+    async fn lines(app: &App) -> Vec<rubato_protocol::AgentLine> {
+        crate::agent_reports::all(app).await.unwrap()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_report_for_this_companions_live_launch_is_stored_bounded_and_on_the_servers_clock() {
+        let (app, reader, pairing, _tmp) = report_app(None).await;
+        let c = pairing.companion_id;
+        on_envelope(&app, &pairing, live_snapshot(c, 1, Some(LAUNCH))).await;
+        let before = app.latest_sessions();
+        let long = format!("designing\nthe seam {}", "x".repeat(300));
+        let reply = on_envelope(
+            &app,
+            &pairing,
+            report(2, &long, &["rubato-server", "not-on-the-map"]),
+        )
+        .await;
+        assert!(matches!(reply, Some(ServerMessage::Ack { seq: 2 })));
+        let got = lines(&app).await;
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].companion_id, c);
+        assert_eq!(got[0].doing.chars().count(), 200, "{}", got[0].doing);
+        assert!(
+            got[0].doing.starts_with("designing the seam"),
+            "newline became a space"
+        );
+        assert_eq!(got[0].parts, vec!["rubato-server".to_owned()]);
+        assert!(
+            got[0].reported_at < Utc::now() + chrono::Duration::minutes(1),
+            "the server's clock, not the report's"
+        );
+        assert_eq!(dropped(&reader, "agent_report_part"), 1);
+        assert_eq!(dropped(&reader, "agent_report"), 0);
+        // Never *working* from a report: the sessions and what is stored of them are unchanged.
+        assert_eq!(app.latest_sessions(), before);
+        let stored = store::session_snapshots(&app.db).await.unwrap();
+        assert_eq!(stored.get(&c), Some(&before));
+        // ADR 0052: the text is kept only in agent_reports, never in the event log.
         use sqlx::Row;
         let payload: String = sqlx::query("SELECT payload FROM companion_events WHERE seq = 2")
             .fetch_one(&app.db)
             .await
             .unwrap()
             .get("payload");
-        assert!(!payload.contains("auth seam"), "{payload}");
+        assert_eq!(payload, "{}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_report_for_a_launch_sent_elsewhere_or_not_live_is_dropped() {
+        // The launch went to another companion; this one claims it in its own snapshot.
+        let other = Uuid::new_v4();
+        let (app, reader, pairing, _tmp) = report_app(Some(other)).await;
+        let c = pairing.companion_id;
+        on_envelope(&app, &pairing, live_snapshot(c, 1, Some(LAUNCH))).await;
+        on_envelope(&app, &pairing, report(2, "forged", &[])).await;
+        assert!(lines(&app).await.is_empty());
+        assert_eq!(dropped(&reader, "agent_report"), 1);
+
+        // Its own launch, but no longer in its snapshot.
+        let (app, reader, pairing, _tmp) = report_app(None).await;
+        let c = pairing.companion_id;
+        on_envelope(&app, &pairing, live_snapshot(c, 1, None)).await;
+        on_envelope(&app, &pairing, report(2, "late", &[])).await;
+        assert!(lines(&app).await.is_empty());
+        assert_eq!(dropped(&reader, "agent_report"), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_snapshot_without_the_launch_deletes_its_line() {
+        let (app, _reader, pairing, _tmp) = report_app(None).await;
+        let c = pairing.companion_id;
+        on_envelope(&app, &pairing, live_snapshot(c, 1, Some(LAUNCH))).await;
+        on_envelope(&app, &pairing, report(2, "working on it", &[])).await;
+        assert_eq!(lines(&app).await.len(), 1);
+        on_envelope(&app, &pairing, live_snapshot(c, 3, None)).await;
+        use sqlx::Row;
+        let n: i64 = sqlx::query("SELECT COUNT(*) AS n FROM agent_reports")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+            .get("n");
+        assert_eq!(n, 0);
+    }
+
+    /// Plan 226 §1: the span carries the launch, the issue and the outcome. Declared fields only;
+    /// an undeclared one would be dropped silently.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_inbound_span_carries_the_launch_the_issue_and_the_outcome() {
+        let (app, _reader, pairing, _tmp) = report_app(None).await;
+        let c = pairing.companion_id;
+        let (events, _guard) = capture::start();
+        on_envelope(&app, &pairing, live_snapshot(c, 1, Some(LAUNCH))).await;
+        on_envelope(&app, &pairing, report(2, "x", &[])).await;
+        let events = events.lock().unwrap().clone();
+        let s = events
+            .iter()
+            .find(|e| {
+                e.message == format!("span {}", span::INBOUND_EVENT)
+                    && e.fields.get("kind").map(String::as_str) == Some("agent_report")
+            })
+            .unwrap_or_else(|| panic!("an inbound span for the report: {events:?}"));
+        assert_eq!(s.fields.get("rubato.launch_id"), Some(&LAUNCH.to_string()));
+        assert_eq!(
+            s.fields.get("rubato.issue").map(String::as_str),
+            Some("m0x6A/rubato#7")
+        );
+        assert_eq!(
+            s.fields.get("rubato.outcome").map(String::as_str),
+            Some("stored")
+        );
     }
 
     /// ADR 0012: a replayed envelope is only acked. Spend history never sees it.
