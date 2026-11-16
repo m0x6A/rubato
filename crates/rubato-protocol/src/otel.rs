@@ -28,6 +28,9 @@ pub mod attr {
     pub const MAP_VERSION: &str = "rubato.map.version";
     /// The workspace a route, map load, gauge or launch belongs to (ADR 0044).
     pub const WORKSPACE: &str = "rubato.workspace";
+    /// The names of the settings a workspace config change touched (ADR 0075), comma-separated.
+    /// Never a value.
+    pub const WORKSPACE_CHANGED_KEYS: &str = "rubato.workspace.changed_keys";
     pub const PLAN_PATH: &str = "rubato.plan.path";
     pub const PLAN_UNKNOWN_IDS: &str = "rubato.plan.unknown_ids";
     pub const PLAN_O_ROWS_MISSING: &str = "rubato.plan.o_rows_missing";
@@ -333,6 +336,9 @@ pub mod span {
     /// Companion: one MCP request on `/mcp` (ADR 0071), with `rubato.mcp.tool`,
     /// `rubato.launch_id`, `rubato.issue`, `rubato.outcome` and `rubato.reason`.
     pub const MCP_CALL: &str = "rubato.mcp.call";
+    /// Server: one stored change to a workspace's settings (ADR 0075), with `rubato.workspace`,
+    /// `rubato.user` and `rubato.workspace.changed_keys`. Key names only, never a value.
+    pub const WORKSPACE_CONFIG_CHANGED: &str = "rubato.workspace.config_changed";
 }
 
 /// Event (log record) names.
@@ -404,6 +410,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::ROUTE,
         attr::OUTCOME,
         attr::WORKSPACE,
+        attr::WORKSPACE_CHANGED_KEYS,
         attr::SESSION_MESSAGE_ID,
         attr::SESSION_MESSAGE_KIND,
         attr::CAPABILITY,
@@ -527,6 +534,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::VOICE_STT,
         span::VOICE_TTS,
         span::MCP_CALL,
+        span::WORKSPACE_CONFIG_CHANGED,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,

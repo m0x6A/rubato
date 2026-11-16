@@ -7,10 +7,14 @@
 //! kernel's workspace registry, which every other slice reads; it alone writes it. Application
 //! settings never come here.
 
+mod api;
 mod seed;
 mod store;
 
+pub use api::{create, delete, settings, sources, update};
 pub use seed::{Drift, Started, start};
 
+#[cfg(test)]
+mod api_tests;
 #[cfg(test)]
 mod tests;

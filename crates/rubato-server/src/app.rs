@@ -8,7 +8,7 @@ use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
     pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic, voice,
-    web_link, webhooks,
+    web_link, webhooks, workspace_settings,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -30,6 +30,7 @@ use rubato_protocol::queue::routes as queue_routes;
 use rubato_protocol::traffic::routes as traffic_routes;
 use rubato_protocol::web_link::routes as web_routes;
 use rubato_protocol::workspace::routes as workspace_routes;
+use rubato_protocol::workspace_settings::routes as settings_routes;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
@@ -83,18 +84,36 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
         )
         .route(&at(pull_routes::PULL), get(pulls::pull_view))
         .route(&at(pull_routes::PULLS_MERGE), post(pulls::merge))
+        .route(
+            &at(settings_routes::SETTINGS),
+            get(workspace_settings::settings).put(workspace_settings::update),
+        )
 }
 
 pub fn router(app: App) -> Router {
     let dist = app.config.web_dist.clone();
     let index = dist.join("index.html");
-    let scoped = map_scoped(|p| workspace_routes::scoped("{ws}", p)).route_layer(
-        axum::middleware::from_fn_with_state(app.clone(), crate::kernel::http::check_workspace),
-    );
+    let scoped = map_scoped(|p| workspace_routes::scoped("{ws}", p))
+        // ADR 0075: a workspace is deleted by its own id, never unprefixed.
+        .route(
+            settings_routes::WORKSPACE,
+            delete(workspace_settings::delete),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            crate::kernel::http::check_workspace,
+        ));
     let api = Router::new()
         .route("/api/health", get(health))
         .route(auth_routes::ME, get(auth::me))
-        .route(workspace_routes::WORKSPACES, get(map::workspaces))
+        .route(
+            workspace_routes::WORKSPACES,
+            get(map::workspaces).post(workspace_settings::create),
+        )
+        .route(
+            settings_routes::TRAFFIC_SOURCES,
+            get(workspace_settings::sources),
+        )
         .merge(map_scoped(str::to_string))
         .merge(scoped)
         .route(
@@ -296,6 +315,14 @@ mod tests {
             (Method::GET, auth_routes::CALLBACK.into()),
             (Method::POST, auth_routes::LOGOUT.into()),
             (Method::GET, workspace_routes::WORKSPACES.into()),
+            (Method::POST, workspace_routes::WORKSPACES.into()),
+            (Method::GET, settings_routes::SETTINGS.into()),
+            (Method::PUT, settings_routes::SETTINGS.into()),
+            (Method::GET, settings_routes::TRAFFIC_SOURCES.into()),
+            (
+                Method::DELETE,
+                settings_routes::WORKSPACE.replace("{ws}", "default"),
+            ),
             (
                 Method::GET,
                 format!(
@@ -324,16 +351,19 @@ mod tests {
         // Every map-scoped route again under `/api/w/{ws}` for a configured workspace (ADR 0049).
         let scoped: Vec<(Method, String)> = routes
             .iter()
+            // The adapters' field lists are team-wide, though under `/api/traffic`.
+            .filter(|(_, p)| p != settings_routes::TRAFFIC_SOURCES)
             .filter(|(_, p)| MAP_SCOPED.iter().any(|m| p.starts_with(m)))
             .map(|(m, p)| (m.clone(), workspace_routes::scoped("default", p)))
             .collect();
-        assert!(scoped.len() >= 18, "{scoped:?}");
+        assert!(scoped.len() >= 20, "{scoped:?}");
         routes.extend(scoped);
         routes
     }
 
     /// The paths served per workspace: map-scoped, never team-scoped.
-    const MAP_SCOPED: [&str; 11] = [
+    const MAP_SCOPED: [&str; 12] = [
+        "/api/settings",
         "/api/pulls",
         "/api/traffic",
         "/api/overview",
@@ -1330,6 +1360,11 @@ mod tests {
                 "/api/w/default/map/draft/discard",
                 &[("sec-fetch-site", "cross-site")],
             ),
+            // ADR 0075: a new workspace is a write like any other.
+            (
+                workspace_routes::WORKSPACES,
+                &[("origin", "https://evil.example")],
+            ),
         ];
         for (path, headers) in refused {
             let r = post(path, headers).await.unwrap();
@@ -1351,7 +1386,12 @@ mod tests {
             .into_iter()
             .filter(|p| p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("cross_origin"))
             .collect();
-        assert_eq!(points.iter().map(|p| p.value).sum::<u64>(), 4, "{points:?}");
+        assert_eq!(points.iter().map(|p| p.value).sum::<u64>(), 5, "{points:?}");
+        assert!(
+            points
+                .iter()
+                .any(|p| p.attrs[attr::ROUTE] == workspace_routes::WORKSPACES)
+        );
         assert!(
             points
                 .iter()

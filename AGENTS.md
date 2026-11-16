@@ -125,7 +125,7 @@ plan_status     plan status pushed to each launched session      (none)
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
-workspace_settings  each workspace's settings, seeded once, set at runtime (ADR 0075)  workspace_settings
+workspace_settings  each workspace's settings: seeded once, read and changed at runtime, create and delete (ADR 0075)  workspace_settings
 ```
 <!-- /slices -->
 <!-- slices: rubato-companion -->
@@ -208,6 +208,7 @@ traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPar
 voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
+workspace_settings  WorkspaceSettings, TrafficSourceSettings, SecretState, SourceFields, SourceField, WorkspaceSettingsUpdate, TrafficSourceUpdate, SecretUpdate, NewWorkspace, SettingsRefusal, reasons; SETTINGS, WORKSPACE, TRAFFIC_SOURCES
 ```
 
 The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).

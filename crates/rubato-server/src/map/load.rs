@@ -114,6 +114,85 @@ fn still_current(app: &App, w: &WorkspaceEntry) -> Result<()> {
     Ok(())
 }
 
+/// Read and validate one workspace's map fresh, as `w` names it (ADR 0075): no fallback to a
+/// cached copy, and nothing stored, set or counted. A settings change calls it before it stores
+/// a new map source, so a ref that does not load never becomes the workspace's ref.
+pub async fn fetch_and_validate(app: &App, w: &WorkspaceEntry) -> Result<LoadedMap> {
+    let (version, yaml) = match &w.map_file {
+        Some(file) => {
+            let yaml = tokio::fs::read_to_string(file)
+                .await
+                .with_context(|| format!("reading {}", file.display()))?;
+            (file_version(&yaml), yaml)
+        }
+        None => {
+            let sha = app
+                .github
+                .branch_sha(&w.map_repo, &w.map_ref)
+                .await?
+                .context("map ref not found")?;
+            let yaml = app
+                .github
+                .file(&w.map_repo, &w.map_path, &w.map_ref)
+                .await?
+                .context("map file not found")?;
+            (sha, yaml)
+        }
+    };
+    let map = parse(app, w, &yaml, false)?;
+    Ok(LoadedMap {
+        map,
+        version,
+        loaded_at: Utc::now(),
+        yaml,
+    })
+}
+
+/// Make a map read by `fetch_and_validate` the workspace's map: cached, in memory and on the
+/// gauges, if the registry still holds `w` at this revision.
+pub async fn apply(app: &App, w: &WorkspaceEntry, loaded: LoadedMap) -> Result<Arc<LoadedMap>> {
+    still_current(app, w)?;
+    store::store_map(
+        &app.db,
+        &w.id,
+        &loaded.version,
+        &loaded.yaml,
+        loaded.loaded_at,
+    )
+    .await?;
+    let loaded = app.set_map(&w.id, loaded).await;
+    app.metrics.map_loaded.record(
+        1,
+        &[
+            KeyValue::new(attr::MAP_VERSION, loaded.version.clone()),
+            KeyValue::new(attr::WORKSPACE, w.id.clone()),
+        ],
+    );
+    record_loaded_at(app, w, loaded.loaded_at);
+    tracing::info!(rubato.workspace = %w.id, version = %loaded.version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
+    Ok(loaded)
+}
+
+/// A deleted workspace's map leaves memory (ADR 0075). Its cached row is kept, like every row
+/// of a deleted workspace.
+pub async fn forget(app: &App, ws: &str) {
+    app.maps.write().await.remove(ws);
+}
+
+/// A map file's version: a content hash, since there may be no git.
+fn file_version(yaml: &str) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(yaml.as_bytes());
+    format!(
+        "file-{}",
+        digest
+            .iter()
+            .take(4)
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
+}
+
 /// Local-file mode (`RUBATO_MAP_FILE`): the version is a content hash, since there may be no git.
 async fn load_from_file(
     app: &App,
@@ -125,16 +204,7 @@ async fn load_from_file(
         .with_context(|| format!("reading {}", file.display()))
         .inspect_err(|_| app.metrics.map_load_failures.add(1, &ws_attr(w)))?;
     let map = parse(app, w, &yaml, true)?;
-    use sha2::Digest;
-    let digest = sha2::Sha256::digest(yaml.as_bytes());
-    let version = format!(
-        "file-{}",
-        digest
-            .iter()
-            .take(4)
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    );
+    let version = file_version(&yaml);
     let loaded = LoadedMap {
         map,
         version: version.clone(),

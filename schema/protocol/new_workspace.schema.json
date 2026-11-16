@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NewWorkspace",
+  "description": "`POST` `workspace::routes::WORKSPACES`: a new workspace. Its traffic source and launch\ndefaults are set afterwards, with an update.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "`[a-z0-9-]{1,32}`.",
+      "type": "string"
+    },
+    "map_path": {
+      "type": "string"
+    },
+    "map_ref": {
+      "type": "string",
+      "default": "main"
+    },
+    "map_repo": {
+      "type": "string"
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "map_repo",
+    "map_path"
+  ]
+}
