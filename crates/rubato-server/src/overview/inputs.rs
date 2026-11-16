@@ -67,7 +67,7 @@ pub async fn build_overview_inputs(
         layout: layout::all(&app.db, ws).await?,
         queue: queue::all(&app.db).await?,
         repo_pulls: github_poll::repo_pulls(&app.db).await?,
-        traffic: app.traffic.read().await.clone(),
+        traffic: app.traffic_of(ws).await,
         dismissals: traffic::dismissals(&app.db, ws).await?,
         spend: spend_history::series(&app.db).await?,
         workspaces: workspace_inputs(app, ws, all, maps).await?,

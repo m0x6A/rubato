@@ -241,7 +241,7 @@ async fn tick(mode: Mode, timeout: Option<Duration>) -> (Outcome, SourceStatus, 
     }
     let mut f = Fetcher::new(PrometheusSource::new(c), Utc::now());
     let outcome = f.tick(&app, Utc::now()).await;
-    let latest = app.traffic.read().await.clone();
+    let latest = app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE).await;
     (outcome, latest.source, latest.report.is_some())
 }
 
@@ -299,27 +299,73 @@ async fn a_matrix_answer_is_rejected_as_parse() {
     assert!(!kept);
 }
 
-/// A source set up wrong is never silent: the task logs it and the state turns failing, which
-/// the map shows as unknown.
+/// A source set up wrong is never silent: the supervisor logs it and the workspace's state
+/// turns failing, which the map shows as unknown. Its fields are read with the same rules as the
+/// variables they were seeded from, so the error names the variable (ADR 0075).
 #[tokio::test]
 async fn a_bad_source_config_makes_the_state_failing() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
-    let mut cfg = Config::for_tests(db, "m0x6A");
-    cfg.traffic_env = TrafficEnv::from_vars(
-        [
-            ("RUBATO_TRAFFIC_PROMETHEUS_URL", "http://prom:9090"),
-            ("RUBATO_TRAFFIC_WINDOW_SECS", "5"),
-        ]
-        .into_iter()
-        .map(|(k, v)| (k.to_owned(), v.to_owned())),
+    let (app, _tmp) = app("http://prom:9090").await;
+    set_source(
+        &app,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        &[("url", "http://prom:9090"), ("window_secs", "5")],
+        1,
     );
-    let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
-    let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
-    let (_tx, rx) = tokio::sync::watch::channel(false);
-    super::run(app.clone(), rx).await.unwrap();
-    let e = failing(&app.traffic.read().await.source).expect("failing");
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let supervisor = tokio::spawn(super::run(app.clone(), rx));
+    let e = eventually(|| {
+        let app = app.clone();
+        async move {
+            failing(
+                &app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE)
+                    .await
+                    .source,
+            )
+        }
+    })
+    .await;
     assert!(e.contains("RUBATO_TRAFFIC_WINDOW_SECS"), "{e}");
+    tx.send(true).unwrap();
+    supervisor.await.unwrap().unwrap();
+}
+
+/// Give `ws` a Prometheus source with `fields` at `revision`, as the settings slice would.
+fn set_source(app: &App, ws: &str, fields: &[(&str, &str)], revision: u64) {
+    use crate::kernel::workspaces::{Registry, TrafficSetting};
+    let (mut entries, source) = app.workspace_entries();
+    let mut found = false;
+    for w in &mut entries {
+        if w.id == ws {
+            found = true;
+            w.settings.revision = revision;
+            w.settings.traffic = Some(TrafficSetting {
+                source: "prometheus".into(),
+                fields: fields
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+                secrets_sealed: None,
+            });
+        }
+    }
+    assert!(found, "{ws} is held");
+    app.set_workspaces(Registry { entries, source });
+}
+
+/// Poll `f` until it gives a value, for at most five seconds.
+async fn eventually<T, F, Fut>(f: F) -> T
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(v) = f().await {
+            return v;
+        }
+        assert!(std::time::Instant::now() < deadline, "not in time");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 #[test]
@@ -431,4 +477,138 @@ fn the_seeded_fields_describe_the_source_the_environment_did() {
         seed.fields.len(),
         seed.secrets.len()
     );
+}
+
+/// Plan 189 S6: each workspace reads its own source. Changing one workspace's source restarts
+/// only its task, a report from the cancelled generation never lands, and clearing a source
+/// records `rubato.traffic.configured` 0 for it (ADR 0075).
+#[tokio::test(flavor = "current_thread")]
+async fn each_workspace_reads_its_own_source() {
+    use crate::kernel::telemetry::metric_reader;
+    use crate::kernel::workspaces::Registry;
+    use rubato_protocol::otel::{attr, metric};
+    let (url_a, fake_a) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    let (url_b, fake_b) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    let (url_c, fake_c) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let db = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+    let mut cfg = Config::for_tests(db, "m0x6A");
+    // A local server (ADR 0064): its sources may reach the fakes on loopback.
+    cfg.public_url = "http://127.0.0.1:18999".into();
+    let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
+    let (reader, metrics) = metric_reader::start();
+    let mut app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
+    Arc::get_mut(&mut app).unwrap().metrics = metrics;
+    let (mut entries, source) = app.workspace_entries();
+    let mut shop = entries[0].clone();
+    shop.id = "shop".into();
+    shop.map_path = "shop.yml".into();
+    entries.push(shop);
+    app.set_workspaces(Registry { entries, source });
+    set_source(&app, "default", &[("url", &url_a)], 1);
+    set_source(&app, "shop", &[("url", &url_b)], 1);
+    let seen = |f: &Arc<Fake>| f.seen.lock().unwrap().len();
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let supervisor = tokio::spawn(super::run(app.clone(), rx));
+    let reported = |ws: &'static str| {
+        let app = app.clone();
+        async move { app.traffic_of(ws).await.report.map(|_| ()) }
+    };
+    eventually(|| reported("default")).await;
+    eventually(|| reported("shop")).await;
+    assert!(
+        seen(&fake_a) >= 2 && seen(&fake_b) >= 2,
+        "each queried its own"
+    );
+    let gens = app.slots.get::<super::Generations>();
+    let (before_default, before_shop) = (gens.of("default"), gens.of("shop"));
+
+    // shop moves to another Prometheus: only shop's task restarts.
+    set_source(&app, "shop", &[("url", &url_c)], 2);
+    eventually(|| async { (seen(&fake_c) >= 2).then_some(()) }).await;
+    assert_eq!(gens.of("default"), before_default, "default untouched");
+    assert_ne!(gens.of("shop"), before_shop, "shop restarted");
+    // A fetcher of shop's cancelled generation writes nothing.
+    let stale = super::Fetcher::new(PrometheusSource::new(config(&url_b, &[])), Utc::now())
+        .feeding(
+            super::Targets::One("shop".into()),
+            60,
+            Some((gens.clone(), before_shop.unwrap())),
+        );
+    let mut stale = stale;
+    let before = seen(&fake_b);
+    assert_eq!(stale.tick(&app, Utc::now()).await, Outcome::Superseded);
+    assert!(seen(&fake_b) > before, "it fetched, and wrote nothing");
+
+    // shop's source is cleared: not configured, and the gauge says 0.
+    let (mut entries, source) = app.workspace_entries();
+    entries[1].settings.traffic = None;
+    entries[1].settings.revision = 3;
+    app.set_workspaces(Registry { entries, source });
+    eventually(|| {
+        let app = app.clone();
+        async move {
+            matches!(
+                app.traffic_of("shop").await.source,
+                SourceStatus::NotConfigured
+            )
+            .then_some(())
+        }
+    })
+    .await;
+    let configured = |ws: &str| {
+        reader
+            .points(metric::TRAFFIC_CONFIGURED)
+            .into_iter()
+            .find(|p| {
+                p.attrs.get(attr::WORKSPACE).map(String::as_str) == (ws != "default").then_some(ws)
+            })
+            .map(|p| p.value)
+    };
+    assert_eq!(configured("shop"), Some(0));
+    assert_eq!(configured("default"), Some(1));
+    tx.send(true).unwrap();
+    supervisor.await.unwrap().unwrap();
+    println!(
+        "checked 3 sources over 2 workspaces: {} answers",
+        seen(&fake_a) + seen(&fake_b) + seen(&fake_c)
+    );
+}
+
+/// Plan 189 S4 (ADR 0075): a guarded source refuses a name that resolves to loopback and an IP
+/// literal on loopback, as a failing source; a local server may reach them; a redirect is not
+/// followed.
+#[tokio::test]
+async fn every_connect_is_checked() {
+    use super::Source as _;
+    let (url, _f) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    let port = url.rsplit(':').next().unwrap().to_owned();
+    let failed = |r: Result<rubato_protocol::TrafficReport, super::SourceError>| match r {
+        Err(super::SourceError::Failed(e)) => e,
+        other => panic!("{other:?}"),
+    };
+    let named = format!("http://localhost:{port}");
+    for target in [named.as_str(), url.as_str()] {
+        let e = failed(
+            PrometheusSource::guarded(config(target, &[]), false)
+                .fetch()
+                .await,
+        );
+        assert!(e.contains("address refused"), "{target}: {e}");
+        assert!(
+            PrometheusSource::guarded(config(target, &[]), true)
+                .fetch()
+                .await
+                .is_ok(),
+            "{target}: a local server may reach it"
+        );
+    }
+    let (moved, _m) = fake(Mode::Status(302, "")).await;
+    let e = failed(
+        PrometheusSource::guarded(config(&moved, &[]), true)
+            .fetch()
+            .await,
+    );
+    assert!(e.contains("redirects are not followed"), "{e}");
+    println!("checked 2 refused targets, 2 allowed, 1 redirect");
 }

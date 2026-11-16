@@ -192,14 +192,25 @@ pub async fn start(
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         + 1;
+    // The request, then the plan's front matter, then the workspace's defaults, then the
+    // built-in ones (ADR 0075): never a server-wide setting.
+    let defaults = app
+        .workspace_entries()
+        .0
+        .into_iter()
+        .find(|w| w.id == ws)
+        .map(|w| w.settings)
+        .unwrap_or_default();
     let spend_cap = req
         .spend_cap_usd
         .or(plan.as_ref().and_then(|p| p.spend_cap_usd))
-        .unwrap_or(app.config.default_spend_cap_usd);
+        .or(defaults.default_spend_cap_usd)
+        .unwrap_or(crate::kernel::config::BUILT_IN_SPEND_CAP_USD);
     let attempt_limit = req
         .attempt_limit
         .or(plan.as_ref().and_then(|p| p.attempt_limit))
-        .unwrap_or(app.config.default_attempt_limit);
+        .or(defaults.default_attempt_limit)
+        .unwrap_or(crate::kernel::config::BUILT_IN_ATTEMPT_LIMIT);
     if attempt > attempt_limit {
         let refusal = refuse_past_attempt_limit(&app.db, &req.issue, attempt, attempt_limit).await;
         app.notify("cap hit");

@@ -7636,3 +7636,41 @@ async fn no_companion_message_grants_an_approval() {
         "the guard must see a written approval"
     );
 }
+
+/// Plan 189 S6: a launch's caps come from the request, the plan, then its workspace's defaults,
+/// then the built-in 25 USD and 3 attempts; never from a server-wide setting (ADR 0075).
+#[tokio::test]
+async fn defaults_come_from_the_workspace() {
+    use rubato_server::kernel::workspaces::Registry;
+    let h = harness().await;
+    let _ws = launcher(&h, "m0x6A", &[]).await;
+    pin_3(&h).await;
+    let caps = |cap: Option<f64>, limit: Option<u32>| {
+        let (mut entries, source) = h.app.workspace_entries();
+        entries[0].settings.default_spend_cap_usd = cap;
+        entries[0].settings.default_attempt_limit = limit;
+        h.app.set_workspaces(Registry { entries, source });
+    };
+    let launched = || async {
+        let r = launch_3(&h, "m0x6A", serde_json::json!({})).await;
+        assert_eq!(r.status(), 200);
+        let c = r
+            .json::<rubato_protocol::LaunchResponse>()
+            .await
+            .unwrap()
+            .command;
+        (c.spend_cap_usd, c.attempt_limit)
+    };
+    caps(Some(5.0), Some(9));
+    assert_eq!(launched().await, (5.0, 9), "the workspace's defaults");
+    caps(None, None);
+    assert_eq!(launched().await, (25.0, 3), "the built-in ones");
+    let r = launch_3(&h, "m0x6A", serde_json::json!({ "spend_cap_usd": 2.0 })).await;
+    let c = r
+        .json::<rubato_protocol::LaunchResponse>()
+        .await
+        .unwrap()
+        .command;
+    assert_eq!(c.spend_cap_usd, 2.0, "the request wins");
+    println!("checked 3 launches");
+}

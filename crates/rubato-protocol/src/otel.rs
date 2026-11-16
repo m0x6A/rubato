@@ -184,6 +184,9 @@ pub mod metric {
     pub const TRAFFIC_GHOST_PARTS: &str = "rubato.traffic.ghost_parts";
     /// Dismissed discrepancies per workspace (ADR 0060), recorded each fetch.
     pub const TRAFFIC_DISMISSALS: &str = "rubato.traffic.dismissals";
+    /// 1 while a workspace has a traffic source, 0 after it is cleared or the workspace goes
+    /// (ADR 0075): the other traffic gauges keep their last value until restart.
+    pub const TRAFFIC_CONFIGURED: &str = "rubato.traffic.configured";
     /// Writes of an issue's spend history (ADR 0037), by `rubato.outcome`: `stored` (a session's
     /// spend changed and the issue's point was written), `unchanged` (same or older value),
     /// `rejected` (not finite, or negative), `failed` (the write returned an error).
@@ -462,6 +465,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::TRAFFIC_UNMAPPED_SERVICES,
         metric::TRAFFIC_GHOST_PARTS,
         metric::TRAFFIC_DISMISSALS,
+        metric::TRAFFIC_CONFIGURED,
         metric::COMPANION_SILENT_SECS,
         metric::SPEND_POINTS,
         metric::WORKSPACES_CONFIGURED,

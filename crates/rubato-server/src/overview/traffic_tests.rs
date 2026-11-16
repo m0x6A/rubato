@@ -263,12 +263,20 @@ async fn without_a_source_traffic_is_not_configured() {
     let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
     let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
     assert_eq!(
-        app.traffic.read().await.source,
+        app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE)
+            .await
+            .source,
         rubato_protocol::SourceStatus::NotConfigured
     );
-    let (_tx, rx) = tokio::sync::watch::channel(false);
-    let r = tokio::time::timeout(Duration::from_secs(1), crate::traffic::run(app, rx)).await;
-    assert!(r.expect("returns at once").is_ok());
+    // The supervisor runs (ADR 0075: a source set at runtime starts without a restart), starts
+    // no task, and ends at once on shutdown.
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let supervisor = tokio::spawn(crate::traffic::run(app.clone(), rx));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(app.traffic.read().await.is_empty(), "no source, no state");
+    tx.send(true).unwrap();
+    let r = tokio::time::timeout(Duration::from_secs(1), supervisor).await;
+    assert!(r.expect("ends on shutdown").unwrap().is_ok());
 }
 
 /// A shop map whose parts emit namespaceless services, so Rubato's own map (`default`) sees
@@ -301,6 +309,13 @@ async fn a_change_in_one_workspace_tells_only_its_browsers() {
     cfg.dev_traffic = Some(file.clone());
     let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
     let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
+    // Two workspaces held (ADR 0075: the registry says which), each with its map loaded.
+    let (mut entries, source) = app.workspace_entries();
+    let mut shop = entries[0].clone();
+    shop.id = "shop".into();
+    shop.map_path = "shop.yml".into();
+    entries.push(shop);
+    app.set_workspaces(crate::kernel::workspaces::Registry { entries, source });
     for (ws, yaml) in [(rubato_protocol::DEFAULT_WORKSPACE, MAP), ("shop", SHOP)] {
         let map: SystemMap = serde_yaml_ng::from_str(yaml).unwrap();
         app.set_map(

@@ -227,6 +227,12 @@ impl std::fmt::Debug for TrafficEnv {
     }
 }
 
+/// A launch's spend cap when neither the plan nor its workspace sets one (ADR 0075): built in,
+/// never an application setting.
+pub const BUILT_IN_SPEND_CAP_USD: f64 = 25.0;
+/// A launch's attempt limit when neither the plan nor its workspace sets one.
+pub const BUILT_IN_ATTEMPT_LIMIT: u32 = 3;
+
 /// The workspace-scoped variables as set (ADR 0075): `None` when unset or not a value.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SeedEnv {
@@ -437,9 +443,6 @@ pub struct Config {
     pub web_dist: PathBuf,
     pub limits: Limits,
     pub otel_endpoint: Option<String>,
-    /// Default caps for a launch when the plan has none.
-    pub default_spend_cap_usd: f64,
-    pub default_attempt_limit: u32,
     /// The workspace-scoped variables as set, unset kept apart from set-to-the-default: what the
     /// first start copies into `workspace_settings`, and what later starts warn about while
     /// they are still set (ADR 0075).
@@ -574,12 +577,6 @@ impl Config {
                 .unwrap_or_else(|| PathBuf::from("web/dist")),
             limits,
             otel_endpoint: env("OTEL_EXPORTER_OTLP_ENDPOINT"),
-            default_spend_cap_usd: env("RUBATO_DEFAULT_SPEND_CAP_USD")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(25.0),
-            default_attempt_limit: env("RUBATO_DEFAULT_ATTEMPT_LIMIT")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(3),
             seed: SeedEnv {
                 default_spend_cap_usd: env("RUBATO_DEFAULT_SPEND_CAP_USD")
                     .and_then(|v| v.parse().ok()),
@@ -790,8 +787,6 @@ impl Config {
             web_dist: PathBuf::from("web/dist"),
             limits: Limits::default(),
             otel_endpoint: None,
-            default_spend_cap_usd: 25.0,
-            default_attempt_limit: 3,
             seed: SeedEnv::default(),
             pairing_ttl_secs: 900,
             pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,

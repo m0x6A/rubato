@@ -10,16 +10,19 @@
 
 mod dismiss;
 mod fetch;
+mod guard;
 mod prometheus;
 mod source;
+mod supervisor;
 
 pub use dismiss::{dismiss, list as dismissals, undismiss};
-pub use fetch::{Fetcher, Outcome, run};
+pub use fetch::{Fetcher, Generations, Outcome, Targets};
 pub use prometheus::{
     FIELDS as PROMETHEUS_FIELDS, PrometheusConfig, PrometheusSource, SECRETS as PROMETHEUS_SECRETS,
     Seed, seed_from_env,
 };
 pub use source::{ConfiguredSource, DevFileSource, Source, SourceError};
+pub use supervisor::run;
 
 #[cfg(test)]
 mod dismiss_tests;

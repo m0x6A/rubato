@@ -872,17 +872,16 @@ pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) {
     }
 }
 
-/// The server's background tasks: the poll loop, essential; the traffic fetch when a source
-/// is configured, best-effort (a dead fetch makes the report stale, and the map says unknown).
+/// The server's background tasks: the poll loop, essential; the traffic supervisor, essential
+/// and always running (ADR 0075): it follows the workspace registry and runs one fetch task per
+/// workspace with a source, so a source set at runtime starts without a restart.
 pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
     let mut tasks = Tasks::default();
-    if app.config.traffic_configured() {
-        tasks.spawn(
-            "traffic",
-            Kind::BestEffort,
-            traffic::run(app.clone(), shutdown.clone()),
-        );
-    }
+    tasks.spawn(
+        "traffic",
+        Kind::Essential,
+        traffic::run(app.clone(), shutdown.clone()),
+    );
     tasks.spawn("session_messages_sweep", Kind::Essential, {
         let (app, shutdown) = (app.clone(), shutdown.clone());
         async move {

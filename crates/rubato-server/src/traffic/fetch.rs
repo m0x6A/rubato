@@ -1,16 +1,16 @@
-//! The fetch task: one fetch per interval, validated against the limits, swapped into
-//! `AppState::traffic`, its gauges recorded, and each workspace's browsers told only when its
-//! derived summary changed (design §4, #131).
+//! The fetch task: one fetch per interval, validated against the limits, swapped into each
+//! workspace it feeds in `AppState::traffic`, its gauges recorded, and each workspace's browsers
+//! told only when its derived summary changed (design §4, #131, ADR 0075).
 
-use super::prometheus::{PrometheusConfig, PrometheusSource};
-use super::source::{ConfiguredSource, DevFileSource, Source, SourceError};
+use super::source::{Source, SourceError};
 use crate::kernel::state::{App, TrafficLatest};
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
 use rubato_protocol::{Finding, ObservedTraffic, SourceStatus, derive_traffic};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::watch;
 use tracing::Instrument;
 
 /// A fetch that has not answered by then has failed; the previous report stays. The task uses
@@ -24,6 +24,8 @@ pub enum Outcome {
     /// Rejected whole, with the reason: `too_many_edges`, `bad_window`, `name_too_long`, `parse`.
     Rejected(&'static str),
     Failed,
+    /// A newer task feeds every workspace this one fed (ADR 0075): nothing was written.
+    Superseded,
 }
 
 impl Outcome {
@@ -32,7 +34,41 @@ impl Outcome {
             Outcome::Ok => "ok",
             Outcome::Rejected(_) => "rejected",
             Outcome::Failed => "failed",
+            Outcome::Superseded => "superseded",
         }
+    }
+}
+
+/// Which workspaces a fetcher feeds: every workspace held (the development file, which is a
+/// process switch), or one workspace's own source (ADR 0075).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Targets {
+    All,
+    One(String),
+}
+
+/// The generation of the task that may write each workspace's traffic now (ADR 0075). The
+/// supervisor bumps it before it starts a task; a task whose generation is no longer current
+/// writes nothing, so a cancelled task's report never lands after its replacement starts.
+#[derive(Default)]
+pub struct Generations(Mutex<HashMap<String, u64>>);
+
+impl Generations {
+    /// A new generation for `ws`, superseding every earlier one.
+    pub fn bump(&self, ws: &str) -> u64 {
+        let mut g = self.0.lock().unwrap();
+        let n = g.entry(ws.to_owned()).or_default();
+        *n += 1;
+        *n
+    }
+
+    /// The current generation for `ws`, if a task was ever started for it.
+    pub fn of(&self, ws: &str) -> Option<u64> {
+        self.0.lock().unwrap().get(ws).copied()
+    }
+
+    fn current(&self, ws: &str, generation: u64) -> bool {
+        self.0.lock().unwrap().get(ws).copied() == Some(generation)
     }
 }
 
@@ -41,8 +77,13 @@ impl Outcome {
 pub struct Fetcher<S> {
     source: S,
     started: DateTime<Utc>,
-    told: std::collections::BTreeMap<String, ObservedTraffic>,
+    told: BTreeMap<String, ObservedTraffic>,
     timeout: Duration,
+    targets: Targets,
+    fetch_secs: u32,
+    /// The generation this fetcher writes under, per workspace it feeds; none in tests that
+    /// drive a fetcher by hand.
+    generation: Option<(Arc<Generations>, u64)>,
 }
 
 fn set_error(latest: &mut TrafficLatest, error: Option<String>) {
@@ -52,12 +93,16 @@ fn set_error(latest: &mut TrafficLatest, error: Option<String>) {
 }
 
 impl<S: Source> Fetcher<S> {
+    /// A fetcher feeding every workspace, as the development file does.
     pub fn new(source: S, now: DateTime<Utc>) -> Self {
         Self {
             source,
             started: now,
-            told: std::collections::BTreeMap::new(),
+            told: BTreeMap::new(),
             timeout: FETCH_TIMEOUT,
+            targets: Targets::All,
+            fetch_secs: crate::kernel::config::TRAFFIC_FETCH_SECS.1,
+            generation: None,
         }
     }
 
@@ -65,6 +110,40 @@ impl<S: Source> Fetcher<S> {
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// The same fetcher, feeding `targets` every `fetch_secs`, writing only while `generation`
+    /// is current (the supervisor's tasks).
+    pub fn feeding(
+        mut self,
+        targets: Targets,
+        fetch_secs: u32,
+        generation: Option<(Arc<Generations>, u64)>,
+    ) -> Self {
+        self.targets = targets;
+        self.fetch_secs = fetch_secs;
+        self.generation = generation;
+        self
+    }
+
+    /// The workspaces this fetcher may write now.
+    fn live_targets(&self, app: &App) -> Vec<String> {
+        let ids: Vec<String> = match &self.targets {
+            Targets::All => app
+                .workspace_entries()
+                .0
+                .into_iter()
+                .map(|w| w.id)
+                .collect(),
+            Targets::One(ws) => vec![ws.clone()],
+        };
+        match &self.generation {
+            None => ids,
+            Some((gens, n)) => ids
+                .into_iter()
+                .filter(|ws| gens.current(&key(&self.targets, ws), *n))
+                .collect(),
+        }
     }
 
     /// Fetch once, keep or reject the report, record the gauges and notify on a change.
@@ -80,9 +159,21 @@ impl<S: Source> Fetcher<S> {
             .instrument(span.clone())
             .await
             .unwrap_or_else(|_| Err(SourceError::Failed("traffic source timed out".into())));
-        let outcome = {
-            let mut latest = app.traffic.write().await;
+        let (outcome, targets) = {
+            let mut all = app.traffic.write().await;
+            // Checked under the lock the write takes: a task superseded meanwhile writes nothing.
+            let targets = self.live_targets(app);
+            let Some(first) = targets.first() else {
+                return Outcome::Superseded;
+            };
             let _enter = span.enter();
+            let mut latest = all.get(first).cloned().unwrap_or(TrafficLatest {
+                report: None,
+                source: SourceStatus::Configured {
+                    fetch_secs: self.fetch_secs,
+                    error: None,
+                },
+            });
             let was_failing = matches!(
                 latest.source,
                 SourceStatus::Configured { error: Some(_), .. }
@@ -103,61 +194,71 @@ impl<S: Source> Fetcher<S> {
                 Err(SourceError::Failed(e)) => {
                     span.record("error", e.as_str());
                     if !was_failing {
-                        tracing::warn!(error = %e, "traffic source failing");
+                        tracing::warn!(error = %e, rubato.workspace = first.as_str(), "traffic source failing");
                     }
                     set_error(&mut latest, Some(e));
                     Outcome::Failed
                 }
             };
             if let Outcome::Rejected(reason) = outcome {
-                tracing::warn!(rubato.reason = reason, "traffic report rejected");
+                tracing::warn!(
+                    rubato.reason = reason,
+                    rubato.workspace = first.as_str(),
+                    "traffic report rejected"
+                );
             }
             // The source answered: it is not failing, whatever it answered.
             if outcome != Outcome::Failed {
                 set_error(&mut latest, None);
                 if was_failing {
-                    tracing::info!("traffic source recovered");
+                    tracing::info!(
+                        rubato.workspace = first.as_str(),
+                        "traffic source recovered"
+                    );
                 }
             }
             span.record(attr::OUTCOME, outcome.as_str());
-            outcome
+            for ws in &targets {
+                all.insert(ws.clone(), latest.clone());
+            }
+            (outcome, targets)
         };
-        app.metrics.traffic_fetches.add(
-            1,
-            &[
-                KeyValue::new(attr::OUTCOME, outcome.as_str()),
-                KeyValue::new(attr::TRAFFIC_SOURCE, self.source.name()),
-            ],
-        );
-        self.record(app, now).await;
+        let mut attrs = vec![
+            KeyValue::new(attr::OUTCOME, outcome.as_str()),
+            KeyValue::new(attr::TRAFFIC_SOURCE, self.source.name()),
+        ];
+        if let Targets::One(ws) = &self.targets
+            && ws != rubato_protocol::DEFAULT_WORKSPACE
+        {
+            attrs.push(KeyValue::new(attr::WORKSPACE, ws.clone()));
+        }
+        app.metrics.traffic_fetches.add(1, &attrs);
+        self.record(app, &targets, now).await;
         outcome
     }
 
     /// Gauges from the derivation each workspace's overview would make now, and
     /// `notify_ws("traffic", ws)` for each workspace whose summary, its report time aside, differs
     /// from the last one it was told about (#131; ADR 0049: a change of one map is scoped to it).
-    async fn record(&mut self, app: &App, now: DateTime<Utc>) {
-        let latest = app.traffic.read().await.clone();
-        let since = latest
-            .report
-            .as_ref()
-            .map_or(self.started, |r| r.observed_at);
-        let age = (now - since).num_seconds().max(0);
-        app.metrics
-            .traffic_report_age
-            .record(u64::try_from(age).unwrap_or(0), &[]);
-        // Judged against each workspace's map and its dismissals (ADR 0039, 0060), and each
-        // workspace told on its own. A dismissal also notifies its workspace from the handler
-        // (`dismiss.rs`); the next tick tells it once more, since `dismissed` is in the summary.
-        let maps: Vec<(String, std::sync::Arc<crate::kernel::state::LoadedMap>)> = app
-            .maps
-            .read()
-            .await
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+    async fn record(&mut self, app: &App, targets: &[String], now: DateTime<Utc>) {
         let mut changed = Vec::new();
-        for (ws, m) in &maps {
+        for ws in targets {
+            let latest = app.traffic_of(ws).await;
+            let w = ws_attrs(ws);
+            let since = latest
+                .report
+                .as_ref()
+                .map_or(self.started, |r| r.observed_at);
+            let age = (now - since).num_seconds().max(0);
+            app.metrics
+                .traffic_report_age
+                .record(u64::try_from(age).unwrap_or(0), &w);
+            let Some(m) = app.map_of(ws).await else {
+                continue;
+            };
+            // Judged against the workspace's map and its dismissals (ADR 0039, 0060), and each
+            // workspace told on its own. A dismissal also notifies its workspace from the handler
+            // (`dismiss.rs`); the next tick tells it once more, since `dismissed` is in the summary.
             let dismissed = super::dismiss::list(&app.db, ws).await.unwrap_or_else(|e| {
                 tracing::warn!(error = %e, rubato.workspace = ws.as_str(), "traffic dismissals unreadable");
                 Vec::new()
@@ -169,12 +270,6 @@ impl<S: Source> Fetcher<S> {
                 &dismissed,
                 now,
             );
-            let is_default = ws == rubato_protocol::DEFAULT_WORKSPACE;
-            let w: Vec<KeyValue> = if is_default {
-                vec![]
-            } else {
-                vec![KeyValue::new(attr::WORKSPACE, ws.clone())]
-            };
             let quiet = f
                 .iter()
                 .filter(|f| matches!(f, Finding::SeamQuiet { .. }))
@@ -201,47 +296,28 @@ impl<S: Source> Fetcher<S> {
                 changed.push(ws.clone());
             }
         }
-        // Defensive: no code path removes a loaded map today.
-        self.told.retain(|ws, _| maps.iter().any(|(m, _)| m == ws));
+        self.told.retain(|ws, _| targets.contains(ws));
         for ws in changed {
             app.notify_ws("traffic", &ws);
         }
     }
 }
 
-/// The traffic task: runs only when a source is configured. Best-effort: if it ends, the
-/// report goes stale and the map says *unknown*.
-pub async fn run(app: App, mut shutdown: watch::Receiver<bool>) -> anyhow::Result<()> {
-    let fetch_secs = app.config.traffic_fetch_secs;
-    let source = if let Some(path) = app.config.dev_traffic.clone() {
-        tracing::warn!(
-            "RUBATO_DEV_TRAFFIC is set: observed traffic comes from that file; development and tests only"
-        );
-        ConfiguredSource::DevFile(DevFileSource::new(path))
+/// `rubato.workspace` for any workspace but `default`, whose series stay as they were before
+/// workspaces (ADR 0047).
+pub fn ws_attrs(ws: &str) -> Vec<KeyValue> {
+    if ws == rubato_protocol::DEFAULT_WORKSPACE {
+        vec![]
     } else {
-        match PrometheusConfig::from_env(|k| app.config.traffic_env.get(k), fetch_secs) {
-            Ok(Some(c)) => {
-                tracing::info!(url = %c.url, window_secs = c.window_secs, "traffic from the service graph");
-                ConfiguredSource::Prometheus(PrometheusSource::new(c))
-            }
-            Ok(None) => return Ok(()),
-            Err(e) => {
-                // A source set up wrong is a failing source, shown as unknown, never as quiet.
-                tracing::error!(error = %e, "traffic source failing");
-                set_error(&mut *app.traffic.write().await, Some(e));
-                return Ok(());
-            }
-        }
-    };
-    let mut fetcher = Fetcher::new(source, Utc::now()).with_timeout(Duration::from_secs(
-        u64::from(fetch_secs.saturating_sub(1).max(1)),
-    ));
-    let secs = u64::from(fetch_secs);
-    loop {
-        fetcher.tick(&app, Utc::now()).await;
-        tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(secs)) => {}
-            _ = shutdown.changed() => return Ok(()),
-        }
+        vec![KeyValue::new(attr::WORKSPACE, ws.to_owned())]
+    }
+}
+
+/// The key a task's generation is kept under: the workspace for its own source, one shared key
+/// for the development file that feeds them all.
+pub fn key(targets: &Targets, ws: &str) -> String {
+    match targets {
+        Targets::All => "*".into(),
+        Targets::One(_) => ws.to_owned(),
     }
 }
