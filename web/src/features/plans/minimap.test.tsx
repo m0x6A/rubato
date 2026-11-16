@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { realMap } from "../../../test/fixtures.ts";
 import type { Plan } from "../../protocol.ts";
 import { MiniMap, layered, miniPositions } from "./MiniMap.tsx";
+import { liveMap } from "../../shared/map.ts";
 
 const map = realMap();
 const plan: Plan = {
@@ -21,7 +22,10 @@ describe("a plan's mini map (issue #81)", () => {
     const svg = screen.getByTestId("mini-map");
     const lit = [...svg.querySelectorAll(".mini-part.affected, .mini-part.new")].map((c) => c.getAttribute("data-part"));
     expect(lit.sort()).toEqual(["rubato-server", "web"]);
-    expect(svg.querySelectorAll(".mini-part")).toHaveLength(map.nodes.length);
+    // Live parts only (ADR 0077).
+    expect(svg.querySelectorAll(".mini-part")).toHaveLength(liveMap(map).nodes.length);
+    expect(svg.querySelector('[data-part="tmux-ide"]')).toBeNull();
+    expect(svg.querySelector('[data-seam="companion-tmux-ide"]')).toBeNull();
     const seams = [...svg.querySelectorAll(".mini-seam.lit")].map((l) => l.getAttribute("data-seam"));
     expect(seams.sort()).toEqual(["server-github", "web-server"]);
     expect(svg).toHaveAttribute("aria-label", "Where it lands: rubato-server, web");

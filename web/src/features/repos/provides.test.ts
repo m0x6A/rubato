@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SystemMap } from "../../protocol.ts";
 import { realMap } from "../../../test/fixtures.ts";
 import { repoFeatures } from "./provides.ts";
+import { liveMap } from "../../shared/map.ts";
 
 // Two repos and an external: auth owns the token seam the shop uses, and a journey crosses both.
 const map: SystemMap = {
@@ -48,8 +49,10 @@ describe("what a repo provides, derived from the map (issue #89)", () => {
   });
 
   it("on the team's own map, rubato provides every part that has a repo", () => {
-    const real = realMap();
-    const own = repoFeatures(real, "m0x6A/rubato");
+    // Live parts only: a retired part is provided by nobody (ADR 0077).
+    const real = liveMap(realMap());
+    const own = repoFeatures(realMap(), "m0x6A/rubato");
+    expect(own.uses.map((s) => s.id)).not.toContain("companion-tmux-ide");
     expect(own.parts.length).toBe(real.nodes.filter((n) => n.repo).length);
     expect(own.parts.length).toBeGreaterThan(0);
     // Externals have no repo, so the seams to them are owned here or used from here, never lost.
