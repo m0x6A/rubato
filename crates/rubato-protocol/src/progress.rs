@@ -498,6 +498,10 @@ pub struct Overview {
     /// Every configured workspace, in switcher order. Empty from an older server.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspaces: Vec<crate::workspace::WorkspaceInfo>,
+    /// What each live launched session's agent last said it is doing (ADR 0071): a signal shown
+    /// with its age, joined on `(companion_id, launch_id)`, never a progress state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_lines: Vec<crate::agent::AgentLine>,
     pub generated_at: DateTime<Utc>,
 }
 

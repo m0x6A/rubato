@@ -232,7 +232,7 @@
       "type": "timeseries",
       "gridPos": {
         "h": 6,
-        "w": 24,
+        "w": 12,
         "x": 0,
         "y": 7
       },
@@ -246,6 +246,46 @@
           "refId": "A",
           "expr": "sum by (rubato_outcome, rubato_reason) (increase(rubato_launches_total[15m]))",
           "legendFormat": "{{rubato_outcome}} {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 113,
+      "title": "MCP calls by tool and outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "The companion's MCP server for launched sessions (ADR 0071): calls by rubato_mcp_tool, rubato_outcome and rubato_reason (refused no_launch: a launch the companion does not know, often after a restart that lost launches.json; identity: a call naming another issue; discovery: Claude Code asking for OAuth after a 401, a stale token in mcp.json). Reports drained (sent, or not_sent server_too_old while the server does not take agent_mcp). Not initialized: a launched session made no MCP request in its first five minutes, so Claude Code could not start the server; look for the rubato.mcp.call span and the 'launched session has not initialized mcp' log line with rubato.launch_id.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_mcp_tool, rubato_outcome, rubato_reason) (increase(rubato_mcp_calls_total[15m]))",
+          "legendFormat": "{{rubato_mcp_tool}} {{rubato_outcome}} {{rubato_reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_outcome, rubato_reason) (increase(rubato_mcp_reports_total[15m]))",
+          "legendFormat": "reports {{rubato_outcome}} {{rubato_reason}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (rubato_companion_id) (increase(rubato_mcp_not_initialized_total[1h]))",
+          "legendFormat": "not initialized {{rubato_companion_id}}"
         }
       ],
       "fieldConfig": {

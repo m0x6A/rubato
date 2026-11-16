@@ -120,6 +120,7 @@ rooms           a plan's room: messages, seam notices, agents called in, turns  
 voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
+agent_reports   what each launched agent last said it is doing  agent_reports
 overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
@@ -143,6 +144,7 @@ spend          transcript cost, spend cap, CapHit                               
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
 session_input  SessionMessage: own user, launched here, idle, typed once; stop    session input task (essential)
 plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
+agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_status  report drain (essential), not-initialized watch (best-effort)
 ```
 <!-- /slices -->
 <!-- slices: web -->
@@ -179,7 +181,7 @@ Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; 
 modules, each with the types and `routes` its seam uses (every type re-exported at the root):
 
 ```text
-agent      AgentReport, PlanStatus, DraftStatus, BranchStatus (ADR 0071; capability agent_mcp)
+agent      AgentReport, PlanStatus, DraftStatus, BranchStatus, AgentLine (ADR 0071; capability agent_mcp)
 approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
 auth       Me; ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE

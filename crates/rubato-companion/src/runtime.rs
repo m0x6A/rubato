@@ -227,13 +227,39 @@ async fn run(
     )
     .allow_plain_http(cfg.state.allow_plain_http);
 
+    // The agent-facing MCP server on the hook receiver (ADR 0071, plan 220 §4). Built before any
+    // launch can run, so launches restored at start count as initialized.
+    let agent_mcp = crate::agent_mcp::AgentMcp::new(
+        registry.clone(),
+        metrics.clone(),
+        server_capabilities.clone(),
+        out_tx.clone(),
+        connected_tx.subscribe(),
+    )
+    .await;
+    let (mcp_open, mcp_guarded) = crate::agent_mcp::routers(agent_mcp.clone());
+
     let mut tasks = Tasks::default();
     tasks.spawn(
         "server_link",
         Kind::Essential,
         client.run(out_rx, in_tx, connected_tx, shutdown.clone()),
     );
-    tasks.spawn("hooks", Kind::Essential, server.serve());
+    tasks.spawn(
+        "hooks",
+        Kind::Essential,
+        server.serve_with(mcp_open, mcp_guarded),
+    );
+    tasks.spawn(
+        "agent_mcp_drain",
+        Kind::Essential,
+        crate::agent_mcp::drain(agent_mcp.clone(), shutdown.clone()),
+    );
+    tasks.spawn(
+        "agent_mcp_watch",
+        Kind::BestEffort,
+        crate::agent_mcp::watch(agent_mcp.clone(), shutdown.clone()),
+    );
     tasks.spawn(
         "heartbeat",
         Kind::Essential,
@@ -404,6 +430,7 @@ async fn run(
         plan_mirror: mirror_tx,
         spend: spend_tx,
         headless,
+        agent_mcp: Some(agent_mcp),
     };
     let supervised = supervise(tasks, shutdown.clone());
     tokio::pin!(supervised);
@@ -428,6 +455,8 @@ pub fn hello_capabilities(skill: Option<&str>, mode: rubato_protocol::ClientKind
         capability::DRAFT_RESTORE.to_owned(),
         capability::SESSION_STOP.to_owned(),
         capability::ROOM_TURNS.to_owned(),
+        // It serves MCP to its launched sessions and takes `PlanStatus` (ADR 0071, plan 220 §6).
+        capability::AGENT_MCP.to_owned(),
     ];
     if mode == rubato_protocol::ClientKind::Headless {
         caps.push(capability::HEADLESS.to_owned());
@@ -462,6 +491,8 @@ struct Dispatch {
     /// Headless mode: turns killed on a revoked pairing (ADR 0062); the spend task kills one on
     /// a cap hit.
     headless: Option<sessions::Headless>,
+    /// Where a `PlanStatus` goes (ADR 0071). `None` in tests that exercise other arms.
+    agent_mcp: Option<Arc<crate::agent_mcp::AgentMcp>>,
 }
 
 impl Dispatch {
@@ -497,6 +528,12 @@ impl Dispatch {
                     // Queued too: one paste at a time, after the Welcome that came before it.
                     ServerMessage::SessionMessage(m) => {
                         let _ = self.session_input.send(m);
+                    }
+                    // The newest per launch answers `plan_status` (ADR 0071, plan 220 §6).
+                    ServerMessage::PlanStatus(s) => {
+                        if let Some(a) = &self.agent_mcp {
+                            a.on_plan_status(*s);
+                        }
                     }
                     ServerMessage::Error { code, .. } if code == "auth" => {
                         tracing::error!("pairing token rejected; re-pair with `rubato-companion pair`");
@@ -648,6 +685,7 @@ mod tests {
             capability::DRAFT_RESTORE,
             capability::SESSION_STOP,
             capability::ROOM_TURNS,
+            capability::AGENT_MCP,
             "skill:0.2.0",
         ] {
             assert!(with.iter().any(|x| x == c), "{c} in {with:?}");
@@ -786,6 +824,7 @@ mod tests {
             plan_mirror: mirror_tx,
             spend: spend_tx,
             headless: None,
+            agent_mcp: None,
         };
         let looped =
             tokio::spawn(
