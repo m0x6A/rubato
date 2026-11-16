@@ -456,6 +456,9 @@ tr.chat-row > td { padding-top: 0; }
 .lane header { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .lane h4 { font-size: 12px; color: var(--chip-ink); text-transform: uppercase; letter-spacing: 0.04em; }
 .lane-row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; align-items: flex-start; }
+/* What a launched agent says it is doing (ADR 0071): plain text with its age, never a chip. */
+.agent-line { font-size: 0.85em; margin-top: 2px; overflow-wrap: anywhere; }
+.agent-line .agent-parts { opacity: 0.8; }
 .lane ol.plain, .lane ul.plain { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .queue-entry[draggable="true"] { cursor: grab; }
 .queue-entry .row-end { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
