@@ -125,6 +125,9 @@ pub struct AppState {
     /// In-memory state a slice keeps for this server, one value per type (the pull request view
     /// cache, issue #82). Never a table; gone on restart.
     pub slots: Slots,
+    /// A companion was answered a `Welcome`: a slice that pushes to it right after (plan 226 §4,
+    /// `plan_status`) listens here, so `companion_link` names no slice for it.
+    welcomed: broadcast::Sender<Uuid>,
     /// The speech adapter while voice is on with a provider configured (ADR 0073). Tests swap it
     /// for a counting or blocking fake with `set_speech`.
     speech: std::sync::RwLock<Option<Arc<dyn Speech>>>,
@@ -201,7 +204,27 @@ impl AppState {
             webhook_wake: tokio::sync::Notify::new(),
             polled_repos: Mutex::new(BTreeSet::new()),
             slots: Slots::default(),
+            welcomed: broadcast::channel(64).0,
         })
+    }
+
+    /// `companion_link` answered this companion's `Hello` with a `Welcome`.
+    pub fn companion_welcomed(&self, companion_id: Uuid) {
+        let _ = self.welcomed.send(companion_id);
+    }
+
+    /// Companions as they are welcomed, from now on.
+    pub fn subscribe_welcomed(&self) -> broadcast::Receiver<Uuid> {
+        self.welcomed.subscribe()
+    }
+
+    /// The per-socket id of a connected companion (#161): a reconnect is a new one.
+    pub fn companion_conn(&self, companion_id: Uuid) -> Option<Uuid> {
+        self.companions
+            .lock()
+            .unwrap()
+            .get(&companion_id)
+            .map(|c| c.conn)
     }
 
     /// The workspaces this server holds now, in switcher order, and where the list came from

@@ -139,6 +139,8 @@ pub struct Metrics {
     pub traffic_ghost_parts: Gauge<u64>,
     pub traffic_dismissals: Gauge<u64>,
     pub spend_points: Counter<u64>,
+    /// `PlanStatus` pushes to companions, by `rubato.reason` and `rubato.outcome` (ADR 0071).
+    pub plan_status_sent: Counter<u64>,
     /// The configured companion stale threshold N in seconds (#105). No unit, so the series
     /// stays `rubato_companion_silent_secs`, the name `CompanionSilent` reads.
     pub companion_silent_secs: Gauge<u64>,
@@ -242,6 +244,7 @@ impl Metrics {
             traffic_ghost_parts: m.u64_gauge(otel::metric::TRAFFIC_GHOST_PARTS).build(),
             traffic_dismissals: m.u64_gauge(otel::metric::TRAFFIC_DISMISSALS).build(),
             spend_points: m.u64_counter(otel::metric::SPEND_POINTS).build(),
+            plan_status_sent: m.u64_counter(otel::metric::PLAN_STATUS_SENT).build(),
             companion_silent_secs: m.u64_gauge(otel::metric::COMPANION_SILENT_SECS).build(),
             session_messages: m.u64_counter(otel::metric::SESSION_MESSAGES).build(),
             session_messages_oldest_idle_queued: m

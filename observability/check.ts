@@ -82,6 +82,8 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Launches by outcome", "rubato_launches_total"],
   // Issue #221 (ADR 0071): the O-row of seam companion-mcp names this panel.
   ["MCP calls by tool and outcome", "rubato_mcp_calls_total"],
+  // Issue #228 (ADR 0071): the O-row of seam companion-server names this panel.
+  ["Plan status pushes", "rubato_plan_status_sent_total"],
   // Issue #142 (ADR 0061): the O-rows of the skill seams and companion-claude-code name this panel.
   ["Skills emitting", "traces_service_graph_request_total"],
   // Issue #146 (ADR 0073): the O-rows of server-speech and web-livekit name this panel.

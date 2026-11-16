@@ -2342,7 +2342,8 @@ async fn welcome_carries_last_seen_seq_after_reconnect() {
             "session_messages",
             "drafts",
             "handoff_reports",
-            "room_replies"
+            "room_replies",
+            "agent_mcp"
         ],
         "the Welcome names every message kind the server takes"
     );

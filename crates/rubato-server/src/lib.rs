@@ -24,6 +24,7 @@ pub mod overview;
 pub mod pairing;
 pub mod pins;
 pub mod plan_drafts;
+pub mod plan_status;
 pub mod plans;
 pub mod pulls;
 pub mod queue;

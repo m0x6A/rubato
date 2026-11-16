@@ -28,3 +28,11 @@ Feature: Companions
     Given a person paired a headless companion
     When anyone opens Companions
     Then that companion is marked headless
+
+  @companions.agent-line
+  Scenario: A launched session shows what its agent says it is doing, with its age
+    Given a person launched a session through their companion
+    And its agent reported a line of what it is doing through MCP
+    When anyone opens Companions or the issue
+    Then the line is shown under that session with how long ago it was said
+    And it is never shown as a state, and never under another companion's session

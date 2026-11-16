@@ -1949,6 +1949,36 @@
       "options": {}
     },
     {
+      "id": 114,
+      "title": "Plan status pushes",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 129
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "PlanStatus pushes to companions for their launched sessions (ADR 0071): welcome (right after a companion connects, from the last tick) and change (a tick found a different status), by outcome: sent, offline (the companion's socket was gone), no_summary (the launch's issue is in no built overview). With companions connected and launched sessions live, welcome flat at zero means plan_status answers unknown everywhere: look for 'plan status pushed after welcome' and 'overview not built' with rubato.workspace.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_reason, rubato_outcome) (increase(rubato_plan_status_sent_total[15m]))",
+          "legendFormat": "{{rubato_reason}} {{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
       "id": 110,
       "title": "Webhooks",
       "type": "timeseries",

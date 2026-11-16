@@ -74,6 +74,35 @@ describe("companion lanes (S13)", () => {
     expect(bar().querySelector("b")).toHaveClass("fading");
   });
 
+  // ADR 0071, plan 226 §3: what a launched agent says it is doing, with its age, never a state.
+  it("a launched session shows its agent's line with its age, joined on companion and launch", () => {
+    const LAUNCH = "99999999-9999-9999-9999-999999999999";
+    const ref = { repo: REPO, number: 48 };
+    const line = { companion_id: MINE, launch_id: LAUNCH, doing: "designing the auth seam", parts: ["rubato-server"], reported_at: minutesAgo(3) };
+    // The same launch id claimed by another companion is not this session's line.
+    const forged = { ...line, companion_id: ALICE, doing: "forged" };
+    show(overview({ companions: [mine], agent_lines: [forged, line], issues: [issue(48, "web", { sessions: [session(MINE, { issue: ref, launch_id: LAUNCH })] })] }));
+    const row = within(lane(MINE)).getByTestId("lane-session");
+    const shown = within(row).getByTestId("agent-line");
+    expect(shown).toHaveTextContent('"designing the auth seam" · 3m ago');
+    expect(shown).toHaveTextContent("rubato-server");
+    expect(row).not.toHaveTextContent("forged");
+    // Never a chip or a colour: the badge is still the session's own status.
+    expect(shown.className).not.toMatch(/badge|working|blocked/);
+    expect(within(row).getAllByText("working")).toHaveLength(1);
+  });
+
+  it("an old line is shown muted with its age, and a session without one looks as before", () => {
+    const LAUNCH = "99999999-9999-9999-9999-999999999999";
+    const old = { companion_id: MINE, launch_id: LAUNCH, doing: "still here", parts: [], reported_at: minutesAgo(30) };
+    show(overview({ companions: [mine], agent_lines: [old], unpinned_sessions: [session(MINE, { launch_id: LAUNCH }), session(MINE, { session_id: "other" })] }));
+    const rows = within(lane(MINE)).getAllByTestId("lane-session");
+    const shown = within(rows[0]!).getByTestId("agent-line");
+    expect(shown).toHaveClass("muted");
+    expect(shown).toHaveTextContent("30m ago");
+    expect(within(rows[1]!).queryByTestId("agent-line")).toBeNull();
+  });
+
   it("sessions without an issue are listed", () => {
     show(overview({ companions: [mine, alices], unpinned_sessions: [session(MINE, { branch: "scratch", status: "idle" })] }));
     const row = within(lane(MINE)).getByTestId("lane-session");
