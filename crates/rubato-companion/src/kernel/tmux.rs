@@ -1,6 +1,6 @@
 //! tmux as a CLI, honouring a private socket directory. Pane *metadata* only (cwd, command,
-//! ids); pane content is never read. State comes from hooks and tmux-ide. The one write into a
-//! pane is [`SessionInput::paste`] (ADR 0051, amending ADR 0003 for typed input).
+//! ids) and `tmux -V`; pane content is never read. State comes from hooks (ADR 0070). The one
+//! write into a pane is [`SessionInput::paste`] (ADR 0051, amending ADR 0003 for typed input).
 
 use crate::kernel::proc;
 use anyhow::{Context, Result, bail};
@@ -66,7 +66,7 @@ impl Tmux {
         }
     }
 
-    /// A `Command` with the socket env applied. Also used for tmux-ide and the launcher so they see the same server.
+    /// A `Command` with the socket env applied. Also used by the launcher so it sees the same server.
     pub fn apply_env(&self, cmd: &mut Command) {
         cmd.env_remove("TMUX");
         if let Some(d) = &self.tmpdir {
@@ -135,6 +135,14 @@ impl Tmux {
             Err(e) if proc::is_timeout(&e) => Err(e),
             Err(_) => Ok(false),
         }
+    }
+
+    /// `tmux -V` → `3.8`, `3.7a` or `next-3.9`: the word after `tmux`. `Err` when tmux is missing,
+    /// fails, hangs past the deadline or prints no version (ADR 0070).
+    pub fn version(&self) -> Result<String> {
+        let out = self.run(&["-V"])?;
+        parse_version(&out)
+            .with_context(|| format!("no version in `{} -V` output: {}", self.command, out.trim()))
     }
 
     /// Every pane on the server. Empty when no server is running; `Err` when tmux hangs.
@@ -209,6 +217,32 @@ pub fn session_name(repo: &str, branch: &str) -> String {
     format!("{}@{}", clean(repo_name), clean(branch))
 }
 
+/// The version word of `tmux -V` output (`tmux 3.8` → `3.8`), if it has one with a digit.
+fn parse_version(out: &str) -> Option<String> {
+    let mut words = out.split_whitespace();
+    (words.next()? == "tmux").then_some(())?;
+    let v = words.next()?;
+    v.chars().any(|c| c.is_ascii_digit()).then(|| v.to_owned())
+}
+
+/// Whether `have` is at least `min`, by their numeric dotted parts. A prefix such as `next-` and
+/// a letter suffix such as the `a` in `3.7a` are ignored, so `3.7a` meets `3.7`.
+pub fn version_at_least(have: &str, min: &str) -> bool {
+    let parse = |s: &str| {
+        let s = s.trim_start_matches(|c: char| !c.is_ascii_digit());
+        s.split('.')
+            .map(|p| {
+                p.chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u64>()
+                    .unwrap_or(0)
+            })
+            .collect::<Vec<_>>()
+    };
+    parse(have) >= parse(min)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +281,41 @@ mod tests {
         let none = standin(dir.path(), "exit 1", proc::LOCAL_TIMEOUT);
         assert_eq!(none.panes().unwrap(), vec![]);
         assert!(!none.has_session("x").unwrap());
+    }
+
+    /// ADR 0070: the pin moves from tmux-ide to tmux. What `tmux -V` prints on release, patch and
+    /// development builds, and what it is compared against.
+    #[test]
+    fn tmux_versions_parse_and_compare() {
+        let cases = [
+            ("tmux 3.8\n", Some("3.8")),
+            ("tmux 3.7a\n", Some("3.7a")),
+            ("tmux next-3.9\n", Some("next-3.9")),
+            ("tmux\n", None),
+            ("tmux master\n", None),
+            ("screen 4.9\n", None),
+        ];
+        for (out, want) in cases {
+            assert_eq!(parse_version(out).as_deref(), want, "{out:?}");
+        }
+        assert!(version_at_least("3.8", "3.7"));
+        assert!(version_at_least("3.7a", "3.7"));
+        assert!(version_at_least("next-3.9", "3.7"));
+        assert!(!version_at_least("3.5", "3.7"));
+        assert!(!version_at_least("3.6a", "3.7"));
+        assert!(version_at_least("10.0", "3.7"));
+        println!("checked {} tmux -V outputs", cases.len());
+    }
+
+    /// A hung or failing `tmux -V` is an error, not a version.
+    #[test]
+    fn a_failing_tmux_has_no_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = standin(dir.path(), "echo no tmux >&2; exit 1", proc::LOCAL_TIMEOUT);
+        assert!(broken.version().is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let old = standin(dir.path(), "echo 'tmux 3.5'", proc::LOCAL_TIMEOUT);
+        assert_eq!(old.version().unwrap(), "3.5");
     }
 
     #[test]

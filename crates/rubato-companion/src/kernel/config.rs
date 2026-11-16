@@ -66,21 +66,22 @@ pub struct ModelPrice {
 pub struct CompanionConfig {
     /// Command used to start Claude Code. Tests point this at a stand-in.
     pub claude_command: String,
-    /// Command used for tmux-ide.
-    pub tmux_ide_command: String,
+    /// Command used for git in a launch: fetch, worktree list, add and remove (ADR 0070). Tests
+    /// point this at a wrapper around the real git.
+    pub git_command: String,
     /// Command used for tmux.
     pub tmux_command: String,
     /// Socket directory for a private tmux server (`TMUX_TMPDIR`). None means the default server.
     pub tmux_tmpdir: Option<PathBuf>,
-    /// Lowest tmux-ide version the companion accepts.
-    pub tmux_ide_min_version: String,
+    /// Lowest tmux version an interactive launch accepts (`tmux -V`, ADR 0070).
+    pub tmux_min_version: String,
     /// Thresholds; the server may override them in `Welcome`.
     pub limits: Limits,
     /// Prices by model id prefix, longest prefix wins. Empty means spend is not measured.
     pub pricing: BTreeMap<String, ModelPrice>,
     /// Permission mode passed to Claude Code at launch.
     pub permission_mode: String,
-    /// Deadline for the launch's `git fetch` and every tmux-ide call; a launch that hits it is
+    /// Deadline for every git and tmux call of a launch; a launch that hits it is
     /// `Failed` (plan 40 S3, A1).
     pub command_timeout_secs: u64,
     /// Where the rubato skill is installed; None means `~/.claude/skills/rubato`. Its version
@@ -118,14 +119,14 @@ impl Default for CompanionConfig {
     fn default() -> Self {
         Self {
             claude_command: "claude".into(),
-            tmux_ide_command: "tmux-ide".into(),
+            git_command: "git".into(),
             tmux_command: "tmux".into(),
             tmux_tmpdir: None,
-            tmux_ide_min_version: "2.9.0".into(),
+            tmux_min_version: "3.7".into(),
             limits: Limits::default(),
             pricing: BTreeMap::new(),
             permission_mode: "acceptEdits".into(),
-            command_timeout_secs: crate::kernel::tmux_ide::DEFAULT_TIMEOUT.as_secs(),
+            command_timeout_secs: crate::kernel::proc::DEFAULT_TIMEOUT.as_secs(),
             skill_dir: None,
             mode: rubato_protocol::ClientKind::Interactive,
             headless_turn_max_secs: 4 * 60 * 60,
@@ -135,10 +136,26 @@ impl Default for CompanionConfig {
     }
 }
 
+/// `local.yml` keys under `companion:` that tmux-ide used (ADR 0070). They still parse, since
+/// unknown keys are ignored; each is named once at start so the developer can delete it.
+pub const RETIRED_KEYS: [&str; 2] = ["tmux_ide_command", "tmux_ide_min_version"];
+
+/// The retired keys `text` still sets. Text that does not parse sets none: `parse` says why.
+pub fn retired_keys(text: &str) -> Vec<&'static str> {
+    let Ok(v) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(text) else {
+        return Vec::new();
+    };
+    let companion = v.get("companion");
+    RETIRED_KEYS
+        .into_iter()
+        .filter(|k| companion.and_then(|c| c.get(*k)).is_some())
+        .collect()
+}
+
 impl Workspace {
     pub fn parse(text: &str) -> Result<Self> {
         let ws: Self = serde_yaml_ng::from_str(text).context("workspace.yml does not parse")?;
-        // Zero would time every tmux-ide call out at once, with nothing pointing here (plan 40).
+        // Zero would time every launch call out at once, with nothing pointing here (plan 40).
         anyhow::ensure!(
             ws.companion.command_timeout_secs > 0,
             "workspace.yml: companion.command_timeout_secs must be at least 1"
@@ -149,6 +166,9 @@ impl Workspace {
     pub fn load(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        for key in retired_keys(&text) {
+            tracing::info!(key, "local.yml sets a retired key; delete it");
+        }
         Self::parse(&text)
     }
 
@@ -255,6 +275,10 @@ pub struct State {
     /// Last server sequence acknowledged.
     #[serde(default)]
     pub last_server_seq: u64,
+    /// Set by `pair --insecure`: `server_url` may be http/ws off loopback (ADR 0067). Files
+    /// written before the field existed read as false.
+    #[serde(default)]
+    pub allow_plain_http: bool,
 }
 
 impl State {
@@ -297,6 +321,50 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     // In case the file existed with wider permissions.
     std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     Ok(())
+}
+
+/// How a server URL that passed [`check_server_url`] carries the pairing token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// `https`/`wss`, or `http`/`ws` on loopback.
+    Protected,
+    /// `http`/`ws` off loopback, allowed only because the developer paired with `--insecure`.
+    PlainOffLoopback,
+}
+
+/// Refuse a server URL that would carry the pairing token or launch commands in clear text off
+/// this machine (ADR 0067): `https` and `wss` anywhere, `http` and `ws` on loopback
+/// (`localhost`, `127.0.0.0/8`, `::1`), and `http` and `ws` elsewhere only when the developer
+/// opted in with `pair --insecure` (`allow_plain_http` in `companion.json`). Checked before
+/// pairing and before connecting; the caller warns on [`Transport::PlainOffLoopback`].
+pub fn check_server_url(server_url: &str, allow_plain_http: bool) -> Result<Transport> {
+    let url = url::Url::parse(server_url)
+        .with_context(|| format!("server URL {server_url:?} does not parse"))?;
+    let loopback = match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    match url.scheme() {
+        "https" | "wss" => Ok(Transport::Protected),
+        "http" | "ws" if loopback => Ok(Transport::Protected),
+        "http" | "ws" if allow_plain_http => Ok(Transport::PlainOffLoopback),
+        "http" | "ws" => anyhow::bail!(
+            "server URL {server_url} is plain text off loopback; use https://, a tunnel to \
+             127.0.0.1, or accept an unencrypted pairing token with \
+             `rubato-companion pair --insecure --server {server_url}`"
+        ),
+        other => anyhow::bail!("server URL {server_url} has scheme {other}; use https://"),
+    }
+}
+
+/// Logged at pair time and at every start while the `--insecure` opt-in is in use (ADR 0067).
+pub fn warn_plain_http(server_url: &str) {
+    tracing::warn!(
+        server = %server_url,
+        "server URL {server_url} is plain http off loopback (paired with --insecure): the pairing token and launch commands travel unencrypted"
+    );
 }
 
 /// Write a state file readable only by the owner, atomically: a temp file with mode 0600,
@@ -380,6 +448,20 @@ pub const HOOK_HEADER_FILE: &str = "hook-auth.header";
 mod tests {
     use super::*;
 
+    /// Plan 147 A7: a `local.yml` written for tmux-ide still parses, and each retired key it
+    /// sets is named once; one that sets none names none.
+    #[test]
+    fn a_config_with_retired_tmux_ide_keys_parses_and_names_them() {
+        let old = "companion:\n  tmux_ide_command: /usr/local/bin/tmux-ide\n  tmux_ide_min_version: 2.9.0\n  tmux_command: tmux\nrepos: []\n";
+        let ws = Workspace::parse(old).unwrap();
+        assert_eq!(ws.companion.tmux_min_version, "3.7");
+        assert_eq!(ws.companion.git_command, "git");
+        assert_eq!(retired_keys(old), RETIRED_KEYS);
+        assert!(retired_keys("companion:\n  tmux_command: tmux\nrepos: []\n").is_empty());
+        assert!(retired_keys("not: [yaml").is_empty());
+        println!("checked {} retired keys", RETIRED_KEYS.len());
+    }
+
     /// The old name is found and flagged: `RUBATO_WORKSPACE`, a `workspace.yml` left alone, or one
     /// named by `RUBATO_LOCAL`; `local.yml` and an empty directory are not (#132).
     #[test]
@@ -422,6 +504,81 @@ mod tests {
         );
         let w = Workspace::old_name_warning(&d.join("workspace.yml"));
         assert!(w.contains("workspace.yml is now local.yml"), "{w}");
+    }
+
+    #[test]
+    fn server_urls() {
+        let ok = [
+            "https://rubato.example",
+            "wss://rubato.example",
+            "http://127.0.0.1:8080",
+            "http://127.1.2.3",
+            "http://localhost:8080",
+            "http://LOCALHOST:8080/",
+            "http://[::1]:8080",
+            "ws://127.0.0.1",
+        ];
+        let refused = [
+            "http://rubato.example",
+            "ws://10.0.0.5:8080",
+            "http://localhost.evil.example",
+            "http://127.0.0.1.evil.example",
+            "http://[::ffff:10.0.0.5]",
+            "ftp://127.0.0.1",
+            "not a url",
+        ];
+        // The opt-in (`pair --insecure`) lets plain http/ws off loopback through, flagged.
+        let opt_in_plain = [
+            "http://rubato.example",
+            "ws://10.0.0.5:8080",
+            "http://192.168.1.20:8080",
+        ];
+        // ...and changes nothing else: other schemes and bad URLs stay refused.
+        let opt_in_refused = ["ftp://127.0.0.1", "not a url"];
+        for u in ok {
+            assert_eq!(
+                check_server_url(u, false).unwrap(),
+                Transport::Protected,
+                "{u}"
+            );
+            assert_eq!(
+                check_server_url(u, true).unwrap(),
+                Transport::Protected,
+                "{u}"
+            );
+        }
+        for u in refused {
+            assert!(check_server_url(u, false).is_err(), "{u} should be refused");
+        }
+        let e = format!(
+            "{:#}",
+            check_server_url("http://rubato.example", false).unwrap_err()
+        );
+        assert!(e.contains("--insecure"), "{e}");
+        for u in opt_in_plain {
+            assert_eq!(
+                check_server_url(u, true).unwrap(),
+                Transport::PlainOffLoopback,
+                "{u}"
+            );
+        }
+        for u in opt_in_refused {
+            assert!(check_server_url(u, true).is_err(), "{u} should be refused");
+        }
+        eprintln!(
+            "server_urls: {} accepted, {} refused, {} plain with opt-in, {} refused with opt-in",
+            ok.len(),
+            refused.len(),
+            opt_in_plain.len(),
+            opt_in_refused.len()
+        );
+    }
+
+    #[test]
+    fn an_older_state_file_does_not_allow_plain_http() {
+        let old = r#"{"companion_id":"00000000-0000-0000-0000-000000000001","server_url":"http://x","user":"u","pairing_token":"t"}"#;
+        let s: State = serde_json::from_str(old).unwrap();
+        assert!(!s.allow_plain_http);
     }
 
     #[test]
@@ -506,6 +663,7 @@ mod tests {
             pairing_token: "t".into(),
             last_seq: 3,
             last_server_seq: 1,
+            allow_plain_http: false,
         };
         s.save(dir.path()).unwrap();
         let mode = std::fs::metadata(State::path(dir.path()))

@@ -85,6 +85,7 @@ pub async fn post_seam_notices(app: &App) -> Result<usize> {
                     }),
                     addressed: vec![],
                     turn_id: None,
+                    spoken: false,
                 };
                 if store::insert(&app.db, &room, &m).await? {
                     posted += 1;

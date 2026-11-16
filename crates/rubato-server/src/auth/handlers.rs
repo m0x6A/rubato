@@ -289,5 +289,6 @@ pub async fn me(State(app): State<App>, super::CurrentUser(login): super::Curren
         avatar_url: None,
         can_act_on_github: can.is_ok(),
         cannot_act_reason: can.err().map(str::to_owned),
+        voice: app.config.voice_availability(),
     })
 }

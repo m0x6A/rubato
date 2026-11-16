@@ -28,7 +28,7 @@ async function connectCompanion(user: string): Promise<WebSocket> {
   return ws;
 }
 
-test("the map renders every node id from system-map.yml", async ({ page }) => {
+test("the map renders every node id from system-map.yml", { tag: "@map.every-part" }, async ({ page }) => {
   await page.goto("/");
   for (const n of map.nodes) {
     await expect(page.getByTestId(`node-${n.id}`)).toBeVisible();
@@ -36,7 +36,7 @@ test("the map renders every node id from system-map.yml", async ({ page }) => {
   await expect(page.getByText("map rubato @")).toBeVisible();
 });
 
-test("By repo boxes each repo's parts, and the Repos tab says what each repo provides (issue #89)", async ({ page }) => {
+test("By repo boxes each repo's parts, and the Repos tab says what each repo provides (issue #89)", { tag: ["@map.by-repo", "@repos.what-each-provides"] }, async ({ page }) => {
   const nodes = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; repo?: string }[] }).nodes;
   const owned = nodes.filter((n) => n.repo);
   await page.goto("/");
@@ -61,7 +61,7 @@ test("By repo boxes each repo's parts, and the Repos tab says what each repo pro
   await expect(provides).toContainText(owned[0]!.id);
 });
 
-test("a member's Map: line places an issue without a drag; a stranger's only suggests", async ({ page }) => {
+test("a member's Map: line places an issue without a drag; a stranger's only suggests", { tag: ["@pins.map-line-member", "@pins.map-line-stranger-suggests"] }, async ({ page }) => {
   // fixtures/issues.json: #912 by the owner names seam companion-server; #913 by someone
   // outside the team names part plan-check (ADR 0026).
   await page.goto("/");
@@ -78,7 +78,7 @@ test("a member's Map: line places an issue without a drag; a stranger's only sug
   await expect(suggestion).toContainText("from someone outside the team");
 });
 
-test("an issue created from a part is pinned on it (ADR 0025)", async ({ page }) => {
+test("an issue created from a part is pinned on it (ADR 0025)", { tag: "@new-issue.pinned-where-begun" }, async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("node-plan-check").click();
   await page.getByTestId("inspector").getByTestId("new-issue-here").click();
@@ -97,7 +97,7 @@ test("an issue created from a part is pinned on it (ADR 0025)", async ({ page })
   await expect(detail).toContainText("node plan-check");
 });
 
-test("drag a not-pinned issue onto a part and onto a seam", async ({ page }) => {
+test("drag a not-pinned issue onto a part and onto a seam", { tag: ["@pins.drag-onto-part", "@pins.drag-onto-seam"] }, async ({ page }) => {
   // The harness serves three open issues of m0x6A/rubato: #901, #902 and #903, none tracked.
   const key = (n: number) => `m0x6A/rubato#${n}`;
   await page.goto("/");
@@ -134,7 +134,7 @@ test("drag a not-pinned issue onto a part and onto a seam", async ({ page }) => 
   await expect(page.getByTestId("seam-web-server")).toContainText("1 issue");
 });
 
-test("start session appears only for the current user's own connected companion", async ({ page }) => {
+test("start session appears only for the current user's own connected companion", { tag: ["@launch.only-own-companion", "@companions.see-teammates"] }, async ({ page }) => {
   // Pin an issue so there is something to select.
   const pin = await fetch(`${base}/api/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } }) });
   expect([201, 200]).toContain(pin.status);
@@ -182,7 +182,7 @@ async function canvasPosition(page: Page, id: string): Promise<{ x: number; y: n
   return { x: Math.round(Number(m[1])), y: Math.round(Number(m[2])) };
 }
 
-test("a dragged part is in the same place in a second browser and after reload", async ({ page, browser }) => {
+test("a dragged part is in the same place in a second browser and after reload", { tag: ["@map.shared-layout", "@live.changes-reach-every-browser"] }, async ({ page, browser }) => {
   const other = await (await browser.newContext({ baseURL: base })).newPage();
   await page.goto("/");
   await other.goto("/");
@@ -239,7 +239,7 @@ test("a dragged part is in the same place in a second browser and after reload",
   await other.context().close();
 });
 
-test("the data flow lens shows rubato-map.yml's flows with arrowheads", async ({ page }) => {
+test("the data flow lens shows rubato-map.yml's flows with arrowheads", { tag: ["@map.flow-lens", "@map.inspect-part-and-seam"] }, async ({ page }) => {
   const seams = (parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { seams: { id: string; flows?: { kind: string; carries: string }[] }[] }).seams;
   const flows = (kind: string) => seams.flatMap((s) => (s.flows ?? []).filter((f) => f.kind === kind).map((f) => ({ seam: s.id, ...f })));
   const withHead = page.locator(".react-flow__edge-path[marker-end], .react-flow__edge-path[marker-start]");
@@ -302,7 +302,7 @@ async function expectClear(page: Page, parts: string[]): Promise<void> {
 }
 
 for (const motion of ["no-preference", "reduce"] as const) {
-  test(`play "start a session on an issue" step by step (motion: ${motion})`, async ({ page }) => {
+  test(`play "start a session on an issue" step by step (motion: ${motion})`, { tag: "@map.play-journey" }, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: motion });
     await page.goto("/");
     await expect(page.getByTestId("seam-web-server")).toBeVisible();
@@ -314,7 +314,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
     const active = page.locator(".react-flow__edge.step-active");
 
     // Step 1: web tells the server to start. The control pulse is a ring on that one arrow.
-    await expect(caption).toHaveText(/^Step 1 of 11: web → rubato-server, control: LaunchRequest/);
+    await expect(caption).toHaveText(/^Step 1 of 10: web → rubato-server, control: LaunchRequest/);
     await expect(active).toHaveCount(1);
     await expect(pulse).toHaveCount(1);
     await expect(pulse).toHaveClass(/control/);
@@ -328,16 +328,16 @@ for (const motion of ["no-preference", "reduce"] as const) {
 
     // Step 2: the launch goes to the companion; the lit parts follow the step.
     await player.getByRole("button", { name: "Next step" }).click();
-    await expect(caption).toHaveText(/^Step 2 of 11: rubato-server → rubato-companion, control: LaunchCommand/);
+    await expect(caption).toHaveText(/^Step 2 of 10: rubato-server → rubato-companion, control: LaunchCommand/);
     await expect(page.getByTestId("node-rubato-companion")).not.toHaveClass(/dim/);
     await expect(page.getByTestId("node-web")).toHaveClass(/dim/);
     await expect(active).toHaveCount(1);
 
-    // Step 5 is data coming back: a filled dot, not a ring.
-    for (let i = 0; i < 3; i++) {
+    // Step 4 is data coming back: a filled dot, not a ring (ADR 0070 dropped the tmux-ide step).
+    for (let i = 0; i < 2; i++) {
       await player.getByRole("button", { name: "Next step" }).click();
     }
-    await expect(caption).toHaveText(/^Step 5 of 11: rubato-companion → rubato-server, data:/);
+    await expect(caption).toHaveText(/^Step 4 of 10: rubato-companion → rubato-server, data:/);
     await expect(pulse).toHaveClass(/data/);
 
     // Nothing covers the step: its two parts are inside the canvas and clear of the band of
@@ -348,8 +348,8 @@ for (const motion of ["no-preference", "reduce"] as const) {
       await zoomIn.click();
     }
     await player.getByRole("button", { name: "Previous step" }).click();
-    for (let i = 3; i < steps.length; i++) {
-      await expect(caption).toHaveText(new RegExp(`^Step ${i + 1} of 11:`));
+    for (let i = 2; i < steps.length; i++) {
+      await expect(caption).toHaveText(new RegExp(`^Step ${i + 1} of ${steps.length}:`));
       await expectClear(page, [steps[i]!.from, steps[i]!.to]);
       if (i < steps.length - 1) {
         await player.getByRole("button", { name: "Next step" }).click();
@@ -363,7 +363,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
   });
 }
 
-test("selecting an issue with a plan paints its parts and flows", async ({ page }) => {
+test("selecting an issue with a plan paints its parts and flows", { tag: "@plans.paints-the-map" }, async ({ page }) => {
   // The seeded repository has branch issue/901-lens with a plan that has a Flows table. Pinning
   // #901 makes it a tracked issue; the next poll tick (5 s in this harness) reads the plan.
   const pin = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 901 }, target: { kind: "node", id: "rubato-server" } } });
@@ -407,7 +407,7 @@ test("selecting an issue with a plan paints its parts and flows", async ({ page 
   await expect(plan).toHaveCount(0);
 });
 
-test("queue an issue on a paired companion and start it", async ({ page }) => {
+test("queue an issue on a paired companion and start it", { tag: ["@queue.queue-on-own-lane", "@queue.refused-start-stays", "@queue.start-leaves-queue", "@companions.see-teammates"] }, async ({ page }) => {
   // Issue #9 was pinned by an earlier test; pin it here too so the test stands alone.
   await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } } });
   const alice = await connectCompanion("alice");
@@ -453,8 +453,8 @@ test("queue an issue on a paired companion and start it", async ({ page }) => {
 
   // The companion refuses: the entry stays and says why.
   const answer = (seq: number, message: Record<string, unknown>) => mine.send(JSON.stringify({ seq, sent_at: new Date().toISOString(), message: { type: "launch", command_id: commands.at(-1)!.id, at: new Date().toISOString(), ...message } }));
-  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux-ide 2.9 is needed" });
-  await expect(entry).toContainText("did not start: missing_dependency: tmux-ide 2.9 is needed");
+  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux 3.7 is needed" });
+  await expect(entry).toContainText("did not start: missing_dependency: tmux 3.7 is needed");
 
   // Started the second time: the entry leaves the lane.
   await entry.getByRole("button", { name: "Start m0x6A/rubato#9" }).click();
@@ -466,7 +466,7 @@ test("queue an issue on a paired companion and start it", async ({ page }) => {
   mine.close();
 });
 
-test("draft a part and a seam, propose", async ({ page }) => {
+test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@drafts.invalid-change-explained", "@drafts.propose-as-pull-request", "@drafts.withdraw"] }, async ({ page }) => {
   const repo = process.env["RUBATO_E2E_REPO"];
   test.skip(!repo, "needs the seeded repository of e2e/run.sh");
   const git = (...args: string[]) => execFileSync("git", ["-C", repo!, ...args], { encoding: "utf8" }).trim();
@@ -558,7 +558,7 @@ test("draft a part and a seam, propose", async ({ page }) => {
   await expect(panel).toContainText("empty");
 });
 
-test("a ghost taken into the draft becomes a part with its service, and its call a seam (issue #140)", async ({ page }) => {
+test("a ghost taken into the draft becomes a part with its service, and its call a seam (issue #140)", { tag: ["@map.ghosts-and-discrepancies", "@drafts.ghost-into-draft"] }, async ({ page }) => {
   // The seeded server has no traffic source: a report with two ghosts is added on the way to the page.
   await routeOverview(page, ghostTraffic);
   await page.goto("/");
@@ -613,4 +613,254 @@ test("a ghost taken into the draft becomes a part with its service, and its call
   // Leave the map as found.
   await panel.getByRole("button", { name: "Discard draft" }).click();
   await expect(panel).toContainText("empty");
+});
+
+// Issue #144: the By repo grouping, readable and arranged by the team (ADR 0068). These run last
+// in this file, after the flat layout's own test, and leave every arrangement as they found it.
+const DEV = { "x-rubato-dev-user": "m0x6A" };
+const BOX = "repo-box-m0x6A/rubato";
+const PAD = { left: 24, top: 48 };
+
+async function byRepo(page: Page): Promise<void> {
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  await page.getByRole("button", { name: "By repo" }).click();
+  await expect(page.getByTestId(BOX)).toBeVisible();
+}
+
+/** A node's top-left on the canvas; for a part in a box, relative to its box. */
+async function inBox(page: Page, id: string, box = "repo:m0x6A/rubato"): Promise<{ x: number; y: number }> {
+  const p = await canvasPosition(page, id);
+  const b = await canvasPosition(page, box);
+  return { x: p.x - b.x, y: p.y - b.y };
+}
+
+async function dragBy(page: Page, target: ReturnType<Page["getByTestId"]>, dx: number, dy: number): Promise<void> {
+  const r = (await target.boundingBox())!;
+  const at = { x: r.x + Math.min(40, r.width / 2), y: r.y + Math.min(14, r.height / 2) };
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  await page.mouse.move(at.x + dx / 2, at.y + dy / 2, { steps: 6 });
+  await page.mouse.move(at.x + dx, at.y + dy, { steps: 6 });
+  await page.mouse.up();
+}
+
+async function partIds(page: Page): Promise<string[]> {
+  return page.locator(".react-flow__node-map").evaluateAll((ns) => ns.map((n) => (n as HTMLElement).dataset["id"] ?? ""));
+}
+
+async function flatPositions(page: Page): Promise<Record<string, { x: number; y: number }>> {
+  const out: Record<string, { x: number; y: number }> = {};
+  for (const id of await partIds(page)) {
+    out[id] = await canvasPosition(page, id);
+  }
+  return out;
+}
+
+async function clearGrouped(page: Page, ws = ""): Promise<void> {
+  const r = await page.request.delete(`${base}${ws ? `/api/w/${ws}` : "/api"}/layout/grouped`, { headers: DEV });
+  expect(r.status()).toBe(200);
+}
+
+for (const lens of ["Structure", "Data flow", "Control flow"]) {
+  test(`By repo on the team's map, ${lens} lens: no chip, label or badge overlaps another or a part card, and every name is readable`, { tag: "@map.by-repo-readable" }, async ({ page }) => {
+    await page.goto("/");
+    await byRepo(page);
+    await page.getByRole("radio", { name: new RegExp(`^${lens}`) }).click();
+    await page.waitForTimeout(300);
+    const boxes = await page.evaluate(() => {
+      const rect = (e: Element, what: string) => {
+        const r = e.getBoundingClientRect();
+        return { what, x: r.left, y: r.top, w: r.width, h: r.height };
+      };
+      return [
+        ...[...document.querySelectorAll(".seam-label")].map((e) => rect(e, (e.textContent ?? "").slice(0, 40))),
+        ...[...document.querySelectorAll(".react-flow__node-map")].map((e) => rect(e, `part ${(e as HTMLElement).dataset["id"]}`)),
+      ];
+    });
+    const clash: string[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i]!;
+        const b = boxes[j]!;
+        if (a.what.startsWith("part ") && b.what.startsWith("part ")) {
+          continue;
+        }
+        if (a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1) {
+          clash.push(`${a.what} / ${b.what}`);
+        }
+      }
+    }
+    console.log(`${lens}: checked ${boxes.length} labels and cards`);
+    expect(clash).toEqual([]);
+    // Every part's name is whole: not clipped by its card.
+    const clipped = await page.locator(".react-flow__node-map .id").evaluateAll((ns) => ns.filter((n) => n.scrollWidth > n.clientWidth + 1).map((n) => n.textContent));
+    expect(clipped).toEqual([]);
+  });
+}
+
+test("By repo: a part dragged inside its box stays there for everyone and after a reload; By repo off brings back the flat map exactly", { tag: ["@map.by-repo-arrange", "@map.by-repo-flat-kept"] }, async ({ page, browser }) => {
+  const other = await (await browser.newContext({ baseURL: base })).newPage();
+  await page.goto("/");
+  await other.goto("/");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  const flat = await flatPositions(page);
+  await byRepo(page);
+  await byRepo(other);
+  const before = await inBox(page, "web");
+
+  await dragBy(page, page.getByTestId("node-web"), 40, 160);
+  const after = await inBox(page, "web");
+  expect(after).not.toEqual(before);
+  // Inside its box.
+  const box = (await page.getByTestId(BOX).boundingBox())!;
+  const part = (await page.getByTestId("node-web").boundingBox())!;
+  expect(part.x >= box.x && part.y >= box.y && part.x + part.width <= box.x + box.width + 1 && part.y + part.height <= box.y + box.height + 1).toBe(true);
+  // The second browser follows over the websocket, box size included.
+  await expect.poll(() => inBox(other, "web")).toEqual(after);
+  await expect.poll(async () => (await other.locator(`.react-flow__node[data-id="repo:m0x6A/rubato"]`).evaluate((n) => (n as HTMLElement).style.height))).toBe(await page.locator(`.react-flow__node[data-id="repo:m0x6A/rubato"]`).evaluate((n) => (n as HTMLElement).style.height));
+
+  // Still there after a reload, with By repo on again.
+  await page.reload();
+  await byRepo(page);
+  await expect.poll(() => inBox(page, "web")).toEqual(after);
+
+  // By repo off: every part is where the flat map has it, untouched by the grouping.
+  await page.getByRole("button", { name: "By repo" }).click();
+  await expect(page.getByTestId(BOX)).toHaveCount(0);
+  await expect.poll(() => flatPositions(page)).toEqual(flat);
+  const stored = await (await page.request.get(`${base}/api/overview`, { headers: DEV })).json();
+  expect(Object.keys(stored.layout.positions ?? {})).toEqual([]);
+  expect(stored.layout.grouped.web).toBeDefined();
+
+  await clearGrouped(page);
+  await other.context().close();
+});
+
+test("By repo: a part dragged past its box's edge stays inside; a box moves with its parts", { tag: ["@map.by-repo-arrange", "@map.by-repo-auto-arrange"] }, async ({ page }) => {
+  await page.goto("/");
+  await byRepo(page);
+  // Past the left edge (and a little down): it stops at the box's padding.
+  const was = await inBox(page, "web");
+  await dragBy(page, page.getByTestId("node-web"), -400, 30);
+  await expect.poll(() => inBox(page, "web").then((p) => p.y)).toBeGreaterThan(was.y);
+  await expect.poll(() => inBox(page, "web").then((p) => p.x)).toBe(PAD.left);
+
+  // The box, by its name bar: every part in it moves by the same offset, the externals do not.
+  const ids = await partIds(page);
+  const inside = new Map<string, { x: number; y: number }>();
+  for (const id of ids) {
+    inside.set(id, await canvasPosition(page, id));
+  }
+  const boxAt = await canvasPosition(page, "repo:m0x6A/rubato");
+  await dragBy(page, page.locator(".repo-box-frame").first(), 0, 120);
+  await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato").then((p) => p.y)).toBeGreaterThan(boxAt.y);
+  const moved = await canvasPosition(page, "repo:m0x6A/rubato");
+  const d = { x: moved.x - boxAt.x, y: moved.y - boxAt.y };
+  const externals = map.nodes.filter((n) => !(n as { repo?: string }).repo).map((n) => n.id);
+  for (const id of ids) {
+    const was = inside.get(id)!;
+    const want = externals.includes(id) ? was : { x: was.x + d.x, y: was.y + d.y };
+    expect(await canvasPosition(page, id), id).toEqual(want);
+  }
+  // Saved for the team (the write follows the drop after a short pause), and after a reload the same.
+  await expect.poll(async () => (await (await page.request.get(`${base}/api/overview`, { headers: DEV })).json()).layout.boxes?.["m0x6A/rubato"]).toBeDefined();
+  await page.reload();
+  await byRepo(page);
+  await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato")).toEqual(moved);
+  await expect.poll(() => inBox(page, "web").then((p) => p.x)).toBe(PAD.left);
+
+  // Auto-arrange in By repo clears only the grouping, for everyone; Undo brings it back.
+  await page.getByRole("button", { name: "Auto-arrange" }).click();
+  await expect(page.getByRole("status")).toContainText("By repo auto-arranged for everyone: 2 saved positions removed");
+  await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato")).not.toEqual(moved);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByRole("status")).toContainText("The saved positions are back");
+  await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato")).toEqual(moved);
+  await clearGrouped(page);
+});
+
+test("By repo in a workspace with two repos: a part or a box dropped on the other box goes back", { tag: "@map.by-repo-stays-in-box" }, async ({ page }) => {
+  await page.goto("/?w=shop");
+  await expect(page.getByTestId("node-storefront")).toBeVisible();
+  await page.getByRole("button", { name: "By repo" }).click();
+  const ledger = page.getByTestId("repo-box-acme/ledger");
+  await expect(ledger).toBeVisible();
+  const start = await canvasPosition(page, "storefront");
+  const target = (await ledger.boundingBox())!;
+  const from = (await page.getByTestId("node-storefront").boundingBox())!;
+  await dragBy(page, page.getByTestId("node-storefront"), target.x + target.width / 2 - from.x - 40, target.y + target.height / 2 - from.y - 14);
+  await expect.poll(() => canvasPosition(page, "storefront")).toEqual(start);
+  // The shop box by its name bar onto the ledger box: back too.
+  const shopAt = await canvasPosition(page, "repo:acme/shop");
+  const shopBar = page.getByTestId("repo-box-acme/shop").locator(".repo-box-frame");
+  const bar = (await shopBar.boundingBox())!;
+  await dragBy(page, shopBar, target.x + 30 - bar.x, target.y + 10 - bar.y);
+  await expect.poll(() => canvasPosition(page, "repo:acme/shop")).toEqual(shopAt);
+  const ov = await (await page.request.get(`${base}/api/w/shop/overview`, { headers: DEV })).json();
+  expect(ov.layout.grouped ?? {}).toEqual({});
+  expect(ov.layout.boxes ?? {}).toEqual({});
+});
+
+test("By repo: a bundle opens on hover and on a selected part; a flow label reads in full on hover", { tag: ["@map.by-repo-bundles", "@map.flow-label-in-full"] }, async ({ page }) => {
+  await page.goto("/");
+  await byRepo(page);
+  const badge = page.getByTestId("bundle-skill-rubato|system-map");
+  await expect(badge).toHaveText("1 seam");
+  await expect(page.getByTestId("seam-skill-system-map")).toHaveCount(0);
+  // The seams that leave the repo are always drawn.
+  await expect(page.getByTestId("seam-server-github")).toBeVisible();
+  await badge.hover();
+  await expect(page.getByTestId("seam-skill-system-map")).toBeVisible();
+  await page.mouse.move(5, 5);
+  await expect(page.getByTestId("seam-skill-system-map")).toHaveCount(0);
+  await page.getByTestId("node-skill-rubato").click();
+  await expect(page.getByTestId("seam-skill-system-map")).toBeVisible();
+  await expect(page.getByTestId("seam-skill-plan-file")).toBeVisible();
+  // Its warning stays on the badge: companion-server has two open plans touching it.
+  await page.getByTestId("inspector").getByRole("button", { name: "Close" }).click();
+  await expect(page.getByTestId("bundle-rubato-companion|rubato-server")).toContainText("⚠");
+
+  // Data flow: a long flow label is clipped until hovered, then read whole.
+  await page.getByRole("radio", { name: /^Data flow/ }).click();
+  const label = page.getByTestId("flow-server-github#data-0");
+  const clipped = () => label.locator(".flow-text").evaluate((e) => e.scrollWidth > e.clientWidth + 1);
+  expect(await clipped()).toBe(true);
+  await label.hover();
+  await expect.poll(clipped).toBe(false);
+});
+
+test("By repo: issues drop on a part and on a seam inside a box, New issue here… opens, and Edit map turns the grouping off", { tag: ["@map.by-repo-bundles", "@map.by-repo", "@pins.drag-onto-part", "@pins.drag-onto-seam"] }, async ({ page }) => {
+  await page.goto("/");
+  await byRepo(page);
+  const backlog = page.getByTestId("backlog");
+  await backlog.getByTestId("backlog-row-917").dragTo(page.getByTestId("node-plan-check"));
+  const detail = page.getByTestId("issue-detail");
+  await expect(detail).toContainText("m0x6A/rubato#917");
+  await expect(detail).toContainText("node plan-check");
+  await page.getByRole("button", { name: "← all issues" }).click();
+  // Onto a seam in a bundle: the bundle opens under the dragged issue, and the drop lands on its chip.
+  await backlog.getByTestId("backlog-row-918").dragTo(page.getByTestId("bundle-skill-rubato|system-map"));
+  await expect(detail).toContainText("m0x6A/rubato#918");
+  await expect(detail).toContainText("seam skill-system-map");
+  await page.getByRole("button", { name: "← all issues" }).click();
+
+  await page.getByTestId("node-web").click();
+  await page.getByTestId("inspector").getByTestId("new-issue-here").click();
+  await expect(page.getByTestId("new-issue")).toBeVisible();
+  await page.goto("/");
+  await byRepo(page);
+
+  await page.getByRole("button", { name: "Edit map" }).click();
+  await expect(page.getByTestId(BOX)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "By repo" })).toBeDisabled();
+  await page.getByRole("button", { name: "Edit map" }).click();
+  await expect(page.getByTestId(BOX)).toBeVisible();
+
+  for (const [n, target] of [
+    [917, { kind: "node", id: "plan-check" }],
+    [918, { kind: "seam", id: "skill-system-map" }],
+  ] as const) {
+    const r = await page.request.delete(`${base}/api/pins`, { headers: DEV, data: { issue: { repo: "m0x6A/rubato", number: n }, target } });
+    expect(r.ok()).toBe(true);
+  }
 });

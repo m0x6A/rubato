@@ -51,6 +51,9 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::approve::ApproveResponse>("approve_response"),
         one::<crate::approve::DraftApproveRequest>("draft_approve_request"),
         one::<crate::approve::DraftApproveResponse>("draft_approve_response"),
+        one::<crate::pulls::PullDetail>("pull_detail"),
+        one::<crate::pulls::MergeRequest>("merge_request"),
+        one::<crate::pulls::MergeResponse>("merge_response"),
         one::<crate::progress::Overview>("overview"),
         one::<crate::web_link::WebEvent>("web_event"),
         one::<crate::session_log::LaunchLog>("launch_log"),
@@ -68,7 +71,13 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::room::CallInResponse>("call_in_response"),
         one::<crate::room::RequestAnswerBody>("request_answer_body"),
         one::<crate::room::DismissAgentRequest>("dismiss_agent_request"),
+        one::<crate::voice::VoiceTokenRequest>("voice_token_request"),
+        one::<crate::voice::VoiceToken>("voice_token"),
+        one::<crate::voice::UtteranceQuery>("utterance_query"),
+        one::<crate::voice::VoiceJoinFailed>("voice_join_failed"),
         one::<crate::traffic::TrafficReport>("traffic_report"),
         one::<crate::traffic::DismissRequest>("dismiss_request"),
+        one::<crate::agent::AgentReport>("agent_report"),
+        one::<crate::agent::PlanStatus>("plan_status"),
     ]
 }

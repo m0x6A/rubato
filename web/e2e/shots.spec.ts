@@ -200,7 +200,7 @@ test.describe("screenshots", () => {
   for (const surface of SURFACES) {
     for (const theme of THEMES) {
       for (const size of WIDTHS) {
-        test(`${surface.name} ${theme} ${size.name}`, async ({ page }) => {
+        test(`${surface.name} ${theme} ${size.name}`, { tag: "@tooling" }, async ({ page }) => {
           await page.emulateMedia({ colorScheme: theme });
           await page.setViewportSize({ width: size.width, height: size.height });
           await surface.setup(page);

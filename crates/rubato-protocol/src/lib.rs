@@ -4,6 +4,7 @@
 //! frontend consumes the JSON Schema exported from it (`schema/protocol/`). A breaking
 //! change here is a seam change (`companion-server`, `web-server`) and blocks.
 
+pub mod agent;
 pub mod approve;
 pub mod auth;
 pub mod github;
@@ -33,9 +34,11 @@ pub mod session;
 pub mod session_log;
 pub mod session_message;
 pub mod traffic;
+pub mod voice;
 pub mod web_link;
 pub mod workspace;
 
+pub use agent::{AgentReport, BranchStatus, DraftStatus, PlanStatus};
 pub use approve::{
     ApproveRequest, ApproveResponse, ApproveState, DraftApproveRequest, DraftApproveResponse,
 };
@@ -94,7 +97,10 @@ pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,
     ProgressInputs, ProgressState, SpendPoint, blocked_from, derive_progress,
 };
-pub use pulls::{OpenPull, RepoPulls};
+pub use pulls::{
+    MergeMethod, MergeOffer, MergeRequest, MergeResponse, MergeState, OpenPull, PlanGate,
+    PullDetail, PullState, RepoPulls,
+};
 pub use queue::{QueueOrder, QueueRequest, QueuedIssue};
 pub use room::{
     CallInRequest, CallInResponse, DismissAgentRequest, LeftReason, RequestAnswer,
@@ -115,6 +121,9 @@ pub use traffic::{
     DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, ObservedTraffic, SeamTraffic,
     SourceStatus, TrafficDismissal, TrafficEdge, TrafficEnd, TrafficReport, TrafficState,
     UndeclaredEdge, derive_traffic,
+};
+pub use voice::{
+    UtteranceQuery, VoiceAvailability, VoiceJoinFailed, VoiceToken, VoiceTokenRequest,
 };
 pub use web_link::{WebEvent, WebResource};
 pub use workspace::{DEFAULT_WORKSPACE, WorkspaceInfo, is_workspace_id};

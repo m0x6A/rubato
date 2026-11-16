@@ -65,11 +65,19 @@ nodes:
 
   - id: tmux-ide
     kind: external
-    description: Session runner (TypeScript CLI, npm tmux-ide, tmux >= 3.7). worktree create, events, team --json, send, wait, MCP. Version pinned by the companion.
+    description: "Retired by ADR 0070: the companion runs tmux and git itself and no longer calls tmux-ide. The id stays so merged plans that name it still check (plan 147 Q1)."
 
   - id: claude-code
     kind: external
-    description: The only agent in v0. Hooks are the event source. Exports its own OTel.
+    description: The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Exports its own OTel.
+
+  - id: livekit
+    kind: external
+    description: "Self-hosted WebRTC media server (Apache 2.0) beside Rubato, run by the team, never started by Rubato. Carries a plan room's voice channel between browsers, behind the voice flag (ADR 0073)."
+
+  - id: speech-provider
+    kind: external
+    description: "Speech-to-text and text-to-speech over an OpenAI-compatible HTTP API, local (Speaches, whisper.cpp, Kokoro) or hosted, chosen by configuration (ADR 0073)."
 
 seams:
   - id: companion-server
@@ -80,7 +88,8 @@ seams:
     guard: protocol JSON Schema snapshot test; both suites replay crates/rubato-protocol/fixtures/
     description: "Each companion reports what its sessions are doing, and receives launch commands and messages for its own user's sessions only. The companion always dials out."
     flows:
-      - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities" }
+      - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071)" }
+      - { kind: data, from: rubato-server, to: rubato-companion, carries: "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071)" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "LaunchCommand, for the paired user only" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "Welcome with limits, server capabilities and the last sequence seen; acks" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "SessionMessage for a session the paired user launched: chat, plan_approved, room_turn" }
@@ -90,7 +99,7 @@ seams:
     to: github
     carries: OAuth login, REST (issues, comments, PRs, checks, contents), Projects v2 GraphQL later
     owner: rubato-server
-    guard: one GitHubApi trait with recorded-response tests; rubato.github.rate_limit.remaining alert
+    guard: one GitHubApi trait with recorded-response tests; rubato.github.rate_limit.remaining alert; GitHubWebhooksSilent alert
     description: "The server reads what GitHub already knows about an issue and, as a GitHub App, proposes map changes as pull requests."
     flows:
       - { kind: data, from: github, to: rubato-server, carries: "open issues, issue state, Decision: comments, pull requests, check runs, plan files and the map from branches" }
@@ -98,28 +107,38 @@ seams:
       - { kind: data, from: github, to: rubato-server, carries: "a pull request's detail when someone opens it: body, reviews, check runs, changed files, mergeable; the person's permission and allowed merge methods" }
       - { kind: control, from: rubato-server, to: github, carries: "OAuth login redirect; a branch, a commit and a pull request for a map draft; as the person, an Approved: comment (until the cutover), one link comment per approved plan commit as its approver, and a pull request merge at the head they saw" }
       - { kind: data, from: github, to: rubato-server, carries: "the last commit to a plan file, for Import" }
+      - { kind: data, from: github, to: rubato-server, carries: "App webhook deliveries, signed with X-Hub-Signature-256: which issue, pull request, check or branch changed" }
 
   - id: companion-tmux-ide
     from: rubato-companion
     to: tmux-ide
-    carries: worktree create, events --follow --json, team --json, send, wait
+    carries: nothing; retired by ADR 0070
     owner: rubato-companion
-    guard: Gherkin against real tmux-ide on tmux -L rubato-test; version pinned (2.9.x), reported as rubato.tmux_ide.version; low-confidence state renders unknown
-    description: "The companion asks tmux-ide to create worktrees and sessions, and reads which sessions exist and what state they are in."
-    flows:
-      - { kind: control, from: rubato-companion, to: tmux-ide, carries: "worktree create, send, wait" }
-      - { kind: data, from: tmux-ide, to: rubato-companion, carries: "team --json and events --follow --json: sessions, panes, agent status" }
+    guard: "the companion's Gherkin suite runs with no tmux-ide installed; rubato.launches by outcome on the Launches by outcome panel"
+    description: "Retired by ADR 0070: the companion makes worktrees with git and sessions with tmux itself, and takes state from hooks only. Kept so merged plans that name it still check (plan 147 Q1); a follow-up retires the id."
 
   - id: companion-claude-code
     from: rubato-companion
     to: claude-code
-    carries: hook stdin JSON (async hooks); launch flags (--session-id, --settings, --permission-mode); OTel env (OTEL_RESOURCE_ATTRIBUTES); typed input through the session's tmux pane; headless forked turns
+    carries: hook stdin JSON (async hooks); launch flags (--mcp-config, --allowedTools, --session-id, --settings, --permission-mode); OTel env (OTEL_RESOURCE_ATTRIBUTES); typed input through the session's tmux pane; headless forked turns
     owner: rubato-companion
     guard: Gherkin replays recorded hook payloads per event name; fixtures refreshed on Claude Code upgrade
     description: "The companion starts Claude Code with a session id, hooks and telemetry attributes, and hears every hook the session fires. It types its own user's messages into that session when it waits for input, and runs read-only forked turns for a plan's room."
     flows:
-      - { kind: control, from: rubato-companion, to: claude-code, carries: "launch: --session-id, --settings with hooks, --permission-mode, OTEL_RESOURCE_ATTRIBUTES, the prompt; a typed prompt through the session's tmux pane; a headless forked turn in plan mode" }
+      - { kind: control, from: rubato-companion, to: claude-code, carries: "launch: --mcp-config and --allowedTools for its own MCP server (ADR 0071), --session-id, --settings with hooks, --permission-mode, OTEL_RESOURCE_ATTRIBUTES, the prompt; a typed prompt through the session's tmux pane; a headless forked turn in plan mode" }
       - { kind: data, from: claude-code, to: rubato-companion, carries: "hook payloads on stdin (session start, tool use, stop, notification), with the prompt and the last reply joined by prompt_id; the transcript with usage; a fork's stream-json result" }
+
+  - id: companion-mcp
+    from: rubato-companion
+    to: claude-code
+    carries: "MCP over loopback HTTP (POST /mcp on the hook receiver, the hook token from a 0600 mcp.json, X-Rubato-Launch): get_assignment, report_status, plan_status"
+    owner: rubato-companion
+    guard: "agent_mcp tests: identity from the launch id only, a call naming another issue refused and counted, no tool name or description that writes an approval; Gherkin calls each tool against a launched session"
+    description: "A session Rubato launched asks its own companion what it is assigned to and where its plan stands, and says what it is doing. What it says is a signal with a last-seen time, never a progress state; hooks stay the evidence (ADR 0071)."
+    flows:
+      - { kind: control, from: claude-code, to: rubato-companion, carries: "get_assignment and plan_status calls, with the launch id the companion wrote into mcp.json" }
+      - { kind: data, from: claude-code, to: rubato-companion, carries: "report_status: one line of what the agent is doing and the map parts it is on" }
+      - { kind: data, from: rubato-companion, to: claude-code, carries: "the assignment (repo, issue, branch, map parts, plan path, caps) and the plan status Rubato last sent, with its age; refusals with a reason" }
 
   - id: skill-plan-file
     from: skill-rubato
@@ -192,10 +211,33 @@ seams:
     guard: generated web/src/protocol.ts diffed in CI
     description: "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map."
     flows:
-      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room" }
+      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073)" }
       - { kind: control, from: rubato-server, to: web, carries: "WebEvent Changed over /ws/web: fetch the overview again; Updated: fetch one draft, log or room" }
-      - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages" }
+      - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages; behind the voice flag, a push-to-talk utterance for a room (ADR 0073)" }
       - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion; propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan" }
+
+  - id: web-livekit
+    from: web
+    to: livekit
+    carries: "WebRTC audio of a plan room's voice channel, joined with a LiveKit token Rubato minted (livekit-client)"
+    owner: web
+    guard: "voice token tests decode every claim with the secret, and a wrong secret fails; livekit-client mocked in Vitest; the server never connects to LiveKit"
+    description: "People in a plan's room hear each other through the team's own LiveKit. Rubato only mints the join token; the audio never passes through Rubato (ADR 0073)."
+    flows:
+      - { kind: control, from: web, to: livekit, carries: "join a plan room's voice channel with a ten-minute join token: microphone only, the login as name" }
+      - { kind: data, from: web, to: livekit, carries: "each person's microphone audio" }
+      - { kind: data, from: livekit, to: web, carries: "the other participants' audio and who is in the voice channel" }
+
+  - id: server-speech
+    from: rubato-server
+    to: speech-provider
+    carries: "POST {base}/audio/transcriptions and {base}/audio/speech, behind the Speech port with a fake adapter for tests"
+    owner: rubato-server
+    guard: "Speech port tests against the fake adapter and a recorded OpenAI-compatible stub; SpeechProviderFailing alert"
+    description: "The server turns one push-to-talk utterance into room text and an agent's reply into a short spoken clip. No audio is stored (ADR 0073)."
+    flows:
+      - { kind: data, from: rubato-server, to: speech-provider, carries: "one utterance's audio to transcribe; the spoken cut of an agent's reply to synthesize" }
+      - { kind: data, from: speech-provider, to: rubato-server, carries: "the transcript; the synthesized clip" }
 
 # Journeys through the system, step by step over the flows above (ADR 0024). The map view plays
 # them. A step names `carries` only where its seam has two flows with the same kind and direction.
@@ -206,7 +248,6 @@ scenarios:
     steps:
       - { seam: web-server, from: web, to: rubato-server, kind: control, says: "you press Start on a pinned issue" }
       - { seam: companion-server, from: rubato-server, to: rubato-companion, kind: control, carries: "LaunchCommand, for the paired user only", says: "the server sends the launch to your own companion only" }
-      - { seam: companion-tmux-ide, from: rubato-companion, to: tmux-ide, kind: control, says: "the companion creates a worktree on the issue branch" }
       - { seam: companion-claude-code, from: rubato-companion, to: claude-code, kind: control, says: "Claude Code starts with hooks and telemetry attributes" }
       - { seam: companion-server, from: rubato-companion, to: rubato-server, kind: data, says: "the launch result and the new session come back" }
       - { seam: web-server, from: rubato-server, to: web, kind: control, says: "every browser is told something changed" }

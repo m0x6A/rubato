@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use opentelemetry::global;
-use opentelemetry::metrics::{Counter, Gauge, Meter};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
 use rubato_protocol::otel;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -101,6 +101,12 @@ pub struct Metrics {
     pub workspace_shared_repos: Gauge<u64>,
     /// Tracked plans that fit none of their issue's workspaces (ADR 0045), per workspace.
     pub plans_fit_none: Gauge<u64>,
+    /// ADR 0074: deliveries by event and outcome, and the webhook and catch-up gauges, no unit.
+    pub webhook_deliveries: Counter<u64>,
+    pub webhook_last_accepted_at: Gauge<u64>,
+    pub webhook_pending_oldest: Gauge<u64>,
+    pub catchup_changes: Counter<u64>,
+    pub catchup_last_change_at: Gauge<u64>,
     /// Ids naming two parts across workspaces sharing a repo (finding `IdCollision`), per workspace.
     pub workspace_id_collisions: Gauge<u64>,
     pub ws_clients: Gauge<u64>,
@@ -122,6 +128,7 @@ pub struct Metrics {
     pub issues_opening: Gauge<u64>,
     pub plans_not_fitting: Gauge<u64>,
     pub plans_approvals_opening: Gauge<u64>,
+    pub pulls_merges_opening: Gauge<u64>,
     pub traffic_fetches: Counter<u64>,
     /// Seconds; no unit, so the series is `rubato_traffic_report_age` as the alert names it.
     pub traffic_report_age: Gauge<u64>,
@@ -158,6 +165,12 @@ pub struct Metrics {
     pub plans_link_comment_missing: Gauge<u64>,
     /// Plans whose approval record differs from Rubato's (ADR 0054).
     pub plans_approval_record_mismatch: Gauge<u64>,
+    /// Speech calls by op, outcome and provider, and their seconds (ADR 0073).
+    pub voice_speech: Counter<u64>,
+    pub voice_duration: Histogram<f64>,
+    /// Voice join tokens by outcome, and failed joins the browser reported, by reason.
+    pub voice_tokens: Counter<u64>,
+    pub voice_join_failed: Counter<u64>,
 }
 
 impl Metrics {
@@ -187,6 +200,19 @@ impl Metrics {
             workspace_orphan_rows: m.u64_gauge(otel::metric::WORKSPACE_ORPHAN_ROWS).build(),
             workspace_shared_repos: m.u64_gauge(otel::metric::WORKSPACE_SHARED_REPOS).build(),
             plans_fit_none: m.u64_gauge(otel::metric::PLANS_FIT_NONE).build(),
+            webhook_deliveries: m
+                .u64_counter(otel::metric::GITHUB_WEBHOOK_DELIVERIES)
+                .build(),
+            webhook_last_accepted_at: m
+                .u64_gauge(otel::metric::GITHUB_WEBHOOK_LAST_ACCEPTED_AT)
+                .build(),
+            webhook_pending_oldest: m
+                .u64_gauge(otel::metric::GITHUB_WEBHOOK_PENDING_OLDEST)
+                .build(),
+            catchup_changes: m.u64_counter(otel::metric::GITHUB_CATCHUP_CHANGES).build(),
+            catchup_last_change_at: m
+                .u64_gauge(otel::metric::GITHUB_CATCHUP_LAST_CHANGE_AT)
+                .build(),
             workspace_id_collisions: m.u64_gauge(otel::metric::WORKSPACE_ID_COLLISIONS).build(),
             ws_clients: m.u64_gauge(otel::metric::WS_CLIENTS).build(),
             companion_heartbeat: m.u64_gauge(otel::metric::COMPANION_HEARTBEAT).build(),
@@ -205,6 +231,7 @@ impl Metrics {
             issues_opening: m.u64_gauge(otel::metric::ISSUES_OPENING).build(),
             plans_not_fitting: m.u64_gauge(otel::metric::PLANS_NOT_FITTING).build(),
             plans_approvals_opening: m.u64_gauge(otel::metric::PLANS_APPROVALS_OPENING).build(),
+            pulls_merges_opening: m.u64_gauge(otel::metric::PULLS_MERGES_OPENING).build(),
             traffic_fetches: m.u64_counter(otel::metric::TRAFFIC_FETCHES).build(),
             traffic_report_age: m.u64_gauge(otel::metric::TRAFFIC_REPORT_AGE).build(),
             traffic_seams_quiet: m.u64_gauge(otel::metric::TRAFFIC_SEAMS_QUIET).build(),
@@ -238,6 +265,13 @@ impl Metrics {
             plans_approval_record_mismatch: m
                 .u64_gauge(otel::metric::PLANS_APPROVAL_RECORD_MISMATCH)
                 .build(),
+            voice_speech: m.u64_counter(otel::metric::VOICE_SPEECH).build(),
+            voice_duration: m
+                .f64_histogram(otel::metric::VOICE_DURATION)
+                .with_description("seconds one speech call took")
+                .build(),
+            voice_tokens: m.u64_counter(otel::metric::VOICE_TOKENS).build(),
+            voice_join_failed: m.u64_counter(otel::metric::VOICE_JOIN_FAILED).build(),
         }
     }
 

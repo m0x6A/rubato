@@ -78,6 +78,9 @@ async fn building(app: &App, room: &RoomKey) -> Result<bool> {
         .any(|p| p.issue == issue && p.branch == room.branch && p.plan.is_some()))
 }
 
+/// The line a turn asked aloud carries, after the quoted room (ADR 0073, plan 146 design §3).
+pub const ASKED_ALOUD: &str = "Asked aloud: start your reply with an answer of one or two sentences that can be spoken; details after.";
+
 /// Queue one turn for `agent`, made by `trigger` (already stored), as `addressed_by`.
 pub(super) async fn dispatch_turn(
     app: &App,
@@ -94,7 +97,12 @@ pub(super) async fn dispatch_turn(
         .filter(|m| m.at > since || m.id == trigger.id)
         .map(|m| (m.author, m.text))
         .collect();
-    let text = room_turn_text(&context, app.config.limits.room_context_max_chars as usize);
+    let mut text = room_turn_text(&context, app.config.limits.room_context_max_chars as usize);
+    // Rubato's own framing for a question asked aloud (ADR 0073): the answer is spoken.
+    if trigger.spoken {
+        text.push_str("\n\n");
+        text.push_str(ASKED_ALOUD);
+    }
     let mode = if building(app, room).await? {
         RoomTurnMode::Fork
     } else {
@@ -164,6 +172,7 @@ fn system(text: String, turn_id: Option<Uuid>, at: chrono::DateTime<chrono::Utc>
         notice: None,
         addressed: vec![],
         turn_id,
+        spoken: false,
     }
 }
 
@@ -196,6 +205,7 @@ async fn post_reply(app: &App, t: &RoomTurnRef, text: &str) -> Result<bool> {
             .map(|a| a.agent.handle.to_ascii_lowercase())
             .collect(),
         turn_id: Some(t.turn_id),
+        spoken: false,
     };
     if !store::insert(&app.db, room, &m).await? {
         tracing::debug!(turn_id = %t.turn_id, "room reply already posted");

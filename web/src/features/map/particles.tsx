@@ -73,13 +73,13 @@ export function FlowParticles({ id, path, kind, reversed, mode, reduced, length 
     );
   }
   if (reduced) {
-    return <div className={`particle ${kind} still`} aria-hidden="true" style={still} />;
+    return <div className={`particle ${kind} still`} aria-hidden="true" data-flow={id} style={still} />;
   }
   const seconds = tripSeconds(length);
   return (
     <>
       {[0, -seconds / 2].map((delay) => (
-        <div key={delay} className={`particle ${kind}`} aria-hidden="true" style={{ ...base, animationDuration: `${seconds}s`, animationDelay: `${delay}s`, animationDirection: direction }} />
+        <div key={delay} className={`particle ${kind}`} aria-hidden="true" data-flow={id} style={{ ...base, animationDuration: `${seconds}s`, animationDelay: `${delay}s`, animationDirection: direction }} />
       ))}
     </>
   );

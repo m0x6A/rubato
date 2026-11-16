@@ -77,7 +77,7 @@ async function measure(page: Page, ms: number, busy = 0): Promise<{ supported: b
   );
 }
 
-test("a map of 40 parts and 60 seams stays smooth with particles and breathing", async ({ page }) => {
+test("a map of 40 parts and 60 seams stays smooth with particles and breathing", { tag: "@look.smooth-on-a-large-map" }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await openBigMap(page);
   const m = await measure(page, WINDOW_MS);
@@ -90,7 +90,7 @@ test("a map of 40 parts and 60 seams stays smooth with particles and breathing",
   expect(m.long).toEqual([]);
 });
 
-test("the same map in the Traffic lens, every seam busy both ways, stays smooth at the cap (#104)", async ({ page }) => {
+test("the same map in the Traffic lens, every seam busy both ways, stays smooth at the cap (#104)", { tag: "@look.smooth-on-a-large-map" }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await openBigMap(page, /^Traffic/, true);
   const m = await measure(page, WINDOW_MS);
@@ -102,7 +102,7 @@ test("the same map in the Traffic lens, every seam busy both ways, stays smooth 
   expect(m.long).toEqual([]);
 });
 
-test("must fail: an 80 ms busy frame is reported as long", async ({ page }) => {
+test("must fail: an 80 ms busy frame is reported as long", { tag: ["@look.smooth-on-a-large-map", "@selftest"] }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await openBigMap(page);
   const m = await measure(page, 1000, 80);

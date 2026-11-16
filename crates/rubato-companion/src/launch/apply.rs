@@ -1,7 +1,7 @@
 //! What a launch knows about the registry: one live session per issue, and the entry a started
 //! launch creates.
 
-use crate::sessions::{Entry, Registry};
+use crate::sessions::{Assignment, Entry, Registry};
 use chrono::{DateTime, Utc};
 use rubato_protocol::{IssueRef, LaunchCommand, SessionStatus, StateSource};
 use std::path::Path;
@@ -28,10 +28,12 @@ impl Registry {
     }
 
     /// A launch is about to run without the lock: note its issue so discovery leaves the new pane
-    /// to `apply_launch`, and say whether a session is already live for it.
-    pub fn begin_launch(&mut self, issue: &IssueRef) -> Option<LiveSession> {
-        self.launching = Some(issue.clone());
-        self.live_for_issue(issue)
+    /// to `apply_launch`, and what it was sent to do so a session that asks before the launcher
+    /// returns is answered (plan 220 §2); say whether a session is already live for the issue.
+    pub fn begin_launch(&mut self, cmd: &LaunchCommand, now: DateTime<Utc>) -> Option<LiveSession> {
+        self.launching = Some(cmd.issue.clone());
+        self.pending = Some(crate::sessions::PendingLaunch::of(cmd, now));
+        self.live_for_issue(&cmd.issue)
     }
 
     /// The launch restored a draft whose bundle hashes to `hash`: the plan mirror starts from it.
@@ -44,6 +46,7 @@ impl Registry {
     /// The launch returned, whatever its result: discovery sees the issue's panes again.
     pub fn end_launch(&mut self) {
         self.launching = None;
+        self.pending = None;
     }
 
     /// A launch we performed: identity is known before the first hook. The registry is not
@@ -77,6 +80,7 @@ impl Registry {
             e.launch_id = Some(cmd.id);
             e.spend_cap_usd = Some(cmd.spend_cap_usd);
             e.plan_path = cmd.plan_path.clone();
+            e.assignment = Some(Assignment::of(cmd, now));
             self.launches_changed = true;
             // A pane reconcile found meanwhile is the same session: drop the duplicate.
             self.entries.retain(|o| {
@@ -130,6 +134,7 @@ impl Registry {
             pasted: Vec::new(),
             plan_path: cmd.plan_path.clone(),
             restored_hash: None,
+            assignment: Some(Assignment::of(cmd, now)),
         };
         match discovered {
             Some(i) => self.entries[i] = launched,
@@ -233,7 +238,7 @@ mod tests {
             now,
         )
         .unwrap();
-        r.begin_launch(&cmd.issue);
+        r.begin_launch(&cmd, now);
         r.apply_hook(&ev);
         // Reconcile runs before the launch is recorded: it matches the hook-only entry to the new
         // pane by cwd and gives it the pane id.
@@ -333,7 +338,7 @@ mod tests {
         }];
         let mut r = Registry::new(Uuid::nil(), "m0x6A");
 
-        assert_eq!(r.begin_launch(&cmd.issue), None);
+        assert_eq!(r.begin_launch(&cmd, now), None);
         r.apply_panes(&panes, now);
         assert!(
             r.snapshot().is_empty(),
@@ -350,7 +355,7 @@ mod tests {
 
         // A launch that failed leaves nothing behind: discovery sees the pane again.
         let mut r = Registry::new(Uuid::nil(), "m0x6A");
-        r.begin_launch(&cmd.issue);
+        r.begin_launch(&cmd, now);
         r.end_launch();
         r.apply_panes(&panes, now);
         assert_eq!(r.snapshot().len(), 1);

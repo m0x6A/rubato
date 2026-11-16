@@ -1,6 +1,6 @@
 [package]
 name = "rubato-companion"
-description = "Per-developer daemon: connects outbound to rubato-server, pushes tmux-ide session state and Claude Code hook events, launches sessions for its paired user only."
+description = "Per-developer daemon: connects outbound to rubato-server, pushes tmux session state and Claude Code hook events, launches sessions for its paired user only."
 edition.workspace = true
 version.workspace = true
 repository.workspace = true

@@ -1,0 +1,10 @@
+{
+  "suites": [
+    {
+      "title": "x.spec.ts",
+      "specs": [
+        { "title": "covers one", "file": "x.spec.ts", "line": 1, "tags": ["auth.all-pass"], "tests": [{ "projectName": "dev", "status": "expected", "results": [{ "status": "passed" }] }] }
+      ]
+    }
+  ]
+}

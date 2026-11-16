@@ -118,6 +118,7 @@ impl Registry {
             pasted: Vec::new(),
             plan_path: None,
             restored_hash: None,
+            assignment: None,
         };
         self.entries.push(entry);
         id.issue
@@ -156,6 +157,7 @@ mod tests {
                 branch: Some("issue/7-restock".into()),
                 spend_cap_usd: Some(20.0),
                 plan_path: None,
+                assignment: None,
             }],
             None,
             false,
