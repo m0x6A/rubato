@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { ProgressRing, SpendGauge, SpendSparkline, StageRail } from "./visuals.tsx";
 import { SessionChat } from "../chat/index.ts";
+import { AgentLineView, agentLineFor } from "../companions/index.ts";
 import { PinMenu } from "../pins/index.ts";
 import { DraftSection, WhereItFits } from "../plans/index.ts";
 import { PullView } from "../pulls/index.ts";
@@ -136,6 +137,19 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
                       <td className="muted">{relative(s.last_seen)}</td>
                       <td>{s.spend_usd !== undefined && s.spend_usd !== null ? `$${s.spend_usd.toFixed(2)}` : ""}</td>
                     </tr>
+                    {/* What its agent says it is doing (ADR 0071): a signal with its age, never a state. */}
+                    {(() => {
+                      const line = agentLineFor(overview.agent_lines, s);
+                      return (
+                        line && (
+                          <tr className="agent-line-row">
+                            <td colSpan={5}>
+                              <AgentLineView line={line} session={s} />
+                            </td>
+                          </tr>
+                        )
+                      );
+                    })()}
                     {/* A session Rubato launched can be messaged by its owner and read by everyone (ADR 0051). */}
                     {s.launch_id && (
                       <tr className="chat-row">
