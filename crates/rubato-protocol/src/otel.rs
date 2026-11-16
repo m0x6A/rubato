@@ -31,6 +31,8 @@ pub mod attr {
     pub const PLAN_PATH: &str = "rubato.plan.path";
     pub const PLAN_UNKNOWN_IDS: &str = "rubato.plan.unknown_ids";
     pub const PLAN_O_ROWS_MISSING: &str = "rubato.plan.o_rows_missing";
+    /// Retired map ids a plan names (ADR 0077): reported by the plan check, never failed.
+    pub const PLAN_RETIRED_IDS: &str = "rubato.plan.retired_ids";
     pub const GITHUB_ENDPOINT: &str = "rubato.github.endpoint";
     /// The tmux version a companion found at start (`tmux -V`, ADR 0070).
     pub const TMUX_VERSION: &str = "rubato.tmux.version";
@@ -388,6 +390,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::PLAN_PATH,
         attr::PLAN_UNKNOWN_IDS,
         attr::PLAN_O_ROWS_MISSING,
+        attr::PLAN_RETIRED_IDS,
         attr::GITHUB_ENDPOINT,
         attr::TMUX_VERSION,
         attr::RECONCILE_PANES,

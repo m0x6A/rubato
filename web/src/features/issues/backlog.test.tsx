@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { minutesAgo, openIssue, realMap } from "../../../test/fixtures.ts";
 import type { Backlog as BacklogData } from "../../protocol.ts";
 import { Backlog } from "./Backlog.tsx";
+import { liveMap } from "../../shared/map.ts";
 
 const map = realMap();
 const REPO = "m0x6A/rubato";
@@ -118,7 +119,10 @@ describe("the row menu (S3, N16)", () => {
     fireEvent.click(trigger);
     const menu = screen.getByRole("menu");
     const items = within(menu).getAllByRole("menuitem");
-    expect(items).toHaveLength(map.nodes.length + (map.seams ?? []).length);
+    // Live parts and seams only: a retired id is not offered (ADR 0077).
+    const live = liveMap(map);
+    expect(items).toHaveLength(live.nodes.length + (live.seams ?? []).length);
+    expect(items.map((i) => i.textContent ?? "").join(" ")).not.toContain("tmux-ide");
     expect(items[0]).toHaveFocus();
 
     // Escape closes and hands focus back.
