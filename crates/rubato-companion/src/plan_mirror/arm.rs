@@ -224,6 +224,7 @@ mod tests {
                 branch: Some("issue/7-restock".into()),
                 spend_cap_usd: None,
                 plan_path: plan_path.map(str::to_owned),
+                assignment: None,
             }],
             None,
             false,

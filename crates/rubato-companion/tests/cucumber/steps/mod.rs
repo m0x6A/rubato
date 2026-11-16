@@ -1,3 +1,4 @@
+mod agent_mcp;
 mod discovery;
 mod drafts;
 mod fork;
@@ -7,6 +8,7 @@ mod hooks;
 mod launch_branch;
 mod launch_refusal;
 mod launch_timeout;
+mod opt_in;
 mod pairing;
 mod restart;
 mod restore;

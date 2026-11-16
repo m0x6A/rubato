@@ -23,9 +23,47 @@
     },
     "login": {
       "type": "string"
+    },
+    "voice": {
+      "description": "A plan room's voice channel (ADR 0073); absent while `RUBATO_VOICE` is off.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VoiceAvailability"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
     "login"
-  ]
+  ],
+  "$defs": {
+    "VoiceAvailability": {
+      "description": "Whether voice is on for this server, on `Me` only while it is (ADR 0073).",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "A voice channel can be joined: LiveKit is configured.",
+          "type": "boolean"
+        },
+        "speech": {
+          "description": "A speech provider is configured: utterances reach the room and spoken replies play.",
+          "type": "boolean"
+        },
+        "speech_hosts": {
+          "description": "The provider's hosts, for the consent text; empty for the fake adapter.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "speech"
+      ]
+    }
+  }
 }

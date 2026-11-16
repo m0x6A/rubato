@@ -5,7 +5,7 @@ use rubato_server::kernel::github::{
 };
 use rubato_server::kernel::state::AppState;
 use rubato_server::kernel::{db, telemetry};
-use rubato_server::{app, map, tasks};
+use rubato_server::{app, map, tasks, workspace_settings};
 use std::future::IntoFuture;
 use std::sync::Arc;
 
@@ -18,6 +18,7 @@ async fn main() -> Result<()> {
     }
     config.report_cutover();
     config.report_webhooks();
+    config.report_voice();
     let pool = db::connect(&config.database_url).await?;
     let dev_issues = match &config.dev_issues {
         Some(path) => {
@@ -88,6 +89,8 @@ async fn main() -> Result<()> {
     };
     let bind = config.bind;
     let state = AppState::new(pool, config, github);
+    // ADR 0075: seed workspace_settings once, then the database is the registry's source.
+    workspace_settings::start(&state).await?;
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
     tasks::warm_sessions(&state).await?;

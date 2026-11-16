@@ -15,7 +15,10 @@ mod source;
 
 pub use dismiss::{dismiss, list as dismissals, undismiss};
 pub use fetch::{Fetcher, Outcome, run};
-pub use prometheus::{PrometheusConfig, PrometheusSource};
+pub use prometheus::{
+    FIELDS as PROMETHEUS_FIELDS, PrometheusConfig, PrometheusSource, SECRETS as PROMETHEUS_SECRETS,
+    Seed, seed_from_env,
+};
 pub use source::{ConfiguredSource, DevFileSource, Source, SourceError};
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { overview, realMap } from "../../../test/fixtures.ts";
+import { liveNodes, overview, realMap } from "../../../test/fixtures.ts";
 import { buildGraph } from "./graph.ts";
 import { MapView } from "./MapView.tsx";
 
@@ -15,7 +15,7 @@ describe("MapView", () => {
     const auto = render(<MapView graph={graph} selected={null} onSelect={() => {}} />);
     await waitFor(() => expect(auto.getByTestId("node-rubato-server")).toBeInTheDocument(), { timeout: 5000 });
     const byElk = placed(auto.container);
-    expect(byElk.size).toBe(realMap().nodes.length);
+    expect(byElk.size).toBe(liveNodes().length);
     // ELK spreads the parts: no two share a place, and none is left at the origin by default.
     expect(new Set(byElk.values()).size).toBe(byElk.size);
     // Without a way to save a move, parts do not drag, and there is no Auto-arrange.
@@ -49,20 +49,21 @@ describe("MapView", () => {
     expect(within(player).getByRole("combobox", { name: "Scenario" })).toHaveValue("start-a-session");
     const live = view.getByTestId("scenario-caption");
     expect(live).toHaveAttribute("aria-live", "polite");
-    expect(live).toHaveTextContent("Step 1 of 11: web → rubato-server, control: LaunchRequest");
+    expect(live).toHaveTextContent("Step 1 of 10: web → rubato-server, control: LaunchRequest");
     expect(within(player).getByRole("button", { name: "Previous step" })).toBeDisabled();
     fireEvent.click(within(player).getByRole("button", { name: "Next step" }));
-    expect(live).toHaveTextContent("Step 2 of 11: rubato-server → rubato-companion, control: LaunchCommand, for the paired user only — the server sends the launch to your own companion only");
+    expect(live).toHaveTextContent("Step 2 of 10: rubato-server → rubato-companion, control: LaunchCommand, for the paired user only — the server sends the launch to your own companion only");
     // The keyboard steps too.
     fireEvent.keyDown(player, { key: "ArrowRight" });
-    expect(live).toHaveTextContent("Step 3 of 11");
+    expect(live).toHaveTextContent("Step 3 of 10");
     fireEvent.keyDown(player, { key: "ArrowLeft" });
-    expect(live).toHaveTextContent("Step 2 of 11");
+    expect(live).toHaveTextContent("Step 2 of 10");
     // The step list jumps; the current step is marked.
     const steps = within(player).getByRole("list", { name: "Steps" });
-    fireEvent.click(within(steps).getAllByRole("button")[6]!);
-    expect(live).toHaveTextContent("Step 7 of 11: rubato-server → web, data:");
-    expect(within(steps).getAllByRole("button")[6]).toHaveAttribute("aria-current", "step");
+    // ADR 0070: the tmux-ide step is gone, so the first data step to web is the sixth.
+    fireEvent.click(within(steps).getAllByRole("button")[5]!);
+    expect(live).toHaveTextContent("Step 6 of 10: rubato-server → web, data:");
+    expect(within(steps).getAllByRole("button")[5]).toHaveAttribute("aria-current", "step");
     // Data and control look different without colour: the legend says dot and ring.
     expect(view.getByTestId("legend")).toHaveTextContent("data moves control: one side tells the other to act");
     // Another scenario starts at its first step.
@@ -73,7 +74,7 @@ describe("MapView", () => {
   it("renders a card for every node of rubato-map.yml", async () => {
     render(<MapView graph={buildGraph(overview())} selected={null} onSelect={() => {}} />);
     await waitFor(() => expect(screen.getByTestId("node-rubato-server")).toBeInTheDocument(), { timeout: 5000 });
-    for (const n of realMap().nodes) {
+    for (const n of liveNodes()) {
       expect(screen.getByTestId(`node-${n.id}`)).toBeInTheDocument();
     }
   });

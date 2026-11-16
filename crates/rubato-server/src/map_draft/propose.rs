@@ -147,7 +147,7 @@ pub async fn propose(
 ) -> Result<Json<ProposeResponse>, Refusal> {
     let map = loaded(&app, ws.as_str()).await?;
     // The workspace's own map repo: a draft is proposed where its map lives (ADR 0047).
-    let entries = app.config.workspace_entries().0;
+    let entries = app.workspace_entries().0;
     let Some(cfg) = entries.iter().find(|w| w.id == ws.as_str()) else {
         return Err((
             axum::http::StatusCode::NOT_FOUND,
@@ -413,7 +413,7 @@ pub async fn withdraw(
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
     // The workspace's own map repo: a draft is proposed where its map lives (ADR 0047).
-    let entries = app.config.workspace_entries().0;
+    let entries = app.workspace_entries().0;
     let Some(cfg) = entries.iter().find(|w| w.id == ws.as_str()) else {
         return Err((
             axum::http::StatusCode::NOT_FOUND,
@@ -595,6 +595,7 @@ mod tests {
                     path: None,
                     description: None,
                     service: None,
+                    retired: None,
                 },
             },
         };
@@ -711,6 +712,7 @@ mod tests {
             map_path: "system-map.yml".into(),
             map_ref: "main".into(),
             map_file: None,
+            settings: Default::default(),
         };
         let (events, _g) = capture::start();
         let e = anyhow::anyhow!("boom");

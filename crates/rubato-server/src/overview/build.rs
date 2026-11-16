@@ -388,6 +388,14 @@ pub fn build(
                         && s.branch.as_deref() == Some(summary.branch.as_str())
                         && s.user.eq_ignore_ascii_case(&summary.owner)
                 });
+                // The draft's own fit against this workspace's map (ADR 0071, plan 226 §4): what
+                // an agent's `plan_status` reads. None when the plan does not parse.
+                summary.fits = match (&summary.parse_error, &d.plan, map) {
+                    (None, Some(plan), Some(m)) => {
+                        rubato_protocol::plan_fit(Some(plan), None, &m.map).map(|f| f.fits)
+                    }
+                    _ => None,
+                };
                 (Some(summary), d.plan)
             }
             None => (None, None),
@@ -1111,6 +1119,7 @@ mod tests {
                 live: false,
                 imported_from: None,
                 original_author: None,
+                fits: None,
             },
             plan: plan(issue, "companion-server", "rubato-companion").plan,
             conflict: conflict.then(|| ("alice".to_owned(), now())),
@@ -1368,7 +1377,7 @@ mod tests {
             queued_by: "m0x6A".into(),
             queued_at: now(),
             position,
-            last_start_error: Some("missing_dependency: tmux-ide".into()),
+            last_start_error: Some("missing_dependency: tmux 3.7 is needed".into()),
         };
         inputs.queue = vec![queued(pinned.clone(), 0), queued(IssueRef::new(repo, 2), 1)];
         inputs.layout.positions =
@@ -1669,6 +1678,7 @@ mod tests {
                 live: false,
                 imported_from: None,
                 original_author: None,
+                fits: None,
             },
             plan: None,
             conflict: None,
@@ -1879,6 +1889,7 @@ mod cross_workspace_tests {
                     path: None,
                     description: None,
                     service: None,
+                    retired: None,
                 })
                 .collect(),
             seams: vec![],

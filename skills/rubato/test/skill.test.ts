@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { legacyKeys, parsePlan } from "../../../actions/plan-check/src/parse-plan.ts";
 import { listAdrs, parseAdr } from "../scripts/adrs.ts";
-import { HOOK_EVENTS, main, renderHooks, templatePath } from "../scripts/hooks.ts";
+import { HOOK_EVENTS, main, renderHooks, templatePath, renderManualHooks, STAND_DOWN } from "../scripts/hooks.ts";
 import { install } from "../scripts/install.ts";
 import { normalisePlan, planSha } from "../scripts/lib/plan-sha.ts";
 import { render, summarize } from "../scripts/map.ts";
@@ -100,13 +100,33 @@ describe("map.ts", () => {
     const { dir, ws } = tempMapRepo();
     const repo = tempRepo("acme/pantry", "issue/7-restock");
     const s = await summarize(ws, repo);
-    expect(s.nodes.length).toBe(11);
-    expect(s.seams.length).toBe(12);
+    // Live parts only: tmux-ide and its seam are retired (ADR 0070, ADR 0077).
+    expect(s.nodes.length).toBe(12);
+    expect(s.seams.length).toBe(13);
     expect(s.seams.map((x) => x.id)).toContain("skill-github");
     expect(s.map_version).toBe(git(dir, "rev-parse", "--short", "HEAD"));
     expect(s.repo).toBe("acme/pantry");
     expect(s.plan_path_template).toBe("features/{issue}-{slug}/plan.md");
     expect(render(s)).toContain("- rubato-companion [context]");
+  });
+
+  it("map.ts lists retired ids apart, with counts, never among the ids a plan may name (ADR 0077)", async () => {
+    const { ws } = tempMapRepo();
+    const repo = tempRepo("acme/pantry", "issue/7-restock");
+    const s = await summarize(ws, repo);
+    expect(s.retired).toEqual([
+      { id: "tmux-ide", what: "node", adr: "0070" },
+      { id: "companion-tmux-ide", what: "seam", adr: "0070" },
+    ]);
+    expect(s.nodes.map((n) => n.id)).not.toContain("tmux-ide");
+    expect(s.seams.map((x) => x.id)).not.toContain("companion-tmux-ide");
+    const text = render(s);
+    expect(text).toContain("12 nodes, 13 seams, 2 retired");
+    expect(text).toContain("## Retired (do not use)");
+    expect(text).toContain("- tmux-ide (node), retired by ADR 0070");
+    expect(text).toContain("- companion-tmux-ide (seam), retired by ADR 0070");
+    const nodes = text.slice(text.indexOf("## Nodes"), text.indexOf("## Retired"));
+    expect(nodes).not.toMatch(/^- (companion-)?tmux-ide/m);
   });
 
   it("map.ts lists flows per seam", async () => {
@@ -375,6 +395,20 @@ describe("hooks.ts", () => {
     const template = readFileSync(templatePath(), "utf8");
     expect(() => renderHooks(template, 0, "/x/hook-auth.header")).toThrow(/port/);
     expect(() => renderHooks(template, 8080, "")).toThrow(/header/);
+  });
+
+  it("renders a manual session's hooks behind the stand-down guard, the companion's words (ADR 0078)", () => {
+    const template = readFileSync(templatePath(), "utf8");
+    const parsed = JSON.parse(renderManualHooks(template, 43125, "/s/hook-auth.header")) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+    const commands = Object.values(parsed.hooks).flatMap((es) => es.flatMap((e) => e.hooks.map((h) => h.command)));
+    expect(commands).toHaveLength(HOOK_EVENTS.length);
+    for (const c of commands) {
+      expect(c.startsWith(STAND_DOWN)).toBe(true);
+      expect(c).toContain("http://127.0.0.1:43125/hook");
+    }
+    // The companion's constant, word for word (crates/rubato-companion/src/hooks/opt_in.rs).
+    const rust = readFileSync(join(root, "crates/rubato-companion/src/hooks/opt_in.rs"), "utf8");
+    expect(rust).toContain(`pub const STAND_DOWN: &str = "${STAND_DOWN.replaceAll('"', '\\"')}";`);
   });
 
   it("refuses --token: the token must not go on a command line (ADR 0063)", () => {

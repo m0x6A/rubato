@@ -1,5 +1,6 @@
 //! Envelopes on the `companion-server` seam (ADR 0012): JSON over one outbound websocket.
 
+use crate::agent::{AgentReport, PlanStatus};
 use crate::handoff::HandoffReport;
 use crate::hook::HookEvent;
 use crate::launch::{CapHit, LaunchCommand, LaunchResult};
@@ -43,6 +44,9 @@ pub mod capability {
     pub const ROOM_TURNS: &str = "room_turns";
     /// The server takes `CompanionMessage::RoomReply`.
     pub const ROOM_REPLIES: &str = "room_replies";
+    /// Companion: it serves MCP to its launched sessions and takes `ServerMessage::PlanStatus`.
+    /// Server: it takes `CompanionMessage::AgentReport` (ADR 0071). One name both ways.
+    pub const AGENT_MCP: &str = "agent_mcp";
     /// Prefix of the installed skill's version, `skill:0.2.0`.
     pub const SKILL_PREFIX: &str = "skill:";
 }
@@ -83,6 +87,9 @@ pub enum CompanionMessage {
     HandoffReport(HandoffReport),
     /// An agent's answer to a room turn (ADR 0057).
     RoomReply(crate::room::RoomReply),
+    /// What a launched session's agent said it is doing, through MCP (ADR 0071). Sent only to a
+    /// server that announced `agent_mcp`.
+    AgentReport(AgentReport),
     /// Acknowledges a server envelope by sequence.
     Ack {
         seq: u64,
@@ -107,6 +114,9 @@ pub enum ServerMessage {
     Launch(LaunchCommand),
     /// Text for one session the paired user launched (ADR 0051).
     SessionMessage(SessionMessage),
+    /// Where the plan of one session this companion launched stands (ADR 0071). Sent only to a
+    /// companion that announced `agent_mcp`.
+    PlanStatus(Box<PlanStatus>),
     Ack {
         seq: u64,
     },

@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use opentelemetry::global;
-use opentelemetry::metrics::{Counter, Gauge, Meter};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
 use rubato_protocol::otel;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -138,6 +138,8 @@ pub struct Metrics {
     pub traffic_ghost_parts: Gauge<u64>,
     pub traffic_dismissals: Gauge<u64>,
     pub spend_points: Counter<u64>,
+    /// `PlanStatus` pushes to companions, by `rubato.reason` and `rubato.outcome` (ADR 0071).
+    pub plan_status_sent: Counter<u64>,
     /// The configured companion stale threshold N in seconds (#105). No unit, so the series
     /// stays `rubato_companion_silent_secs`, the name `CompanionSilent` reads.
     pub companion_silent_secs: Gauge<u64>,
@@ -165,6 +167,12 @@ pub struct Metrics {
     pub plans_link_comment_missing: Gauge<u64>,
     /// Plans whose approval record differs from Rubato's (ADR 0054).
     pub plans_approval_record_mismatch: Gauge<u64>,
+    /// Speech calls by op, outcome and provider, and their seconds (ADR 0073).
+    pub voice_speech: Counter<u64>,
+    pub voice_duration: Histogram<f64>,
+    /// Voice join tokens by outcome, and failed joins the browser reported, by reason.
+    pub voice_tokens: Counter<u64>,
+    pub voice_join_failed: Counter<u64>,
 }
 
 impl Metrics {
@@ -234,6 +242,7 @@ impl Metrics {
             traffic_ghost_parts: m.u64_gauge(otel::metric::TRAFFIC_GHOST_PARTS).build(),
             traffic_dismissals: m.u64_gauge(otel::metric::TRAFFIC_DISMISSALS).build(),
             spend_points: m.u64_counter(otel::metric::SPEND_POINTS).build(),
+            plan_status_sent: m.u64_counter(otel::metric::PLAN_STATUS_SENT).build(),
             companion_silent_secs: m.u64_gauge(otel::metric::COMPANION_SILENT_SECS).build(),
             session_messages: m.u64_counter(otel::metric::SESSION_MESSAGES).build(),
             session_messages_oldest_idle_queued: m
@@ -259,6 +268,13 @@ impl Metrics {
             plans_approval_record_mismatch: m
                 .u64_gauge(otel::metric::PLANS_APPROVAL_RECORD_MISMATCH)
                 .build(),
+            voice_speech: m.u64_counter(otel::metric::VOICE_SPEECH).build(),
+            voice_duration: m
+                .f64_histogram(otel::metric::VOICE_DURATION)
+                .with_description("seconds one speech call took")
+                .build(),
+            voice_tokens: m.u64_counter(otel::metric::VOICE_TOKENS).build(),
+            voice_join_failed: m.u64_counter(otel::metric::VOICE_JOIN_FAILED).build(),
         }
     }
 
@@ -417,7 +433,67 @@ pub mod capture {
         }
     }
 
-    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
+    /// A span's fields as recorded so far; pushed as a `Captured` whose message is
+    /// `span <name>` when the span closes (plan 226 §1: declared fields only).
+    struct SpanFields(BTreeMap<String, String>);
+
+    impl<S> tracing_subscriber::Layer<S> for Layer
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            id: &tracing::span::Id,
+            ctx: Context<'_, S>,
+        ) {
+            let mut c = Captured {
+                level: *attrs.metadata().level(),
+                message: String::new(),
+                fields: BTreeMap::new(),
+            };
+            attrs.record(&mut Visitor(&mut c));
+            if let Some(span) = ctx.span(id) {
+                span.extensions_mut().insert(SpanFields(c.fields));
+            }
+        }
+
+        fn on_record(
+            &self,
+            id: &tracing::span::Id,
+            values: &tracing::span::Record<'_>,
+            ctx: Context<'_, S>,
+        ) {
+            let Some(span) = ctx.span(id) else { return };
+            let mut ext = span.extensions_mut();
+            if let Some(SpanFields(fields)) = ext.get_mut::<SpanFields>() {
+                let mut c = Captured {
+                    level: tracing::Level::INFO,
+                    message: String::new(),
+                    fields: std::mem::take(fields),
+                };
+                values.record(&mut Visitor(&mut c));
+                *fields = c.fields;
+            }
+        }
+
+        fn on_close(&self, id: tracing::span::Id, ctx: Context<'_, S>) {
+            let Some(sink) = SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
+                return;
+            };
+            let Some(span) = ctx.span(&id) else { return };
+            let fields = span
+                .extensions()
+                .get::<SpanFields>()
+                .map(|f| f.0.clone())
+                .unwrap_or_default();
+            sink.lock().unwrap().push(Captured {
+                level: *span.metadata().level(),
+                message: format!("span {}", span.name()),
+                fields,
+            });
+        }
+
         fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
             let Some(sink) = SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
                 return;

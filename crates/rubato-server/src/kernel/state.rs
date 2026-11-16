@@ -4,6 +4,7 @@
 use crate::kernel::config::Config;
 use crate::kernel::github::GitHubApi;
 use crate::kernel::signer::Signer;
+use crate::kernel::speech::Speech;
 use crate::kernel::telemetry::Metrics;
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
@@ -24,6 +25,9 @@ pub struct CompanionConn {
     /// When this connection last sent an envelope: a socket left open by a laptop that went to
     /// sleep looks connected, so "live" also needs a recent envelope (ADR 0051).
     pub last_seen: DateTime<Utc>,
+    /// Silent for `companion_silent_secs` with the socket still open: its sessions are counted
+    /// unknown until it sends again (#69).
+    pub quiet: bool,
 }
 
 impl CompanionConn {
@@ -33,6 +37,7 @@ impl CompanionConn {
             tx,
             conn: Uuid::new_v4(),
             last_seen: now,
+            quiet: false,
         }
     }
 }
@@ -82,6 +87,11 @@ pub struct AppState {
     /// the web can say "upgrade the companion" while it is away. In memory only.
     pub companion_caps: Mutex<HashMap<Uuid, Vec<String>>>,
     pub web_tx: broadcast::Sender<WebEvent>,
+    /// Which workspaces this server holds, in switcher order, and where the list came from
+    /// (ADR 0044, ADR 0075). `new` fills it from `Config`; the composition root replaces it
+    /// from `workspace_settings` at start, and that slice alone writes it after. A `watch`, so
+    /// a task can follow changes.
+    workspaces: tokio::sync::watch::Sender<crate::kernel::workspaces::Registry>,
     /// The loaded map of each workspace, by workspace id (ADR 0044). A workspace whose map has
     /// never loaded has no entry.
     pub maps: RwLock<BTreeMap<String, Arc<LoadedMap>>>,
@@ -102,6 +112,12 @@ pub struct AppState {
     /// In-memory state a slice keeps for this server, one value per type (the pull request view
     /// cache, issue #82). Never a table; gone on restart.
     pub slots: Slots,
+    /// A companion was answered a `Welcome`: a slice that pushes to it right after (plan 226 §4,
+    /// `plan_status`) listens here, so `companion_link` names no slice for it.
+    welcomed: broadcast::Sender<Uuid>,
+    /// The speech adapter while voice is on with a provider configured (ADR 0073). Tests swap it
+    /// for a counting or blocking fake with `set_speech`.
+    speech: std::sync::RwLock<Option<Arc<dyn Speech>>>,
 }
 
 /// One value per type, made on first use: lets a slice keep in-memory state on the `App`
@@ -137,13 +153,23 @@ impl AppState {
                 SourceStatus::NotConfigured
             },
         };
+        let (entries, source) = config.workspace_entries();
+        let (workspaces, _) =
+            tokio::sync::watch::channel(crate::kernel::workspaces::Registry { entries, source });
+        let speech = config
+            .voice
+            .as_ref()
+            .and_then(|v| v.speech.as_ref())
+            .map(crate::kernel::speech::from_config);
         Arc::new(Self {
+            speech: std::sync::RwLock::new(speech),
             db,
             config: Arc::new(config),
             github,
             companions: Mutex::new(HashMap::new()),
             companion_caps: Mutex::new(HashMap::new()),
             web_tx,
+            workspaces,
             maps: RwLock::new(BTreeMap::new()),
             metrics: Metrics::new(),
             signer,
@@ -153,7 +179,63 @@ impl AppState {
             webhook_wake: tokio::sync::Notify::new(),
             polled_repos: Mutex::new(BTreeSet::new()),
             slots: Slots::default(),
+            welcomed: broadcast::channel(64).0,
         })
+    }
+
+    /// `companion_link` answered this companion's `Hello` with a `Welcome`.
+    pub fn companion_welcomed(&self, companion_id: Uuid) {
+        let _ = self.welcomed.send(companion_id);
+    }
+
+    /// Companions as they are welcomed, from now on.
+    pub fn subscribe_welcomed(&self) -> broadcast::Receiver<Uuid> {
+        self.welcomed.subscribe()
+    }
+
+    /// The per-socket id of a connected companion (#161): a reconnect is a new one.
+    pub fn companion_conn(&self, companion_id: Uuid) -> Option<Uuid> {
+        self.companions
+            .lock()
+            .unwrap()
+            .get(&companion_id)
+            .map(|c| c.conn)
+    }
+
+    /// The workspaces this server holds now, in switcher order, and where the list came from
+    /// (ADR 0044, ADR 0075).
+    pub fn workspace_entries(
+        &self,
+    ) -> (
+        Vec<crate::kernel::workspaces::WorkspaceEntry>,
+        crate::kernel::workspaces::Source,
+    ) {
+        let r = self.workspaces.borrow();
+        (r.entries.clone(), r.source)
+    }
+
+    /// Replace the registry: the composition root at start, and slice `workspace_settings` on a
+    /// change (ADR 0075). Every reader of `workspace_entries` sees it at once, and a task that
+    /// subscribed is woken.
+    pub fn set_workspaces(&self, registry: crate::kernel::workspaces::Registry) {
+        self.workspaces.send_replace(registry);
+    }
+
+    /// Follow the registry: woken on every `set_workspaces`.
+    pub fn subscribe_workspaces(
+        &self,
+    ) -> tokio::sync::watch::Receiver<crate::kernel::workspaces::Registry> {
+        self.workspaces.subscribe()
+    }
+
+    /// The speech adapter, if one is configured (ADR 0073).
+    pub fn speech(&self) -> Option<Arc<dyn Speech>> {
+        self.speech.read().unwrap().clone()
+    }
+
+    /// Replace the speech adapter: tests use a counting or blocking fake.
+    pub fn set_speech(&self, s: Option<Arc<dyn Speech>>) {
+        *self.speech.write().unwrap() = s;
     }
 
     /// A companion's latest snapshot replaces its earlier one.
@@ -300,10 +382,20 @@ impl AppState {
     }
 
     /// An envelope arrived from this companion.
-    pub fn touch_companion(&self, companion_id: Uuid, now: DateTime<Utc>) {
-        if let Some(c) = self.companions.lock().unwrap().get_mut(&companion_id) {
-            c.last_seen = now;
+    /// Heard from now. Whether it had gone quiet (#69): the caller records its sessions again.
+    pub fn touch_companion(&self, companion_id: Uuid, now: DateTime<Utc>) -> bool {
+        match self.companions.lock().unwrap().get_mut(&companion_id) {
+            Some(c) => {
+                c.last_seen = now;
+                std::mem::take(&mut c.quiet)
+            }
+            None => false,
         }
+    }
+
+    /// The latest cached snapshot of one companion, if it sent one (or one was stored).
+    pub fn sessions_of(&self, companion_id: Uuid) -> Option<Vec<SessionState>> {
+        self.sessions.lock().unwrap().get(&companion_id).cloned()
     }
 
     /// Connected, announcing `cap`, and heard from within two heartbeat intervals (ADR 0051).

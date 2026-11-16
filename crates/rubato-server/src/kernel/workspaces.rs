@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// One workspace: one map, read from GitHub or, for local runs and tests, from a file.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceEntry {
     pub id: String,
@@ -21,6 +21,60 @@ pub struct WorkspaceEntry {
     pub map_ref: String,
     #[serde(default)]
     pub map_file: Option<PathBuf>,
+    /// What only the database holds (ADR 0075): the revision and the settings beyond the map
+    /// source. Default, revision 0, for an entry read from the file or the environment.
+    #[serde(skip)]
+    pub settings: StoredSettings,
+}
+
+/// A workspace's settings as the registry carries them (ADR 0075). Secrets stay sealed here;
+/// the slice that uses them opens them with `kernel::secrets::open`. `Debug` prints no field
+/// value and no secret.
+#[derive(Clone, Default, PartialEq)]
+pub struct StoredSettings {
+    /// 0 for an entry not read from `workspace_settings`; else the row's revision.
+    pub revision: u64,
+    pub traffic: Option<TrafficSetting>,
+    pub default_spend_cap_usd: Option<f64>,
+    pub default_attempt_limit: Option<u32>,
+}
+
+/// One workspace's traffic source: the adapter's name, its text fields and its sealed secrets.
+/// Only the adapter knows what the fields mean (ADR 0040).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct TrafficSetting {
+    pub source: String,
+    pub fields: std::collections::BTreeMap<String, String>,
+    /// A JSON object of the secrets, sealed with `RUBATO_TOKEN_KEY`.
+    pub secrets_sealed: Option<String>,
+}
+
+impl std::fmt::Debug for StoredSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredSettings")
+            .field("revision", &self.revision)
+            .field("traffic", &self.traffic)
+            .field("default_spend_cap_usd", &self.default_spend_cap_usd)
+            .field("default_attempt_limit", &self.default_attempt_limit)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for TrafficSetting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrafficSetting")
+            .field("source", &self.source)
+            .field("fields", &self.fields.keys().collect::<Vec<_>>())
+            .field("secrets", &self.secrets_sealed.as_ref().map(|_| "set"))
+            .finish()
+    }
+}
+
+/// The workspaces a server holds right now, in switcher order, and where the list came from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Registry {
+    pub entries: Vec<WorkspaceEntry>,
+    pub source: Source,
 }
 
 fn main() -> String {
@@ -38,6 +92,8 @@ struct WorkspacesFile {
 pub enum Source {
     File,
     LegacyEnv,
+    /// Table `workspace_settings`, the source after the first start (ADR 0075).
+    Database,
 }
 
 impl Source {
@@ -45,6 +101,7 @@ impl Source {
         match self {
             Source::File => "file",
             Source::LegacyEnv => "legacy_env",
+            Source::Database => "database",
         }
     }
 }
@@ -128,7 +185,7 @@ pub const SCOPED_TABLES: [&str; 10] = [
 /// count rows whose workspace is no longer configured. Those rows are kept, never deleted, and
 /// logged so a removed or renamed entry is noticed.
 pub async fn report(app: &crate::kernel::state::App) -> Result<u64> {
-    let (entries, source) = app.config.workspace_entries();
+    let (entries, source) = app.workspace_entries();
     let ids: Vec<&str> = entries.iter().map(|w| w.id.as_str()).collect();
     tracing::info!(workspaces = ?ids, source = source.as_str(), "workspace config");
     app.metrics

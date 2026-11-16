@@ -1,6 +1,6 @@
 # 0044. Hold several workspaces on one server, each one map, declared in the server config
 
-- **Status:** accepted
+- **Status:** accepted; superseded in part by 0075
 - **Date:** 2026-11-14
 - **Decided by:** m0x6A, accepted 2026-11-14 by approval comment https://github.com/m0x6A/rubato/issues/89#issuecomment-6876029281 (self); drafted by agent (Claude Code, issue #89 design session)
 - **Seam:** server-system-map, skill-system-map

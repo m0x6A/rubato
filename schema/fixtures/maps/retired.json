@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "retired",
+  "nodes": [
+    { "id": "companion", "kind": "context" },
+    { "id": "runner", "kind": "external", "retired": "0070" },
+    { "id": "agent", "kind": "external" }
+  ],
+  "seams": [
+    { "id": "companion-runner", "from": "companion", "to": "runner", "owner": "companion", "retired": "0070" },
+    {
+      "id": "companion-agent",
+      "from": "companion",
+      "to": "agent",
+      "owner": "companion",
+      "flows": [{ "kind": "control", "from": "companion", "to": "agent", "carries": "launch" }]
+    }
+  ]
+}

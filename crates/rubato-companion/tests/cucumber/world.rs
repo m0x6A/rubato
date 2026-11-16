@@ -6,10 +6,9 @@ use rubato_companion::hooks::{HOOKS_TEMPLATE, render_hooks};
 use rubato_companion::kernel::config::{
     CompanionConfig, HookEndpoint, MapLocation, OtelConfig, State, Workspace, WorkspaceRepo,
 };
+use rubato_companion::kernel::gitx::default_worktree_path;
 use rubato_companion::kernel::tmux::Tmux;
-use rubato_companion::kernel::tmux_ide::{Fleet, default_worktree_path};
 use rubato_companion::runtime::{DaemonConfig, Handles, start};
-use rubato_companion::sessions::Registry;
 use rubato_protocol::pairing::{
     PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse, routes,
 };
@@ -64,7 +63,13 @@ impl TestServer {
             notify: Arc::new(Notify::new()),
             push,
             seq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            limits: Arc::new(std::sync::Mutex::new(Limits::default())),
+            // The Welcome replaces the companion's own limits, so it reconciles every second as the
+            // suite's config says. tmux-ide's event stream used to wake reconcile and hid the 30 s
+            // default; without it a pane is seen at the next reconcile (ADR 0070).
+            limits: Arc::new(std::sync::Mutex::new(Limits {
+                team_poll_interval_secs: 1,
+                ..Limits::default()
+            })),
             capabilities: Arc::new(std::sync::Mutex::new(vec![
                 rubato_protocol::capability::SESSION_MESSAGES.into(),
                 rubato_protocol::capability::DRAFTS.into(),
@@ -187,10 +192,9 @@ pub struct RubatoWorld {
     pub run_error: Option<String>,
     pub last_launch: Option<LaunchCommand>,
     pub last_status: Option<u16>,
+    /// What `rubato-companion status` printed (ADR 0078).
+    pub status_out: Option<String>,
     pub started_worktree: Option<PathBuf>,
-    pub registry: Option<Registry>,
-    pub fleet: Option<Fleet>,
-    pub team_result: Option<anyhow::Result<(Fleet, String)>>,
     /// The last session message the server pushed (`session-messages.feature`).
     pub last_message: Option<SessionMessage>,
     /// An id recorded as `typing` in `deliveries.json` before the daemon started.
@@ -240,7 +244,7 @@ impl RubatoWorld {
             root.join("fork-cost").display()
         );
         let script = format!(
-            "#!/bin/sh\n{fork}{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log\" 2>&1\nexec '{}' idle --record \"$PWD/.claude-standin.typed\"\n",
+            "#!/bin/sh\n{fork}{{ echo \"ARGS: $*\"; env | grep -E '^(OTEL_|CLAUDE_|RUBATO_)' ; }} > \"$PWD/.claude-standin.log.tmp\" 2>&1 && mv \"$PWD/.claude-standin.log.tmp\" \"$PWD/.claude-standin.log\"\nexec '{}' idle --record \"$PWD/.claude-standin.typed\"\n",
             real.join("claude").display()
         );
         let claude = fake_bin.join("claude");
@@ -289,10 +293,8 @@ impl RubatoWorld {
             run_error: None,
             last_launch: None,
             last_status: None,
+            status_out: None,
             started_worktree: None,
-            registry: None,
-            fleet: None,
-            team_result: None,
             last_message: None,
             typing_id: None,
             new_session_id: None,

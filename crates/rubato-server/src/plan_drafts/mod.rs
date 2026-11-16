@@ -153,6 +153,8 @@ pub async fn latest_drafts(app: &App) -> Result<Vec<LatestDraft>> {
                 live: false,
                 imported_from: d.imported_from.clone(),
                 original_author: d.original_author.clone(),
+                // Derived on each overview build, against that workspace's map.
+                fits: None,
             },
             plan: r.plan,
             conflict: d.conflict,

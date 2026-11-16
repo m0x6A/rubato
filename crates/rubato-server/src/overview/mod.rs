@@ -12,7 +12,7 @@ mod issue;
 mod traffic_tests;
 
 pub use build::{Built, OverviewInputs, build, counts};
-pub use gauges::refresh_gauges;
+pub use gauges::{Refreshed, refresh, refresh_gauges};
 pub use handler::overview;
 pub use inputs::build_overview_inputs;
 pub use issue::issue_summary;

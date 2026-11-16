@@ -7,7 +7,7 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
-    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic,
+    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic, voice,
     web_link, webhooks,
 };
 use axum::Router;
@@ -136,6 +136,24 @@ pub fn router(app: App) -> Router {
             rubato_protocol::room::routes::ROOM_MESSAGES,
             post(rooms::post),
         )
+        // ADR 0073: a plan room's voice channel. Every route answers 404 `voice_off` while
+        // `RUBATO_VOICE` is off; the handlers cap their own bodies.
+        .route(
+            rubato_protocol::voice::routes::VOICE_TOKEN,
+            post(voice::voice_token),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_UTTERANCE,
+            post(voice::utterance),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_SPEECH,
+            get(voice::speech),
+        )
+        .route(
+            rubato_protocol::voice::routes::VOICE_JOIN_FAILED,
+            post(voice::join_failed),
+        )
         .route(
             rubato_protocol::plan_draft::routes::DRAFT_REVISION,
             get(plan_drafts::revision),
@@ -170,6 +188,7 @@ pub fn router(app: App) -> Router {
     .route("/webhooks/{*rest}", any(unknown_api_path));
     let csp = axum::http::HeaderValue::from_str(&crate::kernel::http::content_security_policy(
         &app.config.public_url,
+        app.config.livekit_url(),
     ))
     .expect("a header-safe policy");
     api.fallback_service(ServeDir::new(dist).not_found_service(ServeFile::new(index)))
@@ -1014,6 +1033,217 @@ mod tests {
             "last_seen_server_seq": 0})
     }
 
+    /// #69: this companion's `rubato.sessions.by_state` points, by state.
+    fn by_state(
+        reader: &crate::kernel::telemetry::metric_reader::Reader,
+        companion_id: uuid::Uuid,
+    ) -> std::collections::BTreeMap<String, u64> {
+        use rubato_protocol::otel::{attr, metric};
+        reader
+            .points(metric::SESSIONS_BY_STATE)
+            .into_iter()
+            .filter(|p| p.attrs.get(attr::COMPANION_ID) == Some(&companion_id.to_string()))
+            .map(|p| (p.attrs[attr::SESSION_STATE].clone(), p.value))
+            .collect()
+    }
+
+    /// Poll the reader until this companion's counts are `want` (states not named are 0): a
+    /// close is handled asynchronously, so an assertion right after it would prove nothing.
+    async fn counts_become(
+        reader: &crate::kernel::telemetry::metric_reader::Reader,
+        companion_id: uuid::Uuid,
+        want: &[(&str, u64)],
+    ) -> usize {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let got = by_state(reader, companion_id);
+            let ok = got.len() == 5
+                && got
+                    .iter()
+                    .all(|(k, v)| *v == want.iter().find(|(s, _)| s == k).map_or(0, |(_, n)| *n));
+            if ok {
+                return got.len();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "counts {got:?}, want {want:?}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    /// One working and one ended session of this companion, from the protocol fixture.
+    fn working_and_ended(companion_id: uuid::Uuid) -> serde_json::Value {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../rubato-protocol/fixtures/companion_sessions.json"
+        ))
+        .unwrap();
+        let mut working = fixture["message"]["sessions"][0].clone();
+        working["companion_id"] = serde_json::json!(companion_id);
+        working["status"] = serde_json::json!("working");
+        let mut ended = working.clone();
+        ended["status"] = serde_json::json!("ended");
+        ended["session_id"] = serde_json::json!(uuid::Uuid::new_v4());
+        ended["tmux"]["pane"] = serde_json::json!("%99");
+        serde_json::json!({"type": "sessions", "sessions": [working, ended]})
+    }
+
+    /// A paired companion's socket that said `Hello` at `seq` (a new one: a recorded sequence
+    /// number is a replay) and was welcomed.
+    async fn hello_socket(base: &str, companion_id: uuid::Uuid, token: &str, seq: u64) -> Socket {
+        let bearer = format!("Bearer {token}");
+        let mut ws = open_ws(
+            base,
+            pr::COMPANION_WS,
+            &[("authorization", bearer.as_str())],
+        )
+        .await
+        .unwrap();
+        send_env(&mut ws, seq, hello(companion_id)).await;
+        let first = next_msg(&mut ws).await;
+        assert!(
+            matches!(first, Some(rubato_protocol::ServerMessage::Welcome { .. })),
+            "{first:?}"
+        );
+        ws
+    }
+
+    /// #69: a companion whose socket ends counts its sessions that had not ended as unknown,
+    /// and its `Hello` on a new socket records them again from the stored snapshot.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_disconnected_companion_counts_its_sessions_as_unknown() {
+        let (base, app, reader, _tmp) = hardened(|_| {}).await;
+        let (companion_id, token) = pair_companion(&base).await;
+        let mut ws = hello_socket(&base, companion_id, &token, 1).await;
+        send_env(&mut ws, 2, working_and_ended(companion_id)).await;
+        assert_eq!(
+            next_msg(&mut ws).await,
+            Some(rubato_protocol::ServerMessage::Ack { seq: 2 })
+        );
+        let mut checked =
+            counts_become(&reader, companion_id, &[("working", 1), ("ended", 1)]).await;
+        let stored = || async {
+            let row: (String,) = sqlx::query_as("SELECT sessions FROM session_snapshots")
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+            row.0
+        };
+        let (row_before, cache_before) = (stored().await, app.latest_sessions());
+
+        futures_util::SinkExt::close(&mut ws).await.unwrap();
+        checked += counts_become(&reader, companion_id, &[("unknown", 1), ("ended", 1)]).await;
+        assert_eq!(
+            stored().await,
+            row_before,
+            "the stored snapshot is not changed"
+        );
+        assert_eq!(app.latest_sessions(), cache_before, "nor the cache");
+
+        // Back, with no new snapshot: the stored states again.
+        let _ws = hello_socket(&base, companion_id, &token, 3).await;
+        checked += counts_become(&reader, companion_id, &[("working", 1), ("ended", 1)]).await;
+        println!("checked {checked} points over a snapshot, a close and a Hello");
+    }
+
+    /// #69: a socket replaced by a newer one leaves the counts to the newer one when it ends.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_replaced_socket_leaves_the_counts_to_the_newer_one() {
+        let (events, _guard) = crate::kernel::telemetry::capture::start();
+        let (base, _app, reader, _tmp) = hardened(|_| {}).await;
+        let (companion_id, token) = pair_companion(&base).await;
+        let mut first = hello_socket(&base, companion_id, &token, 1).await;
+        send_env(&mut first, 2, working_and_ended(companion_id)).await;
+        assert!(next_msg(&mut first).await.is_some());
+        counts_become(&reader, companion_id, &[("working", 1), ("ended", 1)]).await;
+
+        let _second = hello_socket(&base, companion_id, &token, 3).await;
+        assert_eq!(
+            next_msg(&mut first).await,
+            None,
+            "the server ends the older socket"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !events.lock().unwrap().iter().any(|e| {
+            e.message == "companion disconnected"
+                && e.fields.get("sessions").map(String::as_str) == Some("left_to_newer")
+        }) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the older socket's end was not logged"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        counts_become(&reader, companion_id, &[("working", 1), ("ended", 1)]).await;
+    }
+
+    /// #69: a revoked companion is gone: every count is 0, not unknown.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_revoked_companion_counts_zero() {
+        let (base, _app, reader, _tmp) = hardened(|_| {}).await;
+        let (companion_id, token) = pair_companion(&base).await;
+        let mut ws = hello_socket(&base, companion_id, &token, 1).await;
+        send_env(&mut ws, 2, working_and_ended(companion_id)).await;
+        assert!(next_msg(&mut ws).await.is_some());
+        counts_become(&reader, companion_id, &[("working", 1), ("ended", 1)]).await;
+        let revoked = reqwest::Client::new()
+            .delete(format!("{base}{}/{companion_id}", pr::PAIRINGS))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), 204);
+        counts_become(&reader, companion_id, &[]).await;
+    }
+
+    /// Plan 189 PR 1: every reader takes the kernel's registry, not `Config`. A workspace added
+    /// to the registry is listed and passes `check_workspace`; one never added is still unknown.
+    #[tokio::test(flavor = "current_thread")]
+    async fn readers_follow_the_workspace_registry() {
+        use crate::kernel::workspaces::{Registry, Source};
+        let (base, app, _reader, _tmp) = hardened(|_| {}).await;
+        let http = reqwest::Client::new();
+        let get = |path: String| {
+            let http = http.clone();
+            async move { http.get(path).send().await.unwrap() }
+        };
+        let scoped_map = |ws: &str| format!("{base}/api/w/{ws}/map");
+        // Before: shop is not held.
+        let before = get(scoped_map("shop")).await;
+        assert_eq!(before.status(), 404);
+        assert!(before.text().await.unwrap().contains("unknown_workspace"));
+
+        let (mut entries, _) = app.workspace_entries();
+        let mut shop = entries[0].clone();
+        shop.id = "shop".into();
+        shop.map_path = "docs/design/shop-map.yml".into();
+        entries.push(shop);
+        app.set_workspaces(Registry {
+            entries,
+            source: Source::Database,
+        });
+
+        let listed: Vec<rubato_protocol::WorkspaceInfo> =
+            get(format!("{base}{}", workspace_routes::WORKSPACES))
+                .await
+                .json()
+                .await
+                .unwrap();
+        let ids: Vec<&str> = listed.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, ["default", "shop"]);
+        let after = get(scoped_map("shop")).await;
+        assert!(
+            !after.text().await.unwrap().contains("unknown_workspace"),
+            "shop passes check_workspace"
+        );
+        let never = get(scoped_map("nope")).await;
+        assert_eq!(
+            never.status(),
+            404,
+            "a workspace never added is still unknown"
+        );
+        println!("checked 2 listed workspaces and 3 scoped reads");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn a_signed_delivery_passes_the_same_origin_check() {
         let secret = "s3cret";
@@ -1294,6 +1524,12 @@ mod tests {
             );
             let want = if n > 256 { 1 } else { n };
             assert_eq!(stored().await, want, "after {n} sessions");
+            // #69: a refused snapshot records nothing; the gauge keeps the stored one's counts.
+            assert_eq!(
+                by_state(&reader, companion_id).get("blocked").copied(),
+                Some(want as u64),
+                "the gauge after {n} sessions"
+            );
         }
         assert_eq!(
             dropped(&reader, metric::EVENTS_DROPPED, "too_many_sessions"),

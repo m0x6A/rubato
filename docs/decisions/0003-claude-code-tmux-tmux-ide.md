@@ -1,6 +1,6 @@
 # 0003. Claude Code is the only agent in v0; tmux is required; tmux-ide is the runner
 
-- **Status:** accepted; typed input superseded in part by 0051; superseded in part by 0062
+- **Status:** accepted; typed input superseded in part by 0051; superseded in part by 0062; superseded in part by 0070
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (recorded in AGENTS.md)
 - **Seam:** companion-tmux-ide, companion-claude-code

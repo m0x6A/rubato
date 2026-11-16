@@ -227,6 +227,76 @@
       }
     },
     {
+      "id": 112,
+      "title": "Launches by outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Launch results per companion (ADR 0070): started, refused (by rubato_reason, for example missing_dependency when tmux is missing or below the pin) and failed (a git or tmux call that failed or hit its deadline; the error is in LaunchResult.error and on the queue entry as \"did not start: …\"). A rise in failed after an upgrade is the git worktree path breaking where tmux-ide used to work: look for the rubato.launch log line with launch_id and outcome.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome, rubato_reason) (increase(rubato_launches_total[15m]))",
+          "legendFormat": "{{rubato_outcome}} {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 113,
+      "title": "MCP calls by tool and outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "The companion's MCP server for launched sessions (ADR 0071): calls by rubato_mcp_tool, rubato_outcome and rubato_reason (refused no_launch: a launch the companion does not know, often after a restart that lost launches.json; identity: a call naming another issue; discovery: Claude Code asking for OAuth after a 401, a stale token in mcp.json). Reports drained (sent, or not_sent server_too_old while the server does not take agent_mcp). Not initialized: a launched session made no MCP request in its first five minutes, so Claude Code could not start the server; look for the rubato.mcp.call span and the 'launched session has not initialized mcp' log line with rubato.launch_id.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_mcp_tool, rubato_outcome, rubato_reason) (increase(rubato_mcp_calls_total[15m]))",
+          "legendFormat": "{{rubato_mcp_tool}} {{rubato_outcome}} {{rubato_reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_outcome, rubato_reason) (increase(rubato_mcp_reports_total[15m]))",
+          "legendFormat": "reports {{rubato_outcome}} {{rubato_reason}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (rubato_companion_id) (increase(rubato_mcp_not_initialized_total[1h]))",
+          "legendFormat": "not initialized {{rubato_companion_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
       "id": 10,
       "type": "row",
       "title": "Progress",
@@ -234,7 +304,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 13
       },
       "collapsed": false,
       "panels": []
@@ -247,7 +317,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 8
+        "y": 14
       },
       "datasource": {
         "type": "prometheus",
@@ -274,12 +344,13 @@
     {
       "id": 12,
       "title": "Sessions by state",
+      "description": "Sessions of every companion by state, from each companion's latest snapshot (rubato.sessions.by_state, recorded by the server only, #43). A companion whose socket ended counts its sessions that had not ended as unknown, and one silent for RUBATO_COMPANION_SILENT_SECS with its socket open (a laptop asleep) does too, until it says Hello or sends again (#69). A revoked companion counts 0. Unknown is never working: compare with Companions (heartbeat). The log line companion disconnected says what was recorded (sessions=unknown, zeros or left_to_newer); companion quiet, sessions counted unknown marks a silent one.",
       "type": "timeseries",
       "gridPos": {
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 8
+        "y": 14
       },
       "datasource": {
         "type": "prometheus",
@@ -308,7 +379,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 8
+        "y": 14
       },
       "datasource": {
         "type": "prometheus",
@@ -338,7 +409,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 15
+        "y": 21
       },
       "datasource": {
         "type": "prometheus",
@@ -375,7 +446,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 28
       },
       "collapsed": false,
       "panels": []
@@ -388,7 +459,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 23
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -430,7 +501,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 23
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -485,7 +556,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 23
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -516,7 +587,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 23
+        "y": 29
       },
       "datasource": {
         "type": "prometheus",
@@ -557,7 +628,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 35
       },
       "datasource": {
         "type": "loki",
@@ -583,7 +654,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 42
       },
       "collapsed": false,
       "panels": []
@@ -596,7 +667,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 37
+        "y": 43
       },
       "datasource": {
         "type": "prometheus",
@@ -625,7 +696,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 37
+        "y": 43
       },
       "datasource": {
         "type": "prometheus",
@@ -654,7 +725,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 49
       },
       "collapsed": false,
       "panels": []
@@ -667,7 +738,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -699,7 +770,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 44
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -731,7 +802,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 44
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -760,7 +831,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 58
       },
       "datasource": {
         "type": "prometheus",
@@ -795,7 +866,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 64
       },
       "collapsed": false,
       "panels": []
@@ -808,7 +879,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -864,7 +935,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -894,7 +965,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -924,7 +995,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 59
+        "y": 65
       },
       "datasource": {
         "type": "prometheus",
@@ -976,7 +1047,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1006,7 +1077,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1036,7 +1107,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1071,7 +1142,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 65
+        "y": 71
       },
       "datasource": {
         "type": "prometheus",
@@ -1150,7 +1221,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 71
+        "y": 77
       },
       "datasource": {
         "type": "prometheus",
@@ -1180,7 +1251,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 71
+        "y": 77
       },
       "datasource": {
         "type": "prometheus",
@@ -1215,7 +1286,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 83
       },
       "collapsed": false,
       "panels": []
@@ -1228,7 +1299,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 78
+        "y": 84
       },
       "datasource": {
         "type": "prometheus",
@@ -1296,7 +1367,7 @@
         "h": 6,
         "w": 12,
         "x": 6,
-        "y": 78
+        "y": 84
       },
       "datasource": {
         "type": "prometheus",
@@ -1367,7 +1438,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 84
+        "y": 90
       },
       "datasource": {
         "type": "prometheus",
@@ -1397,7 +1468,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 90
+        "y": 96
       },
       "collapsed": false,
       "panels": []
@@ -1410,7 +1481,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 91
+        "y": 97
       },
       "datasource": {
         "type": "prometheus",
@@ -1466,7 +1537,7 @@
         "h": 6,
         "w": 12,
         "x": 6,
-        "y": 91
+        "y": 97
       },
       "datasource": {
         "type": "prometheus",
@@ -1516,7 +1587,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 91
+        "y": 97
       },
       "datasource": {
         "type": "prometheus",
@@ -1546,7 +1617,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 97
+        "y": 103
       },
       "collapsed": false,
       "panels": []
@@ -1559,7 +1630,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 98
+        "y": 104
       },
       "datasource": {
         "type": "prometheus",
@@ -1599,7 +1670,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 104
+        "y": 110
       },
       "collapsed": false,
       "panels": []
@@ -1612,7 +1683,7 @@
         "h": 6,
         "w": 8,
         "x": 0,
-        "y": 105
+        "y": 111
       },
       "datasource": {
         "type": "prometheus",
@@ -1642,7 +1713,7 @@
         "h": 6,
         "w": 8,
         "x": 8,
-        "y": 105
+        "y": 111
       },
       "datasource": {
         "type": "prometheus",
@@ -1672,7 +1743,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 105
+        "y": 111
       },
       "datasource": {
         "type": "prometheus",
@@ -1702,7 +1773,7 @@
         "h": 6,
         "w": 8,
         "x": 0,
-        "y": 111
+        "y": 117
       },
       "datasource": {
         "type": "prometheus",
@@ -1730,7 +1801,7 @@
         "h": 6,
         "w": 8,
         "x": 8,
-        "y": 111
+        "y": 117
       },
       "datasource": {
         "type": "prometheus",
@@ -1758,7 +1829,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 111
+        "y": 117
       },
       "datasource": {
         "type": "prometheus",
@@ -1786,7 +1857,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 117
+        "y": 123
       },
       "datasource": {
         "type": "prometheus",
@@ -1819,7 +1890,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 117
+        "y": 123
       },
       "datasource": {
         "type": "prometheus",
@@ -1852,7 +1923,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 123
+        "y": 129
       },
       "datasource": {
         "type": "prometheus",
@@ -1878,6 +1949,36 @@
       "options": {}
     },
     {
+      "id": 114,
+      "title": "Plan status pushes",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 129
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "PlanStatus pushes to companions for their launched sessions (ADR 0071): welcome (right after a companion connects, from the last tick) and change (a tick found a different status), by outcome: sent, offline (the companion's socket was gone), no_summary (the launch's issue is in no built overview). With companions connected and launched sessions live, welcome flat at zero means plan_status answers unknown everywhere: look for 'plan status pushed after welcome' and 'overview not built' with rubato.workspace.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_reason, rubato_outcome) (increase(rubato_plan_status_sent_total[15m]))",
+          "legendFormat": "{{rubato_reason}} {{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
       "id": 110,
       "title": "Webhooks",
       "type": "timeseries",
@@ -1886,7 +1987,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 129
+        "y": 135
       },
       "datasource": {
         "type": "prometheus",
@@ -1912,6 +2013,49 @@
           "refId": "D",
           "expr": "sum by (rubato_change_kind) (increase(rubato_github_catchup_changes_total[1h]))",
           "legendFormat": "catch-up changes {{rubato_change_kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 111,
+      "title": "Voice",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 143
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "A plan room's voice channel (ADR 0073), absent while RUBATO_VOICE is off. Speech calls per minute by op (stt, tts) and outcome (ok, timeout, status, transport, bad_body, empty, busy); the p95 seconds of each op; join tokens minted; failed joins the browser reported by reason (signal, ice, permission, insecure, other). SpeechProviderFailing fires when every call failed for 10 minutes. Joins failing as ice mean UDP or TURN; as insecure, Rubato is not on HTTPS.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_voice_op, rubato_outcome) (rate(rubato_voice_speech_total[5m]) * 60)",
+          "legendFormat": "{{rubato_voice_op}} {{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, rubato_voice_op) (rate(rubato_voice_duration_bucket[10m])))",
+          "legendFormat": "p95 s {{rubato_voice_op}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (rubato_outcome) (increase(rubato_voice_tokens_total[10m]))",
+          "legendFormat": "tokens {{rubato_outcome}}"
+        },
+        {
+          "refId": "D",
+          "expr": "sum by (rubato_reason) (increase(rubato_voice_join_failed_total[10m]))",
+          "legendFormat": "join failed {{rubato_reason}}"
         }
       ],
       "fieldConfig": {

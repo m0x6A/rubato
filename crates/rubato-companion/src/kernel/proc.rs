@@ -15,6 +15,9 @@ use std::time::{Duration, Instant};
 /// Local git and tmux calls: quick, no network (plan 40 A1).
 pub const LOCAL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A launch's git and tmux calls when `companion.command_timeout_secs` is not set (plan 40 S3).
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// The command did not finish (or did not close its output) before the deadline.
 #[derive(Debug, thiserror::Error)]
 #[error("{command} in {cwd} timed out after {}", human(*timeout))]

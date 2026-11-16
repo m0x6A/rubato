@@ -1,6 +1,7 @@
 //! The session registry: everything the companion knows about sessions on this machine, from
-//! launches, hooks, pane metadata and tmux-ide, merged with a fixed precedence
-//! (Hook > TmuxIde > Launch > Scraped). Never rendered as *working* without a trusted signal.
+//! launches, hooks, headless turns and pane metadata, merged with a fixed precedence
+//! (Hook = Headless > Launch > Scraped; ADR 0070 retired tmux-ide's state). Never rendered as
+//! *working* without a trusted signal.
 //! The methods that change it live with the slice that drives the change (design D7).
 
 use crate::kernel::gitx;
@@ -43,10 +44,10 @@ pub struct Entry {
     /// A launched session now on another branch than its launch branch.
     pub branch_drift: Option<String>,
     /// Which hook blocked the session (ADR 0043): set by the hook that implied *blocked*,
-    /// cleared by the next status a hook or tmux-ide sets. Sent only with *blocked*.
+    /// cleared by the next status a hook sets. Sent only with *blocked*.
     pub blocked_by: Option<BlockCause>,
     /// The last hook that implied a status, and when it arrived (plan 122 §D1). Set by hooks
-    /// alone: a status that discovery copies from tmux-ide never proves a turn ended.
+    /// alone: a status discovery sets never proves a turn ended.
     pub last_hook: Option<HookEventKind>,
     /// That hook says the session waits for input: `Stop`, or `Notification(idle_prompt)`.
     pub last_hook_idle: bool,
@@ -67,6 +68,8 @@ pub struct Entry {
     /// The bundle hash of a draft this launch restored (plan 122 §D5): the plan mirror's
     /// first settle does not send it back as new. In memory only.
     pub restored_hash: Option<String>,
+    /// What the launch was for, for a launched session (plan 220 §2).
+    pub assignment: Option<super::Assignment>,
 }
 
 impl Entry {
@@ -128,6 +131,8 @@ pub struct Registry {
     /// The issue of the launch in flight, if any. Discovery adds no entry for it: the launch
     /// arm records the session itself, so the server never sees it as a discovered one first.
     pub(crate) launching: Option<IssueRef>,
+    /// The launch in flight, for `assignment_of` before the launcher returns (plan 220 §2).
+    pub(crate) pending: Option<super::assignment::PendingLaunch>,
     /// A launch was recorded or moved to a new session id since `launches.json` was written
     /// (`sessions::save_launches_if_changed`).
     pub(crate) launches_changed: bool,
@@ -140,6 +145,7 @@ impl Registry {
             user: user.into(),
             entries: Vec::new(),
             launching: None,
+            pending: None,
             launches_changed: false,
         }
     }
@@ -218,8 +224,14 @@ impl Registry {
 
     /// Count by source, for the `rubato.sessions.discovered` gauge. Every source is present, zero
     /// included: a gauge keeps its last value, so a source that empties must be recorded as 0.
+    /// Every source this companion can produce, including its zeros. `TmuxIde` is not one since
+    /// ADR 0070: the protocol keeps it for stored data, the gauge does not (plan 147 A6).
     pub fn counts_by_source(&self) -> HashMap<StateSource, usize> {
-        let mut m: HashMap<_, _> = StateSource::ALL.iter().map(|s| (*s, 0)).collect();
+        let mut m: HashMap<_, _> = StateSource::ALL
+            .iter()
+            .filter(|s| **s != StateSource::TmuxIde)
+            .map(|s| (*s, 0))
+            .collect();
         for e in &self.entries {
             *m.entry(e.source).or_insert(0) += 1;
         }
@@ -235,7 +247,7 @@ mod tests {
     fn counts_include_every_source() {
         let mut r = Registry::new(Uuid::nil(), "m0x6A");
         let counts = r.counts_by_source();
-        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
+        assert_eq!(counts.len(), StateSource::ALL.len() - 1, "{counts:?}");
         assert!(counts.values().all(|n| *n == 0), "{counts:?}");
         r.entries.push(Entry {
             session_id: Some("s1".into()),
@@ -268,16 +280,22 @@ mod tests {
             pasted: Vec::new(),
             plan_path: None,
             restored_hash: None,
+            assignment: None,
         });
         let counts = r.counts_by_source();
-        assert_eq!(counts.len(), StateSource::ALL.len(), "{counts:?}");
+        assert_eq!(counts.len(), StateSource::ALL.len() - 1, "{counts:?}");
         assert_eq!(counts[&StateSource::Hook], 1);
         for source in [
-            StateSource::TmuxIde,
+            StateSource::Headless,
             StateSource::Scraped,
             StateSource::Launch,
         ] {
             assert_eq!(counts.get(&source), Some(&0), "{source:?}");
         }
+        assert_eq!(
+            counts.get(&StateSource::TmuxIde),
+            None,
+            "never produced since ADR 0070"
+        );
     }
 }

@@ -11,6 +11,14 @@ use std::collections::BTreeSet;
 /// (issue #155). The schema carries it as `pattern`; [`is_map_id`] is the same rule.
 pub const MAP_ID_PATTERN: &str = "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$";
 
+/// A retired part's ADR number, four digits (ADR 0077).
+pub const RETIRED_PATTERN: &str = "^[0-9]{4}$";
+
+/// Whether `value` is an ADR number as `retired` takes it.
+pub fn is_adr_number(value: &str) -> bool {
+    value.len() == 4 && value.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Whether `id` follows [`MAP_ID_PATTERN`].
 pub fn is_map_id(id: &str) -> bool {
     !id.is_empty()
@@ -124,6 +132,18 @@ pub struct MapNode {
     /// default: a part without it is never matched to observed traffic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service: Option<ServiceId>,
+    /// The ADR that retired this part (ADR 0077). Still declared, so plans and pins that named
+    /// it resolve; drawn, offered and suggested nowhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(pattern(RETIRED_PATTERN))]
+    pub retired: Option<String>,
+}
+
+impl MapNode {
+    /// Retired by an ADR (ADR 0077).
+    pub fn is_retired(&self) -> bool {
+        self.retired.is_some()
+    }
 }
 
 /// A service's identity as it emits it: OpenTelemetry `service.namespace` and `service.name`
@@ -181,6 +201,10 @@ pub struct Seam {
     /// without flows is drawn as a plain dependency from `from` to `to`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub flows: Vec<Flow>,
+    /// The ADR that retired this seam (ADR 0077); a retired seam declares no flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(pattern(RETIRED_PATTERN))]
+    pub retired: Option<String>,
 }
 
 /// Data moves; control tells the other side to do something.
@@ -203,6 +227,11 @@ pub struct Flow {
 }
 
 impl Seam {
+    /// Retired by an ADR (ADR 0077).
+    pub fn is_retired(&self) -> bool {
+        self.retired.is_some()
+    }
+
     /// Whether a flow from `from` to `to` runs along this seam: its two nodes, either way.
     pub fn joins(&self, from: &str, to: &str) -> bool {
         (from == self.from && to == self.to) || (from == self.to && to == self.from)
@@ -261,6 +290,20 @@ pub enum MapError {
         from: String,
         to: String,
     },
+    #[error("{what} {id:?} retired {value:?} is not an ADR number (four digits)")]
+    RetiredNotAdr {
+        what: &'static str,
+        id: String,
+        value: String,
+    },
+    #[error(
+        "node {node:?} is retired but names service {service:?}; a retired part matches no traffic"
+    )]
+    RetiredNodeService { node: String, service: String },
+    #[error("seam {0:?} is retired but declares flows")]
+    RetiredSeamFlows(String),
+    #[error("seam {seam:?} is live but ends at retired node {node:?}")]
+    LiveSeamOnRetiredNode { seam: String, node: String },
     #[error("scenario {0:?} has no steps")]
     EmptyScenario(String),
     #[error("scenario {scenario:?} step {step} names unknown seam {seam:?}")]
@@ -300,6 +343,21 @@ pub enum MapError {
 }
 
 impl SystemMap {
+    /// The node and seam ids a plan, a pin or a suggestion may name now: every declared id but
+    /// the retired ones (ADR 0077), nodes first, in map order.
+    pub fn live_ids(&self) -> impl Iterator<Item = &str> {
+        self.nodes
+            .iter()
+            .filter(|n| !n.is_retired())
+            .map(|n| n.id.as_str())
+            .chain(
+                self.seams
+                    .iter()
+                    .filter(|s| !s.is_retired())
+                    .map(|s| s.id.as_str()),
+            )
+    }
+
     pub fn node(&self, id: &str) -> Option<&MapNode> {
         self.nodes.iter().find(|n| n.id == id)
     }
@@ -419,6 +477,50 @@ impl SystemMap {
                 }
             }
         }
+        // ADR 0077: a retired part is consistent. Nodes first, then seams, in map order (the
+        // plan check's `structuralProblems` says the same in the same order).
+        for n in &self.nodes {
+            let Some(r) = &n.retired else { continue };
+            if !is_adr_number(r) {
+                errors.push(MapError::RetiredNotAdr {
+                    what: "node",
+                    id: n.id.clone(),
+                    value: r.clone(),
+                });
+            }
+            if let Some(s) = &n.service {
+                errors.push(MapError::RetiredNodeService {
+                    node: n.id.clone(),
+                    service: s.to_string(),
+                });
+            }
+        }
+        for s in &self.seams {
+            match &s.retired {
+                Some(r) => {
+                    if !is_adr_number(r) {
+                        errors.push(MapError::RetiredNotAdr {
+                            what: "seam",
+                            id: s.id.clone(),
+                            value: r.clone(),
+                        });
+                    }
+                    if !s.flows.is_empty() {
+                        errors.push(MapError::RetiredSeamFlows(s.id.clone()));
+                    }
+                }
+                None => {
+                    for end in [&s.from, &s.to] {
+                        if self.node(end).is_some_and(MapNode::is_retired) {
+                            errors.push(MapError::LiveSeamOnRetiredNode {
+                                seam: s.id.clone(),
+                                node: end.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
         for sc in &self.scenarios {
             if sc.steps.is_empty() {
                 errors.push(MapError::EmptyScenario(sc.id.clone()));
@@ -516,6 +618,7 @@ mod tests {
                 guard: None,
                 description: None,
                 flows: vec![],
+                retired: None,
             }],
             scenarios: vec![],
         };
@@ -596,6 +699,7 @@ mod tests {
             path: None,
             description: None,
             service: None,
+            retired: None,
         }
     }
 
@@ -624,6 +728,7 @@ mod tests {
             guard: None,
             description: None,
             flows: vec![],
+            retired: None,
         }
     }
 
@@ -837,6 +942,72 @@ mod tests {
     fn a_service_with_an_unknown_key_is_refused() {
         let yaml = "id: a\nkind: context\nservice: { name: x, namspace: typo }\n";
         assert!(serde_yaml_ng::from_str::<MapNode>(yaml).is_err());
+    }
+
+    /// ADR 0077: a retired id stays declared, is left out of the live ids, and the map refuses a
+    /// retired part that is not consistent. The same files the plan-check tests read: same
+    /// problems, same words, same order.
+    #[test]
+    fn retired_fixtures() {
+        let good: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../schema/fixtures/maps/retired.yml"))
+                .unwrap();
+        assert_eq!(good.validate(), Ok(()));
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../../../schema/fixtures/maps/retired.json"))
+                .unwrap();
+        assert_eq!(serde_json::to_value(&good).unwrap(), expected);
+        assert!(good.node("runner").unwrap().is_retired());
+        assert!(good.seam("companion-runner").unwrap().is_retired());
+        let live: Vec<&str> = good.live_ids().collect();
+        assert_eq!(live, ["companion", "agent", "companion-agent"]);
+        let bad: SystemMap = serde_yaml_ng::from_str(include_str!(
+            "../../../schema/fixtures/maps/retired-bad.yml"
+        ))
+        .unwrap();
+        let said: Vec<String> = bad
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "node \"runner\" retired \"70\" is not an ADR number (four digits)",
+                "node \"tracer\" is retired but names service \"tracer\"; a retired part matches no traffic",
+                "seam \"companion-runner\" is retired but declares flows",
+                "seam \"companion-tracer\" is live but ends at retired node \"tracer\"",
+                "seam \"companion-agent\" retired \"ADR 70\" is not an ADR number (four digits)",
+            ]
+        );
+        println!(
+            "checked 2 retired map fixtures, {} parts, {} problems",
+            good.nodes.len() + good.seams.len() + bad.nodes.len() + bad.seams.len(),
+            said.len()
+        );
+    }
+
+    /// The team's own map: tmux-ide and its seam are retired by ADR 0070, nothing else is.
+    #[test]
+    fn the_team_map_retires_tmux_ide() {
+        let m: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
+        assert_eq!(m.validate(), Ok(()));
+        let retired: Vec<(&str, &str)> = m
+            .nodes
+            .iter()
+            .filter_map(|n| n.retired.as_deref().map(|r| (n.id.as_str(), r)))
+            .chain(
+                m.seams
+                    .iter()
+                    .filter_map(|s| s.retired.as_deref().map(|r| (s.id.as_str(), r))),
+            )
+            .collect();
+        assert_eq!(
+            retired,
+            [("tmux-ide", "0070"), ("companion-tmux-ide", "0070")]
+        );
     }
 
     /// The same files the plan-check tests read: same parts, same refusals, same words.

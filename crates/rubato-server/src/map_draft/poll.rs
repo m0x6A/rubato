@@ -22,7 +22,7 @@ const STATES: [ProposalState; 3] = [
 /// Both gauges on every tick, zeros included: a gauge recorded only on change keeps its last
 /// value, so a past state would linger and a restart would go silent.
 pub async fn record_gauges(app: &App) {
-    for w in app.config.workspace_entries().0 {
+    for w in app.workspace_entries().0 {
         record_gauges_ws(app, &w).await;
     }
 }
@@ -62,7 +62,7 @@ async fn record_gauges_ws(app: &App, w: &WorkspaceEntry) {
 /// the merge shows the merged map: then the draft's operations are in it, and they and the
 /// proposal go. Until such a load the draft stays as it is.
 pub async fn clear_merged(app: &App) {
-    for w in app.config.workspace_entries().0 {
+    for w in app.workspace_entries().0 {
         clear_merged_ws(app, &w).await;
     }
 }
@@ -132,7 +132,7 @@ async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Res
 /// Over every workspace: true when any proposal is merged and waits for a map load.
 pub async fn check_proposal(app: &App) -> bool {
     let mut merged = false;
-    for w in app.config.workspace_entries().0 {
+    for w in app.workspace_entries().0 {
         merged |= check_proposal_ws(app, &w).await;
     }
     merged

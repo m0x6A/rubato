@@ -200,7 +200,7 @@ pub(super) async fn fits_another(
     plan: Option<&rubato_protocol::Plan>,
     parse_error: Option<&str>,
 ) -> anyhow::Result<bool> {
-    let (entries, _) = app.config.workspace_entries();
+    let (entries, _) = app.workspace_entries();
     for w in entries.iter().filter(|w| w.id != here) {
         let Some(m) = app.map_of(&w.id).await else {
             continue;

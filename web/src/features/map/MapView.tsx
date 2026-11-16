@@ -311,7 +311,10 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       .then((g) => {
         if (!cancelled) {
           setGrouped(g);
-          setTimeout(() => fitView({ padding: 0.15 }), 0);
+          // Fit once the boxes are on the canvas: two frames, so React has committed them and
+          // React Flow has measured them. A timeout of 0 could fit the flat map's bounds, and a
+          // tall box then sat with its name bar above the visible canvas (issue #146).
+          requestAnimationFrame(() => requestAnimationFrame(() => void fitView({ padding: 0.15 })));
         }
       })
       .catch(() => {

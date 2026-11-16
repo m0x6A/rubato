@@ -102,3 +102,46 @@ pub async fn store_stale(db: &SqlitePool, s: &StaleSession) -> Result<()> {
         .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rubato_protocol::StateSource;
+
+    /// Plan 147: a snapshot a tmux-ide companion stored (`source: tmux_ide`) still loads after
+    /// tmux-ide is retired (ADR 0070, Q2). The read path turns a row that does not parse into
+    /// an empty list, so this asserts the session itself comes back, not just that nothing fails.
+    #[tokio::test]
+    async fn a_snapshot_stored_by_a_tmux_ide_companion_still_loads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let db = crate::kernel::db::connect(&url).await.unwrap();
+        let companion = "6f1c3a2e-9b1d-4c8e-8f7a-2d3b4c5d6e7f";
+        let stored = serde_json::json!([{
+            "session_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+            "companion_id": companion,
+            "user": "m0x6A",
+            "tmux": { "session": "rubato@issue-7-restock", "window": 1, "pane": "%5" },
+            "cwd": "/w/pantry-worktrees/issue/7-restock",
+            "branch": "issue/7-restock",
+            "repo": "acme/pantry",
+            "issue": { "repo": "acme/pantry", "number": 7 },
+            "status": "working",
+            "source": "tmux_ide",
+            "last_seen": "2026-11-14T12:00:00Z"
+        }]);
+        sqlx::query(
+            "INSERT INTO session_snapshots (companion_id, sessions, updated_at) VALUES (?, ?, ?)",
+        )
+        .bind(companion)
+        .bind(stored.to_string())
+        .bind(ts(Utc::now()))
+        .execute(&db)
+        .await
+        .unwrap();
+        let sessions = all_sessions(&db).await.unwrap();
+        assert_eq!(sessions.len(), 1, "the stored session comes back");
+        assert_eq!(sessions[0].source, StateSource::TmuxIde);
+        assert_eq!(sessions[0].issue, Some(IssueRef::new("acme/pantry", 7)));
+    }
+}
