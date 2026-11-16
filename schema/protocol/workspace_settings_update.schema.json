@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkspaceSettingsUpdate",
+  "description": "`PUT` `routes::SETTINGS`: the whole settings as they should be. `map_repo` and `map_path`\nare carried so a change to them is refused by name instead of ignored.",
+  "type": "object",
+  "properties": {
+    "default_attempt_limit": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
+    "default_spend_cap_usd": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "map_path": {
+      "type": "string"
+    },
+    "map_ref": {
+      "type": "string"
+    },
+    "map_repo": {
+      "type": "string"
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "revision": {
+      "description": "The revision this edit read. Another: `409 changed_meanwhile`.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "traffic": {
+      "description": "Absent: no traffic source.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TrafficSourceUpdate"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "revision",
+    "map_repo",
+    "map_path",
+    "map_ref"
+  ],
+  "$defs": {
+    "SecretUpdate": {
+      "description": "What an update does to one secret. A secret an update does not name is kept.",
+      "oneOf": [
+        {
+          "description": "Keep what is stored. A changed URL origin clears a kept secret (ADR 0075).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "keep"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "set"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "clear"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "TrafficSourceUpdate": {
+      "description": "The traffic source an update asks for.",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "secrets": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretUpdate"
+          },
+          "default": {}
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ]
+    }
+  }
+}

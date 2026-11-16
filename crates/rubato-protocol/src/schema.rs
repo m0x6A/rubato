@@ -79,5 +79,10 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::traffic::DismissRequest>("dismiss_request"),
         one::<crate::agent::AgentReport>("agent_report"),
         one::<crate::agent::PlanStatus>("plan_status"),
+        one::<crate::workspace_settings::WorkspaceSettings>("workspace_settings"),
+        one::<crate::workspace_settings::WorkspaceSettingsUpdate>("workspace_settings_update"),
+        one::<crate::workspace_settings::NewWorkspace>("new_workspace"),
+        one::<crate::workspace_settings::SourceFields>("source_fields"),
+        one::<crate::workspace_settings::SettingsRefusal>("settings_refusal"),
     ]
 }

@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SettingsRefusal",
+  "description": "The body of a refused settings write: why, in words for the person, and for a stale edit the\nsettings as they are now.",
+  "type": "object",
+  "properties": {
+    "current": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkspaceSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "reason": {
+      "description": "One of [`reason`].",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason",
+    "message"
+  ],
+  "$defs": {
+    "SecretState": {
+      "description": "Whether a secret is stored. A secret's value is never returned.",
+      "type": "object",
+      "properties": {
+        "set": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "set"
+      ]
+    },
+    "TrafficSourceSettings": {
+      "description": "One workspace's traffic source as the view reads it.",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "description": "The adapter's text fields, by `SourceField.name`. Only the adapter knows what they mean.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "secrets": {
+          "description": "Each secret field of the adapter, by name: set or not set.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretState"
+          },
+          "default": {}
+        },
+        "source": {
+          "description": "The adapter's name, one of `SourceFields.source`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "WorkspaceSettings": {
+      "description": "`GET` `routes::SETTINGS`: one workspace's settings.",
+      "type": "object",
+      "properties": {
+        "default_attempt_limit": {
+          "description": "Absent: the built-in 3 attempts.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "default_spend_cap_usd": {
+          "description": "Absent: the built-in 25 USD.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "id": {
+          "type": "string"
+        },
+        "map_path": {
+          "description": "Fixed once the workspace exists.",
+          "type": "string"
+        },
+        "map_ref": {
+          "type": "string"
+        },
+        "map_repo": {
+          "description": "`owner/name` of the repo holding the map. Fixed once the workspace exists.",
+          "type": "string"
+        },
+        "name": {
+          "description": "What people call it; absent: the map's own name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "description": "The compare-and-set token: an update carries the revision it read.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "traffic": {
+          "description": "Absent: the workspace has no traffic source.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrafficSourceSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_by": {
+          "description": "The login of whoever changed it last; `seed` for a row the first start wrote.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "map_repo",
+        "map_path",
+        "map_ref",
+        "updated_by",
+        "updated_at"
+      ]
+    }
+  }
+}

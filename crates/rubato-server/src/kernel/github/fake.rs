@@ -82,6 +82,8 @@ pub struct FakeInner {
     pub check_runs: HashMap<String, Vec<CheckRun>>,
     /// What `repo_as` answers per (login, repo); without a row, push and every method.
     pub access: HashMap<(String, String), RepoAccess>,
+    /// `repo_as` fails for these (login, repo): a repo the person cannot read (GitHub's 404).
+    pub unreadable: std::collections::HashSet<(String, String)>,
     /// `merge_as` answers with this (status, message) and merges nothing.
     pub merge_refused: Option<(u16, String)>,
     /// `merge_as` fails as a timeout does; `true` merges first (the request reached GitHub).
@@ -317,6 +319,9 @@ impl GitHubApi for FakeGitHub {
             return Err(anyhow!("GitHub refused the token: 401"));
         };
         g.calls.push(("repo_as", format!("{login} {repo}")));
+        if g.unreadable.contains(&(login.to_owned(), repo.to_owned())) {
+            return Err(anyhow!("GitHub: 404 Not Found"));
+        }
         Ok(g.access
             .get(&(login.to_owned(), repo.to_owned()))
             .cloned()

@@ -550,6 +550,10 @@ turn_id: string
  */
 export type RoomTurnMode = ("session" | "fork")
 /**
+ * How a text field is drawn.
+ */
+export type FieldKind = ("text" | "url" | "number")
+/**
  * Pushed to browsers over `/ws/web`. Clients refetch the overview on `Changed`.
  */
 export type WebEvent = ({
@@ -584,6 +588,17 @@ kind: "room"
 number: number
 repo: string
 })
+/**
+ * What an update does to one secret. A secret an update does not name is kept.
+ */
+export type SecretUpdate = ({
+action: "keep"
+} | {
+action: "set"
+value: string
+} | {
+action: "clear"
+}) | undefined
 
 export interface RubatoProtocol {
 AgentReport?: AgentReport
@@ -624,6 +639,7 @@ MergeRequest?: MergeRequest
 MergeResponse?: MergeResponse
 NewIssueRequest?: NewIssueRequest
 NewIssueResponse?: NewIssueResponse
+NewWorkspace?: NewWorkspace
 Overview?: Overview
 PairApproveRequest?: PairApproveRequest
 PairPollRequest?: PairPollRequest
@@ -648,6 +664,8 @@ ServerEnvelope?: ServerEnvelope
 SessionMessageRequest?: SessionMessageRequest
 SessionMessageView?: SessionMessageView
 SessionState?: SessionState
+SettingsRefusal?: SettingsRefusal
+SourceFields?: SourceFields
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
 TrafficReport?: TrafficReport
@@ -656,6 +674,8 @@ VoiceJoinFailed?: VoiceJoinFailed
 VoiceToken?: VoiceToken
 VoiceTokenRequest?: VoiceTokenRequest
 WebEvent?: WebEvent
+WorkspaceSettings?: WorkspaceSettings
+WorkspaceSettingsUpdate?: WorkspaceSettingsUpdate
 }
 /**
  * What a launched session's agent said it is doing, through `report_status` (ADR 0071). A
@@ -2017,6 +2037,20 @@ state: CreationState
 url?: (string | null)
 }
 /**
+ * `POST` `workspace::routes::WORKSPACES`: a new workspace. Its traffic source and launch
+ * defaults are set afterwards, with an update.
+ */
+export interface NewWorkspace {
+/**
+ * `[a-z0-9-]{1,32}`.
+ */
+id: string
+map_path: string
+map_ref?: string
+map_repo: string
+name?: (string | null)
+}
+/**
  * The whole picture in one payload: what the web view renders.
  */
 export interface Overview {
@@ -2915,6 +2949,113 @@ export interface SessionMessageRequest {
 text: string
 }
 /**
+ * The body of a refused settings write: why, in words for the person, and for a stale edit the
+ * settings as they are now.
+ */
+export interface SettingsRefusal {
+current?: (WorkspaceSettings | null)
+message: string
+/**
+ * One of [`reason`].
+ */
+reason: string
+}
+/**
+ * `GET` `routes::SETTINGS`: one workspace's settings.
+ */
+export interface WorkspaceSettings {
+/**
+ * Absent: the built-in 3 attempts.
+ */
+default_attempt_limit?: (number | null)
+/**
+ * Absent: the built-in 25 USD.
+ */
+default_spend_cap_usd?: (number | null)
+id: string
+/**
+ * Fixed once the workspace exists.
+ */
+map_path: string
+map_ref: string
+/**
+ * `owner/name` of the repo holding the map. Fixed once the workspace exists.
+ */
+map_repo: string
+/**
+ * What people call it; absent: the map's own name.
+ */
+name?: (string | null)
+/**
+ * The compare-and-set token: an update carries the revision it read.
+ */
+revision: number
+/**
+ * Absent: the workspace has no traffic source.
+ */
+traffic?: (TrafficSourceSettings | null)
+updated_at: string
+/**
+ * The login of whoever changed it last; `seed` for a row the first start wrote.
+ */
+updated_by: string
+}
+/**
+ * One workspace's traffic source as the view reads it.
+ */
+export interface TrafficSourceSettings {
+/**
+ * The adapter's text fields, by `SourceField.name`. Only the adapter knows what they mean.
+ */
+fields?: {
+[k: string]: string | undefined
+}
+/**
+ * Each secret field of the adapter, by name: set or not set.
+ */
+secrets?: {
+[k: string]: SecretState | undefined
+}
+/**
+ * The adapter's name, one of `SourceFields.source`.
+ */
+source: string
+}
+/**
+ * Whether a secret is stored. A secret's value is never returned.
+ */
+export interface SecretState {
+set: boolean
+}
+/**
+ * `GET` `routes::TRAFFIC_SOURCES`: one adapter's field list, published by the adapter.
+ */
+export interface SourceFields {
+fields: SourceField[]
+label: string
+/**
+ * The adapter's name, as `TrafficSourceSettings.source` carries it.
+ */
+source: string
+}
+/**
+ * One field of a traffic adapter.
+ */
+export interface SourceField {
+kind: FieldKind
+label: string
+name: string
+/**
+ * What the adapter uses when the field is left empty, as text for the form.
+ */
+placeholder?: (string | null)
+required: boolean
+/**
+ * A secret is write-only: sent in `TrafficSourceUpdate.secrets`, never in `fields`.
+ */
+secret: boolean
+}
+/**
  * Emitted once when a *working* session goes quiet for longer than the stale threshold.
  */
 export interface StaleSession1 {
@@ -3030,4 +3171,36 @@ export interface VoiceTokenRequest {
 branch: string
 number: number
 repo: string
+}
+/**
+ * `PUT` `routes::SETTINGS`: the whole settings as they should be. `map_repo` and `map_path`
+ * are carried so a change to them is refused by name instead of ignored.
+ */
+export interface WorkspaceSettingsUpdate {
+default_attempt_limit?: (number | null)
+default_spend_cap_usd?: (number | null)
+map_path: string
+map_ref: string
+map_repo: string
+name?: (string | null)
+/**
+ * The revision this edit read. Another: `409 changed_meanwhile`.
+ */
+revision: number
+/**
+ * Absent: no traffic source.
+ */
+traffic?: (TrafficSourceUpdate | null)
+}
+/**
+ * The traffic source an update asks for.
+ */
+export interface TrafficSourceUpdate {
+fields?: {
+[k: string]: string | undefined
+}
+secrets?: {
+[k: string]: SecretUpdate | undefined
+}
+source: string
 }

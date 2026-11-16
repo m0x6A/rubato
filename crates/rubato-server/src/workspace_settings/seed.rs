@@ -122,40 +122,43 @@ async fn seed(app: &App) -> Result<usize> {
     Ok(entries.len())
 }
 
-/// The registry from the table. `map_file` is never stored: it is read by id from the file or
-/// the environment, as at every start (plan 189 Decision 10).
-fn registry_of(app: &App, rows: &[Row]) -> Result<Registry> {
+/// One registry entry from its row. `map_file` is never stored: it is read by id from the file
+/// or the environment (plan 189 Decision 10).
+pub(super) fn entry_of(app: &App, r: &Row) -> Result<WorkspaceEntry> {
     let (from_config, _) = app.config.workspace_entries();
+    let fields: BTreeMap<String, String> = match &r.traffic_fields {
+        Some(j) => serde_json::from_str(j)
+            .with_context(|| format!("workspace {}: traffic fields", r.workspace_id))?,
+        None => BTreeMap::new(),
+    };
+    Ok(WorkspaceEntry {
+        id: r.workspace_id.clone(),
+        name: r.name.clone(),
+        map_repo: r.map_repo.clone(),
+        map_path: r.map_path.clone(),
+        map_ref: r.map_ref.clone(),
+        map_file: from_config
+            .iter()
+            .find(|w| w.id == r.workspace_id)
+            .and_then(|w| w.map_file.clone()),
+        settings: StoredSettings {
+            revision: r.revision as u64,
+            traffic: r.traffic_source.as_ref().map(|s| TrafficSetting {
+                source: s.clone(),
+                fields,
+                secrets_sealed: r.traffic_secrets_sealed.clone(),
+            }),
+            default_spend_cap_usd: r.default_spend_cap_usd,
+            default_attempt_limit: r.default_attempt_limit.map(|n| n as u32),
+        },
+    })
+}
+
+/// The registry from the table, checked as at every start (ADR 0044).
+pub(super) fn registry_of(app: &App, rows: &[Row]) -> Result<Registry> {
     let entries = rows
         .iter()
-        .map(|r| {
-            let fields: BTreeMap<String, String> = match &r.traffic_fields {
-                Some(j) => serde_json::from_str(j)
-                    .with_context(|| format!("workspace {}: traffic fields", r.workspace_id))?,
-                None => BTreeMap::new(),
-            };
-            Ok(WorkspaceEntry {
-                id: r.workspace_id.clone(),
-                name: r.name.clone(),
-                map_repo: r.map_repo.clone(),
-                map_path: r.map_path.clone(),
-                map_ref: r.map_ref.clone(),
-                map_file: from_config
-                    .iter()
-                    .find(|w| w.id == r.workspace_id)
-                    .and_then(|w| w.map_file.clone()),
-                settings: StoredSettings {
-                    revision: r.revision as u64,
-                    traffic: r.traffic_source.as_ref().map(|s| TrafficSetting {
-                        source: s.clone(),
-                        fields,
-                        secrets_sealed: r.traffic_secrets_sealed.clone(),
-                    }),
-                    default_spend_cap_usd: r.default_spend_cap_usd,
-                    default_attempt_limit: r.default_attempt_limit.map(|n| n as u32),
-                },
-            })
-        })
+        .map(|r| entry_of(app, r))
         .collect::<Result<Vec<_>>>()?;
     check(&entries)?;
     Ok(Registry {
