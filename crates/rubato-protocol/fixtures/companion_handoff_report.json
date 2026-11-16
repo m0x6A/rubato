@@ -1,0 +1,13 @@
+{
+  "seq": 14,
+  "sent_at": "2026-11-16T12:05:00Z",
+  "message": {
+    "type": "handoff_report",
+    "launch_id": "9b2e4d1a-3c5f-4e6a-9b7c-8d9e0f1a2b3c",
+    "event": "rubato.plan.handoff",
+    "outcome": "committed",
+    "approval": "5d3b1f0e-2c4a-4b8e-9f1d-7a6c5e4b3a21",
+    "commit": "abc1234def5678abc1234def5678abc1234def56",
+    "at": "2026-11-16T12:05:00Z"
+  }
+}
