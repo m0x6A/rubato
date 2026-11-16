@@ -138,7 +138,7 @@ slices:
 pairing        device-code pairing with a GitHub login                            pair
 server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
 sessions       Registry, identity, discovery, launches.json, headless turns        reconcile (essential, not headless)
-hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
+hooks          hook receiver (port and token kept), template, apply_hook, manual opt-in   hook server, dropped counter (essential)
 launch         LaunchCommand: own user only, worktree, tmux or a headless turn    launch task (essential)
 spend          transcript cost, spend cap, CapHit                                 after each hook
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
