@@ -1368,7 +1368,7 @@ mod tests {
             queued_by: "m0x6A".into(),
             queued_at: now(),
             position,
-            last_start_error: Some("missing_dependency: tmux-ide".into()),
+            last_start_error: Some("missing_dependency: tmux 3.7 is needed".into()),
         };
         inputs.queue = vec![queued(pinned.clone(), 0), queued(IssueRef::new(repo, 2), 1)];
         inputs.layout.positions =

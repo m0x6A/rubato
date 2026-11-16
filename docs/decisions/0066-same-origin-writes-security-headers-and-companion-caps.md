@@ -1,6 +1,6 @@
 # 0066. Refuse cross-origin browser writes, send a CSP, and cap what one companion message may carry
 
-- **Status:** accepted
+- **Status:** accepted; superseded in part by 0073
 - **Date:** 2026-11-15
 - **Decided by:** m0x6A, accepted 2026-11-15 by approval comment https://github.com/m0x6A/rubato/issues/193#issuecomment-6892514528 (self); drafted by agent (Claude Code, issue #193 design session)
 - **Seam:** web-server, companion-server

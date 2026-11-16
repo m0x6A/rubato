@@ -204,6 +204,10 @@
             }
           ]
         },
+        "spoken": {
+          "description": "Posted from a push-to-talk utterance (ADR 0073); a turn it makes is asked aloud.",
+          "type": "boolean"
+        },
         "text": {
           "type": "string"
         },

@@ -257,6 +257,7 @@ async fn on_envelope(
         CompanionMessage::Draft(_) => "draft",
         CompanionMessage::HandoffReport(_) => "handoff_report",
         CompanionMessage::RoomReply(_) => "room_reply",
+        CompanionMessage::AgentReport(_) => "agent_report",
         CompanionMessage::Ack { .. } => "ack",
     };
     let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq);
@@ -485,6 +486,15 @@ async fn on_envelope(
                 session_messages::on_result(app, companion_id, &r).await;
                 Some(ServerMessage::Ack { seq: env.seq })
             }
+            // ADR 0071: this server does not announce `agent_mcp` yet, so a companion should not
+            // send one; if it does, it is dropped and counted (plan 226 takes it).
+            CompanionMessage::AgentReport(r) => {
+                tracing::warn!(rubato.companion_id = %companion_id, rubato.launch_id = %r.launch_id, "agent report dropped: this server does not take agent_mcp");
+                app.metrics
+                    .events_dropped
+                    .add(1, &[KeyValue::new(attr::DROP_REASON, "agent_report")]);
+                Some(ServerMessage::Ack { seq: env.seq })
+            }
             CompanionMessage::Ack { .. } => None,
         }
     }
@@ -616,7 +626,9 @@ fn stored_payload(m: &CompanionMessage) -> serde_json::Value {
             h.payload = None;
             serde_json::to_value(CompanionMessage::Hook(h)).unwrap_or_default()
         }
-        CompanionMessage::SessionMessageResult(_) | CompanionMessage::Draft(_) => {
+        CompanionMessage::SessionMessageResult(_)
+        | CompanionMessage::Draft(_)
+        | CompanionMessage::AgentReport(_) => {
             serde_json::json!({})
         }
         other => serde_json::to_value(other).unwrap_or_default(),
@@ -919,6 +931,38 @@ mod tests {
         assert_eq!(cached[0].status, SessionStatus::Idle);
         let stored = store::session_snapshots(&app.db).await.unwrap();
         assert_eq!(stored.get(&c), Some(&cached));
+    }
+
+    /// ADR 0071, plan 220: until the server takes `agent_mcp` (plan 226) it drops an
+    /// `AgentReport`, counts it, stores no payload (ADR 0052) and leaves the sessions alone.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_agent_report_is_dropped_counted_and_stored_without_its_text() {
+        let (app, reader, pairing, _tmp) = spend_app().await;
+        let c = pairing.companion_id;
+        on_envelope(&app, &pairing, spend_snapshot(c, 1, 1.0)).await;
+        let before = app.latest_sessions();
+        let mut env = fixture("companion_agent_report.json");
+        env.seq = 2;
+        let reply = on_envelope(&app, &pairing, env).await;
+        assert!(
+            matches!(reply, Some(ServerMessage::Ack { seq: 2 })),
+            "{reply:?}"
+        );
+        let dropped: u64 = reader
+            .points(metric::EVENTS_DROPPED)
+            .iter()
+            .filter(|p| p.attrs[attr::DROP_REASON] == "agent_report")
+            .map(|p| p.value)
+            .sum();
+        assert_eq!(dropped, 1);
+        assert_eq!(app.latest_sessions(), before, "sessions unchanged");
+        use sqlx::Row;
+        let payload: String = sqlx::query("SELECT payload FROM companion_events WHERE seq = 2")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+            .get("payload");
+        assert!(!payload.contains("auth seam"), "{payload}");
     }
 
     /// ADR 0012: a replayed envelope is only acked. Spend history never sees it.

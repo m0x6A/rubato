@@ -11,6 +11,8 @@ mod wire;
 
 pub use arm::{HookOutcome, count_dropped, on_event, seed_forwarded};
 pub use handoff::{Forwarded, on_handoff};
-pub use server::{HANDOFF_ROUTE, HookServer, LAUNCH_HEADER, new_token};
+pub use server::{
+    HANDOFF_ROUTE, HookServer, LAUNCH_HEADER, LaunchHeader, MCP_BODY_LIMIT, new_token,
+};
 pub use template::{HOOKS_TEMPLATE, render_hooks};
 pub use wire::PAYLOAD_ALLOWLIST;

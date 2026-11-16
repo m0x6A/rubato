@@ -31,6 +31,7 @@ pub mod session_log;
 pub mod session_messages;
 pub mod spend_history;
 pub mod traffic;
+pub mod voice;
 pub mod web_link;
 pub mod webhooks;
 

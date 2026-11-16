@@ -314,7 +314,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
     const active = page.locator(".react-flow__edge.step-active");
 
     // Step 1: web tells the server to start. The control pulse is a ring on that one arrow.
-    await expect(caption).toHaveText(/^Step 1 of 11: web → rubato-server, control: LaunchRequest/);
+    await expect(caption).toHaveText(/^Step 1 of 10: web → rubato-server, control: LaunchRequest/);
     await expect(active).toHaveCount(1);
     await expect(pulse).toHaveCount(1);
     await expect(pulse).toHaveClass(/control/);
@@ -328,16 +328,16 @@ for (const motion of ["no-preference", "reduce"] as const) {
 
     // Step 2: the launch goes to the companion; the lit parts follow the step.
     await player.getByRole("button", { name: "Next step" }).click();
-    await expect(caption).toHaveText(/^Step 2 of 11: rubato-server → rubato-companion, control: LaunchCommand/);
+    await expect(caption).toHaveText(/^Step 2 of 10: rubato-server → rubato-companion, control: LaunchCommand/);
     await expect(page.getByTestId("node-rubato-companion")).not.toHaveClass(/dim/);
     await expect(page.getByTestId("node-web")).toHaveClass(/dim/);
     await expect(active).toHaveCount(1);
 
-    // Step 5 is data coming back: a filled dot, not a ring.
-    for (let i = 0; i < 3; i++) {
+    // Step 4 is data coming back: a filled dot, not a ring (ADR 0070 dropped the tmux-ide step).
+    for (let i = 0; i < 2; i++) {
       await player.getByRole("button", { name: "Next step" }).click();
     }
-    await expect(caption).toHaveText(/^Step 5 of 11: rubato-companion → rubato-server, data:/);
+    await expect(caption).toHaveText(/^Step 4 of 10: rubato-companion → rubato-server, data:/);
     await expect(pulse).toHaveClass(/data/);
 
     // Nothing covers the step: its two parts are inside the canvas and clear of the band of
@@ -348,8 +348,8 @@ for (const motion of ["no-preference", "reduce"] as const) {
       await zoomIn.click();
     }
     await player.getByRole("button", { name: "Previous step" }).click();
-    for (let i = 3; i < steps.length; i++) {
-      await expect(caption).toHaveText(new RegExp(`^Step ${i + 1} of 11:`));
+    for (let i = 2; i < steps.length; i++) {
+      await expect(caption).toHaveText(new RegExp(`^Step ${i + 1} of ${steps.length}:`));
       await expectClear(page, [steps[i]!.from, steps[i]!.to]);
       if (i < steps.length - 1) {
         await player.getByRole("button", { name: "Next step" }).click();
@@ -453,8 +453,8 @@ test("queue an issue on a paired companion and start it", { tag: ["@queue.queue-
 
   // The companion refuses: the entry stays and says why.
   const answer = (seq: number, message: Record<string, unknown>) => mine.send(JSON.stringify({ seq, sent_at: new Date().toISOString(), message: { type: "launch", command_id: commands.at(-1)!.id, at: new Date().toISOString(), ...message } }));
-  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux-ide 2.9 is needed" });
-  await expect(entry).toContainText("did not start: missing_dependency: tmux-ide 2.9 is needed");
+  answer(2, { outcome: "refused", reason: "missing_dependency", detail: "tmux 3.7 is needed" });
+  await expect(entry).toContainText("did not start: missing_dependency: tmux 3.7 is needed");
 
   // Started the second time: the entry leaves the lane.
   await entry.getByRole("button", { name: "Start m0x6A/rubato#9" }).click();

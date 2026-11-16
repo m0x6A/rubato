@@ -102,13 +102,23 @@
           "kind": "external"
         },
         {
-          "description": "Session runner (TypeScript CLI, npm tmux-ide, tmux >= 3.7). worktree create, events, team --json, send, wait, MCP. Version pinned by the companion.",
+          "description": "Retired by ADR 0070: the companion runs tmux and git itself and no longer calls tmux-ide. The id stays so merged plans that name it still check (plan 147 Q1).",
           "id": "tmux-ide",
           "kind": "external"
         },
         {
           "description": "The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Exports its own OTel.",
           "id": "claude-code",
+          "kind": "external"
+        },
+        {
+          "description": "Self-hosted WebRTC media server (Apache 2.0) beside Rubato, run by the team, never started by Rubato. Carries a plan room's voice channel between browsers, behind the voice flag (ADR 0073).",
+          "id": "livekit",
+          "kind": "external"
+        },
+        {
+          "description": "Speech-to-text and text-to-speech over an OpenAI-compatible HTTP API, local (Speaches, whisper.cpp, Kokoro) or hosted, chosen by configuration (ADR 0073).",
+          "id": "speech-provider",
           "kind": "external"
         },
         {
@@ -143,13 +153,6 @@
               "says": "the server sends the launch to your own companion only",
               "seam": "companion-server",
               "to": "rubato-companion"
-            },
-            {
-              "from": "rubato-companion",
-              "kind": "control",
-              "says": "the companion creates a worktree on the issue branch",
-              "seam": "companion-tmux-ide",
-              "to": "tmux-ide"
             },
             {
               "from": "rubato-companion",
@@ -527,24 +530,10 @@
           "to": "github"
         },
         {
-          "carries": "worktree create, events --follow --json, team --json, send, wait",
-          "description": "The companion asks tmux-ide to create worktrees and sessions, and reads which sessions exist and what state they are in.",
-          "flows": [
-            {
-              "carries": "worktree create, send, wait",
-              "from": "rubato-companion",
-              "kind": "control",
-              "to": "tmux-ide"
-            },
-            {
-              "carries": "team --json and events --follow --json: sessions, panes, agent status",
-              "from": "tmux-ide",
-              "kind": "data",
-              "to": "rubato-companion"
-            }
-          ],
+          "carries": "nothing; retired by ADR 0070",
+          "description": "Retired by ADR 0070: the companion makes worktrees with git and sessions with tmux itself, and takes state from hooks only. Kept so merged plans that name it still check (plan 147 Q1); a follow-up retires the id.",
           "from": "rubato-companion",
-          "guard": "Gherkin against real tmux-ide on tmux -L rubato-test; version pinned (2.9.x), reported as rubato.tmux_ide.version; low-confidence state renders unknown",
+          "guard": "the companion's Gherkin suite runs with no tmux-ide installed; rubato.launches by outcome on the Launches by outcome panel",
           "id": "companion-tmux-ide",
           "owner": "rubato-companion",
           "to": "tmux-ide"
@@ -726,7 +715,7 @@
           "description": "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map.",
           "flows": [
             {
-              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room",
+              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073)",
               "from": "rubato-server",
               "kind": "data",
               "to": "web"
@@ -738,7 +727,7 @@
               "to": "web"
             },
             {
-              "carries": "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages",
+              "carries": "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages; behind the voice flag, a push-to-talk utterance for a room (ADR 0073)",
               "from": "web",
               "kind": "data",
               "to": "rubato-server"
@@ -755,6 +744,58 @@
           "id": "web-server",
           "owner": "rubato-server",
           "to": "rubato-server"
+        },
+        {
+          "carries": "WebRTC audio of a plan room's voice channel, joined with a LiveKit token Rubato minted (livekit-client)",
+          "description": "People in a plan's room hear each other through the team's own LiveKit. Rubato only mints the join token; the audio never passes through Rubato (ADR 0073).",
+          "flows": [
+            {
+              "carries": "join a plan room's voice channel with a ten-minute join token: microphone only, the login as name",
+              "from": "web",
+              "kind": "control",
+              "to": "livekit"
+            },
+            {
+              "carries": "each person's microphone audio",
+              "from": "web",
+              "kind": "data",
+              "to": "livekit"
+            },
+            {
+              "carries": "the other participants' audio and who is in the voice channel",
+              "from": "livekit",
+              "kind": "data",
+              "to": "web"
+            }
+          ],
+          "from": "web",
+          "guard": "voice token tests decode every claim with the secret, and a wrong secret fails; livekit-client mocked in Vitest; the server never connects to LiveKit",
+          "id": "web-livekit",
+          "owner": "web",
+          "to": "livekit"
+        },
+        {
+          "carries": "POST {base}/audio/transcriptions and {base}/audio/speech, behind the Speech port with a fake adapter for tests",
+          "description": "The server turns one push-to-talk utterance into room text and an agent's reply into a short spoken clip. No audio is stored (ADR 0073).",
+          "flows": [
+            {
+              "carries": "one utterance's audio to transcribe; the spoken cut of an agent's reply to synthesize",
+              "from": "rubato-server",
+              "kind": "data",
+              "to": "speech-provider"
+            },
+            {
+              "carries": "the transcript; the synthesized clip",
+              "from": "speech-provider",
+              "kind": "data",
+              "to": "rubato-server"
+            }
+          ],
+          "from": "rubato-server",
+          "guard": "Speech port tests against the fake adapter and a recorded OpenAI-compatible stub; SpeechProviderFailing alert",
+          "id": "server-speech",
+          "owner": "rubato-server",
+          "to": "speech-provider"
         },
         {
           "from": "billing",

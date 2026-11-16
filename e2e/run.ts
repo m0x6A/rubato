@@ -242,10 +242,16 @@ async function main() {
   // hooks. Wait for the sessions to finish too, or the checks below race the Stop hook.
   const standinGlob = `${T}/repos/*-worktrees/**/.claude-standin.log`;
   const finished = () => globSync(standinGlob).filter((f) => /^(DONE|ERROR)/m.test(readFileSync(f, "utf8"))).length;
-  const final = await waitFor("all three issues Designed and all three sessions finished", 150_000, async () => {
+  // Designed can come from the draft (ADR 0053) before the server's next poll reads the plan on
+  // the branch; launches without tmux-ide (ADR 0070) start fast enough for that to show, so the
+  // wait is for both.
+  const final = await waitFor("all three issues Designed with their plans read and all three sessions finished", 150_000, async () => {
     const ov = await overview();
     record(ov);
-    const done = issues.every((i) => ov.issues.find((s) => s.issue.repo === i.repo && s.issue.number === i.number)?.progress.state === "designed");
+    const done = issues.every((i) => {
+      const s = ov.issues.find((x) => x.issue.repo === i.repo && x.issue.number === i.number);
+      return s?.progress.state === "designed" && s.plan;
+    });
     return done && finished() === issues.length ? ov : null;
   });
 
@@ -341,7 +347,8 @@ async function main() {
       "rubato.map.draft.ops",
       "rubato.map.proposal.state_since",
     ],
-    "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered"],
+    // ADR 0070: each launch result is counted, by outcome.
+    "rubato-companion": ["rubato.companion.heartbeat", "rubato.hook.forwarded", "rubato.sessions.discovered", "rubato.launches"],
   };
   // Issue #43: names that must not show up. Sessions by state is the server's alone (a copy from
   // the companion made every sum count each session twice), and no companion metric carries the
@@ -352,9 +359,9 @@ async function main() {
   // its place on the other metrics is proved by the companion's in-memory metric tests.)
   const expectedAttributeKeys: Record<string, string[]> = {
     "rubato-server": ["rubato.issue.state"],
-    "rubato-companion": ["rubato.companion_id", "rubato.session.source"],
+    "rubato-companion": ["rubato.companion_id", "rubato.session.source", "rubato.outcome"],
   };
-  const expectedSpans: Record<string, string[]> = { "rubato-companion": ["rubato.hook.forward", "rubato.team_poll"] };
+  const expectedSpans: Record<string, string[]> = { "rubato-companion": ["rubato.hook.forward", "rubato.reconcile"] };
   const expectations: { what: string; expected: Record<string, string[]>; seen: Map<string, Set<string>> }[] = [
     { what: "metric names", expected: expectedMetrics, seen: otlp.metrics },
     { what: "attribute keys", expected: expectedAttributeKeys, seen: otlp.metrics },

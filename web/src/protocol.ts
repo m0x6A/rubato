@@ -45,7 +45,7 @@ user: string
 } | Heartbeat | HookEvent | {
 sessions: SessionState[]
 type: "sessions"
-} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | {
+} | LaunchResult | CapHit1 | StaleSession | SessionMessageResult | DraftBundle | HandoffReport | RoomReply | AgentReport1 | {
 seq: number
 type: "ack"
 })
@@ -489,7 +489,7 @@ limits: Limits
 protocol_version: number
 server_version: string
 type: "welcome"
-} | LaunchCommand1 | SessionMessage | {
+} | LaunchCommand1 | SessionMessage | PlanStatus1 | {
 seq: number
 type: "ack"
 } | {
@@ -586,6 +586,7 @@ repo: string
 })
 
 export interface RubatoProtocol {
+AgentReport?: AgentReport
 ApproveRequest?: ApproveRequest
 ApproveResponse?: ApproveResponse
 CallInRequest?: CallInRequest
@@ -632,6 +633,7 @@ PairStartResponse?: PairStartResponse
 PairingInfo?: PairingInfo
 PinRequest?: PinRequest
 Plan?: Plan
+PlanStatus?: PlanStatus
 Progress?: Progress
 ProposeResponse?: ProposeResponse
 PullDetail?: PullDetail
@@ -649,7 +651,37 @@ SessionState?: SessionState
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
 TrafficReport?: TrafficReport
+UtteranceQuery?: UtteranceQuery
+VoiceJoinFailed?: VoiceJoinFailed
+VoiceToken?: VoiceToken
+VoiceTokenRequest?: VoiceTokenRequest
 WebEvent?: WebEvent
+}
+/**
+ * What a launched session's agent said it is doing, through `report_status` (ADR 0071). A
+ * signal with its own time, never a progress state: the server shows the newest per launch and
+ * never derives progress from it.
+ */
+export interface AgentReport {
+/**
+ * When the agent called `report_status`.
+ */
+at: string
+/**
+ * One line, at most 200 characters (`limits::AGENT_DOING_MAX_CHARS`).
+ */
+doing: string
+/**
+ * The launch the companion resolved from the call's `X-Rubato-Launch`, never from what the
+ * agent said.
+ */
+launch_id: string
+/**
+ * Map ids the agent says it is on, at most 8 (`limits::AGENT_PARTS_MAX`).
+ * 
+ * @maxItems 8
+ */
+parts?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]
 }
 /**
  * Approve the plan of `issue` as it is now. `sha` is the plan's approval hash the person saw
@@ -846,6 +878,32 @@ export interface RoomReply {
 type: "room_reply"
 }
 /**
+ * What a launched session's agent said it is doing, through `report_status` (ADR 0071). A
+ * signal with its own time, never a progress state: the server shows the newest per launch and
+ * never derives progress from it.
+ */
+export interface AgentReport1 {
+/**
+ * When the agent called `report_status`.
+ */
+at: string
+/**
+ * One line, at most 200 characters (`limits::AGENT_DOING_MAX_CHARS`).
+ */
+doing: string
+/**
+ * The launch the companion resolved from the call's `X-Rubato-Launch`, never from what the
+ * agent said.
+ */
+launch_id: string
+/**
+ * Map ids the agent says it is on, at most 8 (`limits::AGENT_PARTS_MAX`).
+ * 
+ * @maxItems 8
+ */
+parts?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]
+}
+/**
  * A decision recorded as an issue comment with the `Decision:` template (ADR 0014).
  */
 export interface DecisionRecord {
@@ -1039,7 +1097,15 @@ claude_version?: (string | null)
 companion_id: string
 companion_version: string
 hostname: string
+/**
+ * Deprecated (ADR 0070): `tmux-ide --version` from a companion that still ran tmux-ide.
+ * Read, never sent by a current companion.
+ */
 tmux_ide_version?: (string | null)
+/**
+ * `tmux -V` at start, such as `3.8` (ADR 0070). None on a headless companion (ADR 0062).
+ */
+tmux_version?: (string | null)
 user: string
 }
 /**
@@ -1703,7 +1769,8 @@ session_message_max_chars?: number
  */
 session_stale_secs?: number
 /**
- * Reconciliation poll of `tmux-ide team --json`.
+ * Reconcile interval: `tmux list-panes` and identity, every this many seconds. The name is
+ * kept from the retired `tmux-ide team --json` poll (ADR 0070).
  */
 team_poll_interval_secs?: number
 }
@@ -1836,6 +1903,27 @@ can_act_on_github?: boolean
  */
 cannot_act_reason?: (string | null)
 login: string
+/**
+ * A plan room's voice channel (ADR 0073); absent while `RUBATO_VOICE` is off.
+ */
+voice?: (VoiceAvailability | null)
+}
+/**
+ * Whether voice is on for this server, on `Me` only while it is (ADR 0073).
+ */
+export interface VoiceAvailability {
+/**
+ * A voice channel can be joined: LiveKit is configured.
+ */
+enabled: boolean
+/**
+ * A speech provider is configured: utterances reach the room and spoken replies play.
+ */
+speech: boolean
+/**
+ * The provider's hosts, for the consent text; empty for the fake adapter.
+ */
+speech_hosts?: string[]
 }
 /**
  * Merge a pull request as yourself (`POST /api/pulls/merge`, ADR 0033): at the head the person
@@ -2400,6 +2488,62 @@ issue: IssueRef
 target: MapRef
 }
 /**
+ * Where the plan of one launched session stands, as the server derives it (ADR 0071). The
+ * companion keeps the newest per launch and answers `plan_status` from it.
+ */
+export interface PlanStatus {
+/**
+ * The newest counted approval and whether it is of the current version; an approval whose
+ * version is not `current` does not cover the plan as it is.
+ */
+approval?: (ApprovalState | null)
+/**
+ * When the server derived it.
+ */
+as_of: string
+/**
+ * The plan on the issue branch, when there is one.
+ */
+branch?: (BranchStatus | null)
+/**
+ * The newest settled revision of the launch's draft (ADR 0053).
+ */
+draft?: (DraftStatus | null)
+launch_id: string
+/**
+ * The issue's newest counted design review.
+ */
+review?: (ReviewRecord | null)
+}
+export interface BranchStatus {
+/**
+ * Whether the plan on the branch carries the approval record (ADR 0054).
+ */
+carries_approval: boolean
+/**
+ * The plan's hash at the branch head.
+ */
+sha: string
+}
+export interface DraftStatus {
+/**
+ * When the revision settled.
+ */
+at: string
+/**
+ * Whether the revision's plan fits the map.
+ */
+fits: boolean
+/**
+ * The revision's plan hash, as an approval names it.
+ */
+plan_sha: string
+/**
+ * Revision number, 1-based.
+ */
+rev: number
+}
+/**
  * Answer of `POST /api/map/draft/propose`.
  */
 export interface ProposeResponse {
@@ -2571,6 +2715,10 @@ id: string
  * For a seam notice: the other issue and the seam both plans touch.
  */
 notice?: (SeamNotice | null)
+/**
+ * Posted from a push-to-talk utterance (ADR 0073); a turn it makes is asked aloud.
+ */
+spoken?: boolean
 text: string
 /**
  * The turn this message made, or the turn an agent's message answers.
@@ -2695,6 +2843,34 @@ number: number
 repo: string
 }
 /**
+ * Where the plan of one launched session stands, as the server derives it (ADR 0071). The
+ * companion keeps the newest per launch and answers `plan_status` from it.
+ */
+export interface PlanStatus1 {
+/**
+ * The newest counted approval and whether it is of the current version; an approval whose
+ * version is not `current` does not cover the plan as it is.
+ */
+approval?: (ApprovalState | null)
+/**
+ * When the server derived it.
+ */
+as_of: string
+/**
+ * The plan on the issue branch, when there is one.
+ */
+branch?: (BranchStatus | null)
+/**
+ * The newest settled revision of the launch's draft (ADR 0053).
+ */
+draft?: (DraftStatus | null)
+launch_id: string
+/**
+ * The issue's newest counted design review.
+ */
+review?: (ReviewRecord | null)
+}
+/**
  * Web → server: send this text to the launch's session.
  */
 export interface SessionMessageRequest {
@@ -2759,4 +2935,61 @@ server: string
  * OpenTelemetry `service.namespace` of the callee, as it emits it.
  */
 server_namespace?: (string | null)
+}
+/**
+ * The query of an utterance (`POST` `routes::VOICE_UTTERANCE`); the audio is the body.
+ */
+export interface UtteranceQuery {
+branch: string
+/**
+ * Chosen by the browser; it becomes the room message's id, so a repeat posts once.
+ */
+id: string
+number: number
+repo: string
+/**
+ * An agent's handle in the room: the transcript is posted as `@<to> <transcript>`.
+ */
+to?: (string | null)
+}
+/**
+ * A failed join, reported by the browser (`POST` `routes::VOICE_JOIN_FAILED`): Rubato never sees
+ * LiveKit, so this is the only signal for a LiveKit that is down or unreachable.
+ */
+export interface VoiceJoinFailed {
+branch: string
+number: number
+/**
+ * One of `join_reason`; anything else is counted as `other`.
+ */
+reason: string
+repo: string
+}
+/**
+ * A LiveKit join token for one person and one plan room. `expires_at` bounds the join only:
+ * LiveKit refreshes the token of a connected participant (ADR 0073).
+ */
+export interface VoiceToken {
+expires_at: string
+/**
+ * `<login>#<suffix>`, so two tabs of one person do not evict each other.
+ */
+identity: string
+/**
+ * The LiveKit room: `rubato-` and 32 hex digits of the plan room's key.
+ */
+room: string
+token: string
+/**
+ * The LiveKit server, `wss://…`.
+ */
+url: string
+}
+/**
+ * Which room's voice channel to join (`POST` `routes::VOICE_TOKEN`).
+ */
+export interface VoiceTokenRequest {
+branch: string
+number: number
+repo: string
 }

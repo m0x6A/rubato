@@ -7,6 +7,7 @@ pub mod db;
 pub mod github;
 pub mod http;
 pub mod signer;
+pub mod speech;
 pub mod state;
 pub mod telemetry;
 pub mod workspaces;

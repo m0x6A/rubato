@@ -5,6 +5,7 @@ import { issueKey, relative } from "../../shared/format.ts";
 import { useWebResource } from "../live/index.ts";
 import { type RoomKey, roomApi, roomFailureText } from "./api.ts";
 import { Presence } from "./Presence.tsx";
+import { VoicePanel } from "./VoicePanel.tsx";
 
 /** `Limits.room_message_max_chars`'s default, for an overview that does not carry the limits. */
 export const ROOM_MAX_CHARS = 8000;
@@ -141,6 +142,9 @@ function Room({ room, issue, me, maxChars, onOpenIssue, canOpen, onShowSeam }: P
       </h3>
       <p className="muted">The plan's room: the whole team reads it.</p>
       {error && <p className="warn">The room could not be read: {error}</p>}
+      {data && me?.voice && (
+        <VoicePanel room={room} voice={me.voice} agents={present.map((a) => a.handle)} messages={messages} onPosted={(m) => setPosted((p) => [...p, m])} />
+      )}
       {data && (
         <Presence room={room} me={me} agents={data.agents ?? []} requests={data.requests ?? []} sessions={launched} planOnBranch={issue.plan?.git_ref === room.branch} acting={acting} act={act} />
       )}

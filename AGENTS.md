@@ -18,7 +18,7 @@ Does:
 
 - One shared system map: contexts, contracts and the seams between them; repos are the code behind the nodes. Declared in `system-map.yml` with node ids that everything else references.
 - Issues created and shown per repository (GitHub's rule), each pinned to a map node or seam. An issue is never attached only to a repo.
-- Start a Claude Code session on an issue, in a worktree, through the developer's own companion: in their own tmux through tmux-ide, or, on a headless companion, as one `claude -p` turn at a time with no terminal (ADR 0062). A user can start sessions only through their own companion.
+- Start a Claude Code session on an issue, in a worktree, through the developer's own companion: in their own tmux, or, on a headless companion, as one `claude -p` turn at a time with no terminal (ADR 0062). A user can start sessions only through their own companion.
 - The agent's plan is drafted in Rubato: the companion mirrors it from the worktree at each settle point, the team reads every revision, and it reaches the branch once, at approval, as a Markdown file at a known path (ADR 0053, ADR 0055). Its affected-parts section paints the map.
 - Talk to your own launched session from Rubato, and about a plan in its room, where the whole team reads both; an agent joins a room only when its owner calls it in (ADR 0050, ADR 0051, ADR 0057).
 - Progress per issue derived from existing signals (see progress model below), read three ways: by issue, by session, by map node.
@@ -30,7 +30,7 @@ Does not:
 - Orchestrate agents across repositories or order cross-repo changes.
 - Run agents itself. Rubato never executes anything on a developer's machine; the companion does, for its own user only.
 - Stream or attach to a colleague's live terminal.
-- Audio.
+- Audio, except a plan's room voice channel behind the off-by-default voice flag (ADR 0073); Rubato stores no audio.
 
 ## Architecture
 
@@ -39,10 +39,10 @@ Three parts, two of them built here:
 | Part | Lives | Built here | Role |
 | --- | --- | --- | --- |
 | `rubato-server` | shared, one instance per team | yes (Rust) | map, issue pins, Projects join, plans, progress, decisions, GitHub OAuth, websocket fan-out, embedded frontend |
-| `rubato-companion` | one per developer machine (WSL or macOS) | yes (Rust) | connects **outbound** to the server; pushes tmux-ide session state and Claude Code hook events; accepts launch commands only for its paired user; runs `git worktree` and `claude`, and `tmux` in interactive mode only (a headless companion runs each turn as a `claude -p` child, ADR 0062) |
+| `rubato-companion` | one per developer machine (WSL or macOS) | yes (Rust) | connects **outbound** to the server; pushes tmux session state and Claude Code hook events; accepts launch commands only for its paired user; runs `git worktree` and `claude`, and `tmux` in interactive mode only (a headless companion runs each turn as a `claude -p` child, ADR 0062) |
 | GitHub | — | no | code, issues, PRs, checks, plan files |
 
-Dependencies we stitch rather than build: **tmux-ide** (session discovery, agent status from Claude Code hooks, `team --json`, `send`, `wait`, MCP, SDK; WSL is its Windows path), **Claude Code** (the only agent in v0; hooks are the event source), **GitHub** (OAuth, REST, Projects v2 GraphQL).
+Dependencies we stitch rather than build: **tmux** and **git** (sessions, panes and worktrees, run by the companion itself; tmux-ide was retired by ADR 0070; WSL is the Windows path), **Claude Code** (the only agent in v0; hooks are the event source), **GitHub** (OAuth, REST, Projects v2 GraphQL).
 
 No inbound access to developer machines. Ever. The companion pairs with a login through a device-code flow and the server addresses launch commands to that pairing.
 
@@ -95,7 +95,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
 `/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces, telemetry, db connection, `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port); slices:
+(config, workspaces, telemetry, db connection, `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -117,6 +117,7 @@ github_poll     issue reads, open issues and pulls, placement   pull_requests, d
 pulls           a pull request's view, merging as the person    pr_merges
 import          a plan written outside Rubato becomes your draft  (none)
 rooms           a plan's room: messages, seam notices, agents called in, turns  room_messages, room_agents, room_requests
+voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 overview        derived progress, findings, gauges              (none)
@@ -127,7 +128,7 @@ webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveri
 <!-- slices: rubato-companion -->
 `crates/rubato-companion/src/`: composition root `lib.rs`, `main.rs`, `runtime.rs` (channels,
 task spawn with essential or best-effort flag, select arms, supervision); `kernel/` (config and
-state files, telemetry, tmux, tmux-ide, git and `ps` adapters, `proc` for running them with a deadline,
+state files, telemetry, tmux, git and `ps` adapters, `proc` for running them with a deadline,
 the `SessionInput` port whose first adapter is the tmux paste, `claude` for headless `claude -p` turns as
 process groups, ADR 0062);
 slices:
@@ -135,13 +136,14 @@ slices:
 ```text
 pairing        device-code pairing with a GitHub login                            pair
 server_link    outbound websocket, outbox, acks, Welcome limits and capabilities  client task (essential)
-sessions       Registry, identity, discovery, launches.json, headless turns        reconcile (essential, not headless), events watcher (best-effort)
+sessions       Registry, identity, discovery, launches.json, headless turns        reconcile (essential, not headless)
 hooks          hook receiver (port and token kept), template, apply_hook          hook server, dropped counter (essential)
 launch         LaunchCommand: own user only, worktree, tmux or a headless turn    launch task (essential)
 spend          transcript cost, spend cap, CapHit                                 after each hook
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
 session_input  SessionMessage: own user, launched here, idle, typed once; stop    session input task (essential)
 plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
+agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_status  report drain (essential), not-initialized watch (best-effort)
 ```
 <!-- /slices -->
 <!-- slices: web -->
@@ -168,7 +170,7 @@ new_issue   "New issue here…": the form, pinned where begun      POST /api/iss
 plans       proposed and open plans, fit, Accept plan, drafts    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
 repos       connected repos, what each provides, their open pull requests and issues, loose sessions  (none)
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
-room        a plan's room: messages, notices, agents called in   GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id
+room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
 workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
 ```
 <!-- /slices -->
@@ -178,6 +180,7 @@ Shared kernel modules `ids`, `limits`, `message` (envelopes), `otel`, `schema`; 
 modules, each with the types and `routes` its seam uses (every type re-exported at the root):
 
 ```text
+agent      AgentReport, PlanStatus, DraftStatus, BranchStatus (ADR 0071; capability agent_mcp)
 approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
 auth       Me; ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
@@ -196,7 +199,9 @@ github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord and it
 progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
 pulls      OpenPull, RepoPulls, PullDetail, MergeOffer, PlanGate, plan_gate, merge_refusal, MergeRequest, MergeResponse, reasons; PULL, PULLS_MERGE
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
+room       RoomMessage (with spoken), RoomAgent, RoomRequest, RoomView, RoomKey, RoomReply, call-in types, addressed_handles, reasons; ROOM, ROOM_MESSAGES, ROOM_AGENTS, ROOM_REQUEST
 traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
+voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
 ```
@@ -258,7 +263,7 @@ All telemetry is OpenTelemetry over OTLP, vendor-neutral. The team's stack is LG
 | Part | Emits | Why |
 | --- | --- | --- |
 | Claude Code sessions | its own OTel export (already in place), launched with resource attributes `rubato.repo`, `rubato.issue`, `rubato.branch`, `rubato.node` | cost, duration and tool calls per issue and per map node come free |
-| `rubato-companion` | a heartbeat metric per machine; a span per launch, per hook forwarded, per `team --json` poll; a `rubato.session.stale` event when a session goes quiet | the trust check: is the signal still flowing? |
+| `rubato-companion` | a heartbeat metric per machine; a span per hook forwarded and per reconcile cycle (`rubato.reconcile`); a `rubato.launches` count per launch result; a `rubato.session.stale` event when a session goes quiet | the trust check: is the signal still flowing? |
 | `rubato-server` | a span per inbound event with the session and issue as attributes; a span per GitHub call; metrics for sessions by state, issues by state, events dropped, GitHub rate-limit remaining | the derived progress model must be explainable from traces |
 | plan check | a log line per plan checked: node ids found, unknown ids, O-rows present; with an OTLP endpoint set, also a `rubato.skill.command` span with `service.name` `plan-check` | every check reports what it checked |
 | skills (`otel-emit.ts`) | a `rubato.skill.command` span per script run, with `rubato.skill.subcommand` and `rubato.exit_code`; a `rubato.skill.call` client span with `peer.service` per call to GitHub, the map or the plan file; `service.name` is the skill, `service.namespace` only from the environment (ADR 0061) | skills are parts of the system and must show on the observed map |
@@ -282,6 +287,7 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A handoff commit whose link comment is not on the issue.
 - A plan whose committed approval record differs from Rubato's.
 - Headless turns killed for running too long or too quiet, or left over from a companion restart (`HeadlessTurnsKilled`; never a stop or a cap hit).
+- A speech provider failing every call for 10 minutes while people use voice (`SpeechProviderFailing`, ADR 0073).
 - A GitHub App webhook that has stopped delivering while the catch-up poll finds changes, or a delivery not applied for 5 minutes (`GitHubWebhooksSilent`, `GitHubWebhooksStuck`, ADR 0074).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
@@ -324,7 +330,7 @@ Every decision that touches a seam, a dependency, a data format or a non-goal is
 
 - Planning-time tool, not an orchestrator.
 - Rust for companion and server; TypeScript for frontend and skill scripts.
-- Claude Code is the only agent in v0; for interactive companions tmux is required and tmux-ide is the runner (a headless companion needs neither, ADR 0062).
+- Claude Code is the only agent in v0; for interactive companions tmux is required, and the companion runs tmux and git itself (tmux-ide retired, ADR 0070; a headless companion needs no tmux, ADR 0062).
 - A user starts sessions only through their own companion; no inbound access to machines.
 - The approved plan travels as a file in the repo, not through an API; drafts live in Rubato until approval (ADR 0053).
 - Issue identity from the branch name.
@@ -343,7 +349,7 @@ Choosing what to build and where the boundaries are. Approving plans, especially
 ## Don't
 
 - Don't add a feature that steers another developer's agent.
-- Don't scrape tmux panes for state; use hooks and `tmux-ide team --json`.
+- Don't scrape tmux panes for state; use hooks, and `tmux list-panes` metadata only for which panes exist.
 - Don't store progress; derive it.
 - Don't invent node ids; read the map.
 - Don't imply more scale or experience than the team has. This is one team, a handful of repos, a lab.

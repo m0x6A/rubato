@@ -18,7 +18,7 @@ Feature: Pairing a companion with a GitHub login
     And a paired companion for user "m0x6A"
     When the companion daemon starts
     Then the server receives a hello for user "m0x6A" with protocol version 1
-    And the server receives a heartbeat naming the tmux-ide version
+    And the server receives a heartbeat naming the tmux version
 
   Scenario: Shutdown stops every task and returns Ok
     Given a test server that approves pairing for user "m0x6A"

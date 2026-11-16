@@ -275,10 +275,12 @@ export async function layoutByRepo(graph: Graph): Promise<{ groups: RepoGroup[];
         id: repoGroupId(repo),
         // Room at the top for the repo's name. ELK lays out a box's parts with the box's own
         // options, not the root's: without these the parts sat 20 px apart and every badge and
-        // chip between them landed on a card (issue #144).
+        // chip between them landed on a card (issue #144). 120 px between parts in a layer: with
+        // Rubato's own map at 13 parts (issue #146), 60 left a seam that leaves the box no gap to
+        // pass between two parts, and its flow labels sat on their cards.
         layoutOptions: {
           "elk.padding": "[top=48,left=24,bottom=24,right=24]",
-          "elk.spacing.nodeNode": "60",
+          "elk.spacing.nodeNode": "120",
           "elk.layered.spacing.nodeNodeBetweenLayers": "140",
           "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
         },

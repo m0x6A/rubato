@@ -12,7 +12,8 @@ pub struct Limits {
     pub session_stale_secs: u64,
     /// A companion silent for longer than this fires `CompanionSilent`.
     pub companion_silent_secs: u64,
-    /// Reconciliation poll of `tmux-ide team --json`.
+    /// Reconcile interval: `tmux list-panes` and identity, every this many seconds. The name is
+    /// kept from the retired `tmux-ide team --json` poll (ADR 0070).
     pub team_poll_interval_secs: u64,
     /// How often the server looks for a plan file on a live branch.
     pub plan_poll_interval_secs: u64,
@@ -55,3 +56,8 @@ impl Default for Limits {
         }
     }
 }
+
+/// The longest `doing` line of an `AgentReport` (ADR 0071); the companion cuts longer ones.
+pub const AGENT_DOING_MAX_CHARS: usize = 200;
+/// The most map ids an `AgentReport` names (ADR 0071); the companion keeps the first ones.
+pub const AGENT_PARTS_MAX: usize = 8;
