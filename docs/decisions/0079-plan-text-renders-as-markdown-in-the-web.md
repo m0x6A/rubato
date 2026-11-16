@@ -1,8 +1,8 @@
 # 0079. Render plan text as Markdown in the web, with react-markdown and no raw HTML
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-16
-- **Decided by:** agent (issue #265) proposes; Mattias Jonsson chose "render Markdown now" on 2026-11-16 and accepts by approving plan #265
+- **Decided by:** Mattias Jonsson (m0x6A), by approving plan #265 at 89d8c31 on 2026-11-16 (https://github.com/m0x6A/rubato/issues/265#issuecomment-6927411780); drafted by agent
 - **Seam:** none (a dependency of `web`)
 - **Issue:** m0x6A/rubato#265
 
