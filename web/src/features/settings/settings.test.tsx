@@ -302,7 +302,8 @@ describe("the traffic source's state is this workspace's (issue #281)", () => {
     const cases = [
       { t: undefined, says: null },
       { t: { state: "not_configured" as const }, says: null },
-      { t: { state: "fresh" as const, observed_at: ago(2) }, says: "Working: the last report is from 2m ago." },
+      { t: { state: "fresh" as const, observed_at: ago(2), observed_parts: ["web"] }, says: "Working: the last report is from 2m ago." },
+      { t: { state: "fresh" as const, observed_at: ago(2), seams: [], undeclared: [] }, says: "Connected, but the source returned no calls between services: the last report is from 2m ago." },
       { t: { state: "stale" as const, observed_at: ago(14) }, says: "No recent report: the last one is from 14m ago." },
       { t: { state: "stale" as const }, says: "No report has arrived yet." },
       { t: { state: "failing" as const, error: "connection refused" }, says: "Failing: connection refused." },
@@ -330,7 +331,7 @@ describe("the traffic source's state is this workspace's (issue #281)", () => {
 
   it("follows the workspace: shop's source works while default has none", async () => {
     serve(settings());
-    const { view, ...props } = open("shop", {}, { state: "fresh", observed_at: new Date().toISOString(), seams: [], undeclared: [] });
+    const { view, ...props } = open("shop", {}, { state: "fresh", observed_at: new Date().toISOString(), seams: [{ seam: "web-server", forward_calls: 2, reverse_calls: 0, errors: 0 }], undeclared: [] });
     expect(await screen.findByTestId("settings-source-status")).toHaveTextContent("Working");
     vi.unstubAllGlobals();
     serve(settings({ id: "default", name: null, traffic: null }));

@@ -99,6 +99,13 @@ Feature: The system map
     And the declared parts stay where they were
     And the map-versus-territory list counts each discrepancy
 
+  @map.empty-report-says-so
+  Scenario: A traffic report with nothing in it is not read as the map matching
+    Given a traffic source that answers with no calls between services
+    When a person picks the Traffic lens
+    Then the map-versus-territory list says nothing was observed
+    And it does not say the observed system matches the map
+
   @map.dismiss-discrepancy
   Scenario: A person dismisses a discrepancy for the workspace
     Given a discrepancy between the map and the observed traffic

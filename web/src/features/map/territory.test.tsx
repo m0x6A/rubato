@@ -133,3 +133,32 @@ describe("ghosts on the map", () => {
     expect(v.queryByTestId("ghost-shop/checkout")).toBeNull();
   });
 });
+
+describe("an empty report is not agreement (issue #285)", () => {
+  const fresh = (traffic: Partial<ObservedTraffic>): Overview => ({ ...overview(), findings: [], traffic: { state: "fresh", observed_at: new Date().toISOString(), window_secs: 3600, ...traffic } });
+  const show = (o: Overview) => render(<Discrepancies overview={o} onTake={() => {}} onDismiss={() => {}} onUndo={() => {}} />);
+
+  it("nothing observed: says the source returned no calls, and that nothing was compared", () => {
+    const v = show(fresh({ seams: [], undeclared: [] }));
+    expect(screen.getByTestId("nothing-observed")).toHaveTextContent("The traffic source answered with no calls between services in the last 1 h. Nothing was compared with the map.");
+    expect(v.container.textContent).not.toContain("matches the map");
+    expect(v.container.querySelector("summary")).toHaveTextContent("Map versus territory (nothing observed)");
+  });
+
+  it("anything observed and no discrepancy: the observed system matches the map", () => {
+    const cases: Partial<ObservedTraffic>[] = [
+      { seams: [{ seam: "web-server", forward_calls: 3, reverse_calls: 0, errors: 0 }], observed_parts: ["web", "rubato-server"] },
+      { observed_parts: ["web"] },
+      { unmapped_services: 2, unmapped_sample: ["a", "b"] },
+    ];
+    for (const c of cases) {
+      const v = show(fresh(c));
+      // Must fail on purpose if every empty list reads as "nothing observed".
+      expect(v.container.textContent).toContain("The observed system matches the map.");
+      expect(screen.queryByTestId("nothing-observed")).toBeNull();
+      expect(v.container.querySelector("summary")).toHaveTextContent("Map versus territory (0)");
+      v.unmount();
+    }
+    console.log(`checked 1 empty report and ${cases.length} reports with something in them`);
+  });
+});
