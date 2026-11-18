@@ -442,7 +442,11 @@ pub mod capture {
 
     /// A span's fields as recorded so far; pushed as a `Captured` whose message is
     /// `span <name>` when the span closes (plan 226 §1: declared fields only).
-    struct SpanFields(BTreeMap<String, String>);
+    ///
+    /// The sink is the one of the thread that made the span, taken then. A span closes on
+    /// whichever thread drops its last handle, and that is not always the test's: sqlx's SQLite
+    /// worker holds the caller's span for each command and may let go of it last (#272).
+    struct SpanFields(BTreeMap<String, String>, Option<Events>);
 
     impl<S> tracing_subscriber::Layer<S> for Layer
     where
@@ -461,7 +465,8 @@ pub mod capture {
             };
             attrs.record(&mut Visitor(&mut c));
             if let Some(span) = ctx.span(id) {
-                span.extensions_mut().insert(SpanFields(c.fields));
+                let sink = SINK.try_with(|s| s.borrow().clone()).ok().flatten();
+                span.extensions_mut().insert(SpanFields(c.fields, sink));
             }
         }
 
@@ -473,7 +478,7 @@ pub mod capture {
         ) {
             let Some(span) = ctx.span(id) else { return };
             let mut ext = span.extensions_mut();
-            if let Some(SpanFields(fields)) = ext.get_mut::<SpanFields>() {
+            if let Some(SpanFields(fields, _)) = ext.get_mut::<SpanFields>() {
                 let mut c = Captured {
                     level: tracing::Level::INFO,
                     message: String::new(),
@@ -485,15 +490,12 @@ pub mod capture {
         }
 
         fn on_close(&self, id: tracing::span::Id, ctx: Context<'_, S>) {
-            let Some(sink) = SINK.try_with(|s| s.borrow().clone()).ok().flatten() else {
+            let Some(span) = ctx.span(&id) else { return };
+            let ext = span.extensions();
+            let Some(SpanFields(fields, Some(sink))) = ext.get::<SpanFields>() else {
                 return;
             };
-            let Some(span) = ctx.span(&id) else { return };
-            let fields = span
-                .extensions()
-                .get::<SpanFields>()
-                .map(|f| f.0.clone())
-                .unwrap_or_default();
+            let fields = fields.clone();
             sink.lock().unwrap().push(Captured {
                 level: *span.metadata().level(),
                 message: format!("span {}", span.name()),
@@ -586,6 +588,23 @@ pub mod capture {
             let (events, _guard) = start();
             line();
             assert_eq!(messages(&events), ["reached twice"]);
+        }
+
+        /// A span made here and closed on another thread is still this capture's (#272: sqlx's
+        /// SQLite worker can drop the last handle of the caller's span).
+        #[test]
+        fn a_span_closed_on_another_thread_is_captured_where_it_was_made() {
+            let (events, _guard) = start();
+            let span = tracing::info_span!("handed over", n = 2);
+            std::thread::spawn(move || drop(span)).join().unwrap();
+            assert_eq!(messages(&events), ["span handed over"]);
+            assert_eq!(
+                events.lock().unwrap()[0]
+                    .fields
+                    .get("n")
+                    .map(String::as_str),
+                Some("2")
+            );
         }
     }
 }
