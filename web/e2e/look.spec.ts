@@ -69,6 +69,54 @@ test("must fail: an inline style is refused by the policy", { tag: ["@security.c
   await expect(page.addStyleTag({ content: ".panel { min-width: 1200px; }" })).rejects.toThrow(/Content Security Policy/);
 });
 
+// Issue #265: the panel has three sizes while the map sits beside it. The measurements are
+// printed; a panel that collapsed to nothing would pass an overflow check alone.
+test("the panel widens, fills the window and comes back, and the browser remembers", { tag: "@look.panel-expands" }, async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  const measure = () =>
+    page.evaluate(() => {
+      const panel = document.querySelector(".panel")!.getBoundingClientRect();
+      const map = document.querySelector("section.map")!.getBoundingClientRect();
+      return { scroll: document.documentElement.scrollWidth, inner: window.innerWidth, panel: Math.round(panel.width), map: Math.round(map.width) };
+    });
+  const button = page.getByTestId("panel-size");
+  const sizes: Record<string, { panel: number; map: number }> = {};
+  for (const size of ["normal", "wide", "full"]) {
+    await expect(page.getByTestId("body")).toHaveAttribute("data-panel", size);
+    const m = await measure();
+    console.log(`panel ${size} at 1440 px: panel ${m.panel}, map ${m.map}, scrollWidth ${m.scroll}`);
+    expect(m.scroll).toBeLessThanOrEqual(m.inner);
+    sizes[size] = m;
+    // The keyboard reaches it: the button is a real one.
+    await button.focus();
+    await page.keyboard.press("Enter");
+  }
+  expect(sizes.normal!.panel).toBe(400);
+  expect(sizes.wide!.panel).toBeGreaterThan(600);
+  expect(sizes.wide!.map).toBeGreaterThan(400);
+  expect(sizes.full!.panel).toBeGreaterThanOrEqual(1440 * 0.9);
+  expect(sizes.full!.map).toBe(0);
+  // Back at normal, the map is there again.
+  await expect(page.getByTestId("body")).toHaveAttribute("data-panel", "normal");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  // Remembered over a reload.
+  await button.click();
+  await page.reload();
+  await expect(page.getByTestId("body")).toHaveAttribute("data-panel", "wide");
+  console.log("checked 3 panel sizes and a reload");
+});
+
+test("a stored full size does not hide the map on a narrow window", { tag: "@look.panel-expands" }, async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("rubato.panel", "full"));
+  await page.setViewportSize({ width: 600, height: 900 });
+  await page.goto("/");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  await expect(page.getByTestId("body")).toHaveAttribute("data-panel", "normal");
+  await expect(page.getByTestId("panel-size")).toHaveCount(0);
+});
+
 for (const width of [900, 600]) {
   for (const colorScheme of ["dark", "light"] as const) {
     test(`at ${width} px (${colorScheme}) nothing overflows and the panel stays on screen`, { tag: "@look.fits-every-width" }, async ({ page }) => {

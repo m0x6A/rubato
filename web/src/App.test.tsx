@@ -19,6 +19,8 @@ let pinAnswer: { status: number; body?: string } | "offline";
 let pinned: Map<number, MapRef[]>;
 /** Tracked issues the overview holds besides the pinned ones. */
 let others: IssueSummary[];
+/** The session has ended: every API call answers 401. */
+let loggedOut: boolean;
 /** The team's stored layout, as `PUT` and `DELETE /api/layout` change it. */
 let layoutStore: Record<string, { x: number; y: number }>;
 let layoutAnswer: { status: number; body?: string };
@@ -28,12 +30,16 @@ beforeEach(() => {
   pinAnswer = { status: 201 };
   pinned = new Map();
   others = [];
+  loggedOut = false;
   layoutStore = {};
   layoutAnswer = { status: 204 };
   vi.stubGlobal("WebSocket", QuietSocket);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
+      if (loggedOut) {
+        return new Response(JSON.stringify({ login_url: "/auth/github/login" }), { status: 401 });
+      }
       if (url === "/api/me") {
         return new Response(JSON.stringify({ login: "m0x6A" }), { status: 200 });
       }
@@ -107,6 +113,82 @@ describe("open on GitHub by default (#265)", () => {
     expect(await screen.findByRole("button", { name: "Issues (1)" })).toBeInTheDocument();
     expect(screen.getByTestId("team-track")).toHaveTextContent("1 issue");
     expect(screen.getByTestId("issues-view-done")).toHaveTextContent("Done (2)");
+  });
+});
+
+describe("without a session", () => {
+  // The shell renders first and the 401 arrives after: every hook must run on both renders.
+  it("the login page replaces the shell without an error", async () => {
+    loggedOut = true;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<App />);
+    expect(await screen.findByRole("link", { name: "Log in with GitHub" })).toBeInTheDocument();
+    expect(screen.queryByTestId("body")).toBeNull();
+    expect(errors.mock.calls.map((c) => String(c[0])).filter((m) => /hooks/i.test(m))).toEqual([]);
+    errors.mockRestore();
+  });
+});
+
+describe("the panel's three sizes (#265)", () => {
+  const body = () => screen.getByTestId("body");
+  const map = () => document.querySelector("section.map")!;
+  /** The window is wide or narrow: what `(min-width: 901px)` answers. */
+  const windowIs = (wide: boolean) => vi.stubGlobal("matchMedia", () => ({ matches: wide, addEventListener() {}, removeEventListener() {} }));
+  afterEach(() => localStorage.clear());
+
+  it("one button cycles normal, wide, full and back, names what it does next, and the browser remembers", async () => {
+    windowIs(true);
+    const first = render(<App />);
+    const button = await screen.findByTestId("panel-size");
+    expect(body()).toHaveAttribute("data-panel", "normal");
+    expect(button).toHaveAccessibleName("Widen panel");
+    fireEvent.click(button);
+    expect(body()).toHaveAttribute("data-panel", "wide");
+    expect(map()).not.toHaveAttribute("hidden");
+    expect(button).toHaveAccessibleName("Fill the window with the panel");
+    fireEvent.click(button);
+    expect(body()).toHaveAttribute("data-panel", "full");
+    expect(map()).toHaveAttribute("hidden");
+    expect(button).toHaveAccessibleName("Back to normal panel width");
+    expect(localStorage.getItem("rubato.panel")).toBe("full");
+    first.unmount();
+    // A reload: the stored size is read back.
+    render(<App />);
+    await screen.findByTestId("panel-size");
+    expect(body()).toHaveAttribute("data-panel", "full");
+    fireEvent.click(screen.getByTestId("panel-size"));
+    expect(body()).toHaveAttribute("data-panel", "normal");
+    expect(map()).not.toHaveAttribute("hidden");
+  });
+
+  it("a stacked window has one size and no button, whatever is stored", async () => {
+    localStorage.setItem("rubato.panel", "full");
+    windowIs(false);
+    render(<App />);
+    await screen.findByRole("button", { name: /^Issues/ });
+    expect(body()).toHaveAttribute("data-panel", "normal");
+    expect(map()).not.toHaveAttribute("hidden");
+    expect(screen.queryByTestId("panel-size")).toBeNull();
+  });
+
+  it("renders at normal when storage throws or holds something else", async () => {
+    windowIs(true);
+    localStorage.setItem("rubato.panel", "huge");
+    const first = render(<App />);
+    await screen.findByTestId("panel-size");
+    expect(body()).toHaveAttribute("data-panel", "normal");
+    first.unmount();
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByTestId("panel-size"));
+    expect(body()).toHaveAttribute("data-panel", "wide");
+    get.mockRestore();
+    set.mockRestore();
   });
 });
 
