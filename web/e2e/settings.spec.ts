@@ -110,6 +110,29 @@ test.describe("on the server with two workspaces", () => {
     await page.getByRole("radio", { name: "Traffic" }).click();
     await expect(page.getByText("This workspace has no traffic source. Set one in Configure workspace.")).toBeVisible();
   });
+
+  // Issue #288: the namespaces a source reads are a field of the adapter, drawn from its list.
+  test("a source keeps the namespaces it lists, and refuses a list that is not namespaces", { tag: "@settings.traffic-namespaces" }, async ({ page }) => {
+    await page.goto("/?w=shop");
+    const view = await openSettings(page);
+    try {
+      await view.getByLabel("Source").selectOption("prometheus");
+      await view.getByTestId("settings-field-url").fill("http://127.0.0.1:9");
+      const namespaces = view.getByTestId("settings-field-namespaces");
+      await expect(namespaces).toHaveAttribute("placeholder", "rubato, shop");
+      await namespaces.fill("shop|.*");
+      await view.getByTestId("settings-save").click();
+      await expect(view.getByRole("alert")).toContainText("is not a namespace");
+      expect((await (await page.request.get("/api/w/shop/settings")).json()).traffic ?? null).toBeNull();
+      await namespaces.fill("rubato, shop");
+      await save(page);
+      expect((await (await page.request.get("/api/w/shop/settings")).json()).traffic.fields.namespaces).toBe("rubato, shop");
+    } finally {
+      const now = await (await page.request.get("/api/w/shop/settings")).json();
+      const put = await page.request.put("/api/w/shop/settings", { data: { ...now, traffic: null } });
+      expect(put.status()).toBe(200);
+    }
+  });
 });
 
 test.describe("on the server with one workspace", () => {

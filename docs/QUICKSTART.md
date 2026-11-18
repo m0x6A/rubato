@@ -134,6 +134,7 @@ themselves.
 | `RUBATO_TRAFFIC_PROMETHEUS_TIMEOUT_SECS` | 10 | per query, at most half the fetch interval |
 | `RUBATO_TRAFFIC_PROMETHEUS_METRIC_PREFIX` | `traces_service_graph_` | for a generator that names them differently |
 | `RUBATO_TRAFFIC_PROMETHEUS_NAMESPACE_LABELS` | `client_service_namespace,server_service_namespace` | the two namespace labels, client first |
+| `RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES` | unset: every namespace | the service namespaces to read, comma-separated, at most 20; a call is kept when its client or its server is in one of them, so a stack shared with other applications does not show theirs |
 
 The team's side of the setup:
 
