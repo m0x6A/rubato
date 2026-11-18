@@ -25,6 +25,36 @@ impl Drop for Guard {
     }
 }
 
+/// The resource every span and metric carries: the service's name, what the environment sets
+/// (`OTEL_RESOURCE_ATTRIBUTES`), and `service.namespace` `rubato` when the environment sets
+/// none (ADR 0080).
+fn resource(service_name: &'static str) -> opentelemetry_sdk::Resource {
+    namespaced(
+        opentelemetry_sdk::Resource::builder()
+            .with_service_name(service_name)
+            .build(),
+    )
+}
+
+fn namespaced(resource: opentelemetry_sdk::Resource) -> opentelemetry_sdk::Resource {
+    use opentelemetry::{Key, KeyValue};
+    use rubato_protocol::otel::{DEFAULT_SERVICE_NAMESPACE, semconv::SERVICE_NAMESPACE};
+    if resource
+        .get(&Key::from_static_str(SERVICE_NAMESPACE))
+        .is_some()
+    {
+        return resource;
+    }
+    opentelemetry_sdk::Resource::builder_empty()
+        .with_attributes(
+            resource
+                .iter()
+                .map(|(k, v)| KeyValue::new(k.clone(), v.clone())),
+        )
+        .with_attribute(KeyValue::new(SERVICE_NAMESPACE, DEFAULT_SERVICE_NAMESPACE))
+        .build()
+}
+
 pub fn init(service_name: &'static str, endpoint: Option<&str>) -> Result<Guard> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn"));
@@ -41,9 +71,7 @@ pub fn init(service_name: &'static str, endpoint: Option<&str>) -> Result<Guard>
         });
     };
     use opentelemetry_otlp::WithExportConfig;
-    let resource = opentelemetry_sdk::Resource::builder()
-        .with_service_name(service_name)
-        .build();
+    let resource = resource(service_name);
     let span_exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
         .with_endpoint(format!("{}/v1/traces", endpoint.trim_end_matches('/')))
@@ -634,5 +662,32 @@ mod tests {
         }
         assert_eq!(reader.points(otel::metric::POLL_TICKS)[0].value, 1);
         println!("checked the threshold on {} collections", seen.len());
+    }
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::namespaced;
+    use opentelemetry::{Key, KeyValue, Value};
+    use opentelemetry_sdk::Resource;
+
+    /// ADR 0080: `rubato` when nothing sets a namespace, and the environment's own when it does.
+    /// Must fail on purpose if the default overrides what the environment set.
+    #[test]
+    fn the_namespace_defaults_to_rubato_and_the_environment_wins() {
+        let ns = Key::from_static_str("service.namespace");
+        let name = Key::from_static_str("service.name");
+        let bare = Resource::builder_empty()
+            .with_attribute(KeyValue::new("service.name", "svc"))
+            .build();
+        let got = namespaced(bare);
+        assert_eq!(got.get(&ns), Some(Value::from("rubato")));
+        assert_eq!(got.get(&name), Some(Value::from("svc")), "the rest is kept");
+        let team = Resource::builder_empty()
+            .with_attribute(KeyValue::new("service.name", "svc"))
+            .with_attribute(KeyValue::new("service.namespace", "team"))
+            .build();
+        assert_eq!(namespaced(team).get(&ns), Some(Value::from("team")));
+        println!("checked 2 resources: one without a namespace, one with");
     }
 }

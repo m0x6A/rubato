@@ -139,8 +139,10 @@ themselves.
 The team's side of the setup:
 
 1. **Every service emits its identity.** Each one sets `service.namespace` and `service.name`
-   (`OTEL_RESOURCE_ATTRIBUTES` / `OTEL_SERVICE_NAME`). Rubato sets no namespace for anyone,
-   including itself: give `rubato-server` and the companions theirs in their environment.
+   (`OTEL_RESOURCE_ATTRIBUTES` / `OTEL_SERVICE_NAME`). Rubato sets no namespace for a service it
+   observes. Its own parts (`rubato-server`, the companions, the sessions they launch, the skill
+   scripts and the plan check) emit `service.namespace=rubato` unless their environment sets
+   another (ADR 0080).
 2. **The connector carries the namespace.** It drops it unless asked. In the Collector or Alloy,
    set it as a dimension:
 

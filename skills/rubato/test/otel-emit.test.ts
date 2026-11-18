@@ -70,6 +70,15 @@ describe("config", () => {
     expect(both?.resource["service.namespace"]).toBe("std");
   });
 
+  it("is in the rubato namespace unless the resource attributes set another (ADR 0080)", () => {
+    const base = { OTEL_EXPORTER_OTLP_ENDPOINT: "http://a:4318" };
+    expect(config(base)?.resource["service.namespace"]).toBe("rubato");
+    expect(config({ ...base, OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev" })?.resource).toEqual({ "service.namespace": "rubato", "deployment.environment": "dev" });
+    // Must fail on purpose if the default wins over the environment.
+    expect(config({ ...base, OTEL_RESOURCE_ATTRIBUTES: "service.namespace=team" })?.resource["service.namespace"]).toBe("team");
+    expect(config({ ...base, RUBATO_OTEL_RESOURCE_ATTRIBUTES: "service.namespace=mirror" })?.resource["service.namespace"]).toBe("mirror");
+  });
+
   it("skips grpc, a disabled SDK and a non-otlp exporter at once", () => {
     const e = { OTEL_EXPORTER_OTLP_ENDPOINT: "http://a:4317" };
     expect(config({ ...e, OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" })).toBeNull();
