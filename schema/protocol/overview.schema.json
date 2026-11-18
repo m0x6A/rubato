@@ -1684,6 +1684,10 @@
             }
           ]
         },
+        "closed": {
+          "description": "GitHub says the issue is closed (#265). A fact, read with the issue; an issue Rubato has\nnot read yet is not closed. Not a progress state: Done still means merged.",
+          "type": "boolean"
+        },
         "decisions": {
           "type": "array",
           "items": {
@@ -1700,6 +1704,10 @@
               "type": "null"
             }
           ]
+        },
+        "finished": {
+          "description": "The issue is finished ([`is_finished`]): the default views leave it out and the Done\nviews show it. Decided here so no reader grows a rule of its own.",
+          "type": "boolean"
         },
         "fit": {
           "description": "Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.",

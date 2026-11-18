@@ -91,11 +91,12 @@ async fn refresh_one(
     let built = build_overview_inputs(app, ws, all, maps).await?;
     let built = build::build(built, Some(map), &app.config.limits, Utc::now());
     let (by_state, by_seam) = build::counts(&built);
-    for (state, n) in by_state {
+    for ((state, finished), n) in by_state {
         app.metrics.issues_by_state.record(
             n as u64,
             &[
                 KeyValue::new(attr::ISSUE_STATE, format!("{state:?}").to_lowercase()),
+                KeyValue::new(attr::ISSUE_FINISHED, finished),
                 w(),
             ],
         );
@@ -136,7 +137,7 @@ async fn refresh_one(
     let not_fitting = built
         .issues
         .iter()
-        .filter(|i| i.fit.as_ref().is_some_and(|f| !f.fits))
+        .filter(|i| !i.finished && i.fit.as_ref().is_some_and(|f| !f.fits))
         .count();
     app.metrics
         .plans_not_fitting
@@ -145,7 +146,7 @@ async fn refresh_one(
     let fit_none = built
         .issues
         .iter()
-        .filter(|i| i.fit.as_ref().is_some_and(|f| !f.fits) && i.fits_in.is_empty())
+        .filter(|i| !i.finished && i.fit.as_ref().is_some_and(|f| !f.fits) && i.fits_in.is_empty())
         .count();
     app.metrics.plans_fit_none.record(fit_none as u64, &[w()]);
     Ok(built.issues)

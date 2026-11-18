@@ -369,6 +369,9 @@ pub fn build(
             .take(&issue)
             .into_iter()
             .max_by_key(|d| d.summary.at);
+        // This issue's own findings: kept only while the issue is not finished (#265).
+        let all_findings = &mut findings;
+        let mut findings: Vec<Finding> = Vec::new();
         if let Some(d) = &latest_draft
             && let Some((other, at)) = &d.conflict
             && now.signed_duration_since(*at) < chrono::Duration::hours(24)
@@ -491,6 +494,8 @@ pub fn build(
         // Only while the issue is open on GitHub (#135): a closed issue whose work merged elsewhere
         // never reaches Done, and its old launch would be flagged forever. Unknown is not closed.
         let closed = meta.github_state.as_deref() == Some("closed");
+        let finished =
+            rubato_protocol::is_finished(closed, state, &sessions, now, limits.session_stale_secs);
         let versions = versions_by.take(&issue);
         if let (Some(m), false) = (map, closed)
             && state != ProgressState::Done
@@ -563,6 +568,11 @@ pub fn build(
         if !plan_on_branch && let Some(p) = draft_plan {
             draft_plans.push((issue.clone(), p));
         }
+        // A finished issue's plan is history: what it names, how it parses and who approved
+        // what are no longer findings. The handoff findings below are kept whatever the state.
+        if !finished {
+            all_findings.append(&mut findings);
+        }
         out.push(IssueSummary {
             title: meta.title,
             url: meta.url,
@@ -590,6 +600,8 @@ pub fn build(
             pinned_in,
             outside_rubato,
             draft,
+            closed,
+            finished,
             issue,
         });
     }
@@ -599,12 +611,12 @@ pub fn build(
     // grouping a room's seam notices read, `seam_groups`).
     let done: HashSet<&IssueRef> = out
         .iter()
-        .filter(|s| s.progress.state == ProgressState::Done)
+        .filter(|s| s.finished)
         .map(|s| &s.issue)
         .collect();
     let open_plans = out
         .iter()
-        .filter(|s| s.progress.state != ProgressState::Done)
+        .filter(|s| !s.finished)
         .filter_map(|s| s.plan.as_ref().map(|p| (s.issue.clone(), p)));
     let open_drafts = draft_plans
         .iter()
@@ -776,7 +788,7 @@ fn connected_repos(
                 open_issues: count(&counts.open_issues),
                 plans: issues
                     .iter()
-                    .filter(|i| same(&i.issue.repo, &repo) && i.plan.is_some())
+                    .filter(|i| same(&i.issue.repo, &repo) && i.plan.is_some() && !i.finished)
                     .count() as u32,
                 sessions: count(&counts.sessions),
                 unattributed: count(&counts.unattributed),
@@ -787,15 +799,26 @@ fn connected_repos(
         .collect()
 }
 
-/// Counts for the `rubato.issues.by_state` and `rubato.seam.open_plans` gauges.
-pub fn counts(built: &Built) -> (BTreeMap<ProgressState, usize>, BTreeMap<String, usize>) {
-    let mut by_state = BTreeMap::new();
+/// Counts for the `rubato.issues.by_state` and `rubato.seam.open_plans` gauges. Issues are
+/// counted per state and whether they are finished (#265), every pair present, zeros included:
+/// the gauge is synchronous, so a pair that is not recorded would keep its last value.
+pub fn counts(
+    built: &Built,
+) -> (
+    BTreeMap<(ProgressState, bool), usize>,
+    BTreeMap<String, usize>,
+) {
+    let mut by_state: BTreeMap<(ProgressState, bool), usize> = ProgressState::ALL
+        .into_iter()
+        .flat_map(|s| [(s, false), (s, true)])
+        .map(|k| (k, 0))
+        .collect();
     for i in &built.issues {
-        *by_state.entry(i.progress.state).or_insert(0) += 1;
+        *by_state.entry((i.progress.state, i.finished)).or_insert(0) += 1;
     }
     let mut by_seam = BTreeMap::new();
     for i in &built.issues {
-        if i.progress.state == ProgressState::Done {
+        if i.finished {
             continue;
         }
         if let Some(p) = &i.plan {
@@ -901,6 +924,22 @@ mod tests {
             approval_sha: Some("f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9".into()),
             head_sha: None,
         }
+    }
+
+    pub(super) fn a_plan(issue: &IssueRef, seam: &str, node: &str) -> PlanRow {
+        plan(issue, seam, node)
+    }
+
+    pub(super) fn a_session(issue: &IssueRef, status: SessionStatus) -> SessionState {
+        session(issue, status, StateSource::Hook)
+    }
+
+    pub(super) fn the_map() -> LoadedMap {
+        map()
+    }
+
+    pub(super) fn the_now() -> DateTime<Utc> {
+        now()
     }
 
     fn session(issue: &IssueRef, status: SessionStatus, source: StateSource) -> SessionState {
@@ -1160,7 +1199,7 @@ mod tests {
         assert_eq!(built.issues[0].progress.state, ProgressState::Building);
         assert_eq!(built.issues[0].spend_usd, Some(3.0));
         let (by_state, by_seam) = counts(&built);
-        assert_eq!(by_state[&ProgressState::Building], 1);
+        assert_eq!(by_state[&(ProgressState::Building, false)], 1);
         assert_eq!(by_seam["companion-server"], 1);
     }
 
@@ -1287,7 +1326,7 @@ mod tests {
         let (by_state, _) = counts(&built);
         assert_eq!(
             by.values().sum::<usize>(),
-            by_state[&ProgressState::Blocked]
+            by_state[&(ProgressState::Blocked, false)] + by_state[&(ProgressState::Blocked, true)]
         );
         println!("checked {} blocked_from values", by.len());
     }
@@ -1988,5 +2027,195 @@ mod closed_mismatch_tests {
             [48, 49],
             "closed #47 is not flagged; open #48 and unread #49 are"
         );
+    }
+}
+
+#[cfg(test)]
+mod finished_tests {
+    //! #265: GitHub is the source. A closed issue is finished, and a finished issue's plan makes
+    //! no findings, collides with nothing and is counted nowhere as open.
+    use super::*;
+    use rubato_protocol::{Limits, SessionStatus};
+    use tests::{a_plan, a_session, empty_inputs, the_map, the_now};
+
+    fn meta(state: &str) -> IssueMeta {
+        IssueMeta {
+            title: None,
+            url: None,
+            github_state: Some(state.into()),
+        }
+    }
+
+    fn merged(issue: &IssueRef) -> rubato_protocol::PullRequestState {
+        rubato_protocol::PullRequestState {
+            repo: issue.repo.clone(),
+            number: 900 + issue.number,
+            branch: format!("issue/{}-x", issue.number),
+            open: false,
+            draft: false,
+            checks: rubato_protocol::ChecksStatus::Green,
+            merged_at: Some(the_now()),
+            updated_at: the_now(),
+            url: String::new(),
+        }
+    }
+
+    fn built(inputs: OverviewInputs) -> Built {
+        build(inputs, Some(&the_map()), &Limits::default(), the_now())
+    }
+
+    fn flags(b: &Built, n: u64) -> (bool, bool) {
+        let s = b.issues.iter().find(|i| i.issue.number == n).unwrap();
+        (s.closed, s.finished)
+    }
+
+    #[test]
+    fn closed_and_finished_follow_github_and_the_merge() {
+        let [closed, open, unread, done] = [1, 2, 3, 4].map(|n| IssueRef::new("o/r", n));
+        let mut inputs = empty_inputs();
+        for i in [&closed, &open, &unread, &done] {
+            inputs.launched.insert(i.clone());
+        }
+        inputs.meta.insert(closed.clone(), meta("closed"));
+        inputs.meta.insert(open.clone(), meta("open"));
+        inputs.meta.insert(done.clone(), meta("open"));
+        inputs.prs.insert(done.clone(), merged(&done));
+        let b = built(inputs);
+        assert_eq!(flags(&b, 1), (true, true), "closed on GitHub");
+        assert_eq!(flags(&b, 2), (false, false), "open on GitHub");
+        assert_eq!(flags(&b, 3), (false, false), "not read yet is not closed");
+        assert_eq!(flags(&b, 4), (false, true), "merged, the issue still open");
+        let closed_state = b.issues[0].progress.state;
+        assert_eq!(
+            closed_state,
+            ProgressState::Started,
+            "progress is not touched"
+        );
+        println!("checked 4 issues for closed and finished");
+    }
+
+    /// One issue whose plan names an unknown node, and one whose plan does not parse.
+    fn noisy(state: &str) -> (OverviewInputs, IssueRef, IssueRef) {
+        let unknown = IssueRef::new("o/r", 1);
+        let broken = IssueRef::new("o/r", 2);
+        let mut inputs = empty_inputs();
+        inputs.plans = vec![a_plan(&unknown, "companion-server", "no-such-node"), {
+            let mut p = a_plan(&broken, "companion-server", "rubato-companion");
+            p.plan = None;
+            p.parse_error = Some("no affected parts".into());
+            p
+        }];
+        for i in [&unknown, &broken] {
+            inputs.meta.insert(i.clone(), meta(state));
+        }
+        (inputs, unknown, broken)
+    }
+
+    fn plan_findings(b: &Built) -> usize {
+        b.findings
+            .iter()
+            .filter(|f| {
+                matches!(
+                    f,
+                    Finding::UnknownIds { .. }
+                        | Finding::FlowOffSeam { .. }
+                        | Finding::PlanParseError { .. }
+                        | Finding::ApprovalStale { .. }
+                        | Finding::ApprovedWithoutFit { .. }
+                        | Finding::SeamCollision { .. }
+                )
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_finished_issue_makes_no_plan_findings_and_an_open_one_does() {
+        let (open, ..) = noisy("open");
+        let open = plan_findings(&built(open));
+        assert!(
+            open >= 2,
+            "must fail on purpose: the open fixture is noisy, got {open}"
+        );
+        let (closed, ..) = noisy("closed");
+        assert_eq!(plan_findings(&built(closed)), 0);
+        println!("checked {open} findings of the open fixture gone when closed");
+    }
+
+    #[test]
+    fn a_closed_issue_with_an_agent_working_keeps_its_findings() {
+        let (mut inputs, unknown, _) = noisy("closed");
+        inputs.sessions = vec![a_session(&unknown, SessionStatus::Working)];
+        let b = built(inputs.clone());
+        assert_eq!(flags(&b, 1), (true, false), "closed, an agent working");
+        assert!(
+            b.findings
+                .iter()
+                .any(|f| matches!(f, Finding::UnknownIds { .. }))
+        );
+        // Idle or blocked does not hold it: a snapshot is never deleted.
+        for status in [
+            SessionStatus::Idle,
+            SessionStatus::Blocked,
+            SessionStatus::Ended,
+        ] {
+            inputs.sessions = vec![a_session(&unknown, status)];
+            assert_eq!(flags(&built(inputs.clone()), 1), (true, true), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn a_finished_plan_collides_with_nothing_and_is_counted_nowhere() {
+        let a = IssueRef::new("o/r", 1);
+        let c = IssueRef::new("o/r", 2);
+        let mut inputs = empty_inputs();
+        inputs.plans = vec![
+            a_plan(&a, "companion-server", "rubato-companion"),
+            a_plan(&c, "companion-server", "rubato-companion"),
+        ];
+        let collisions = |b: &Built| {
+            b.findings
+                .iter()
+                .filter(|f| matches!(f, Finding::SeamCollision { .. }))
+                .count()
+        };
+        let both_open = built(inputs.clone());
+        assert_eq!(
+            collisions(&both_open),
+            1,
+            "must fail on purpose: two open plans collide"
+        );
+        assert_eq!(counts(&both_open).1["companion-server"], 2);
+        let repo_plans = |b: &Built| b.repos.iter().find(|r| r.repo == "o/r").unwrap().plans;
+        assert_eq!(repo_plans(&both_open), 2);
+
+        inputs.meta.insert(c.clone(), meta("closed"));
+        let one_closed = built(inputs);
+        assert_eq!(collisions(&one_closed), 0);
+        assert_eq!(counts(&one_closed).1["companion-server"], 1);
+        assert_eq!(repo_plans(&one_closed), 1);
+    }
+
+    #[test]
+    fn counts_hold_every_pair_and_zero_what_moved() {
+        let a = IssueRef::new("o/r", 1);
+        let mut inputs = empty_inputs();
+        inputs.launched.insert(a.clone());
+        let open = counts(&built(inputs.clone())).0;
+        assert_eq!(
+            open.len(),
+            ProgressState::ALL.len() * 2,
+            "every state, open and finished"
+        );
+        assert_eq!(open[&(ProgressState::Started, false)], 1);
+        assert_eq!(open[&(ProgressState::Started, true)], 0);
+        inputs.meta.insert(a.clone(), meta("closed"));
+        let closed = counts(&built(inputs)).0;
+        assert_eq!(
+            closed[&(ProgressState::Started, false)],
+            0,
+            "zero, not the last value"
+        );
+        assert_eq!(closed[&(ProgressState::Started, true)], 1);
+        println!("checked {} state and finished pairs", closed.len());
     }
 }

@@ -1324,12 +1324,22 @@ export interface IssueSummary {
  * badge, not a progress state.
  */
 approval?: (ApprovalState | null)
+/**
+ * GitHub says the issue is closed (#265). A fact, read with the issue; an issue Rubato has
+ * not read yet is not closed. Not a progress state: Done still means merged.
+ */
+closed?: boolean
 decisions?: DecisionRecord[]
 /**
  * The issue's plan draft in Rubato, its newest settled revision (ADR 0053). Absent when the
  * issue has none.
  */
 draft?: (DraftSummary | null)
+/**
+ * The issue is finished ([`is_finished`]): the default views leave it out and the Done
+ * views show it. Decided here so no reader grows a rule of its own.
+ */
+finished?: boolean
 /**
  * Where the plan fits the map, and whether it does (ADR 0029). Absent without a plan file.
  */

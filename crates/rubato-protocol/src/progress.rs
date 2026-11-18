@@ -44,6 +44,20 @@ pub enum ProgressState {
     Unknown,
 }
 
+impl ProgressState {
+    pub const ALL: [Self; 9] = [
+        Self::Planned,
+        Self::Started,
+        Self::Designing,
+        Self::Designed,
+        Self::Building,
+        Self::Blocked,
+        Self::InReview,
+        Self::Done,
+        Self::Unknown,
+    ];
+}
+
 /// Everything the derivation looks at. The server collects these; nothing here is stored as a state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProgressInputs<'a> {
@@ -260,6 +274,34 @@ pub struct IssueSummary {
     /// and can be imported. Only once the cutover is set; before it, plans are approved by comment.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub outside_rubato: bool,
+    /// GitHub says the issue is closed (#265). A fact, read with the issue; an issue Rubato has
+    /// not read yet is not closed. Not a progress state: Done still means merged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
+    /// The issue is finished ([`is_finished`]): the default views leave it out and the Done
+    /// views show it. Decided here so no reader grows a rule of its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub finished: bool,
+}
+
+/// Whether an issue is finished (#265): its pull request merged (`state` is Done), or GitHub
+/// closed it and no agent is working on it right now. Only a trusted, fresh *working* session
+/// holds a closed issue open: a session snapshot is never deleted, so a blocked or idle one
+/// would hold it for ever. Derived on every overview, never stored.
+pub fn is_finished(
+    closed: bool,
+    state: ProgressState,
+    sessions: &[SessionState],
+    now: DateTime<Utc>,
+    session_stale_secs: u64,
+) -> bool {
+    if state == ProgressState::Done {
+        return true;
+    }
+    closed
+        && !sessions
+            .iter()
+            .any(|s| s.effective_status(now, session_stale_secs) == SessionStatus::Working)
 }
 
 /// One point of an issue's spend over time: the total over every session it has had, at the
@@ -530,6 +572,111 @@ mod tests {
     use crate::session::StateSource;
     use chrono::TimeZone;
     use uuid::Uuid;
+
+    /// #265: merged is finished; closed is finished unless an agent is working right now.
+    #[test]
+    fn finished_is_merged_or_closed_with_no_agent_working() {
+        use ProgressState::*;
+        use SessionStatus as S;
+        use StateSource::{Hook, Scraped};
+        let cases: Vec<(&str, bool, ProgressState, Vec<SessionState>, bool)> = vec![
+            ("open, nothing", false, Planned, vec![], false),
+            (
+                "open, working",
+                false,
+                Building,
+                vec![session(S::Working, Hook, 5)],
+                false,
+            ),
+            ("merged", false, Done, vec![], true),
+            (
+                "merged, working",
+                false,
+                Done,
+                vec![session(S::Working, Hook, 5)],
+                true,
+            ),
+            ("merged and closed", true, Done, vec![], true),
+            ("closed, no session", true, Designed, vec![], true),
+            (
+                "closed, fresh working",
+                true,
+                Building,
+                vec![session(S::Working, Hook, 5)],
+                false,
+            ),
+            (
+                "closed, stale working",
+                true,
+                Unknown,
+                vec![session(S::Working, Hook, 500)],
+                true,
+            ),
+            (
+                "closed, untrusted working",
+                true,
+                Unknown,
+                vec![session(S::Working, Scraped, 5)],
+                true,
+            ),
+            (
+                "closed, blocked",
+                true,
+                Blocked,
+                vec![session(S::Blocked, Hook, 5)],
+                true,
+            ),
+            (
+                "closed, idle",
+                true,
+                Designed,
+                vec![session(S::Idle, Hook, 5)],
+                true,
+            ),
+            (
+                "closed, ended",
+                true,
+                Started,
+                vec![session(S::Ended, Hook, 5)],
+                true,
+            ),
+            (
+                "closed, ended and fresh working",
+                true,
+                Building,
+                vec![session(S::Ended, Hook, 5), session(S::Working, Hook, 5)],
+                false,
+            ),
+        ];
+        for (name, closed, state, sessions, want) in &cases {
+            assert_eq!(
+                is_finished(*closed, *state, sessions, now(), 120),
+                *want,
+                "{name}"
+            );
+        }
+        println!("checked {} finished cases", cases.len());
+    }
+
+    #[test]
+    fn closed_and_finished_are_absent_when_false_and_round_trip() {
+        let base = serde_json::json!({
+            "issue": {"repo": "o/r", "number": 1},
+            "pins": [],
+            "progress": {"issue": {"repo": "o/r", "number": 1}, "state": "designed", "last_seen": now()},
+        });
+        let open: IssueSummary = serde_json::from_value(base.clone()).unwrap();
+        assert!(!open.closed && !open.finished, "absent reads as open");
+        let out = serde_json::to_value(&open).unwrap();
+        assert!(out.get("closed").is_none() && out.get("finished").is_none());
+        let mut done = open.clone();
+        done.closed = true;
+        done.finished = true;
+        let out = serde_json::to_value(&done).unwrap();
+        assert_eq!(out["closed"], true);
+        assert_eq!(out["finished"], true);
+        assert_eq!(serde_json::from_value::<IssueSummary>(out).unwrap(), done);
+    }
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 11, 8, 12, 0, 0).unwrap()

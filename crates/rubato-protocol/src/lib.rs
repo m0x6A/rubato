@@ -100,7 +100,7 @@ pub use plan_hash::{
 };
 pub use progress::{
     Backlog, BacklogRepo, ConnectedRepo, Finding, IssueSummary, OpenIssue, Overview, Progress,
-    ProgressInputs, ProgressState, SpendPoint, blocked_from, derive_progress,
+    ProgressInputs, ProgressState, SpendPoint, blocked_from, derive_progress, is_finished,
 };
 pub use pulls::{
     MergeMethod, MergeOffer, MergeRequest, MergeResponse, MergeState, OpenPull, PlanGate,
