@@ -152,6 +152,48 @@ async fn seed_from_file_and_env_once() {
     );
 }
 
+/// Each workspace has its own traffic source (issue #281): when `shop`'s has moved since the
+/// seed, the variables differ, although `default`'s row still equals them. Fails on purpose when
+/// only `default`'s row is compared.
+#[tokio::test(flavor = "current_thread")]
+async fn drift_compares_every_workspaces_traffic_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+    let app = server(config(&url, "main", 5.0, true)).await;
+    assert_eq!(start(&app).await.unwrap().seeded, 2);
+    sqlx::query(
+        "UPDATE workspace_settings SET traffic_fields = ?, default_spend_cap_usd = 9 WHERE workspace_id = 'shop'",
+    )
+    .bind(r#"{"url":"http://mimir.shop.lan:9009","window_secs":"1800"}"#)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    drop(app);
+
+    let app = server(config(&url, "main", 5.0, true)).await;
+    let again = start(&app).await.unwrap();
+    let drift: Vec<(&str, bool)> = again
+        .drift
+        .iter()
+        .map(|d| (d.setting.as_str(), d.differs))
+        .collect();
+    assert_eq!(
+        drift,
+        [
+            ("RUBATO_WORKSPACES_FILE entry default", false),
+            ("RUBATO_WORKSPACES_FILE entry shop", false),
+            ("RUBATO_TRAFFIC_PROMETHEUS_HEADERS", false),
+            ("RUBATO_TRAFFIC_PROMETHEUS_URL", true),
+            ("RUBATO_TRAFFIC_WINDOW_SECS", false),
+            ("RUBATO_DEFAULT_SPEND_CAP_USD", true),
+        ]
+    );
+    println!(
+        "checked {} settings against 2 workspaces' rows",
+        drift.len()
+    );
+}
+
 /// Must fail on purpose: a header with no key to seal it refuses the start, names both
 /// variables, and leaves the table empty (one transaction).
 #[tokio::test(flavor = "current_thread")]

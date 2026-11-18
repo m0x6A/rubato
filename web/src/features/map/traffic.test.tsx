@@ -178,7 +178,7 @@ describe("findings on conduits (design §5.4)", () => {
 
 describe("unknown, not quiet (design §5.5)", () => {
   const states = [
-    { traffic: { state: "not_configured" as const, seams: [], undeclared: [] }, says: "Rubato has no traffic source. Observed traffic is not shown." },
+    { traffic: { state: "not_configured" as const, seams: [], undeclared: [] }, says: "This workspace has no traffic source. Set one in Configure workspace." },
     { traffic: { state: "stale" as const, observed_at: new Date(NOW - 14 * 60_000).toISOString(), seams: [], undeclared: [] }, says: "Traffic unknown: the last report is from 14m ago." },
     { traffic: { state: "failing" as const, error: "dev traffic file: No such file", seams: [], undeclared: [] }, says: "Traffic unknown: the source failed: dev traffic file: No such file." },
   ];

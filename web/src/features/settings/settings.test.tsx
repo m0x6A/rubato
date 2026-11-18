@@ -1,9 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { overview } from "../../../test/fixtures.ts";
-import type { SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
+import type { ObservedTraffic, SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
 import { forgetWorkspace, learnWorkspace } from "../../shared/workspace.ts";
-import { SettingsView } from "./SettingsView.tsx";
+import { SettingsView, sourceStatus } from "./SettingsView.tsx";
 
 /** An adapter no server has: the form must come from the list, not from what the page knows. */
 const SOURCES: SourceFields[] = [
@@ -70,11 +70,11 @@ function serve(stored: WorkspaceSettings, answers: { put?: Answer; post?: Answer
   return calls;
 }
 
-function open(ws: string, handlers: Partial<Parameters<typeof SettingsView>[0]> = {}) {
+function open(ws: string, handlers: Partial<Parameters<typeof SettingsView>[0]> = {}, traffic?: ObservedTraffic) {
   learnWorkspace(ws);
   const props = { onClose: vi.fn(), onChanged: vi.fn(), onNotice: vi.fn(), onSwitch: vi.fn(), ...handlers };
-  render(<SettingsView overview={overview({ workspace: ws })} {...props} />);
-  return props;
+  const view = render(<SettingsView overview={overview({ workspace: ws, ...(traffic ? { traffic } : {}) })} {...props} />);
+  return { ...props, view };
 }
 
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -291,5 +291,52 @@ describe("Configure workspace (issue #189)", () => {
     fail = false;
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByLabelText("Name")).toHaveValue("Shop");
+  });
+});
+
+describe("the traffic source's state is this workspace's (issue #281)", () => {
+  const NOW = Date.parse("2026-11-18T12:00:00Z");
+  const ago = (mins: number) => new Date(NOW - mins * 60_000).toISOString();
+
+  it("each state has its sentence, and no source has none", () => {
+    const cases = [
+      { t: undefined, says: null },
+      { t: { state: "not_configured" as const }, says: null },
+      { t: { state: "fresh" as const, observed_at: ago(2) }, says: "Working: the last report is from 2m ago." },
+      { t: { state: "stale" as const, observed_at: ago(14) }, says: "No recent report: the last one is from 14m ago." },
+      { t: { state: "stale" as const }, says: "No report has arrived yet." },
+      { t: { state: "failing" as const, error: "connection refused" }, says: "Failing: connection refused." },
+    ];
+    for (const c of cases) {
+      expect(sourceStatus(c.t, NOW)?.text ?? null).toBe(c.says);
+    }
+    expect(sourceStatus({ state: "failing" })?.failing).toBe(true);
+    console.log(`checked ${cases.length} source states`);
+  });
+
+  it("shows the stored source's state, and hides it while the edit differs", async () => {
+    serve(settings());
+    open("shop", {}, { state: "failing", error: "connection refused", seams: [], undeclared: [] });
+    const status = await screen.findByTestId("settings-source-status");
+    expect(status).toHaveTextContent("Failing: connection refused.");
+    expect(status).toHaveClass("warn");
+    fireEvent.change(screen.getByTestId("settings-field-url"), { target: { value: "http://other.lan/render" } });
+    expect(screen.queryByTestId("settings-source-status")).toBeNull();
+    fireEvent.change(screen.getByTestId("settings-field-url"), { target: { value: "http://graphite.lan/render" } });
+    expect(screen.getByTestId("settings-source-status")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "" } });
+    expect(screen.queryByTestId("settings-source-status")).toBeNull();
+  });
+
+  it("follows the workspace: shop's source works while default has none", async () => {
+    serve(settings());
+    const { view, ...props } = open("shop", {}, { state: "fresh", observed_at: new Date().toISOString(), seams: [], undeclared: [] });
+    expect(await screen.findByTestId("settings-source-status")).toHaveTextContent("Working");
+    vi.unstubAllGlobals();
+    serve(settings({ id: "default", name: null, traffic: null }));
+    learnWorkspace("default");
+    view.rerender(<SettingsView overview={overview({ workspace: "default", traffic: { state: "not_configured", seams: [], undeclared: [] } })} {...props} />);
+    await waitFor(() => expect(screen.getByLabelText("Source")).toHaveValue(""));
+    expect(screen.queryByTestId("settings-source-status")).toBeNull();
   });
 });

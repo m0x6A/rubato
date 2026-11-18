@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Overview, SecretUpdate, SourceField, SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
+import type { ObservedTraffic, Overview, SecretUpdate, SourceField, SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
+import { relative } from "../../shared/format.ts";
 import { DEFAULT_WORKSPACE } from "../../shared/workspace.ts";
 import { refusalOf, refusalText, settingsApi } from "./api.ts";
 import { NewWorkspaceForm } from "./NewWorkspaceForm.tsx";
@@ -46,6 +47,24 @@ function originOf(url: string | undefined): string | null {
     return url ? new URL(url).origin : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * How this workspace's stored traffic source is doing, from the overview (issue #281): each
+ * workspace has its own source and its own report. Null when it has no source.
+ */
+export function sourceStatus(t: Pick<ObservedTraffic, "state" | "observed_at" | "error"> | undefined, now = Date.now()): { text: string; failing: boolean } | null {
+  switch (t?.state) {
+    case undefined:
+    case "not_configured":
+      return null;
+    case "fresh":
+      return { text: t.observed_at ? `Working: the last report is from ${relative(t.observed_at, now)}.` : "Working.", failing: false };
+    case "stale":
+      return { text: t.observed_at ? `No recent report: the last one is from ${relative(t.observed_at, now)}.` : "No report has arrived yet.", failing: false };
+    case "failing":
+      return { text: `Failing: ${t.error ?? "no reason given"}.`, failing: true };
   }
 }
 
@@ -139,6 +158,10 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
   const isSet = (name: string) => storedSecrets[name]?.set === true;
   const choiceOf = (name: string) => draft.secrets[name] ?? { choice: "keep" as SecretChoice, value: "" };
   // A stored secret belongs to the address it was set for (ADR 0075).
+  // The state is the stored source's: an edit not saved yet has none.
+  const stored = settings.traffic?.fields ?? {};
+  const asStored = settings.traffic?.source === draft.source && [...new Set([...Object.keys(stored), ...Object.keys(draft.fields)])].every((k) => (draft.fields[k] ?? "").trim() === (stored[k] ?? ""));
+  const status = asStored ? sourceStatus(overview.traffic) : null;
   const originMoved = settings.traffic?.source === draft.source && originOf(settings.traffic?.fields?.["url"]) !== originOf(draft.fields["url"]);
 
   const number = (text: string, what: string): number | null => {
@@ -263,6 +286,11 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
               {draft.source && !adapter && <option value={draft.source}>{draft.source}</option>}
             </select>
           </label>
+          {status && (
+            <p className={status.failing ? "warn" : "muted"} data-testid="settings-source-status" data-state={overview.traffic?.state}>
+              {status.text}
+            </p>
+          )}
           {(adapter?.fields ?? []).map((f) =>
             f.secret ? (
               <div className="settings-secret" key={f.name} data-testid={`settings-secret-${f.name}`}>

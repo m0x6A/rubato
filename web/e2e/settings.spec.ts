@@ -75,6 +75,41 @@ test.describe("on the server with two workspaces", () => {
     }
     await expect(page.getByText(`map rubato @ ${sha("main")}`)).toBeVisible();
   });
+
+  // Issue #281: a traffic source belongs to one workspace. Nothing listens on the address, so
+  // shop's source fails, and default, which has none, says so and shows no state.
+  test("a traffic source set in shop shows there, failing, and default still has none", { tag: ["@settings.traffic-per-workspace", "@settings.traffic-status"] }, async ({ page }) => {
+    await page.goto("/?w=shop");
+    const switcher = page.getByRole("combobox", { name: "Workspace" });
+    const view = await openSettings(page);
+    const status = view.getByTestId("settings-source-status");
+    await expect(view.getByLabel("Source")).toHaveValue("");
+    await expect(status).toHaveCount(0);
+    try {
+      await view.getByLabel("Source").selectOption("prometheus");
+      await view.getByTestId("settings-field-url").fill("http://127.0.0.1:9");
+      await expect(status).toHaveCount(0);
+      await save(page);
+      await expect(status).toHaveAttribute("data-state", "failing", { timeout: 30_000 });
+      await expect(status).toContainText("Failing: ");
+
+      await switcher.selectOption("default");
+      await expect(view.getByText("m0x6A/rubato")).toBeVisible();
+      await expect(view.getByLabel("Source")).toHaveValue("");
+      await expect(status).toHaveCount(0);
+      expect((await (await page.request.get("/api/settings")).json()).traffic ?? null).toBeNull();
+      expect((await (await page.request.get("/api/w/shop/settings")).json()).traffic.fields.url).toBe("http://127.0.0.1:9");
+      const overview = await (await page.request.get("/api/overview")).json();
+      expect(overview.traffic?.state ?? "not_configured").toBe("not_configured");
+    } finally {
+      const now = await (await page.request.get("/api/w/shop/settings")).json();
+      const put = await page.request.put("/api/w/shop/settings", { data: { ...now, traffic: null } });
+      expect(put.status()).toBe(200);
+    }
+    await view.getByRole("button", { name: "Close" }).click();
+    await page.getByRole("radio", { name: "Traffic" }).click();
+    await expect(page.getByText("This workspace has no traffic source. Set one in Configure workspace.")).toBeVisible();
+  });
 });
 
 test.describe("on the server with one workspace", () => {
