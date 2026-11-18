@@ -84,6 +84,14 @@ pub fn sources() -> Vec<SourceFields> {
                 Some("traces_service_graph_"),
             ),
             field(
+                "namespaces",
+                "Service namespaces to include (empty: all)",
+                FieldKind::Text,
+                false,
+                false,
+                Some("rubato, shop"),
+            ),
+            field(
                 "window_secs",
                 "Window, seconds",
                 FieldKind::Number,

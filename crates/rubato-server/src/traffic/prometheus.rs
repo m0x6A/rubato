@@ -25,6 +25,9 @@ pub struct PrometheusConfig {
     pub metric_prefix: String,
     pub client_namespace_label: String,
     pub server_namespace_label: String,
+    /// The service namespaces this workspace reads (issue #288): a call is kept when its client
+    /// or its server is in one of them. Empty: every namespace.
+    pub namespaces: Vec<String>,
     pub window_secs: u32,
 }
 
@@ -40,6 +43,7 @@ impl std::fmt::Debug for PrometheusConfig {
             .field("metric_prefix", &self.metric_prefix)
             .field("client_namespace_label", &self.client_namespace_label)
             .field("server_namespace_label", &self.server_namespace_label)
+            .field("namespaces", &self.namespaces)
             .field("window_secs", &self.window_secs)
             .finish()
     }
@@ -59,18 +63,32 @@ fn is_metric_prefix(s: &str) -> bool {
         && c.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
 }
 
+/// How many namespaces a source may list, and how long one may be.
+pub const MAX_NAMESPACES: usize = 20;
+const MAX_NAMESPACE_LEN: usize = 63;
+
+/// A `service.namespace` a source may list: letters, digits, `.`, `_` and `-`. Narrow on
+/// purpose, so the value goes into the query's matcher with only the dot to escape.
+fn is_namespace(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= MAX_NAMESPACE_LEN
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 /// The adapter's name in a workspace's settings (ADR 0075).
 pub const SOURCE: &str = "prometheus";
 
 /// Each text field of a workspace's Prometheus source and the variable that seeds it once
 /// (ADR 0075). Only this adapter knows what they mean (ADR 0040).
-pub const FIELDS: [(&str, &str); 5] = [
+pub const FIELDS: [(&str, &str); 6] = [
     ("url", "RUBATO_TRAFFIC_PROMETHEUS_URL"),
     (
         "namespace_labels",
         "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACE_LABELS",
     ),
     ("metric_prefix", "RUBATO_TRAFFIC_PROMETHEUS_METRIC_PREFIX"),
+    ("namespaces", "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES"),
     ("timeout_secs", "RUBATO_TRAFFIC_PROMETHEUS_TIMEOUT_SECS"),
     ("window_secs", "RUBATO_TRAFFIC_WINDOW_SECS"),
 ];
@@ -203,6 +221,24 @@ impl PrometheusConfig {
                     "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACE_LABELS={labels:?} must be two different label names, client first"
                 )
             })?;
+        let listed = get("RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES").unwrap_or_default();
+        let mut namespaces: Vec<String> = Vec::new();
+        for ns in listed.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+            if !is_namespace(ns) {
+                return Err(format!(
+                    "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES: {ns:?} is not a namespace (letters, digits, '.', '_' and '-', at most {MAX_NAMESPACE_LEN})"
+                ));
+            }
+            if !namespaces.iter().any(|n| n == ns) {
+                namespaces.push(ns.to_owned());
+            }
+        }
+        if namespaces.len() > MAX_NAMESPACES {
+            return Err(format!(
+                "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES lists {} namespaces; at most {MAX_NAMESPACES}",
+                namespaces.len()
+            ));
+        }
         Ok(Some(Self {
             url: url.trim_end_matches('/').to_owned(),
             headers,
@@ -210,21 +246,43 @@ impl PrometheusConfig {
             metric_prefix,
             client_namespace_label: cl,
             server_namespace_label: sl,
+            namespaces,
             window_secs,
         }))
     }
 
     /// The instant query for one metric: calls per pair of services over the window, the
-    /// largest first, one more than a report may hold so a cut is seen.
+    /// largest first, one more than a report may hold so a cut is seen. With namespaces listed
+    /// (issue #288), only series whose client or server is in one of them: `or` keeps a series
+    /// that matches both once.
     pub fn query(&self, metric: &str) -> String {
+        let increase = |matcher: &str| {
+            format!(
+                "increase({}{}{}[{}s])",
+                self.metric_prefix, metric, matcher, self.window_secs
+            )
+        };
+        let series = if self.namespaces.is_empty() {
+            increase("")
+        } else {
+            // `is_namespace` leaves the dot as the only regex character; the matcher is anchored.
+            let any = self
+                .namespaces
+                .iter()
+                .map(|n| n.replace('.', "\\\\."))
+                .collect::<Vec<_>>()
+                .join("|");
+            format!(
+                "{} or {}",
+                increase(&format!("{{{}=~\"{any}\"}}", self.client_namespace_label)),
+                increase(&format!("{{{}=~\"{any}\"}}", self.server_namespace_label))
+            )
+        };
         format!(
-            "topk({}, sum by (client, server, {}, {}) (increase({}{}[{}s])))",
+            "topk({}, sum by (client, server, {}, {}) ({series}))",
             MAX_EDGES + 1,
             self.client_namespace_label,
             self.server_namespace_label,
-            self.metric_prefix,
-            metric,
-            self.window_secs
         )
     }
 }

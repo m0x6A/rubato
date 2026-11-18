@@ -190,6 +190,35 @@ async fn labels_and_prefix_come_from_config() {
     );
 }
 
+/// Issue #288: a source that lists namespaces asks only for calls with an end in one of them,
+/// and one that lists none asks as before. Must fail on purpose if the list is dropped.
+#[tokio::test]
+async fn listed_namespaces_narrow_the_query() {
+    let (url, f) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    let c = config(
+        &url,
+        &[(
+            "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES",
+            " rubato, shop.eu ,rubato",
+        )],
+    );
+    assert_eq!(c.namespaces, ["rubato", "shop.eu"], "trimmed, once each");
+    PrometheusSource::new(c).report_at(at()).await.unwrap();
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(
+        seen[0].0["query"],
+        format!(
+            "topk({}, sum by (client, server, client_service_namespace, server_service_namespace) (increase(traces_service_graph_request_total{{client_service_namespace=~\"rubato|shop\\\\.eu\"}}[3600s]) or increase(traces_service_graph_request_total{{server_service_namespace=~\"rubato|shop\\\\.eu\"}}[3600s])))",
+            MAX_EDGES + 1
+        )
+    );
+    assert!(seen[1].0["query"].contains("request_failed_total{client_service_namespace=~"));
+    let none = config(&url, &[("RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES", " , ")]);
+    assert!(none.namespaces.is_empty());
+    assert!(!none.query("request_total").contains('{'), "no matcher");
+    println!("checked 2 queries with a list and 1 without");
+}
+
 #[tokio::test]
 async fn more_series_than_a_report_holds_are_cut_and_marked() {
     let result: Vec<String> = (0..=MAX_EDGES)
@@ -417,6 +446,18 @@ fn config_is_checked_and_headers_never_print() {
             ("RUBATO_TRAFFIC_PROMETHEUS_NAMESPACE_LABELS", "same,same"),
         ],
         vec![url, ("RUBATO_TRAFFIC_PROMETHEUS_METRIC_PREFIX", "x{y}")],
+        vec![
+            url,
+            ("RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES", "a\"} or up{x=\""),
+        ],
+        vec![url, ("RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES", "shop|.*")],
+        vec![
+            url,
+            (
+                "RUBATO_TRAFFIC_PROMETHEUS_NAMESPACES",
+                "n1,n2,n3,n4,n5,n6,n7,n8,n9,n10,n11,n12,n13,n14,n15,n16,n17,n18,n19,n20,n21",
+            ),
+        ],
         vec![url, ("RUBATO_TRAFFIC_PROMETHEUS_HEADERS", "Basic czNjcmV0")],
     ] {
         let e = PrometheusConfig::from_env(env(&bad), 60).unwrap_err();

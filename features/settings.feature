@@ -44,3 +44,10 @@ Feature: Workspace settings
     When a person opens Configure workspace in "shop"
     Then they read that the source is failing, with the reason
     And Configure workspace in "default" says nothing about a source
+
+  @settings.traffic-namespaces
+  Scenario: A workspace's traffic source reads only the namespaces it lists
+    Given the workspace "shop" has a traffic source on a stack shared with other applications
+    When a person lists the service namespaces to include and saves
+    Then the source keeps the list, and reads only calls with an end in one of them
+    And a list that is not namespaces is refused with the reason
