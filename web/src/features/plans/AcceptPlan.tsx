@@ -11,10 +11,13 @@ const CANNOT_ACT: Record<string, string> = {
 };
 
 /** *Accept plan*: posts `Approved: plan <sha> on <branch>` as you (ADR 0030). One click, no
- * dialog: it is idempotent for you and this plan version, and a changed plan needs a new one. */
-export function AcceptPlan({ issue, me, onDone }: { issue: IssueSummary; me: Me | null; onDone: (text: string) => void }) {
+ * dialog: it is idempotent for you and this plan version, and a changed plan needs a new one.
+ * What it did stays on the plan after the approval counts and the button is gone (issue #283);
+ * `said` is that sentence when the caller keeps it, as the board does for a row that moves. */
+export function AcceptPlan({ issue, me, onDone, said: kept }: { issue: IssueSummary; me: Me | null; onDone: (text: string) => void; said?: string | undefined }) {
   const [busy, setBusy] = useState(false);
-  const [said, setSaid] = useState<string | null>(null);
+  const [own, setSaid] = useState<string | null>(null);
+  const said = kept ?? own;
   const sha = issue.plan_sha;
   const counted = issue.approval?.version === "current";
   const fits = issue.fit?.fits ?? false;
@@ -26,7 +29,11 @@ export function AcceptPlan({ issue, me, onDone }: { issue: IssueSummary; me: Me 
         ? (CANNOT_ACT[me.cannot_act_reason ?? ""] ?? "Rubato cannot comment as you.")
         : null;
   if (counted) {
-    return null;
+    return said ? (
+      <div className="accept-plan" data-testid="plan-accepted" role="status">
+        {said}
+      </div>
+    ) : null;
   }
   const accept = async () => {
     if (!sha) {
@@ -49,8 +56,8 @@ export function AcceptPlan({ issue, me, onDone }: { issue: IssueSummary; me: Me 
   };
   return (
     <div className="accept-plan" data-testid="accept-plan">
-      <button type="button" className="primary" disabled={busy || why !== null} title={why ?? undefined} onClick={() => void accept()}>
-        Accept plan
+      <button type="button" className="primary" disabled={busy || why !== null} aria-busy={busy} title={why ?? undefined} onClick={() => void accept()}>
+        {busy ? "Accepting…" : "Accept plan"}
       </button>{" "}
       {sha && (
         <span className="muted">

@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import type { Me, Overview } from "../src/protocol.ts";
+import { routeOverview } from "./fixtures/traffic.ts";
 
 // Issue #80: plans of voice-note issues nobody pinned are found by their `issue/` branch
 // (ADR 0032), listed under Plans with where they fit, and a plan that does not fit cannot be
@@ -72,4 +74,40 @@ test("connected repos list the map's repo", { tag: "@repos.lists-map-repo" }, as
   const row = page.getByTestId("repo-m0x6A/rubato");
   await expect(row).toBeVisible();
   await expect(row).toContainText("yes");
+});
+
+// Issue #283: Accept plan says what it did, on the row. The dev server keeps no tokens and has no
+// GitHub to post to, so the page is told it may act, the post is answered here after a moment,
+// and the overview then counts the approval, as it does once the comment is on the issue.
+test("Accept plan reads Accepting… while it posts, and the row keeps the sentence under Open", { tag: "@plans.accept-says-so" }, async ({ page }) => {
+  let accepted = false;
+  await page.route("**/api/me", async (route) => {
+    const res = await route.fetch();
+    await route.fulfill({ response: res, json: { ...((await res.json()) as Me), can_act_on_github: true } });
+  });
+  await routeOverview(page, (o: Overview) => ({
+    ...o,
+    issues: o.issues.map((i) =>
+      accepted && i.issue.number === 914 ? { ...i, approval: { version: "current" as const, record: { issue: i.issue, comment_id: 1, author: "dev", sha: i.plan_sha ?? null, created_at: new Date().toISOString(), url: "https://github.invalid/c/1" } } } : i,
+    ),
+  }));
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/plans/approve", async (route) => {
+    await held;
+    accepted = true;
+    await route.fulfill({ json: { state: "posted", body: "Approved: plan" } });
+  });
+  await page.goto("/");
+  await page.getByTestId("tab-plans").click();
+  const row = page.getByTestId("plan-row-914");
+  await expect(page.getByTestId("plans-proposed").getByTestId("plan-row-914")).toBeVisible({ timeout: 30_000 });
+  await row.getByRole("button", { name: "Accept plan" }).click();
+  await expect(row.getByRole("button", { name: "Accepting…" })).toBeDisabled();
+  release();
+  await expect(page.getByTestId("plans-open").getByTestId("plan-row-914")).toBeVisible();
+  await expect(row.getByTestId("plan-accepted")).toContainText("Accepted: posted");
+  await expect(row.getByRole("button", { name: "Accept plan" })).toHaveCount(0);
 });

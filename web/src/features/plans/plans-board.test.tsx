@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issue, overview } from "../../../test/fixtures.ts";
@@ -44,7 +44,10 @@ const rowsIn = (testid: string) =>
     .queryAllByTestId(/^plan-row-\d+$/)
     .map((el) => el.getAttribute("data-testid"));
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("the plans board (#265)", () => {
   it("shows Proposed and Open, a draft among the proposed, and no finished plan", () => {
@@ -114,5 +117,51 @@ describe("the plans board (#265)", () => {
     const ov = overview({ issues: [issue(9, "web"), planned(1)] });
     render(<PlansBoard overview={ov} me={me} selected={ov.issues[0]!} onSelect={() => {}} onOpenIssue={() => {}} onNotice={() => {}} />);
     expect(screen.getByTestId("plans-panel")).toBeInTheDocument();
+  });
+});
+
+describe("Accept plan says what it did, where it was pressed (#283)", () => {
+  it("reads Accepting… while it posts, and the row keeps the sentence when it moves to Open", async () => {
+    let answer: (r: Response) => void = () => {};
+    const posted: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        posted.push(JSON.parse(String(init?.body)));
+        return new Promise<Response>((resolve) => {
+          answer = resolve;
+        });
+      }),
+    );
+    const { rerender } = render(<Shell ov={board()} />);
+    const row = () => screen.getByTestId("plan-row-1");
+    fireEvent.click(within(row()).getByRole("button", { name: "Accept plan" }));
+    const busy = within(row()).getByRole("button", { name: "Accepting…" });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(posted).toEqual([{ issue: ref(1), sha: "f3c5e84f2bf82c2a409ad90e83f3236012b1dfb9" }]);
+
+    answer(new Response(JSON.stringify({ state: "posted", body: "Approved: plan" }), { status: 200 }));
+    await waitFor(() => expect(within(row()).getByRole("status")).toHaveTextContent('Accepted: posted "Approved: plan f3c5e84f2b" as you.'));
+
+    // The overview now counts the approval: the row is under Open, without the button, and
+    // still says what happened. Must fail on purpose if the sentence goes with the button.
+    const ov = board();
+    rerender(<Shell ov={{ ...ov, issues: ov.issues.map((i) => (i.issue.number === 1 ? { ...i, approval: approved(1) } : i)) }} />);
+    expect(rowsIn("plans-open")).toEqual(["plan-row-1", "plan-row-3"]);
+    expect(within(row()).queryByRole("button", { name: "Accept plan" })).toBeNull();
+    expect(within(row()).getByTestId("plan-accepted")).toHaveTextContent("Accepted: posted");
+    // A plan nobody accepted here says nothing.
+    expect(within(screen.getByTestId("plan-row-3")).queryByTestId("plan-accepted")).toBeNull();
+    console.log("checked 1 accept: busy label, sentence before and after the row moved");
+  });
+
+  it("a refusal stays under the button, which is offered again", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("GitHub is down", { status: 502 })));
+    render(<Shell ov={board()} />);
+    const row = screen.getByTestId("plan-row-1");
+    fireEvent.click(within(row).getByRole("button", { name: "Accept plan" }));
+    await waitFor(() => expect(within(row).getByRole("status")).toHaveTextContent("The plan was not accepted"));
+    expect(within(row).getByRole("button", { name: "Accept plan" })).toBeEnabled();
   });
 });
