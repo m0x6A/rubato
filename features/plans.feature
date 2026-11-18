@@ -31,6 +31,13 @@ Feature: Plans
     Then the plan is marked as not fitting
     And Accept plan is disabled
 
+  @plans.accept-says-so
+  Scenario: Accept plan says what it did, where it was pressed
+    Given a plan that fits the map and has no counted approval
+    When a person presses Accept plan on its row
+    Then the button reads "Accepting…" until the approval is posted
+    And the row says the plan was accepted, also after it moves to Open
+
   @plans.draft-revisions
   Scenario: The team reads every revision of a draft plan
     Given a session drafting a plan in Rubato

@@ -10,7 +10,8 @@ import { WhereItFits } from "./WhereItFits.tsx";
 
 /** One plan on the board. A plan that exists only as a draft in Rubato (ADR 0053) has no parsed
  * parts in the overview: its row says whose draft it is and whether it fits. */
-function Row({ issue, overview, me, done, onSelect, onNotice }: { issue: IssueSummary; overview: Overview; me: Me | null; done: boolean; onSelect: (i: IssueRef) => void; onNotice: (t: string) => void }) {
+function Row({ issue, overview, me, done, onSelect, onNotice, accepted, onAccepted }: { issue: IssueSummary; overview: Overview; me: Me | null; done: boolean; onSelect: (i: IssueRef) => void; onNotice: (t: string) => void; accepted: Record<string, string>; onAccepted: (key: string, text: string) => void }) {
+  const key = issueKey(issue.issue);
   const plan = issue.plan;
   const draft = issue.draft;
   const draftOnly = !plan && !issue.fit && draft;
@@ -60,12 +61,22 @@ function Row({ issue, overview, me, done, onSelect, onNotice }: { issue: IssueSu
         </span>
       </div>
       {/* A finished plan is read, not accepted; a draft is approved on the draft, in the plan. */}
-      {!done && !draftOnly && <AcceptPlan issue={issue} me={me} onDone={onNotice} />}
+      {!done && !draftOnly && (
+        <AcceptPlan
+          issue={issue}
+          me={me}
+          said={accepted[key]}
+          onDone={(text) => {
+            onAccepted(key, text);
+            onNotice(text);
+          }}
+        />
+      )}
     </li>
   );
 }
 
-function Column({ name, note, testid, empty, issues, ...row }: { name: string; note: string; testid: string; empty: string; issues: IssueSummary[]; overview: Overview; me: Me | null; done: boolean; onSelect: (i: IssueRef) => void; onNotice: (t: string) => void }) {
+function Column({ name, note, testid, empty, issues, ...row }: { name: string; note: string; testid: string; empty: string; issues: IssueSummary[]; overview: Overview; me: Me | null; done: boolean; onSelect: (i: IssueRef) => void; onNotice: (t: string) => void; accepted: Record<string, string>; onAccepted: (key: string, text: string) => void }) {
   return (
     <section className="plan-column">
       <h3>
@@ -175,12 +186,15 @@ interface Props {
  */
 export function PlansBoard({ overview, me, selected, onSelect, onOpenIssue, onNotice, onResume }: Props) {
   const [view, setView] = useState<"open" | "done">("open");
+  // What Accept plan said, by issue: an accepted plan's row moves from Proposed to Open, and
+  // takes the sentence with it (issue #283).
+  const [accepted, setAccepted] = useState<Record<string, string>>({});
   const { proposed, open, done } = groupPlans(overview);
   if (selected && (selected.plan || selected.fit || selected.draft)) {
     return <PlanDetail issue={selected} overview={overview} me={me} onBack={() => onSelect(null)} onOpenIssue={onOpenIssue} onNotice={onNotice} onResume={onResume} />;
   }
   const unfit = [...proposed, ...open].filter((i) => i.fit && !i.fit.fits).length;
-  const row = { overview, me, onSelect, onNotice };
+  const row = { overview, me, onSelect, onNotice, accepted, onAccepted: (key: string, text: string) => setAccepted((a) => ({ ...a, [key]: text })) };
   return (
     <section className="plans-board" data-testid="plans-panel">
       <div className="big-counts" aria-hidden="true">
