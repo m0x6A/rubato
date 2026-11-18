@@ -155,7 +155,7 @@ agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_st
 `shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
 `scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
-its retired parts, for every reader that draws or offers ids, ADR 0077; `finished.ts` the issues the
+its retired parts, for every reader that draws or offers ids, ADR 0077; `traffic.ts` `nothingObserved`, a fresh report with nothing in it; `finished.ts` the issues the
 default views show and the Done views show, read from the server's `finished`; `panel.ts` the
 panel's three sizes, remembered per browser);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by

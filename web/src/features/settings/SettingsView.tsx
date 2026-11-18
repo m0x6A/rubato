@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ObservedTraffic, Overview, SecretUpdate, SourceField, SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
 import { relative } from "../../shared/format.ts";
+import { nothingObserved } from "../../shared/traffic.ts";
 import { DEFAULT_WORKSPACE } from "../../shared/workspace.ts";
 import { refusalOf, refusalText, settingsApi } from "./api.ts";
 import { NewWorkspaceForm } from "./NewWorkspaceForm.tsx";
@@ -54,12 +55,15 @@ function originOf(url: string | undefined): string | null {
  * How this workspace's stored traffic source is doing, from the overview (issue #281): each
  * workspace has its own source and its own report. Null when it has no source.
  */
-export function sourceStatus(t: Pick<ObservedTraffic, "state" | "observed_at" | "error"> | undefined, now = Date.now()): { text: string; failing: boolean } | null {
+export function sourceStatus(t: (Partial<ObservedTraffic> & Pick<ObservedTraffic, "state">) | undefined, now = Date.now()): { text: string; failing: boolean } | null {
   switch (t?.state) {
     case undefined:
     case "not_configured":
       return null;
     case "fresh":
+      if (nothingObserved(t)) {
+        return { text: `Connected, but the source returned no calls between services${t.observed_at ? `: the last report is from ${relative(t.observed_at, now)}` : ""}.`, failing: false };
+      }
       return { text: t.observed_at ? `Working: the last report is from ${relative(t.observed_at, now)}.` : "Working.", failing: false };
     case "stale":
       return { text: t.observed_at ? `No recent report: the last one is from ${relative(t.observed_at, now)}.` : "No report has arrived yet.", failing: false };

@@ -6,6 +6,8 @@
  */
 import type { DiscrepancyKey, Overview } from "../../protocol.ts";
 import { relative } from "../../shared/format.ts";
+import { nothingObserved } from "../../shared/traffic.ts";
+import { windowText } from "../findings/index.ts";
 import { type Take, discrepancies, dismissalText } from "./territory.ts";
 
 interface Props {
@@ -30,13 +32,21 @@ export function Discrepancies({ overview, onTake, onDismiss, onUndo, busy = fals
   }
   const rows = discrepancies(overview);
   const dismissed = t.dismissed ?? [];
+  // Closed by default: the summary must already say that nothing was seen, not "(0)".
+  const empty = nothingObserved(t);
   return (
     <details className="discrepancies" aria-label="Map versus territory" data-testid="discrepancies">
       <summary>
-        Map versus territory <span className="muted">({rows.length})</span>
+        Map versus territory <span className="muted">({empty ? "nothing observed" : rows.length})</span>
       </summary>
       {rows.length === 0 ? (
-        <p className="muted">The observed system matches the map.</p>
+        empty ? (
+          <p className="warn" data-testid="nothing-observed">
+            The traffic source answered with no calls between services in the last {windowText(t.window_secs ?? 3600)}. Nothing was compared with the map.
+          </p>
+        ) : (
+          <p className="muted">The observed system matches the map.</p>
+        )
       ) : (
         <ul className="plain">
           {rows.map((r, i) => (

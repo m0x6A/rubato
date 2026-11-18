@@ -870,3 +870,17 @@ test("By repo: issues drop on a part and on a seam inside a box, New issue hereâ
     expect(r.ok()).toBe(true);
   }
 });
+
+// Issue #285: a source that answers with no calls is not agreement. The seeded server has no
+// traffic source, so an empty fresh report is added on the way to the page.
+test("an empty traffic report says nothing was observed, not that the map matches", { tag: "@map.empty-report-says-so" }, async ({ page }) => {
+  await routeOverview(page, (o) => ({ ...o, traffic: { state: "fresh", observed_at: new Date().toISOString(), window_secs: 3600, seams: [], undeclared: [] } }));
+  await page.goto("/");
+  await expect(page.getByTestId("node-web")).toBeVisible();
+  await page.getByRole("radio", { name: "Traffic" }).click();
+  const list = page.getByTestId("discrepancies");
+  await expect(list.locator(":scope > summary")).toContainText("Map versus territory (nothing observed)");
+  await list.locator(":scope > summary").click();
+  await expect(list.getByTestId("nothing-observed")).toContainText("answered with no calls between services in the last 1 h");
+  await expect(list).not.toContainText("matches the map");
+});
