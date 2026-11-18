@@ -168,7 +168,9 @@ pub(super) fn registry_of(app: &App, rows: &[Row]) -> Result<Registry> {
 }
 
 /// Every workspace-scoped variable or file entry still set, and whether it differs from the
-/// database (`default`'s row for a variable). Values are compared, never logged.
+/// database: a file entry from its own row, `RUBATO_MAP_*` from `default`'s row (they name that
+/// one workspace), a traffic or launch-default variable from any row (issue #281). Values are
+/// compared, never logged.
 fn drift(app: &App, rows: &[Row]) -> Vec<Drift> {
     let cfg = &app.config;
     let row = |id: &str| rows.iter().find(|r| r.workspace_id == id);
@@ -197,14 +199,26 @@ fn drift(app: &App, rows: &[Row]) -> Vec<Drift> {
             differs,
         });
     }
-    let stored_fields: BTreeMap<String, String> = default
-        .and_then(|r| r.traffic_fields.as_deref())
-        .and_then(|j| serde_json::from_str(j).ok())
-        .unwrap_or_default();
-    let stored_secrets: Option<BTreeMap<String, String>> = default
-        .and_then(|r| r.traffic_secrets_sealed.as_deref())
-        .and_then(|s| secrets::open(cfg.token_key.as_ref()?, s).ok())
-        .and_then(|j| serde_json::from_str(&j).ok());
+    // The traffic source and the launch defaults were copied to every row, and each workspace
+    // has had its own since (ADR 0075): a variable differs when any workspace's row does.
+    type Values = BTreeMap<String, String>;
+    let stored: Vec<(Values, Option<Values>)> = rows
+        .iter()
+        .map(|r| {
+            let fields = r
+                .traffic_fields
+                .as_deref()
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default();
+            let secrets = r
+                .traffic_secrets_sealed
+                .as_deref()
+                .and_then(|s| secrets::open(cfg.token_key.as_ref()?, s).ok())
+                .and_then(|j| serde_json::from_str(&j).ok());
+            (fields, secrets)
+        })
+        .collect();
+    let any_row = |differs: &dyn Fn(usize) -> bool| rows.is_empty() || (0..rows.len()).any(differs);
     for (var, value) in &cfg.traffic_env.0 {
         let field = PROMETHEUS_FIELDS
             .iter()
@@ -216,34 +230,33 @@ fn drift(app: &App, rows: &[Row]) -> Vec<Drift> {
                     .find(|(_, v)| v == var)
                     .map(|(f, _)| (*f, true))
             });
-        let differs = match field {
-            Some((f, false)) => stored_fields.get(f) != Some(value),
-            Some((f, true)) => stored_secrets
-                .as_ref()
-                .is_none_or(|s| s.get(f) != Some(value)),
+        let differs = any_row(&|i| match field {
+            Some((f, false)) => stored[i].0.get(f) != Some(value),
+            Some((f, true)) => stored[i].1.as_ref().is_none_or(|s| s.get(f) != Some(value)),
             None => true,
-        };
+        });
         out.push(Drift {
             setting: var.clone(),
             differs,
         });
     }
     if let Some(f) = cfg.seed.traffic_fetch_secs {
+        let f = f.to_string();
         out.push(Drift {
             setting: "RUBATO_TRAFFIC_FETCH_SECS".into(),
-            differs: stored_fields.get("fetch_secs") != Some(&f.to_string()),
+            differs: any_row(&|i| stored[i].0.get("fetch_secs") != Some(&f)),
         });
     }
     if let Some(c) = cfg.seed.default_spend_cap_usd {
         out.push(Drift {
             setting: "RUBATO_DEFAULT_SPEND_CAP_USD".into(),
-            differs: default.is_none_or(|r| r.default_spend_cap_usd != Some(c)),
+            differs: any_row(&|i| rows[i].default_spend_cap_usd != Some(c)),
         });
     }
     if let Some(n) = cfg.seed.default_attempt_limit {
         out.push(Drift {
             setting: "RUBATO_DEFAULT_ATTEMPT_LIMIT".into(),
-            differs: default.is_none_or(|r| r.default_attempt_limit != Some(i64::from(n))),
+            differs: any_row(&|i| rows[i].default_attempt_limit != Some(i64::from(n))),
         });
     }
     out

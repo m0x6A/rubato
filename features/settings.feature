@@ -30,3 +30,17 @@ Feature: Workspace settings
     When a member opens Configure workspace from the header
     Then they see that workspace's settings
     And no switcher is drawn and no workspace is created
+
+  @settings.traffic-per-workspace
+  Scenario: Each workspace has its own traffic source
+    Given a server with the workspaces "default" and "shop", neither with a traffic source
+    When a person sets a traffic source in Configure workspace for "shop"
+    Then "shop" shows that source
+    And "default" still has none, and its Traffic lens says where to set one
+
+  @settings.traffic-status
+  Scenario: Configure workspace says how the workspace's traffic source is doing
+    Given the workspace "shop" has a traffic source that cannot be reached
+    When a person opens Configure workspace in "shop"
+    Then they read that the source is failing, with the reason
+    And Configure workspace in "default" says nothing about a source

@@ -49,7 +49,7 @@ export function unknownSentence(t: Pick<ObservedTraffic, "state" | "observed_at"
     case "fresh":
       return null;
     case "not_configured":
-      return "Rubato has no traffic source. Observed traffic is not shown.";
+      return "This workspace has no traffic source. Set one in Configure workspace.";
     case "stale":
       return t.observed_at ? `Traffic unknown: the last report is from ${relative(t.observed_at, now)}.` : "Traffic unknown: no report has arrived yet.";
     case "failing":
