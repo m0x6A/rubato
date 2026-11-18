@@ -629,6 +629,32 @@ tr.chat-row > td { padding-top: 0; }
 .big-counts b { display: block; font-size: 28px; line-height: 1; color: var(--ink); letter-spacing: 0; }
 .big-counts .warn b { color: var(--warn-ink); }
 .plan-row > .row { display: flex; gap: 12px; align-items: flex-start; }
+/* The plans board (#265): its columns follow the panel's width, not the window's. */
+.plans-board { container-type: inline-size; }
+.plan-columns { display: grid; gap: 12px; }
+@container (min-width: 720px) { .plan-columns { grid-template-columns: 1fr 1fr; gap: 20px; } }
+.plan-column { min-width: 0; }
+.plan-detail-nav { display: flex; gap: 12px; align-items: center; }
+/* Plan text as a document (ADR 0079): the UI face, a readable measure, tables in their own box. */
+.plan-text { border-top: 1px solid var(--line); }
+.plan-text-mode { margin: 0; padding: 4px 8px 0; text-align: right; font-size: 11px; }
+.md-body { padding: 4px 12px 12px; max-width: 75ch; font-family: var(--font-ui); font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-family: var(--font-ui); text-transform: none; letter-spacing: 0; color: var(--ink); line-height: 1.25; margin: 1.2em 0 0.4em; }
+.md-body h1 { font-size: 20px; }
+.md-body h2 { font-size: 17px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+.md-body h3 { font-size: 15px; font-weight: 600; }
+.md-body h4 { font-size: 14px; font-weight: 600; }
+.md-body p, .md-body ul, .md-body ol, .md-body pre, .md-body blockquote, .md-body .md-table { margin: 0.6em 0; }
+.md-body ul, .md-body ol { padding-left: 1.4em; }
+.md-body li > input[type="checkbox"] { margin-right: 6px; }
+.md-body code { font-family: var(--font-mono); font-size: 12px; }
+.md-body pre { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow-x: auto; }
+.md-body blockquote { padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); }
+.md-body .md-table { overflow-x: auto; max-width: 100%; }
+.md-body table { border-collapse: collapse; font-size: 12.5px; }
+.md-body th, .md-body td { text-align: left; vertical-align: top; padding: 4px 8px; border: 1px solid var(--line); overflow-wrap: normal; }
+.md-body th { font-weight: 600; background: var(--panel); }
+.md-body hr { border: 0; border-top: 1px solid var(--line); }
 .mini-map { flex: none; border-radius: 7px; background: var(--canvas); border: 1px solid var(--line); }
 .mini-seam { stroke: var(--line-strong); stroke-width: 1; }
 .mini-seam.lit { stroke: var(--accent); stroke-width: 2; }

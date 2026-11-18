@@ -7,7 +7,8 @@ const ISSUE = { repo: "m0x6A/rubato", number: 930 };
 
 test("an issue closed on GitHub is listed only under Done", { tag: ["@issues.open-only", "@issues.done-view", "@plans.done-view"] }, async ({ page, baseURL }) => {
   const pinned = await page.request.post(`${baseURL}/api/pins`, { data: { issue: ISSUE, target: { kind: "node", id: "plan-check" } } });
-  expect(pinned.ok()).toBe(true);
+  // Another test may have pinned it already.
+  expect([200, 201, 409]).toContain(pinned.status());
   // The poll reads the issue one by one, finds it closed, and reads its plan from the branch.
   await expect
     .poll(

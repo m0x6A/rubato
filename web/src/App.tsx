@@ -3,13 +3,13 @@ import { LoginPage, authApi } from "./features/auth/index.ts";
 import { CompanionsPanel } from "./features/companions/index.ts";
 import { DraftPanel, type DraftPrefill, draftMarks, draftsApi, seamOpFor, withDraft } from "./features/drafts/index.ts";
 import { Findings } from "./features/findings/index.ts";
-import { IssuePanel, TeamTrack } from "./features/issues/index.ts";
+import { IssuePanel, TeamTrack, ownConnectedCompanions } from "./features/issues/index.ts";
 import { launchApi, launchFailureText, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe, takeForgottenWorkspace } from "./features/live/index.ts";
 import { NewIssueForm } from "./features/new_issue/index.ts";
 import { Discrepancies, Inspector, MapView, PlanInspector, type Take, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
-import { PlansPanel, groupPlans } from "./features/plans/index.ts";
+import { PlansBoard, groupPlans } from "./features/plans/index.ts";
 import { ConnectedRepos } from "./features/repos/index.ts";
 import { queueApi } from "./features/queue/index.ts";
 import { SettingsView } from "./features/settings/index.ts";
@@ -550,13 +550,16 @@ export function App() {
             />
           )}
           {overview && tab === "plans" && (
-            <PlansPanel
+            <PlansBoard
               overview={overview}
               me={me}
-              onSelect={(issue) => {
+              selected={selected}
+              onSelect={setSelectedIssue}
+              onOpenIssue={(issue) => {
                 setTab("issues");
                 setSelectedIssue(issue);
               }}
+              onResume={ownConnectedCompanions(overview, me).length > 0 ? (issue, branch) => onLaunch(issue, branch) : undefined}
               onNotice={(text) => {
                 setNotice(text);
                 void refresh();

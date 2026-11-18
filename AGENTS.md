@@ -151,11 +151,13 @@ agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_st
 ```
 <!-- /slices -->
 <!-- slices: web -->
-`web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, selection, handlers);
+`web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, the panel's size, selection, handlers);
 `shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
 `scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
-its retired parts, for every reader that draws or offers ids, ADR 0077);
+its retired parts, for every reader that draws or offers ids, ADR 0077; `finished.ts` the issues the
+default views show and the Done views show, read from the server's `finished`; `panel.ts` the
+panel's three sizes, remembered per browser);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
 `features/features.test.ts`:
 
@@ -164,7 +166,7 @@ live        the overview and every event, over /ws/web           GET /api/overvi
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
 chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout, DELETE /api/layout/grouped; POST, DELETE /api/traffic/dismissals
-issues      issue list, not-pinned backlog, detail, start gate   (none)
+issues      issue list (open by default, Done on request), not-pinned backlog, detail, start gate   (none)
 companions  pair with a code, lanes (sessions, agent line, queue, headless badge), revoke  POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
 queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
@@ -172,7 +174,7 @@ launch      start a session through your own companion           POST /api/launc
 drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
 findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
-plans       proposed and open plans, fit, Accept plan, drafts    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
+plans       the plans board: proposed and open, Done on request, a plan read in place; fit, Accept plan, drafts, plan text as Markdown (ADR 0079)    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
 repos       connected repos, what each provides, their open pull requests and issues, loose sessions  (none)
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
 room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
@@ -202,7 +204,7 @@ map_draft  MapOp, DraftOp, MapDraft, Proposal; DRAFT_OPS, DRAFT_DISCARD, DRAFT_R
 plan       Plan and its affected parts, O-rows, assumptions, decisions, the approval record
 plan_hash  approval_hash (the record left out), bundle_paths, bundle_hash, adr_pins; shared fixtures with plan-check and the skill
 github     PullRequestState, DecisionRecord, ReviewRecord, ApprovalRecord and its source, ApprovalState, comment_counts
-progress   derive_progress, Overview, IssueSummary, SpendPoint, Backlog, Finding; OVERVIEW
+progress   derive_progress, is_finished, Overview, IssueSummary (with closed and finished), SpendPoint, Backlog, Finding; OVERVIEW
 pulls      OpenPull, RepoPulls, PullDetail, MergeOffer, PlanGate, plan_gate, merge_refusal, MergeRequest, MergeResponse, reasons; PULL, PULLS_MERGE
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 fleet      LaunchRole, FleetRequest, FleetAction, FleetResult, FleetOutcome, FleetEntry, LeadView, LEAD_HEADER, reasons, limits (ADR 0072; capability fleet)
@@ -231,6 +233,8 @@ One state per issue, derived; never stored by hand.
 | Blocked | session blocked (hook) or a question open |
 | In review | PR open, checks green |
 | Done | merged |
+
+An issue is *finished* when it is Done, or closed on GitHub with no agent working on it (`is_finished`). That is not a ninth state: the default views leave finished issues and their plans out, and the Done views show them.
 
 Identity comes from the branch: pane cwd → worktree → branch → issue. A headless session has no pane; it starts from the launch's worktree (ADR 0062). No manual tags.
 

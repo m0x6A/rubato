@@ -4,6 +4,7 @@ import { ApiError } from "../../shared/api.ts";
 import { relative } from "../../shared/format.ts";
 import { useWebResource } from "../live/index.ts";
 import { ApproveDraft } from "./ApproveDraft.tsx";
+import { PlanText } from "./PlanText.tsx";
 import { draftFailureText, planDraftsApi } from "./api.ts";
 import { type FileChange, bundleOrder, diffBundles, hunks } from "./diff.ts";
 import { readSeen, writeSeen } from "./seen.ts";
@@ -287,7 +288,7 @@ function Files({ rev, state, openPlan }: { rev: number; state: RevisionState | n
               <code>{f.path}</code>
               {i === 0 && <span className="muted"> · the plan</span>}
             </summary>
-            <pre className="draft-text">{f.text}</pre>
+            <PlanText path={f.path} text={f.text} />
           </details>
         ))
       )}
