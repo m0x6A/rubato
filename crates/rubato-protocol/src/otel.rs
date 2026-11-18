@@ -395,6 +395,11 @@ pub mod semconv {
     pub const PEER_SERVICE: &str = "peer.service";
 }
 
+/// The `service.namespace` every part of Rubato emits unless its environment sets another
+/// (ADR 0080): the server, the companion, the sessions a companion launches, the skill scripts
+/// and the plan check. A service Rubato observes keeps the namespace it emits (ADR 0059).
+pub const DEFAULT_SERVICE_NAMESPACE: &str = "rubato";
+
 /// Every name, for the test that checks the namespace and for documentation.
 pub fn all_names() -> Vec<&'static str> {
     vec![

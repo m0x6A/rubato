@@ -147,9 +147,16 @@ pub fn launcher_script(
             format!("{key}={}", v.replace([',', ' '], "_"))
         })
         .collect();
+    // The session is part of Rubato: `service.namespace` is `rubato` unless the developer's
+    // environment sets another (ADR 0080). Claude Code's own telemetry and the skills in the
+    // session then carry it.
+    s.push_str(&format!(
+        "case \",${{OTEL_RESOURCE_ATTRIBUTES-}}\" in *,{key}=*) ;; *) export OTEL_RESOURCE_ATTRIBUTES=\"{key}={ns}${{OTEL_RESOURCE_ATTRIBUTES:+,$OTEL_RESOURCE_ATTRIBUTES}}\" ;; esac\n",
+        key = rubato_protocol::otel::semconv::SERVICE_NAMESPACE,
+        ns = rubato_protocol::otel::DEFAULT_SERVICE_NAMESPACE,
+    ));
     if !attrs.is_empty() {
         // Merged, not replaced: a `service.namespace` the developer's environment sets is kept.
-        // Rubato itself never sets one (#140).
         s.push_str(&format!(
             "export OTEL_RESOURCE_ATTRIBUTES=\"${{OTEL_RESOURCE_ATTRIBUTES:+$OTEL_RESOURCE_ATTRIBUTES,}}\"{}\n",
             q(&attrs.join(","))
@@ -316,6 +323,8 @@ mod tests {
         );
         let attrs = &env["OTEL_RESOURCE_ATTRIBUTES"];
         assert!(attrs.starts_with("service.namespace=team,"), "{attrs}");
+        // Must fail on purpose if the default is added over the developer's own namespace.
+        assert!(!attrs.contains("service.namespace=rubato"), "{attrs}");
         assert!(attrs.contains("rubato.issue=acme/pantry#7"), "{attrs}");
         assert!(attrs.contains("rubato.branch=issue/7-it's"), "{attrs}");
         assert_eq!(&env["RUBATO_OTEL_RESOURCE_ATTRIBUTES"], attrs);
@@ -326,14 +335,28 @@ mod tests {
         assert_eq!(env["RUBATO_OTEL_EXPORTER_OTLP_PROTOCOL"], "http/protobuf");
     }
 
+    /// ADR 0080: without a namespace from the environment the session is in `rubato`; other
+    /// inherited attributes are kept, and the namespace is there once.
     #[test]
-    fn without_inherited_attributes_only_rubato_ones_are_set() {
+    fn without_an_inherited_namespace_the_session_is_in_rubato() {
         let env = run(&script(true), &[]);
+        let attrs = &env["OTEL_RESOURCE_ATTRIBUTES"];
         assert!(
-            env["OTEL_RESOURCE_ATTRIBUTES"].starts_with("rubato."),
-            "{:?}",
-            env["OTEL_RESOURCE_ATTRIBUTES"]
+            attrs.starts_with("service.namespace=rubato,rubato."),
+            "{attrs}"
         );
+        assert_eq!(&env["RUBATO_OTEL_RESOURCE_ATTRIBUTES"], attrs);
+
+        let env = run(
+            &script(true),
+            &[("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=dev")],
+        );
+        let attrs = &env["OTEL_RESOURCE_ATTRIBUTES"];
+        assert!(
+            attrs.starts_with("service.namespace=rubato,deployment.environment=dev,rubato."),
+            "{attrs}"
+        );
+        assert_eq!(attrs.matches("service.namespace=").count(), 1, "{attrs}");
     }
 
     #[test]
@@ -435,7 +458,7 @@ mod tests {
         assert!(out.status.success(), "{out:?}\n{script}");
         assert_eq!(
             String::from_utf8(out.stdout).unwrap(),
-            format!("rubato.node={node}")
+            format!("service.namespace=rubato,rubato.node={node}")
         );
         assert!(!marker.exists(), "the id ran as a command:\n{script}");
     }

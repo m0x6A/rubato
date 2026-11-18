@@ -296,7 +296,7 @@ async function main() {
   for (const f of standinLogs) {
     const text = readFileSync(f, "utf8");
     const attrs = /OTEL_RESOURCE_ATTRIBUTES=(.*)/.exec(text)?.[1] ?? "";
-    for (const k of ["rubato.repo=", "rubato.issue=", "rubato.branch=", "rubato.node="]) {
+    for (const k of ["service.namespace=", "rubato.repo=", "rubato.issue=", "rubato.branch=", "rubato.node="]) {
       if (!attrs.includes(k)) {
         checks.problem("session-telemetry", `${f}: OTEL_RESOURCE_ATTRIBUTES lacks ${k} (${attrs})`);
       }

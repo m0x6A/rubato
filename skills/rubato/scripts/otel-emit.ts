@@ -5,7 +5,7 @@
  *
  * Settings are the standard `OTEL_*` variables. Claude Code strips `OTEL_*` from the processes it
  * spawns, so the companion also exports each one as `RUBATO_OTEL_*`; the standard name wins.
- * `service.namespace` comes only from the resource attributes: Rubato never sets one (#140).
+ * `service.namespace` is `rubato` unless the resource attributes set another (ADR 0080).
  *
  * Library:  await runCommand("rubato", "plan check", () => main(argv));
  *           call("github", () => gh([...]));     // a client span with peer.service=github
@@ -29,6 +29,10 @@ export const ATTR = {
   serviceNamespace: "service.namespace",
   peerService: "peer.service",
 } as const;
+
+/** The namespace every part of Rubato emits unless its environment sets another (ADR 0080);
+ * `DEFAULT_SERVICE_NAMESPACE` in `crates/rubato-protocol/src/otel.rs` (checked by a test). */
+export const DEFAULT_SERVICE_NAMESPACE = "rubato";
 
 /** How long the one POST may take before it is given up. */
 export const SEND_TIMEOUT_MS = 800;
@@ -106,7 +110,7 @@ export function config(env: Env = process.env): Config | null {
       ...parsePairs(read(env, "OTEL_EXPORTER_OTLP_HEADERS")),
       ...parsePairs(read(env, "OTEL_EXPORTER_OTLP_TRACES_HEADERS")),
     },
-    resource: parsePairs(read(env, "OTEL_RESOURCE_ATTRIBUTES")),
+    resource: { [ATTR.serviceNamespace]: DEFAULT_SERVICE_NAMESPACE, ...parsePairs(read(env, "OTEL_RESOURCE_ATTRIBUTES")) },
   };
 }
 

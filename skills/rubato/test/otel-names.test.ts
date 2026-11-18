@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ATTR, SPAN } from "../scripts/otel-emit.ts";
+import { ATTR, DEFAULT_SERVICE_NAMESPACE, SPAN } from "../scripts/otel-emit.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const otelRs = readFileSync(join(root, "crates/rubato-protocol/src/otel.rs"), "utf8");
@@ -47,6 +47,10 @@ describe("telemetry names", () => {
     expect(unknown).toEqual([]);
     expect(count).toBeGreaterThan(0);
     console.log(`checked ${count} rubato.* literals in ${files.length} files`);
+  });
+
+  it("the default namespace is the one otel.rs has (ADR 0080)", () => {
+    expect(otelRs.match(/pub const DEFAULT_SERVICE_NAMESPACE: &str = "([^"]+)";/)?.[1]).toBe(DEFAULT_SERVICE_NAMESPACE);
   });
 
   it("fails on purpose for a name otel.rs does not have", () => {
