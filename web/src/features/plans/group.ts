@@ -1,14 +1,20 @@
 import type { FitReason, IssueSummary, Overview } from "../../protocol.ts";
+import { finishedIssues, openIssues } from "../../shared/finished.ts";
 
-/** Plans Rubato can read, in two groups (issue #80): *proposed* (a plan, no counted approval)
- * and *open* (a counted approval, not merged). A merged plan is neither. */
-export function groupPlans(ov: Overview): { proposed: IssueSummary[]; open: IssueSummary[] } {
-  const withPlan = ov.issues.filter((i) => (i.plan || i.fit) && !i.pull_request?.merged_at && i.progress.state !== "done");
+/** An issue with a plan Rubato can read: on its branch, or as a draft in Rubato (ADR 0053). */
+const hasPlan = (i: IssueSummary) => Boolean(i.plan || i.fit || i.draft);
+
+/** Plans Rubato can read, in three groups: *proposed* (a plan or a draft, no counted approval)
+ * and *open* (a counted approval), both of issues that are not finished (issue #80); and *done*,
+ * the plans of finished issues, newest first, shown only on request (#265). */
+export function groupPlans(ov: Overview): { proposed: IssueSummary[]; open: IssueSummary[]; done: IssueSummary[] } {
+  const withPlan = openIssues(ov).filter(hasPlan);
   const counted = (i: IssueSummary) => i.approval?.version === "current";
   const byNumber = (a: IssueSummary, b: IssueSummary) => a.issue.repo.localeCompare(b.issue.repo) || a.issue.number - b.issue.number;
   return {
     proposed: withPlan.filter((i) => !counted(i)).sort(byNumber),
     open: withPlan.filter(counted).sort(byNumber),
+    done: finishedIssues(ov).filter(hasPlan),
   };
 }
 

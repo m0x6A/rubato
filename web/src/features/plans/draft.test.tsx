@@ -255,6 +255,16 @@ describe("resuming a parked draft (ADR 0053, plan 122 §D5)", () => {
     await screen.findAllByRole("button", { name: /^Revision \d+/ });
     expect(screen.queryByTestId("resume-draft")).not.toBeInTheDocument();
   });
+
+  it("offers nothing on a finished issue's draft, which is still read (#265)", async () => {
+    serve();
+    // The owner, parked, with a companion: Resume would be offered (the test above), and Approve.
+    render(<DraftSection issue={drafted({ live: false })} me={owner} onResume={vi.fn()} approvalsInRubato readOnly />);
+    await screen.findAllByRole("button", { name: /^Revision \d+/ });
+    expect(screen.getByTestId("draft")).toHaveTextContent("revision 3");
+    expect(screen.queryByTestId("resume-draft")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("approve-draft")).not.toBeInTheDocument();
+  });
 });
 
 describe("an imported draft (ADR 0058)", () => {

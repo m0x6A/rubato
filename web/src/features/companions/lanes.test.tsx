@@ -167,6 +167,20 @@ describe("the queue on a lane (S14 to S16)", () => {
     expect(entry).toHaveAttribute("draggable", "false");
   });
 
+  it("a queued issue that finished on GitHub says so and does not start (#265)", () => {
+    show(
+      overview({
+        companions: [mine],
+        issues: [issue(48, "web", { title: "Interactive map", closed: true, finished: true })],
+        queue: [queued(48, MINE, 0)],
+      }),
+    );
+    const entry = within(lane(MINE)).getByTestId("queued-48");
+    expect(entry).toHaveTextContent("finished on GitHub");
+    expect(within(entry).getByRole("button", { name: "Start m0x6A/rubato#48" })).toBeDisabled();
+    expect(within(entry).getByRole("button", { name: "Remove m0x6A/rubato#48 from the queue" })).toBeEnabled();
+  });
+
   it("Start is disabled with 'pin first' for an unpinned issue", () => {
     const actions = show(
       overview({

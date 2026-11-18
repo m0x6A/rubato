@@ -4,6 +4,7 @@
  */
 import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
 import type { Finding, Flow, IssueRef, IssueSummary, MapNode, ObservedTraffic, Overview, PartStatus, ProgressState, Scenario, Seam, SeamTraffic, SessionState, SessionStatus, UndeclaredEdge } from "../../protocol.ts";
+import { openIssues } from "../../shared/finished.ts";
 import { issueKey } from "../../shared/format.ts";
 import { liveMap } from "../../shared/map.ts";
 
@@ -76,20 +77,19 @@ function strongerPaint(a: Paint, b: PartStatus): Paint {
   return PAINT_RANK[b] > PAINT_RANK[a] ? b : a;
 }
 
-export function isOpen(state: ProgressState): boolean {
-  return state !== "done";
-}
 
 export function buildGraph(ov: Overview): Graph {
   // Retired parts are drawn nowhere (ADR 0077); the map rules keep no live seam on one.
   const live = liveMap(ov.map.map);
+  // The map shows what is open: a finished issue is on no part and paints nothing (#265).
+  const open = openIssues(ov);
   const seams: Seam[] = live.seams ?? [];
   const nodes: GraphNode[] = live.nodes.map((n) => ({
     id: n.id,
     kind: n.kind,
     description: n.description ?? undefined,
     repo: n.repo ?? undefined,
-    issues: ov.issues.filter((i) => i.pins.some((p) => p.kind === "node" && p.id === n.id)),
+    issues: open.filter((i) => i.pins.some((p) => p.kind === "node" && p.id === n.id)),
     sessions: [],
     paint: null,
     findings: [],
@@ -106,12 +106,12 @@ export function buildGraph(ov: Overview): Graph {
     flows: s.flows ?? [],
     openPlans: [],
     collision: false,
-    issues: ov.issues.filter((i) => i.pins.some((p) => p.kind === "seam" && p.id === s.id)),
+    issues: open.filter((i) => i.pins.some((p) => p.kind === "seam" && p.id === s.id)),
     findings: [],
   }));
   const edgeById = new Map(edges.map((e) => [e.id, e]));
 
-  for (const issue of ov.issues) {
+  for (const issue of open) {
     // Sessions land on the nodes the issue is pinned to.
     for (const pin of issue.pins) {
       if (pin.kind === "node") {
@@ -119,7 +119,7 @@ export function buildGraph(ov: Overview): Graph {
       }
     }
     const plan = issue.plan;
-    if (!plan || !isOpen(issue.progress.state)) {
+    if (!plan) {
       continue;
     }
     for (const m of plan.data_models ?? []) {

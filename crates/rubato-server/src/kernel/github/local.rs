@@ -19,6 +19,9 @@ pub struct LocalGit {
     repos: HashMap<String, PathBuf>,
     /// Open issues per repo, from `RUBATO_DEV_ISSUES`. Git has none of its own.
     open: std::sync::Mutex<HashMap<String, Vec<OpenIssueInfo>>>,
+    /// Issues of `RUBATO_DEV_ISSUES` labelled [`DEV_CLOSED_LABEL`]: closed, so in no open
+    /// listing, and answered as closed when read one by one (#265).
+    closed: HashMap<(String, u64), IssueInfo>,
     /// Pull requests opened through this stand-in, by (repo, head branch). Git has none.
     pulls: std::sync::Mutex<HashMap<(String, String), PullInfo>>,
     /// Pull requests `create_pull` made so far: numbered from 1 on their own, so seeded ones
@@ -41,6 +44,9 @@ pub struct DevPull {
     pub draft: bool,
 }
 
+/// The label that makes an issue of `RUBATO_DEV_ISSUES` a closed one in the stand-in.
+pub const DEV_CLOSED_LABEL: &str = "dev:closed";
+
 fn main_branch() -> String {
     "main".into()
 }
@@ -61,13 +67,31 @@ impl LocalGit {
         Ok(Self {
             repos,
             open: Default::default(),
+            closed: Default::default(),
             pulls: Default::default(),
             created: Default::default(),
         })
     }
 
-    /// Give the stand-in its open issues.
-    pub fn with_open_issues(mut self, open: HashMap<String, Vec<OpenIssueInfo>>) -> Self {
+    /// Give the stand-in its issues. One labelled [`DEV_CLOSED_LABEL`] is a closed issue: it
+    /// is left out of the open listing and reads as closed.
+    pub fn with_open_issues(mut self, mut open: HashMap<String, Vec<OpenIssueInfo>>) -> Self {
+        for (repo, issues) in &mut open {
+            let (closed, still_open): (Vec<_>, Vec<_>) = std::mem::take(issues)
+                .into_iter()
+                .partition(|i| i.labels.iter().any(|l| l == DEV_CLOSED_LABEL));
+            *issues = still_open;
+            for i in closed {
+                self.closed.insert(
+                    (repo.clone(), i.number),
+                    IssueInfo {
+                        title: i.title,
+                        state: "closed".into(),
+                        url: i.url,
+                    },
+                );
+            }
+        }
         self.open = std::sync::Mutex::new(open);
         self
     }
@@ -391,8 +415,8 @@ impl GitHubApi for LocalGit {
         })
     }
 
-    async fn issue(&self, _repo: &str, _number: u64) -> Result<Option<IssueInfo>> {
-        Ok(None)
+    async fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueInfo>> {
+        Ok(self.closed.get(&(repo.to_owned(), number)).cloned())
     }
 
     async fn issue_comments(&self, _repo: &str, _number: u64) -> Result<Vec<Comment>> {
@@ -613,6 +637,36 @@ mod tests {
             "git {args:?}: {}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+
+    /// #265: an issue labelled `dev:closed` is in no open listing and reads as closed; any
+    /// other issue read one by one is not known, as before.
+    #[tokio::test]
+    async fn a_dev_issue_labelled_closed_is_closed() {
+        let issue = |number: u64, labels: &[&str]| OpenIssueInfo {
+            number,
+            title: format!("issue {number}"),
+            url: format!("u{number}"),
+            labels: labels.iter().map(|l| (*l).to_owned()).collect(),
+            ..Default::default()
+        };
+        let g = LocalGit::from_spec("a/r=/nowhere")
+            .unwrap()
+            .with_open_issues(HashMap::from([(
+                "a/r".to_owned(),
+                vec![issue(1, &["bug"]), issue(2, &[DEV_CLOSED_LABEL])],
+            )]));
+        let open = g.open_issues("a/r", 10).await.unwrap();
+        assert_eq!(
+            open.issues.iter().map(|i| i.number).collect::<Vec<_>>(),
+            [1]
+        );
+        let closed = g.issue("a/r", 2).await.unwrap().unwrap();
+        assert_eq!(
+            (closed.state.as_str(), closed.title.as_str()),
+            ("closed", "issue 2")
+        );
+        assert_eq!(g.issue("a/r", 1).await.unwrap(), None);
     }
 
     #[tokio::test]

@@ -49,3 +49,10 @@ Feature: Plans
     Given a plan pushed to an issue branch from a session started by hand
     When a person presses Import on the issue
     Then a plan that fits becomes their draft in Rubato
+
+  @plans.done-view
+  Scenario: A finished plan is kept and not shown by default
+    Given a plan whose issue is closed on GitHub
+    When a person opens Plans
+    Then the plan is not listed
+    And it is still read from the issue under Done, with nothing to accept or approve

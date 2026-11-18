@@ -13,6 +13,7 @@ export function WhereItFits({
   me,
   onNotice,
   approvalsInRubato = false,
+  readOnly = false,
 }: {
   issue: IssueSummary;
   map: SystemMap;
@@ -20,6 +21,8 @@ export function WhereItFits({
   onNotice: (text: string) => void;
   /** The cutover is set: plans are approved in Rubato, on the draft, not by comment (ADR 0054). */
   approvalsInRubato?: boolean;
+  /** The issue is finished: where the plan fitted, with no Accept and no Import (#265). */
+  readOnly?: boolean;
 }) {
   // Retired parts are drawn nowhere (ADR 0077).
   const map = liveMap(full);
@@ -110,7 +113,7 @@ export function WhereItFits({
           )}
         </>
       )}
-      {issue.outside_rubato ? (
+      {readOnly ? null : issue.outside_rubato ? (
         <ImportPlan issue={issue} me={me} onDone={onNotice} />
       ) : approvalsInRubato ? (
         issue.approval?.version !== "current" && <p className="muted" data-testid="approve-in-rubato">Plans are approved in Rubato on this server: approve the draft above.</p>

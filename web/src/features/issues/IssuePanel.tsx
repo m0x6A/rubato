@@ -9,6 +9,7 @@ import { QueueMenu } from "../queue/index.ts";
 import { RoomSection, roomLimit } from "../room/index.ts";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
 import { setIssueDrag } from "../../shared/dnd.ts";
+import { closedUnmerged, finishedIssues, isFinished, openIssues } from "../../shared/finished.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
 import { Backlog } from "./Backlog.tsx";
 import { PlanSignals, SignalBadges } from "./PlanSignals.tsx";
@@ -74,12 +75,18 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
   // The pull request's view, opened from its line; closed again when another issue opens.
   const [pullOpen, setPullOpen] = useState(false);
   useEffect(() => setPullOpen(false), [openKey]);
-  const issues = [...overview.issues]
-    .filter((i) => !selection || i.pins.some((p) => p.kind === selection.kind && p.id === selection.id))
+  // Open on GitHub by default; the finished ones on request, newest first (#265).
+  const [view, setView] = useState<"open" | "done">("open");
+  const pinnedHere = (i: IssueSummary) => !selection || i.pins.some((p) => p.kind === selection.kind && p.id === selection.id);
+  const open = openIssues(overview)
+    .filter(pinnedHere)
     .sort((a, b) => ORDER.indexOf(a.progress.state) - ORDER.indexOf(b.progress.state) || a.issue.number - b.issue.number);
+  const done = finishedIssues(overview).filter(pinnedHere);
+  const issues = view === "done" ? done : open;
 
   if (selected) {
     const key = issueKey(selected.issue);
+    const finished = isFinished(selected);
     return (
       <section data-testid="issue-detail">
         <button onClick={() => onSelect(null)}>← all issues</button>
@@ -99,15 +106,26 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           <SpendSparkline points={selected.spend_history ?? []} />
         </div>
         <p>
-          <span className={`badge ${selected.progress.state}`}>{STATE_LABEL[selected.progress.state]}</span> <span className="muted">last signal {relative(selected.progress.last_seen)}</span>
+          <span className={`badge ${selected.progress.state}`}>{STATE_LABEL[selected.progress.state]}</span>{" "}
+          {selected.closed && (
+            <span className="badge closed" data-testid="closed-badge" title="Closed on GitHub">
+              closed
+            </span>
+          )}{" "}
+          <span className="muted">last signal {relative(selected.progress.last_seen)}</span>
           {selected.progress.reason && <span className="muted"> · {selected.progress.reason}</span>}
         </p>
-        {own.length > 0 ? (
+        {finished ? (
+          <p className="muted" data-testid="finished-note">
+            {selected.progress.state === "done" ? "Merged." : "Closed on GitHub."} Finished: nothing starts from here.
+          </p>
+        ) : null}
+        {finished ? null : own.length > 0 ? (
           <button className="primary" data-testid="start-session" onClick={() => onLaunch(selected.issue)} disabled={selected.pins.length === 0} title={selected.pins.length === 0 ? "pin the issue to the map first" : `start in your companion ${own[0]?.hostname ?? ""}`}>
             Start session in my tmux
           </button>
         ) : null}
-        {own.length > 0 && leadOn && onLaunchLead ? (
+        {!finished && own.length > 0 && leadOn && onLaunchLead ? (
           <button
             data-testid="start-lead"
             onClick={() => onLaunchLead(selected.issue, leadOn.companion_id)}
@@ -117,7 +135,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
             Start as lead agent
           </button>
         ) : null}
-        {own.length > 0 ? null : (
+        {finished || own.length > 0 ? null : (
           <p className="muted" data-testid="no-companion">
             No companion of yours is connected; start one with <code>rubato-companion run</code>.
           </p>
@@ -183,12 +201,12 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           </>
         )}
         {selected.draft && (
-          <DraftSection issue={selected} me={me} approvalsInRubato={Boolean(overview.comment_approvals_until)} onResume={own.length > 0 ? (branch) => onLaunch(selected.issue, branch) : undefined} />
+          <DraftSection issue={selected} me={me} approvalsInRubato={Boolean(overview.comment_approvals_until)} onResume={own.length > 0 ? (branch) => onLaunch(selected.issue, branch) : undefined} readOnly={finished} />
         )}
         {(selected.plan || selected.fit) && (
           <>
             <h3 style={{ marginTop: 12 }}>Plan · {selected.plan?.path ?? "does not parse"}</h3>
-            <WhereItFits issue={selected} map={overview.map.map} me={me} onNotice={(t) => onNotice?.(t)} approvalsInRubato={Boolean(overview.comment_approvals_until)} />
+            <WhereItFits issue={selected} map={overview.map.map} me={me} onNotice={(t) => onNotice?.(t)} approvalsInRubato={Boolean(overview.comment_approvals_until)} readOnly={finished} />
             {selected.plan?.assumed && selected.plan.assumed.some((a) => a.scope === "seam") && (
               <p className="warn">⚠ {selected.plan.assumed.filter((a) => a.scope === "seam").length} seam-level question(s) wait for a human.</p>
             )}
@@ -249,9 +267,25 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           <span className="muted">pinned to {selection.kind === "seam" ? "seam" : "part"}</span> <strong>{selection.id}</strong> <button onClick={onClearSelection}>show all</button>
         </p>
       )}
-      <ul className="plain">
+      <div className="lens view-switch" role="group" aria-label="Which issues to list">
+        <button type="button" className={view === "open" ? "active" : ""} aria-pressed={view === "open"} data-testid="issues-view-open" onClick={() => setView("open")}>
+          Open ({open.length})
+        </button>
+        <button type="button" className={view === "done" ? "active" : ""} aria-pressed={view === "done"} data-testid="issues-view-done" onClick={() => setView("done")}>
+          Done ({done.length})
+        </button>
+      </div>
+      <ul className="plain" data-testid={view === "done" ? "issues-done" : "issues-open"}>
         {issues.map((i) => (
-          <li key={issueKey(i.issue)} className="issue-row" onClick={() => onSelect(i.issue)} data-testid={`issue-${i.issue.number}`} draggable onDragStart={(e) => setIssueDrag(e, i.issue)} title="Drag onto a part or a seam of the map to add a pin">
+          <li
+            key={issueKey(i.issue)}
+            className="issue-row"
+            onClick={() => onSelect(i.issue)}
+            data-testid={`issue-${i.issue.number}`}
+            draggable={view === "open"}
+            onDragStart={view === "open" ? (e) => setIssueDrag(e, i.issue) : undefined}
+            title={view === "open" ? "Drag onto a part or a seam of the map to add a pin" : undefined}
+          >
             {/* `issue-row-N` names the whole row for the e2e; `issue-N` is the older id on the same row. */}
             <div className="row" data-testid={`issue-row-${i.issue.number}`}>
               <ProgressRing state={i.progress.state} />
@@ -265,23 +299,34 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
               </span>
               <span className="row-end">
                 <span className={`badge ${i.progress.state}`}>{STATE_LABEL[i.progress.state]}</span>
+                {closedUnmerged(i) && (
+                  <span className="badge closed" title="Closed on GitHub without a merged pull request">
+                    closed
+                  </span>
+                )}
                 <SignalBadges issue={i} here={hereName} />
-                <PinMenu map={overview.map.map} issue={i.issue} pinned={i.pins} onPin={onPin} />
-                {onQueue && <QueueMenu issue={i.issue} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />}
+                {view === "open" && <PinMenu map={overview.map.map} issue={i.issue} pinned={i.pins} onPin={onPin} />}
+                {view === "open" && onQueue && <QueueMenu issue={i.issue} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />}
               </span>
             </div>
           </li>
         ))}
         {issues.length === 0 && (
           <li className="muted" data-testid="no-tracked-issues">
-            {selection
-              ? `No issue is pinned to ${selection.kind === "seam" ? "seam" : "part"} ${selection.id}.`
-              : "No tracked issues yet. Drag one from Not pinned onto a part or a seam of the map, or use its Pin to… menu."}
+            {view === "done"
+              ? selection
+                ? `No finished issue is pinned to ${selection.kind === "seam" ? "seam" : "part"} ${selection.id}.`
+                : "Nothing finished yet."
+              : selection
+                ? `No open issue is pinned to ${selection.kind === "seam" ? "seam" : "part"} ${selection.id}.`
+                : done.length > 0
+                  ? `Nothing open on GitHub is tracked here. ${done.length} finished: see Done. Drag an issue from Not pinned onto the map to track it.`
+                  : "No tracked issues yet. Drag one from Not pinned onto a part or a seam of the map, or use its Pin to… menu."}
           </li>
         )}
       </ul>
-      <Backlog backlog={overview.backlog} map={overview.map.map} onPin={onPin} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />
-      {(overview.unpinned_sessions ?? []).length > 0 && (
+      {view === "open" && <Backlog backlog={overview.backlog} map={overview.map.map} onPin={onPin} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />}
+      {view === "open" && (overview.unpinned_sessions ?? []).length > 0 && (
         <p className="muted">
           {(overview.unpinned_sessions ?? []).length} session{(overview.unpinned_sessions ?? []).length === 1 ? "" : "s"} on branches outside the convention (unpinned).
         </p>

@@ -32,12 +32,17 @@ export function companion(user: string, connected: boolean, extra: Partial<Pairi
 
 export function issue(number: number, node: string, extra: Partial<IssueSummary> = {}): IssueSummary {
   const ref = { repo: "m0x6A/rubato", number };
-  return {
+  const out: IssueSummary = {
     issue: ref,
     pins: [{ kind: "node", id: node }],
     progress: { issue: ref, state: "planned", last_seen: new Date().toISOString() },
     ...extra,
   };
+  // As the server sends it (#265): a merged issue is finished. A test may say otherwise.
+  if (extra.finished === undefined && (out.progress.state === "done" || out.pull_request?.merged_at)) {
+    out.finished = true;
+  }
+  return out;
 }
 
 export function openIssue(number: number, title: string, extra: Partial<OpenIssue> = {}): OpenIssue {

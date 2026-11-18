@@ -189,6 +189,9 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .badge.in_review { color: var(--warn-ink); background: var(--warn-wash); border-color: var(--warn); }
 .badge.done { color: var(--ok-ink); background: var(--ok-wash); border-color: var(--ok); }
 .badge.unknown { color: var(--muted); border-style: dashed; border-color: var(--quiet); }
+/* Closed on GitHub without a merge (#265): a fact about the issue, not a progress state. */
+.badge.closed { border-style: dashed; }
+.view-switch { margin: 6px 0 8px; }
 .badge.working { color: var(--ok-ink); background: var(--ok-wash); border-color: var(--ok); }
 .badge.idle { color: var(--chip-ink); }
 .badge.ended { color: var(--muted); border-style: dashed; border-color: var(--quiet); }

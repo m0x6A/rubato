@@ -21,16 +21,20 @@ export function DraftSection({
   me,
   approvalsInRubato = false,
   onResume,
+  readOnly = false,
 }: {
   issue: IssueSummary;
   me: Me | null;
   approvalsInRubato?: boolean;
   /** Start a session of yours on the draft's branch; absent with no companion of yours connected. */
   onResume?: ((branch: string) => void) | undefined;
+  /** The issue is finished: the draft is shown with nothing to press (#265). */
+  readOnly?: boolean;
 }) {
   const d = issue.draft;
   // Keyed by the draft, so another issue's draft starts with its own "last looked at".
-  return d ? <Draft key={d.draft_id} issue={issue} d={d} me={me} approvalsInRubato={approvalsInRubato} onResume={onResume} /> : null;
+  // A finished issue's draft is read, not acted on (#265): no Resume, no Approve.
+  return d ? <Draft key={d.draft_id} issue={issue} d={d} me={me} approvalsInRubato={approvalsInRubato && !readOnly} onResume={readOnly ? undefined : onResume} /> : null;
 }
 
 interface RevisionState {

@@ -61,8 +61,68 @@ describe("issue list", () => {
     });
     renderPanel(ov, null);
     const rows = screen.getAllByTestId(/^issue-\d+$/).map((el) => el.getAttribute("data-testid"));
-    expect(rows).toEqual(["issue-2", "issue-3", "issue-1"]);
+    // The done one is not in the default list (#265).
+    expect(rows).toEqual(["issue-2", "issue-3"]);
     expect(screen.getByText("Blocked")).toBeInTheDocument();
+  });
+});
+
+describe("open on GitHub by default, finished on request (#265)", () => {
+  const now = new Date().toISOString();
+  const at = (n: number, state: "designed" | "done" | "building") => ({ issue: { repo: "m0x6A/rubato", number: n }, state, last_seen: now });
+  const mixed = () =>
+    overview({
+      issues: [
+        issue(1, "web", { progress: at(1, "designed") }),
+        issue(2, "web", { progress: at(2, "done") }),
+        issue(3, "web", { progress: at(3, "designed"), closed: true, finished: true }),
+        // Closed on GitHub with an agent still working: the server says not finished.
+        issue(4, "web", { progress: at(4, "building"), closed: true }),
+      ],
+      companions: [companion("m0x6A", true)],
+    });
+  const rows = () => screen.getAllByTestId(/^issue-\d+$/).map((el) => el.getAttribute("data-testid"));
+
+  it("lists only what is not finished, and says how many are", () => {
+    renderPanel(mixed(), null);
+    expect(rows()).toEqual(["issue-4", "issue-1"]);
+    expect(screen.getByTestId("issues-view-open")).toHaveTextContent("Open (2)");
+    expect(screen.getByTestId("issues-view-done")).toHaveTextContent("Done (2)");
+    expect(screen.getByTestId("issues-view-open")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("Done lists the finished ones, the closed one marked, with nothing to pin or drag", () => {
+    renderPanel(mixed(), null);
+    fireEvent.click(screen.getByTestId("issues-view-done"));
+    expect(rows().sort()).toEqual(["issue-2", "issue-3"]);
+    expect(screen.getByTestId("issue-3")).toHaveTextContent("closed");
+    expect(screen.getByTestId("issue-2")).not.toHaveTextContent("closed");
+    expect(screen.getByTestId("issue-3")).not.toHaveAttribute("draggable", "true");
+    expect(screen.queryByText("Pin to…")).toBeNull();
+    expect(screen.queryByTestId("backlog")).toBeNull();
+  });
+
+  it("says so when nothing is open and when nothing is finished", () => {
+    const ov = overview({ issues: [issue(2, "web", { progress: at(2, "done") })] });
+    renderPanel(ov, null);
+    expect(screen.getByTestId("no-tracked-issues")).toHaveTextContent("Nothing open on GitHub is tracked here. 1 finished: see Done.");
+    fireEvent.click(screen.getByTestId("issues-view-done"));
+    expect(rows()).toEqual(["issue-2"]);
+  });
+
+  it("a finished issue's detail starts nothing; an open one's still does", () => {
+    const ov = mixed();
+    const { unmount } = render(<IssuePanel overview={ov} me={me} selected={ov.issues[2]!} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(screen.getByTestId("finished-note")).toHaveTextContent("Closed on GitHub.");
+    expect(screen.getByTestId("closed-badge")).toBeInTheDocument();
+    expect(screen.queryByTestId("start-session")).toBeNull();
+    expect(screen.queryByTestId("no-companion")).toBeNull();
+    unmount();
+    // Must fail on purpose if the gate is the closed flag and not the server's decision.
+    renderPanel(ov, ov.issues[3]!);
+    expect(screen.getByTestId("start-session")).toBeInTheDocument();
+    expect(screen.getByTestId("closed-badge")).toBeInTheDocument();
+    expect(screen.queryByTestId("finished-note")).toBeNull();
   });
 });
 
@@ -134,7 +194,7 @@ describe("seam selection (S4)", () => {
   it("says which part or seam has no issue instead of an empty list", () => {
     panel({ kind: "seam", id: "companion-server" });
     expect(listed()).toEqual([]);
-    expect(screen.getByTestId("no-tracked-issues")).toHaveTextContent("No issue is pinned to seam companion-server.");
+    expect(screen.getByTestId("no-tracked-issues")).toHaveTextContent("No open issue is pinned to seam companion-server.");
   });
 });
 

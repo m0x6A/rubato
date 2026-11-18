@@ -6,6 +6,7 @@
  * Direction: a seam runs from the side that depends to the side depended on.
  */
 import type { DecisionRecord, Flow, IssueRef, IssueSummary, MapNode, MapRef, ORow, Overview, Seam, SessionState } from "../../protocol.ts";
+import { isFinished } from "../../shared/finished.ts";
 
 export interface FlowLine {
   flow: Flow;
@@ -56,11 +57,11 @@ export interface SeamExplanation {
 
 export type Explanation = PartExplanation | SeamExplanation;
 
-const isOpen = (i: IssueSummary) => i.progress.state !== "done";
+const isOpen = (i: IssueSummary) => !isFinished(i);
 const pinnedTo = (i: IssueSummary, ref: MapRef) => i.pins.some((p) => p.kind === ref.kind && p.id === ref.id);
 
 function touching(ov: Overview, ref: MapRef): Touching {
-  const issues = ov.issues.filter((i) => pinnedTo(i, ref));
+  const issues = ov.issues.filter((i) => isOpen(i) && pinnedTo(i, ref));
   const plans: PlanTouch[] = [];
   for (const i of ov.issues) {
     if (!i.plan || !isOpen(i)) {
