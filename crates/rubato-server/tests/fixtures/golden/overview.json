@@ -52,14 +52,22 @@
           "id": "rubato-companion",
           "kind": "context",
           "path": "crates/rubato-companion",
-          "repo": "m0x6A/rubato"
+          "repo": "m0x6A/rubato",
+          "service": {
+            "name": "rubato-companion",
+            "namespace": "rubato"
+          }
         },
         {
           "description": "One per team. Map, pins, plans, progress derivation, decisions, GitHub OAuth, websocket fan-out, embeds web.",
           "id": "rubato-server",
           "kind": "context",
           "path": "crates/rubato-server",
-          "repo": "m0x6A/rubato"
+          "repo": "m0x6A/rubato",
+          "service": {
+            "name": "rubato-server",
+            "namespace": "rubato"
+          }
         },
         {
           "description": "React map view served by the server.",
@@ -73,14 +81,22 @@
           "id": "skill-rubato",
           "kind": "context",
           "path": "skills/rubato",
-          "repo": "m0x6A/rubato"
+          "repo": "m0x6A/rubato",
+          "service": {
+            "name": "rubato",
+            "namespace": "rubato"
+          }
         },
         {
           "description": "GitHub Action. Fails a PR whose plan names an unknown id or lacks an O-row per seam.",
           "id": "plan-check",
           "kind": "context",
           "path": "actions/plan-check",
-          "repo": "m0x6A/rubato"
+          "repo": "m0x6A/rubato",
+          "service": {
+            "name": "plan-check",
+            "namespace": "rubato"
+          }
         },
         {
           "description": "The plan Markdown on an issue branch. Affected-parts and O-rows tables parsed to JSON.",
@@ -99,7 +115,10 @@
         {
           "description": "Issues, comments, PRs, checks, OAuth, REST, Projects v2 GraphQL, plan files on branches.",
           "id": "github",
-          "kind": "external"
+          "kind": "external",
+          "service": {
+            "name": "github"
+          }
         },
         {
           "description": "Retired by ADR 0070: the companion runs tmux and git itself and no longer calls tmux-ide. The id stays so merged plans that name it still check (plan 147 Q1).",
@@ -110,7 +129,11 @@
         {
           "description": "The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Authenticated by the developer's login or an API key (ADR 0076). Exports its own OTel.",
           "id": "claude-code",
-          "kind": "external"
+          "kind": "external",
+          "service": {
+            "name": "claude-code",
+            "namespace": "rubato"
+          }
         },
         {
           "description": "Self-hosted WebRTC media server (Apache 2.0) beside Rubato, run by the team, never started by Rubato. Carries a plan room's voice channel between browsers, behind the voice flag (ADR 0073).",
@@ -447,7 +470,7 @@
           "description": "Each companion reports what its sessions are doing, and receives launch commands and messages for its own user's sessions only. The companion always dials out.",
           "flows": [
             {
-              "carries": "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071), FleetRequest from a person's own lead launch behind the orchestrator flag (ADR 0072)",
+              "carries": "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071), FleetRequest from a person's own lead launch behind the orchestrator flag (ADR 0072); each envelope may carry the W3C trace context of its send (ADR 0081)",
               "from": "rubato-companion",
               "kind": "data",
               "to": "rubato-server"

@@ -14,6 +14,12 @@ Feature: Telemetry
     When sessions run through the flow
     Then each exports the metrics and spans on-call relies on
 
+  @telemetry.companion-server-one-trace
+  Scenario: What a companion sends and what the server does with it are one trace
+    Given a server and a companion with an OTLP endpoint
+    When the companion sends the server an envelope
+    Then the server's handling is a child of the companion's send, in the same trace
+
   @telemetry.no-per-session-metrics
   Scenario: No metric from the companion carries a series per session
     When the companion exports metrics
