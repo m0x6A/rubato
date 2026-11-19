@@ -701,7 +701,7 @@ fn app_client_with(
 
 #[async_trait]
 impl GitHubApi for Octo {
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "contents"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "contents"))]
     async fn file(&self, repo: &str, path: &str, git_ref: &str) -> Result<Option<String>> {
         count_call("contents", 1);
         let (o, r) = split_repo(repo)?;
@@ -726,7 +726,7 @@ impl GitHubApi for Octo {
         }
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "commits"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "commits"))]
     async fn last_commit_author(
         &self,
         repo: &str,
@@ -750,7 +750,7 @@ impl GitHubApi for Octo {
             .map(str::to_owned))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "branch"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "branch"))]
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>> {
         count_call("branch", 1);
         let (o, r) = split_repo(repo)?;
@@ -771,7 +771,7 @@ impl GitHubApi for Octo {
         }
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "branches"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "branches"))]
     async fn branches(&self, repo: &str, prefix: &str) -> Result<Vec<BranchHead>> {
         // `git/matching-refs` filters by prefix on GitHub's side (ADR 0032). It answers with
         // every matching ref at once and ignores `per_page` and `page` (seen 2026-11-16: 144
@@ -838,7 +838,7 @@ impl GitHubApi for Octo {
         Ok(heads)
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pulls"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "pulls"))]
     async fn open_pulls(&self, repo: &str) -> Result<OpenPulls> {
         count_call("pulls", 1);
         let (o, r) = split_repo(repo)?;
@@ -882,7 +882,7 @@ impl GitHubApi for Octo {
         Ok(OpenPulls { pulls, truncated })
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "issue"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "issue"))]
     async fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueInfo>> {
         count_call("issue", 1);
         let (o, r) = split_repo(repo)?;
@@ -899,7 +899,7 @@ impl GitHubApi for Octo {
         }
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "comments"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "comments"))]
     async fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<Comment>> {
         let (o, r) = split_repo(repo)?;
         let issues = self.client.issues(o, r);
@@ -951,7 +951,7 @@ impl GitHubApi for Octo {
             .collect())
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pulls"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "pulls"))]
     async fn pull_for_branch(&self, repo: &str, branch: &str) -> Result<Option<PullInfo>> {
         count_call("pulls", 1);
         let (o, r) = split_repo(repo)?;
@@ -980,7 +980,7 @@ impl GitHubApi for Octo {
         }))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "check-runs"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "check-runs"))]
     async fn checks(&self, repo: &str, sha: &str) -> Result<ChecksStatus> {
         count_call("check-runs", 1);
         let (o, r) = split_repo(repo)?;
@@ -999,7 +999,7 @@ impl GitHubApi for Octo {
         })))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pull"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "pull"))]
     async fn pull(&self, repo: &str, number: u64) -> Result<Option<PullFull>> {
         count_call("pull", 1);
         let (o, r) = split_repo(repo)?;
@@ -1019,7 +1019,7 @@ impl GitHubApi for Octo {
         }
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pull_reviews"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "pull_reviews"))]
     async fn pull_reviews(&self, repo: &str, number: u64) -> Result<Vec<ReviewInfo>> {
         count_call("pull_reviews", 1);
         let (o, r) = split_repo(repo)?;
@@ -1028,7 +1028,7 @@ impl GitHubApi for Octo {
         Ok(reviews_from_page(&v))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "pull_files"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "pull_files"))]
     async fn pull_files(
         &self,
         repo: &str,
@@ -1041,7 +1041,7 @@ impl GitHubApi for Octo {
         Ok(files_from_page(&v))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "check-runs"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "check-runs"))]
     async fn check_runs(
         &self,
         repo: &str,
@@ -1054,7 +1054,7 @@ impl GitHubApi for Octo {
         Ok(check_runs_from_page(&v))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self, token), err, fields(rubato.github.endpoint = "repo"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, token), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "repo"))]
     async fn repo_as(&self, token: &str, repo: &str) -> Result<RepoAccess> {
         count_call("repo", 1);
         let (o, r) = split_repo(repo)?;
@@ -1063,7 +1063,7 @@ impl GitHubApi for Octo {
         Ok(access_from_repo(&v))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self, token), err, fields(rubato.github.endpoint = "merge"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, token), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "merge"))]
     async fn merge_as(
         &self,
         token: &str,
@@ -1100,7 +1100,7 @@ impl GitHubApi for Octo {
         }
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "rate_limit"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "rate_limit"))]
     async fn rate_limit(&self) -> Result<(u64, u64)> {
         count_call("rate_limit", 1);
         let v: serde_json::Value = self.client.get("/rate_limit", None::<&()>).await?;
@@ -1111,7 +1111,7 @@ impl GitHubApi for Octo {
         ))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "issues"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "issues"))]
     async fn open_issues(&self, repo: &str, max: usize) -> Result<OpenIssues> {
         count_call("issues", 1);
         let (o, r) = split_repo(repo)?;
@@ -1137,7 +1137,7 @@ impl GitHubApi for Octo {
         self.installation
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "installation_repositories"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "installation_repositories"))]
     async fn installation_repos(&self) -> Result<Vec<String>> {
         count_call("installation_repositories", 1);
         let mut out = Vec::new();
@@ -1166,7 +1166,7 @@ impl GitHubApi for Octo {
         self.installation
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "create_ref"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "create_ref"))]
     async fn create_ref(&self, repo: &str, branch: &str, sha: &str) -> Result<()> {
         count_call("create_ref", 1);
         let (o, r) = split_repo(repo)?;
@@ -1181,7 +1181,7 @@ impl GitHubApi for Octo {
         }
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self, content), err, fields(rubato.github.endpoint = "put_contents"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, content), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "put_contents"))]
     async fn put_file(
         &self,
         repo: &str,
@@ -1221,7 +1221,7 @@ impl GitHubApi for Octo {
         Ok(())
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self, body), err, fields(rubato.github.endpoint = "create_pull"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, body), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "create_pull"))]
     async fn create_pull(
         &self,
         repo: &str,
@@ -1245,7 +1245,7 @@ impl GitHubApi for Octo {
         ))
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "close_pull"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "close_pull"))]
     async fn close_pull(&self, repo: &str, number: u64) -> Result<()> {
         count_call("close_pull", 1);
         let (o, r) = split_repo(repo)?;
@@ -1266,7 +1266,7 @@ impl GitHubApi for Octo {
         self.app_login.lock().unwrap().clone()
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "installation"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "installation"))]
     async fn refresh_issue_permission(&self) -> Result<bool> {
         count_call("installation", 1);
         let Some(a) = &self.as_app else {
@@ -1291,7 +1291,7 @@ impl GitHubApi for Octo {
         Ok(write)
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self, token, body), err, fields(rubato.github.endpoint = "create_comment"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, token, body), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "create_comment"))]
     async fn comment_as(
         &self,
         token: &str,
@@ -1315,7 +1315,7 @@ impl GitHubApi for Octo {
         }
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self, body), err, fields(rubato.github.endpoint = "create_issue"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self, body), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "create_issue"))]
     async fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<(u64, String)> {
         count_call("create_issue", 1);
         let (o, r) = split_repo(repo)?;
@@ -1351,7 +1351,7 @@ impl GitHubApi for Octo {
         }
     }
 
-    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(rubato.github.endpoint = "delete_ref"))]
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "delete_ref"))]
     async fn delete_ref(&self, repo: &str, branch: &str) -> Result<()> {
         count_call("delete_ref", 1);
         let (o, r) = split_repo(repo)?;
@@ -1784,5 +1784,63 @@ mod tests {
             ),
             ChecksStatus::Red
         );
+    }
+
+    /// The `GITHUB_CALL` span attributes in `src` that lack the client kind or the peer: the
+    /// line numbers. The service graph draws `server-github` from these two (plan 287).
+    fn call_sites_lacking_kind_or_peer(src: &str) -> (usize, Vec<usize>) {
+        use rubato_protocol::otel::semconv::{GITHUB_PEER, OTEL_KIND, PEER_SERVICE};
+        let kind = format!("{OTEL_KIND} = \"client\"");
+        let peer = format!("{PEER_SERVICE} = \"{GITHUB_PEER}\"");
+        let sites: Vec<(usize, &str)> = src
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| {
+                l.trim_start().starts_with("#[tracing::instrument(")
+                    && l.contains("name = GITHUB_CALL")
+            })
+            .collect();
+        let lacking = sites
+            .iter()
+            .filter(|(_, l)| !l.contains(&kind) || !l.contains(&peer))
+            .map(|(i, _)| i + 1)
+            .collect();
+        (sites.len(), lacking)
+    }
+
+    #[test]
+    fn every_github_call_span_is_a_client_span_that_names_its_peer() {
+        let src = include_str!("api.rs");
+        let (sites, lacking) = call_sites_lacking_kind_or_peer(src);
+        assert!(
+            sites >= 26,
+            "found only {sites} call sites; the pattern is wrong"
+        );
+        assert_eq!(
+            lacking,
+            Vec::<usize>::new(),
+            "api.rs lines without kind or peer"
+        );
+        // Every instrumented function in this file is a GitHub call: none escapes the pattern.
+        let instrumented = src
+            .lines()
+            .filter(|l| l.trim_start().starts_with("#[tracing::instrument("))
+            .count();
+        assert_eq!(
+            instrumented, sites,
+            "an instrumented function that is not a GITHUB_CALL"
+        );
+        println!("checked {sites} GitHub call sites");
+    }
+
+    /// must fail: a site with the kind and no peer, and one with neither, are both reported.
+    #[test]
+    fn a_call_site_without_the_peer_or_the_kind_is_reported() {
+        let src = concat!(
+            "#[tracing::instrument(name = GITHUB_CALL, fields(otel.kind = \"client\", peer.service = \"github\"))]\n",
+            "#[tracing::instrument(name = GITHUB_CALL, fields(otel.kind = \"client\"))]\n",
+            "#[tracing::instrument(name = GITHUB_CALL, skip(self))]\n",
+        );
+        assert_eq!(call_sites_lacking_kind_or_peer(src), (3, vec![2, 3]));
     }
 }
