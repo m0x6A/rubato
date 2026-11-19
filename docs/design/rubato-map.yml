@@ -19,12 +19,14 @@ nodes:
 
   - id: rubato-companion
     kind: context
+    service: { namespace: rubato, name: rubato-companion }
     repo: m0x6A/rubato
     path: crates/rubato-companion
     description: One per developer machine. Outbound only. Runs tmux, git worktree and claude for its paired user.
 
   - id: rubato-server
     kind: context
+    service: { namespace: rubato, name: rubato-server }
     repo: m0x6A/rubato
     path: crates/rubato-server
     description: One per team. Map, pins, plans, progress derivation, decisions, GitHub OAuth, websocket fan-out, embeds web.
@@ -37,12 +39,14 @@ nodes:
 
   - id: skill-rubato
     kind: context
+    service: { namespace: rubato, name: rubato }
     repo: m0x6A/rubato
     path: skills/rubato
     description: Claude Code skill installed in every connected repo. Loads map and ADRs, writes the plan, ships hook config.
 
   - id: plan-check
     kind: context
+    service: { namespace: rubato, name: plan-check }
     repo: m0x6A/rubato
     path: actions/plan-check
     description: GitHub Action. Fails a PR whose plan names an unknown id or lacks an O-row per seam.
@@ -61,6 +65,7 @@ nodes:
 
   - id: github
     kind: external
+    service: { name: github }
     description: Issues, comments, PRs, checks, OAuth, REST, Projects v2 GraphQL, plan files on branches.
 
   - id: tmux-ide
@@ -70,6 +75,7 @@ nodes:
 
   - id: claude-code
     kind: external
+    service: { namespace: rubato, name: claude-code }
     description: The only agent in v0. Hooks are the event source; a launched session also reports on purpose over MCP to its own companion (ADR 0071). Authenticated by the developer's login or an API key (ADR 0076). Exports its own OTel.
 
   - id: livekit
@@ -89,7 +95,7 @@ seams:
     guard: protocol JSON Schema snapshot test; both suites replay crates/rubato-protocol/fixtures/
     description: "Each companion reports what its sessions are doing, and receives launch commands and messages for its own user's sessions only. The companion always dials out."
     flows:
-      - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071), FleetRequest from a person's own lead launch behind the orchestrator flag (ADR 0072)" }
+      - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071), FleetRequest from a person's own lead launch behind the orchestrator flag (ADR 0072); each envelope may carry the W3C trace context of its send (ADR 0081)" }
       - { kind: data, from: rubato-server, to: rubato-companion, carries: "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071); FleetResult to a lead's request (ADR 0072)" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072)" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "Welcome with limits, server capabilities and the last sequence seen; acks" }

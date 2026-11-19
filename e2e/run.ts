@@ -14,6 +14,7 @@ import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CheckLog } from "./run-checks.ts";
+import { callPairs, spansOf, type OtlpSpan } from "./otlp-spans.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const T = `/tmp/rubato-e2e-${process.pid}`;
@@ -101,12 +102,21 @@ async function main() {
   // 2. An OTLP receiver: counts posts per path and remembers which rubato.* names it saw, and
   //    which names each binary exported in its metrics bodies (metric names and attribute keys)
   //    and in its traces bodies (span names), keyed by the service.name string in the body.
-  const otlp = { posts: new Map<string, number>(), names: new Set<string>(), metrics: new Map<string, Set<string>>(), traces: new Map<string, Set<string>>() };
+  const otlp = { posts: new Map<string, number>(), names: new Set<string>(), metrics: new Map<string, Set<string>>(), traces: new Map<string, Set<string>>(), spans: [] as OtlpSpan[], unread: [] as string[] };
   const receiver = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
-      const body = Buffer.concat(chunks).toString("latin1");
+      const raw = Buffer.concat(chunks);
+      const body = raw.toString("latin1");
+      if (req.url === "/v1/traces") {
+        // Decoded too (plan 287): which span is whose child, across the two binaries.
+        try {
+          otlp.spans.push(...spansOf(raw));
+        } catch (e) {
+          otlp.unread.push(String(e));
+        }
+      }
       otlp.posts.set(req.url ?? "?", (otlp.posts.get(req.url ?? "?") ?? 0) + 1);
       for (const m of body.matchAll(/rubato\.[a-z_.]+/g)) {
         otlp.names.add(m[0]);
@@ -361,7 +371,10 @@ async function main() {
     "rubato-server": ["rubato.issue.state"],
     "rubato-companion": ["rubato.companion_id", "rubato.session.source", "rubato.outcome"],
   };
-  const expectedSpans: Record<string, string[]> = { "rubato-companion": ["rubato.hook.forward", "rubato.reconcile"] };
+  const expectedSpans: Record<string, string[]> = {
+    "rubato-companion": ["rubato.hook.forward", "rubato.reconcile", "rubato.envelope.send"],
+    "rubato-server": ["rubato.inbound_event"],
+  };
   const expectations: { what: string; expected: Record<string, string[]>; seen: Map<string, Set<string>> }[] = [
     { what: "metric names", expected: expectedMetrics, seen: otlp.metrics },
     { what: "attribute keys", expected: expectedAttributeKeys, seen: otlp.metrics },
@@ -386,6 +399,16 @@ async function main() {
       log(`otlp ${service}: saw ${names.filter((n) => seen.get(service)?.has(n)).length}/${names.length} ${what}`);
     }
   }
+  // ADR 0081: an envelope's send and its handling are one trace, the server span the child of
+  // the companion's client span. This is the pair a service graph draws companion-server from.
+  const calls = () =>
+    callPairs(otlp.spans, { service: "rubato-companion", name: "rubato.envelope.send" }, { service: "rubato-server", name: "rubato.inbound_event" });
+  await waitFor("a companion send span with the server's inbound span as its child", 30_000, async () => calls().length > 0).catch((e) =>
+    checks.problem("trace-link", `${String(e)}; decoded ${otlp.spans.length} span(s)`),
+  );
+  for (const e of otlp.unread) checks.problem("trace-link", `a /v1/traces body could not be read: ${e}`);
+  checks.reach("trace-link", otlp.spans.length);
+  log(`otlp traces: decoded ${otlp.spans.length} span(s); ${calls().length} companion-to-server call(s) in one trace`);
   log(`otlp receiver: ${[...otlp.posts.entries()].map(([p, n]) => `${p}×${n}`).join(", ")}; rubato names: ${otlp.names.size}`);
 
   console.log("\n=== Rubato v0 end to end ===");
