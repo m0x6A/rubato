@@ -127,6 +127,9 @@ pub mod metric {
     /// `rubato.issues.by_state`.
     pub const ISSUES_BLOCKED_FROM: &str = "rubato.issues.blocked_from";
     pub const EVENTS_DROPPED: &str = "rubato.events.dropped";
+    /// Inbound envelopes by what their `traceparent` gave (ADR 0081), with `rubato.outcome`:
+    /// `linked`, `absent` or `invalid`.
+    pub const INBOUND_TRACEPARENT: &str = "rubato.inbound.traceparent";
     pub const GITHUB_RATE_LIMIT_REMAINING: &str = "rubato.github.rate_limit.remaining";
     pub const GITHUB_RATE_LIMIT_LIMIT: &str = "rubato.github.rate_limit.limit";
     pub const PLAN_PARSE_FAILURES: &str = "rubato.plan.parse_failures";
@@ -318,7 +321,11 @@ pub mod span {
     /// Companion: one reconcile cycle (`tmux list-panes`, identity, snapshot), with
     /// `rubato.companion_id` and an error status when `tmux list-panes` fails (ADR 0070).
     pub const RECONCILE: &str = "rubato.reconcile";
+    /// Server: one envelope from a companion, kind server. Under the companion's
+    /// `rubato.envelope.send` span when the envelope carries a `traceparent` (ADR 0081).
     pub const INBOUND_EVENT: &str = "rubato.inbound_event";
+    /// Companion: one envelope built for the server, kind client (ADR 0081).
+    pub const ENVELOPE_SEND: &str = "rubato.envelope.send";
     pub const GITHUB_CALL: &str = "rubato.github.call";
     pub const WS_FANOUT: &str = "rubato.ws.fanout";
     pub const HANDOFF: &str = "rubato.handoff";
@@ -393,12 +400,68 @@ pub mod semconv {
     pub const SERVICE_NAME: &str = "service.name";
     pub const SERVICE_NAMESPACE: &str = "service.namespace";
     pub const PEER_SERVICE: &str = "peer.service";
+    /// The key `tracing-opentelemetry` reads a span's kind from: `client` or `server`.
+    pub const OTEL_KIND: &str = "otel.kind";
+    /// The peer the server's GitHub call spans name; also the `service.name` of the map's
+    /// `github` part.
+    pub const GITHUB_PEER: &str = "github";
 }
 
 /// The `service.namespace` every part of Rubato emits unless its environment sets another
 /// (ADR 0080): the server, the companion, the sessions a companion launches, the skill scripts
 /// and the plan check. A service Rubato observes keeps the namespace it emits (ADR 0059).
 pub const DEFAULT_SERVICE_NAMESPACE: &str = "rubato";
+
+/// A W3C `traceparent` (version `00`), as a companion's envelope may carry it (ADR 0081):
+/// `00-<32 hex trace id>-<16 hex span id>-<2 hex flags>`. Plain numbers, so the protocol crate
+/// names no OpenTelemetry type; the binaries convert at their edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraceParent {
+    pub trace_id: u128,
+    pub span_id: u64,
+    pub flags: u8,
+}
+
+impl TraceParent {
+    /// The length of the only form read or written.
+    pub const LEN: usize = 55;
+
+    /// Strict: exactly 55 characters, version `00`, lower-case hex, and neither id all zero.
+    /// Anything else is `None`; the receiver then handles the envelope as one without a parent.
+    pub fn parse(s: &str) -> Option<Self> {
+        let b = s.as_bytes();
+        if !s.is_ascii() || b.len() != Self::LEN || b[2] != b'-' || b[35] != b'-' || b[52] != b'-' {
+            return None;
+        }
+        let hex = |part: &str| {
+            part.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                .then(|| u128::from_str_radix(part, 16).ok())
+                .flatten()
+        };
+        if &s[0..2] != "00" {
+            return None;
+        }
+        let trace_id = hex(&s[3..35])?;
+        let span_id = u64::try_from(hex(&s[36..52])?).ok()?;
+        let flags = u8::try_from(hex(&s[53..55])?).ok()?;
+        (trace_id != 0 && span_id != 0).then_some(Self {
+            trace_id,
+            span_id,
+            flags,
+        })
+    }
+}
+
+impl std::fmt::Display for TraceParent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "00-{:032x}-{:016x}-{:02x}",
+            self.trace_id, self.span_id, self.flags
+        )
+    }
+}
 
 /// Every name, for the test that checks the namespace and for documentation.
 pub fn all_names() -> Vec<&'static str> {
@@ -468,6 +531,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::ISSUES_BY_STATE,
         metric::ISSUES_BLOCKED_FROM,
         metric::EVENTS_DROPPED,
+        metric::INBOUND_TRACEPARENT,
         metric::GITHUB_RATE_LIMIT_REMAINING,
         metric::GITHUB_RATE_LIMIT_LIMIT,
         metric::PLAN_PARSE_FAILURES,
@@ -548,6 +612,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::HOOK_FORWARD,
         span::RECONCILE,
         span::INBOUND_EVENT,
+        span::ENVELOPE_SEND,
         span::GITHUB_CALL,
         span::WS_FANOUT,
         span::HANDOFF,
@@ -584,6 +649,74 @@ pub fn all_names() -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    /// ADR 0081: only the W3C version 00 form is read. The table has the refusals the plan
+    /// names; the test prints how many values it checked.
+    #[test]
+    fn a_traceparent_is_read_strictly_and_written_back_the_same() {
+        use super::TraceParent;
+        let good = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let tp = TraceParent::parse(good).expect("the W3C example parses");
+        assert_eq!(tp.trace_id, 0x4bf92f3577b34da6a3ce929d0e0e4736);
+        assert_eq!(tp.span_id, 0x00f067aa0ba902b7);
+        assert_eq!(tp.flags, 1);
+        assert_eq!(tp.to_string(), good);
+        let unsampled = "00-0000000000000000000000000000000a-000000000000000b-00";
+        assert_eq!(
+            TraceParent::parse(unsampled)
+                .map(|t| t.to_string())
+                .as_deref(),
+            Some(unsampled),
+            "leading zeros are kept"
+        );
+        let refused = [
+            ("", "empty"),
+            (
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0",
+                "too short",
+            ),
+            (
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-011",
+                "too long",
+            ),
+            (
+                "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+                "upper case",
+            ),
+            (
+                "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                "version ff",
+            ),
+            (
+                "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                "another version",
+            ),
+            (
+                "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+                "zero trace id",
+            ),
+            (
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+                "zero span id",
+            ),
+            (
+                "00-4bf92f3577b34da6a3ce929d0e0e4736_00f067aa0ba902b7-01",
+                "wrong separator",
+            ),
+            (
+                "00-+bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                "a sign",
+            ),
+            (
+                "00-4bf92f3577b34da6a3ce929d0e0e473é-00f067aa0ba902b7-1",
+                "not ASCII",
+            ),
+        ];
+        for (value, why) in refused {
+            assert_eq!(TraceParent::parse(value), None, "{why}: {value}");
+        }
+        println!("checked {} traceparent values", refused.len() + 2);
+    }
+
     #[test]
     fn every_name_is_in_the_rubato_namespace_and_unique() {
         let names = super::all_names();
