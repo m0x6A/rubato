@@ -160,6 +160,8 @@ pub struct Metrics {
     pub plans_approvals_opening: Gauge<u64>,
     pub pulls_merges_opening: Gauge<u64>,
     pub traffic_fetches: Counter<u64>,
+    /// Traffic lookbacks by `rubato.outcome` (ADR 0083).
+    pub traffic_lookback: Counter<u64>,
     /// Seconds; no unit, so the series is `rubato_traffic_report_age` as the alert names it.
     pub traffic_report_age: Gauge<u64>,
     pub traffic_seams_quiet: Gauge<u64>,
@@ -270,6 +272,7 @@ impl Metrics {
             plans_approvals_opening: m.u64_gauge(otel::metric::PLANS_APPROVALS_OPENING).build(),
             pulls_merges_opening: m.u64_gauge(otel::metric::PULLS_MERGES_OPENING).build(),
             traffic_fetches: m.u64_counter(otel::metric::TRAFFIC_FETCHES).build(),
+            traffic_lookback: m.u64_counter(otel::metric::TRAFFIC_LOOKBACK).build(),
             traffic_report_age: m.u64_gauge(otel::metric::TRAFFIC_REPORT_AGE).build(),
             traffic_configured: m.u64_gauge(otel::metric::TRAFFIC_CONFIGURED).build(),
             traffic_seams_quiet: m.u64_gauge(otel::metric::TRAFFIC_SEAMS_QUIET).build(),

@@ -2,7 +2,7 @@
 //! workspace it feeds in `AppState::traffic`, its gauges recorded, and each workspace's browsers
 //! told only when its derived summary changed (design §4, #131, ADR 0075).
 
-use super::source::{Source, SourceError};
+use super::source::{Lookback, Source, SourceError};
 use crate::kernel::state::{App, TrafficLatest};
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
@@ -16,6 +16,9 @@ use tracing::Instrument;
 /// A fetch that has not answered by then has failed; the previous report stays. The task uses
 /// the fetch interval less a second instead, so a fetch never overlaps the next.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The lookback runs on the first tick and then on every tick this many later (ADR 0083).
+pub const LOOKBACK_EVERY: u64 = 10;
 
 /// How one fetch ended, as counted on `rubato.traffic.fetches`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +87,10 @@ pub struct Fetcher<S> {
     /// The generation this fetcher writes under, per workspace it feeds; none in tests that
     /// drive a fetcher by hand.
     generation: Option<(Arc<Generations>, u64)>,
+    /// Ticks so far: the lookback runs when this is a multiple of `LOOKBACK_EVERY`.
+    ticks: u64,
+    /// The last lookback that answered, carried by every report until the next (ADR 0083).
+    lookback: Option<Lookback>,
 }
 
 fn set_error(latest: &mut TrafficLatest, error: Option<String>) {
@@ -103,6 +110,8 @@ impl<S: Source> Fetcher<S> {
             targets: Targets::All,
             fetch_secs: crate::kernel::config::TRAFFIC_FETCH_SECS.1,
             generation: None,
+            ticks: 0,
+            lookback: None,
         }
     }
 
@@ -179,14 +188,18 @@ impl<S: Source> Fetcher<S> {
                 SourceStatus::Configured { error: Some(_), .. }
             );
             let outcome = match fetched {
-                Ok(report) => match report.validate() {
-                    Ok(()) => {
-                        span.record("edges", report.edges.len());
-                        latest.report = Some(report);
-                        Outcome::Ok
+                Ok(report) => {
+                    // Every report carries the last lookback's answer (ADR 0083).
+                    let report = with_lookback(self.lookback.as_ref(), report);
+                    match report.validate() {
+                        Ok(()) => {
+                            span.record("edges", report.edges.len());
+                            latest.report = Some(report);
+                            Outcome::Ok
+                        }
+                        Err(r) => Outcome::Rejected(r.as_str()),
                     }
-                    Err(r) => Outcome::Rejected(r.as_str()),
-                },
+                }
                 Err(SourceError::Parse(e)) => {
                     span.record("error", e.as_str());
                     Outcome::Rejected("parse")
@@ -234,7 +247,72 @@ impl<S: Source> Fetcher<S> {
         }
         app.metrics.traffic_fetches.add(1, &attrs);
         self.record(app, &targets, now).await;
+        // After the window's report is written, never before or inside its fetch: a slow or
+        // failing lookback cannot make the window late or failing (ADR 0083).
+        let due = self.ticks.is_multiple_of(LOOKBACK_EVERY);
+        self.ticks += 1;
+        if due && outcome != Outcome::Superseded {
+            self.look_back(app, &attrs, now).await;
+        }
         outcome
+    }
+
+    /// Ask the lookback once, under the fetch's timeout. On an answer, keep it and put it on the
+    /// stored report of each workspace still fed; on a failure keep the previous one, or none.
+    async fn look_back(&mut self, app: &App, attrs: &[KeyValue], now: DateTime<Utc>) {
+        let asked = tokio::time::timeout(self.timeout, self.source.lookback()).await;
+        let (outcome, error) = match asked {
+            Ok(Ok(Some(l))) => {
+                self.lookback = Some(l);
+                ("ok", None)
+            }
+            // The source has no lookback: nothing to count or say.
+            Ok(Ok(None)) => return,
+            Ok(Err(e)) => ("failed", Some(e.to_string())),
+            Err(_) => ("timeout", Some("traffic lookback timed out".to_owned())),
+        };
+        let mut a: Vec<KeyValue> = attrs
+            .iter()
+            .filter(|k| k.key.as_str() != attr::OUTCOME)
+            .cloned()
+            .collect();
+        a.push(KeyValue::new(attr::OUTCOME, outcome));
+        app.metrics.traffic_lookback.add(1, &a);
+        let seen = self.lookback.as_ref().map_or(0, |l| l.seen.len());
+        match error {
+            Some(e) => {
+                tracing::warn!(rubato.outcome = outcome, rubato.traffic.seen = seen, error = %e, "traffic lookback")
+            }
+            None => tracing::info!(
+                rubato.outcome = outcome,
+                rubato.traffic.seen = seen,
+                "traffic lookback"
+            ),
+        }
+        if outcome != "ok" {
+            return;
+        }
+        let targets = {
+            let mut all = app.traffic.write().await;
+            let targets = self.live_targets(app);
+            for ws in &targets {
+                let Some(latest) = all.get_mut(ws) else {
+                    continue;
+                };
+                let Some(report) = latest.report.take() else {
+                    continue;
+                };
+                let with = with_lookback(self.lookback.as_ref(), report.clone());
+                // A lookback that would make the report invalid is not put on it.
+                latest.report = Some(if with.validate().is_ok() {
+                    with
+                } else {
+                    report
+                });
+            }
+            targets
+        };
+        self.record(app, &targets, now).await;
     }
 
     /// Gauges from the derivation each workspace's overview would make now, and
@@ -301,6 +379,26 @@ impl<S: Source> Fetcher<S> {
             app.notify_ws("traffic", &ws);
         }
     }
+}
+
+/// The report with the last lookback's answer on it (ADR 0083), only what is longer than its
+/// window. Without a lookback, or with one no longer than the window, it claims nothing.
+pub fn with_lookback(
+    lookback: Option<&Lookback>,
+    mut report: rubato_protocol::TrafficReport,
+) -> rubato_protocol::TrafficReport {
+    report.seen.clear();
+    report.lookback_secs = None;
+    if let Some(l) = lookback.filter(|l| l.lookback_secs > report.window_secs) {
+        report.seen = l
+            .seen
+            .iter()
+            .filter(|e| e.within_secs > report.window_secs)
+            .cloned()
+            .collect();
+        report.lookback_secs = Some(l.lookback_secs);
+    }
+    report
 }
 
 /// `rubato.workspace` for any workspace but `default`, whose series stay as they were before

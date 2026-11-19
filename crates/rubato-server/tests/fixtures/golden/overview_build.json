@@ -1253,6 +1253,20 @@
       }
     ],
     "unmapped_services": 0,
-    "truncated": false
+    "truncated": false,
+    "not_instrumented": [
+      {
+        "kind": "node",
+        "id": "auth-svc"
+      },
+      {
+        "kind": "node",
+        "id": "github"
+      },
+      {
+        "kind": "seam",
+        "id": "api-auth"
+      }
+    ]
   }
 }
