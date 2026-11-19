@@ -216,6 +216,72 @@ pub fn add_security_headers(csp: &axum::http::HeaderValue, res: &mut Response) {
 }
 
 /// Log `error!(slice, error, "request failed")` and answer 500.
+/// The span of one HTTP request (ADR 0082). A request carrying a valid `traceparent`, which
+/// the web sends on its own API calls, gets `rubato.http.request` of kind server under the
+/// browser's client span, so the service graph sees both ends of the call. Any other request
+/// keeps the internal span `TraceLayer` would make, so health checks and asset loads draw no
+/// virtual caller. Each request is counted by what its header gave. The header is used for
+/// nothing but the parent: not an identity, not an authorisation.
+pub fn request_span<B>(app: &App, req: &axum::http::Request<B>) -> tracing::Span {
+    use opentelemetry::KeyValue;
+    use opentelemetry::trace::{
+        SpanContext, SpanId, TraceContextExt as _, TraceFlags, TraceId, TraceState,
+    };
+    use rubato_protocol::otel::{TraceParent, attr, span};
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+    let header = req
+        .headers()
+        .get("traceparent")
+        .map(|v| v.to_str().ok().and_then(TraceParent::parse));
+    let outcome = match header {
+        None => "absent",
+        Some(None) => "invalid",
+        Some(Some(_)) => "linked",
+    };
+    app.metrics
+        .http_traceparent
+        .add(1, &[KeyValue::new(attr::OUTCOME, outcome)]);
+    let Some(Some(tp)) = header else {
+        return tracing::debug_span!(
+            "request",
+            method = %req.method(),
+            uri = %req.uri(),
+            version = ?req.version()
+        );
+    };
+    let route = req
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map_or_else(|| req.uri().path().to_owned(), |m| m.as_str().to_owned());
+    let s = tracing::info_span!(
+        span::HTTP_REQUEST,
+        otel.kind = "server",
+        http.request.method = %req.method(),
+        http.route = %route,
+        http.response.status_code = tracing::field::Empty,
+        otel.status_code = tracing::field::Empty,
+    );
+    let remote = SpanContext::new(
+        TraceId::from(tp.trace_id),
+        SpanId::from(tp.span_id),
+        TraceFlags::new(tp.flags),
+        true,
+        TraceState::default(),
+    );
+    // Without an OpenTelemetry layer (no OTLP endpoint) there is nothing to parent.
+    let _ = s.set_parent(opentelemetry::Context::new().with_remote_span_context(remote));
+    s
+}
+
+/// The response's status on the request's span; a server error marks it failed.
+pub fn record_status<B>(res: &axum::http::Response<B>, span: &tracing::Span) {
+    let status = res.status();
+    span.record("http.response.status_code", status.as_u16());
+    if status.is_server_error() {
+        span.record("otel.status_code", "ERROR");
+    }
+}
+
 pub fn internal(slice: &'static str, e: impl std::fmt::Display) -> StatusCode {
     tracing::error!(slice, error = %e, "request failed");
     StatusCode::INTERNAL_SERVER_ERROR

@@ -112,6 +112,8 @@ pub struct Metrics {
     pub events_dropped: Counter<u64>,
     /// Inbound envelopes by what their `traceparent` gave: linked, absent, invalid (ADR 0081).
     pub inbound_traceparent: Counter<u64>,
+    /// HTTP requests by their `traceparent` (ADR 0082): `linked`, `absent`, `invalid`.
+    pub http_traceparent: Counter<u64>,
     pub rate_limit_remaining: Gauge<u64>,
     pub rate_limit_limit: Gauge<u64>,
     pub plan_parse_failures: Counter<u64>,
@@ -224,6 +226,7 @@ impl Metrics {
             issues_blocked_from: m.u64_gauge(otel::metric::ISSUES_BLOCKED_FROM).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
             inbound_traceparent: m.u64_counter(otel::metric::INBOUND_TRACEPARENT).build(),
+            http_traceparent: m.u64_counter(otel::metric::HTTP_TRACEPARENT).build(),
             rate_limit_remaining: m
                 .u64_gauge(otel::metric::GITHUB_RATE_LIMIT_REMAINING)
                 .build(),
