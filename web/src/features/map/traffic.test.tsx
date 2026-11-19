@@ -10,6 +10,7 @@ import { MapView } from "./MapView.tsx";
 import { PARTICLE_CAP, particleBudget } from "./particles.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 import { PartCard } from "./PartCard.tsx";
+import { partTrafficOf, quietState, seamChip, withinText } from "./traffic.tsx";
 import { TerritoryMark, TrafficChevrons, TrafficVitals, chevronCount, chipTraffic, chevronsOn, compactRate, health, liveTier, partRates, perMinute, trafficLegend, trafficVitals, unknownSentence } from "./traffic.tsx";
 
 const css = readFileSync(resolve(import.meta.dirname, "../../styles.css"), "utf8");
@@ -270,19 +271,77 @@ describe("traffic stands out: pipes, vitals and part rates", () => {
     expect(rates.has("plan-check")).toBe(false);
   });
 
-  it("a part card in the Traffic lens shows its rates and glows by health; a quiet part steps back", () => {
+  it("a part card in the Traffic lens: rates and a glow when observed, then each quiet state (ADR 0083)", () => {
     const g = buildGraph(withTraffic());
     const node = g.nodes.find((n) => n.id === "rubato-server");
     if (!node) throw new Error("no rubato-server");
+    const card = () => r.getByTestId("node-rubato-server");
     const r = render(<PartCard node={node} selected={false} traffic={{ in: 20, out: 0.5, calls: 1230, errors: 36 }} />);
     expect(r.getByTestId("part-traffic-rubato-server")).toHaveTextContent("in 20");
-    expect(r.getByTestId("node-rubato-server")).toHaveClass("observed", "health-warn");
-    r.rerender(<PartCard node={node} selected={false} traffic="none" />);
-    expect(r.getByTestId("node-rubato-server")).toHaveClass("unobserved");
+    expect(card()).toHaveClass("observed", "health-warn");
+    // Seen in a lookback: plain, at full opacity, with the bucket in words.
+    r.rerender(<PartCard node={node} selected={false} traffic={{ quiet: "seen", withinSecs: 21_600 }} />);
+    expect(card()).toHaveClass("seen");
+    expect(card()).not.toHaveClass("unobserved");
+    expect(r.getByTestId("part-quiet-rubato-server")).toHaveTextContent("last seen within 6 h");
     expect(r.queryByTestId("part-traffic-rubato-server")).toBeNull();
+    // Before any lookback: plain, and nothing is said.
+    r.rerender(<PartCard node={node} selected={false} traffic={{ quiet: "unknown" }} />);
+    expect(card()).not.toHaveClass("unobserved");
+    expect(card()).not.toHaveClass("seen");
+    expect(r.queryByTestId("part-quiet-rubato-server")).toBeNull();
+    // A lookback answered and did not see it: only now it steps back.
+    r.rerender(<PartCard node={node} selected={false} traffic={{ quiet: "not_seen", lookbackSecs: 604_800 }} />);
+    expect(card()).toHaveClass("unobserved");
+    expect(r.getByTestId("part-quiet-rubato-server")).toHaveTextContent("not seen in 7 d");
+    // Nothing can observe it: hatched, never faded.
+    r.rerender(<PartCard node={node} selected={false} traffic="not_instrumented" />);
+    expect(card()).toHaveClass("blind");
+    expect(card()).not.toHaveClass("unobserved");
+    expect(r.getByTestId("part-quiet-rubato-server")).toHaveTextContent("not instrumented");
     r.rerender(<PartCard node={node} selected={false} />);
-    expect(r.getByTestId("node-rubato-server")).not.toHaveClass("unobserved");
+    expect(card()).not.toHaveClass("unobserved");
+    expect(card()).not.toHaveClass("blind");
     r.unmount();
+  });
+
+  it("quiet states come from the report: last seen, not seen, unknown, not instrumented", () => {
+    const t = withTraffic({
+      last_seen: [{ ref: { kind: "node", id: "plan-check" }, within_secs: 86_400 }],
+      lookback_secs: 604_800,
+      not_instrumented: [{ kind: "node", id: "livekit" }, { kind: "seam", id: "web-livekit" }],
+    }).traffic as ObservedTraffic;
+    expect(quietState("node", "plan-check", t)).toEqual({ quiet: "seen", withinSecs: 86_400 });
+    expect(quietState("node", "system-map", t)).toEqual({ quiet: "not_seen", lookbackSecs: 604_800 });
+    expect(quietState("node", "livekit", t)).toBe("not_instrumented");
+    expect(quietState("seam", "web-livekit", t)).toBe("not_instrumented");
+    expect(quietState("node", "system-map", { ...t, lookback_secs: null })).toEqual({ quiet: "unknown" });
+    expect([21_600, 86_400, 604_800].map(withinText)).toEqual(["within 6 h", "within a day", "within a week"]);
+    // A part that carried calls is its rates, whatever the lookback says.
+    const rates = new Map([["plan-check", { in: 1, out: 0, calls: 60, errors: 0 }]]);
+    expect(partTrafficOf("plan-check", t, rates)).toEqual({ in: 1, out: 0, calls: 60, errors: 0 });
+  });
+
+  it("in the Traffic lens a seam says its rate, that it is quiet, when it was last seen, or that nothing can observe it", () => {
+    const t = withTraffic({
+      last_seen: [{ ref: { kind: "seam", id: "skill-plan-file" }, within_secs: 21_600 }],
+      lookback_secs: 604_800,
+      not_instrumented: [{ kind: "seam", id: "web-livekit" }],
+    }).traffic as ObservedTraffic;
+    const live = { seam: "web-server", forward_calls: 1200, reverse_calls: 30, errors: 36 };
+    expect(seamChip({ id: "web-server", traffic: live }, t)).toBe("20.5/min · 3 % errors");
+    expect(seamChip({ id: "companion-server", quietFor: 3600 }, t)).toBe("no calls in 1 h");
+    expect(seamChip({ id: "skill-plan-file" }, t)).toBe("last seen within 6 h");
+    expect(seamChip({ id: "web-livekit" }, t)).toBe("not instrumented");
+    expect(seamChip({ id: "server-speech" }, t)).toBe("not seen in 7 d");
+    expect(seamChip({ id: "server-speech" }, { ...t, lookback_secs: null })).toBeUndefined();
+  });
+
+  it("the headline counts the parts nothing can observe", async () => {
+    const o = withTraffic({ not_instrumented: [{ kind: "node", id: "livekit" }, { kind: "node", id: "speech-provider" }, { kind: "seam", id: "web-livekit" }] });
+    const v = render(<MapView graph={buildGraph(o)} selected={null} onSelect={() => {}} />);
+    expect(await v.findByTestId("traffic-vitals")).toHaveTextContent("not instrumented2");
+    v.unmount();
   });
 
   it("the map opens on Traffic while a report is fresh, and on Structure when it is not", async () => {
