@@ -1818,6 +1818,7 @@ async fn web_events_follow_every_action() {
     let started = CompanionEnvelope {
         seq: 20,
         sent_at: chrono::Utc::now(),
+        traceparent: None,
         message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Started {
             command_id: cmd.id,
             session_id: cmd.session_id,
@@ -1852,6 +1853,7 @@ async fn web_events_follow_every_action() {
     let stale = CompanionEnvelope {
         seq: 22,
         sent_at: chrono::Utc::now(),
+        traceparent: None,
         message: CompanionMessage::Stale(rubato_protocol::StaleSession {
             companion_id,
             session_id: Some("s".into()),
@@ -1996,6 +1998,7 @@ async fn attempt_limit_does_not_block_a_running_issue() {
     let sessions = CompanionEnvelope {
         seq: 2,
         sent_at: chrono::Utc::now(),
+        traceparent: None,
         message: CompanionMessage::Sessions {
             sessions: vec![rubato_protocol::SessionState {
                 session_id: Some("s-3".into()),
@@ -2057,6 +2060,7 @@ fn started(seq: u64, launched: &rubato_protocol::LaunchResponse) -> CompanionEnv
     CompanionEnvelope {
         seq,
         sent_at: chrono::Utc::now(),
+        traceparent: None,
         message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Started {
             command_id: launched.command.id,
             session_id: launched.command.session_id,
@@ -2110,6 +2114,7 @@ async fn a_spend_hit_blocks_after_a_second_start_was_refused_as_already_running(
     let result = |seq: u64, result: rubato_protocol::LaunchResult| CompanionEnvelope {
         seq,
         sent_at: chrono::Utc::now(),
+        traceparent: None,
         message: CompanionMessage::Launch(result),
     };
 
@@ -2299,6 +2304,7 @@ async fn a_stale_event_is_recorded_under_the_pairing() {
     let stale = CompanionEnvelope {
         seq: 2,
         sent_at: chrono::Utc::now(),
+        traceparent: None,
         message: CompanionMessage::Stale(rubato_protocol::StaleSession {
             companion_id: victim,
             session_id: Some("s".into()),
@@ -3590,6 +3596,7 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
     let refused = CompanionEnvelope {
         seq: 30,
         sent_at: chrono::Utc::now(),
+        traceparent: None,
         message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Refused {
             command_id: first,
             reason: rubato_protocol::RefusalReason::MissingDependency,
@@ -3614,6 +3621,7 @@ async fn queue_entry_leaves_on_started_and_stays_on_refused() {
     let started = CompanionEnvelope {
         seq: 31,
         sent_at: chrono::Utc::now(),
+        traceparent: None,
         message: CompanionMessage::Launch(rubato_protocol::LaunchResult::Started {
             command_id: command_id(t.to_string()),
             session_id: Uuid::new_v4(),

@@ -93,6 +93,7 @@ impl Client {
         Ok(CompanionEnvelope {
             seq,
             sent_at: Utc::now(),
+            traceparent: None,
             message,
         })
     }
@@ -298,6 +299,7 @@ mod tests {
             seqs.map(|seq| CompanionEnvelope {
                 seq,
                 sent_at: Utc::now(),
+                traceparent: None,
                 message: CompanionMessage::Ack { seq },
             })
             .collect()

@@ -1162,6 +1162,7 @@ mod tests {
         CompanionEnvelope {
             seq,
             sent_at: Utc::now(),
+            traceparent: None,
             message: CompanionMessage::Sessions { sessions: vec![s] },
         }
     }
@@ -1282,6 +1283,7 @@ mod tests {
         CompanionEnvelope {
             seq,
             sent_at: Utc::now(),
+            traceparent: None,
             message: CompanionMessage::Sessions { sessions: vec![s] },
         }
     }
@@ -1290,6 +1292,7 @@ mod tests {
         CompanionEnvelope {
             seq,
             sent_at: Utc::now(),
+            traceparent: None,
             message: CompanionMessage::AgentReport(rubato_protocol::AgentReport {
                 launch_id: LAUNCH,
                 doing: doing.into(),

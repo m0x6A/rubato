@@ -143,6 +143,12 @@ pub struct CompanionEnvelope {
     /// Monotonic per companion, starting at 1, persisted across restarts.
     pub seq: u64,
     pub sent_at: DateTime<Utc>,
+    /// The W3C trace context of the companion's send span (ADR 0081), read with
+    /// `otel::TraceParent::parse`. The server uses it only as the parent of its inbound span;
+    /// one that does not parse is handled as absent. Left out by an older companion and when
+    /// the companion exports no traces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traceparent: Option<String>,
     pub message: CompanionMessage,
 }
 
