@@ -17,13 +17,13 @@ import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, NODE_HE
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 import { FlowParticles, type ParticleMode, particleBudget, particleMode } from "./particles.tsx";
-import { TerritoryMark, TrafficChevrons, chevronCount, chevronsOn, chipTraffic, perMinute, trafficLegend, unknownSentence } from "./traffic.tsx";
+import { type PartTraffic, TerritoryMark, TrafficChevrons, TrafficVitals, chevronCount, chevronsOn, chipTraffic, compactRate, health, liveTier, partRates, perMinute, trafficLegend, trafficVitals, unknownSentence } from "./traffic.tsx";
 import { windowText } from "../findings/index.ts";
 import type { GhostPart, UndeclaredEdge } from "../../protocol.ts";
 import { endId, endText, ghostBand, ghostId, ghostsToDraw, isGhostId, serviceText } from "./territory.ts";
 import { useReducedMotion } from "../../shared/motion.ts";
 
-type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean };
+type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean; traffic: PartTraffic | undefined };
 type MapFlowNode = Node<MapNodeData, "map">;
 /** A repo's box in the By repo grouping (issue #89): behind its parts, never selected; moved by its name bar (issue #144). */
 type RepoFlowNode = Node<{ repo: string; movable: boolean }, "repo">;
@@ -63,7 +63,7 @@ function MapNodeCard({ data }: NodeProps<MapFlowNode>) {
     <>
       {/* In edit mode the handles show: drag from the right handle of one part to the left of another to draw a seam. */}
       <Handle type="target" position={Position.Left} className={data.editing ? "seam-handle" : "seam-handle hidden"} isConnectable={data.editing} />
-      <PartCard node={data.node} selected={data.selected} onPin={data.onPin} dim={data.dim} draft={data.draft} />
+      <PartCard node={data.node} selected={data.selected} onPin={data.onPin} dim={data.dim} draft={data.draft} traffic={data.traffic} />
       <Handle type="source" position={Position.Right} className={data.editing ? "seam-handle" : "seam-handle hidden"} isConnectable={data.editing} />
     </>
   );
@@ -438,11 +438,18 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     [],
   );
 
-  const [chosenLens, setLens] = useState<Exclude<Lens, "plan">>("structure");
+  // Null until someone picks a lens: the map opens on Traffic while a fresh report is in, else
+  // on Structure. Observed traffic is the first thing to see when there is any.
+  const [pickedLens, setLens] = useState<Exclude<Lens, "plan"> | null>(null);
+  const trafficFresh = graph.traffic?.state === "fresh";
+  const chosenLens: Exclude<Lens, "plan"> = pickedLens ?? (trafficFresh ? "traffic" : "structure");
   const planView = useMemo(() => (plan ? planLens(plan.plan, graph.edges) : null), [plan, graph]);
   // While a plan is shown, the switch waits: the arrows are the plan's.
   const lens: Lens = planView ? "plan" : chosenLens;
   const counts = useMemo(() => flowCounts(graph.edges), [graph]);
+  // In the Traffic lens on a fresh report: each part's calls a minute, in and out, and how they fare.
+  const partTraffic = useMemo(() => (chevronsOn(lens, graph.traffic?.state ?? "not_configured") && graph.traffic ? partRates(graph.traffic, graph.edges) : null), [lens, graph]);
+  const vitalsAt = useMemo(() => (trafficFresh && graph.traffic ? trafficVitals(graph.traffic, graph.edges.filter((e) => e.quietFor !== undefined).length) : null), [trafficFresh, graph]);
   // The scenario lens (ADR 0024): one scenario, one step at a time.
   const reducedMotion = useReducedMotion();
   const [scenarioId, setScenarioId] = useState<string | null>(null);
@@ -549,7 +556,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         position: box ? { x: box.x, y: box.y } : (held.current.get(n.id) ?? settled.get(n.id) ?? { x: 0, y: 0 }),
         ...(box?.parent ? { parentId: box.parent } : {}),
         // In the plan lens a part is painted by this plan only, not by every open plan.
-        data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id), draft: draftMarks?.get(n.id), editing },
+        data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id), draft: draftMarks?.get(n.id), editing, traffic: partTraffic ? (partTraffic.get(n.id) ?? "none") : undefined },
         };
       }),
       ...ghostView.ghosts.map(
@@ -566,7 +573,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     ],
     // `heldRevision` stands for `held`, a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing, grouping, placed, onMove, ghostView, ghostAt],
+    [graph, settled, selectedNode, onPin, heldRevision, litNow, planView, draftMarks, editing, grouping, placed, onMove, ghostView, ghostAt, partTraffic],
   );
   // React Flow draws an edge only between parts it has measured, and it reports a measurement
   // once, through `onNodesChange`. So the nodes are kept in state and every refresh of the
@@ -800,7 +807,10 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     const drawn: SeamFlowEdge[] =
       graph.edges.filter((e) => !folded.has(e.id)).flatMap((e) =>
         arrowsFor(planView ? { ...e, flows: planView.flows.get(e.id) } : e, lens).map((arrow, i) => {
-          const marker = { type: MarkerType.ArrowClosed, width: 18, height: 18 };
+          // A live pipe's head keeps its size whatever the pipe's width, in the pipe's colour.
+          const tier = showTraffic && e.traffic ? liveTier(e.traffic, windowSecs) : 0;
+          const tone = tier > 0 && e.traffic ? health(e.traffic.errors, e.traffic.forward_calls + e.traffic.reverse_calls) : null;
+          const marker = tone ? { type: MarkerType.ArrowClosed, width: 20 + tier * 4, height: 20 + tier * 4, markerUnits: "userSpaceOnUse", color: `var(--pipe-${tone})` } : { type: MarkerType.ArrowClosed, width: 18, height: 18 };
           return {
             id: arrow.id,
             type: "seam" as const,
@@ -815,6 +825,9 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               step?.arrow === arrow.id ? "step-active" : "",
               arrow.reversed ? "reversed" : "",
               showTraffic && e.quietFor !== undefined ? "quiet" : "",
+              // A seam that carried calls is a live pipe: heavier for more calls, coloured by its error share.
+              tone ? `live live-${tier} health-${tone}` : "",
+              showTraffic && !e.traffic && e.quietFor === undefined ? "unobserved" : "",
               draftMarks?.has(e.id) ? `draft draft-${draftMarks.get(e.id)?.state}` : "",
               litNow !== null && !litNow.seams.has(e.id) ? "dim" : "",
             ]
@@ -893,9 +906,20 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       <div className="map-band-row">
         <div className="lens" role="radiogroup" aria-label="What the arrows show">
           {LENSES.map((l) => (
-            <button key={l.id} type="button" role="radio" aria-checked={lens === l.id} className={lens === l.id ? "active" : ""} onClick={() => setLens(l.id)} disabled={planView !== null} title={planView ? "Close the issue to choose what the arrows show" : undefined}>
+            <button
+              key={l.id}
+              type="button"
+              role="radio"
+              aria-checked={lens === l.id}
+              className={[lens === l.id ? "active" : "", l.id === "traffic" ? `traffic-lens ${trafficFresh ? "fresh" : "unknown"}` : ""].filter(Boolean).join(" ")}
+              onClick={() => setLens(l.id)}
+              disabled={planView !== null}
+              title={planView ? "Close the issue to choose what the arrows show" : l.id === "traffic" ? "What the running system actually calls, observed" : undefined}
+            >
+              {l.id === "traffic" && <i className="live-dot" aria-hidden="true" />}
               {l.label}
               {(l.id === "data" || l.id === "control") && ` (${counts[l.id]})`}
+              {l.id === "traffic" && vitalsAt && vitalsAt.calls > 0 && <span className="lens-rate" aria-hidden="true"> · {compactRate(vitalsAt.perMin)}/min</span>}
             </button>
           ))}
           {graph.scenarios.length > 0 && (
@@ -991,6 +1015,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           {scenario.unplaced > 0 && <p className="scenario-note">{scenario.unplaced} of its steps cannot be drawn: the map no longer declares their flow.</p>}
         </div>
       )}
+      {lens === "traffic" && trafficFresh && graph.traffic && <TrafficVitals traffic={graph.traffic} quietSeams={vitalsAt?.quietSeams ?? 0} seams={graph.edges.length} />}
       {lens !== "scenario" && (
         <div className="legend" data-testid="legend">
           {lens === "plan" && plan && planView && (

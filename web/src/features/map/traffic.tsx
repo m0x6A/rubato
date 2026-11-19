@@ -43,6 +43,187 @@ export function chevronsOn(lens: Lens, state: TrafficState): boolean {
   return lens === "traffic" && state === "fresh";
 }
 
+/** How a stream of calls is doing, as a tone: under 1 % failed is ok, under 5 % warn, more bad. */
+export type Health = "ok" | "warn" | "bad";
+
+export function health(errors: number, calls: number): Health {
+  if (calls <= 0 || errors <= 0) {
+    return "ok";
+  }
+  const share = errors / calls;
+  return share < 0.01 ? "ok" : share < 0.05 ? "warn" : "bad";
+}
+
+/** How heavy a live seam is drawn: the chevron tier of its busier direction, 0 when no calls. */
+export function liveTier(t: SeamTraffic, windowSecs: number): 0 | 1 | 2 | 3 {
+  return Math.max(chevronCount(perMinute(t.forward_calls, windowSecs)), chevronCount(perMinute(t.reverse_calls, windowSecs))) as 0 | 1 | 2 | 3;
+}
+
+/** A rate for a big number: 0.4, 12, 340, 1.2k. */
+export function compactRate(perMin: number): string {
+  if (perMin <= 0) {
+    return "0";
+  }
+  if (perMin < 0.1) {
+    return "<0.1";
+  }
+  if (perMin < 10) {
+    return String(Math.round(perMin * 10) / 10);
+  }
+  if (perMin < 1000) {
+    return String(Math.round(perMin));
+  }
+  return `${Math.round(perMin / 100) / 10}k`;
+}
+
+/** The headline of a fresh report: every call the source saw, and what the map makes of it. */
+export interface Vitals {
+  perMin: number;
+  calls: number;
+  errors: number;
+  health: Health;
+  /** Declared seams that carried calls. */
+  liveSeams: number;
+  /** Declared seams with no calls while both their parts show traffic (finding SeamQuiet), as the caller counted them. */
+  quietSeams: number;
+  /** Calls between parts that no seam joins. */
+  undeclared: number;
+  /** Services that run but no part names. */
+  ghosts: number;
+}
+
+export function trafficVitals(t: ObservedTraffic, quietSeams: number): Vitals {
+  const window = t.window_secs ?? 3600;
+  let calls = 0;
+  let errors = 0;
+  let liveSeams = 0;
+  for (const s of t.seams ?? []) {
+    const n = s.forward_calls + s.reverse_calls;
+    calls += n;
+    errors += s.errors;
+    liveSeams += n > 0 ? 1 : 0;
+  }
+  for (const u of t.undeclared ?? []) {
+    calls += u.calls;
+    errors += u.errors;
+  }
+  for (const g of t.ghost_edges ?? []) {
+    calls += g.calls;
+    errors += g.errors;
+  }
+  return {
+    perMin: perMinute(calls, window),
+    calls,
+    errors,
+    health: health(errors, calls),
+    liveSeams,
+    quietSeams,
+    undeclared: (t.undeclared ?? []).length,
+    ghosts: (t.ghosts ?? []).length,
+  };
+}
+
+/** One part's calls in the Traffic lens: a minute in and out, and the calls and errors behind them. */
+export interface PartRate {
+  in: number;
+  out: number;
+  errors: number;
+  calls: number;
+}
+
+/** What a part card shows in the Traffic lens: its rates, or "none" when the report saw no calls to or from it. */
+export type PartTraffic = PartRate | "none";
+
+/** Calls a minute into and out of each map part, over declared seams, undeclared edges and ghost edges. */
+export function partRates(t: ObservedTraffic, seams: { id: string; from: string; to: string }[]): Map<string, PartRate> {
+  const window = t.window_secs ?? 3600;
+  const out = new Map<string, PartRate>();
+  const add = (from: string | null, to: string | null, calls: number, errors: number) => {
+    for (const [id, side] of [
+      [from, "out"],
+      [to, "in"],
+    ] as const) {
+      if (id === null || calls <= 0) {
+        continue;
+      }
+      const r = out.get(id) ?? { in: 0, out: 0, errors: 0, calls: 0 };
+      r[side] += perMinute(calls, window);
+      r.errors += errors;
+      r.calls += calls;
+      out.set(id, r);
+    }
+  };
+  const byId = new Map(seams.map((s) => [s.id, s]));
+  for (const s of t.seams ?? []) {
+    const seam = byId.get(s.seam);
+    if (!seam) {
+      continue;
+    }
+    const n = s.forward_calls + s.reverse_calls;
+    // Errors are not split by direction: each direction takes its share.
+    add(seam.from, seam.to, s.forward_calls, n > 0 ? (s.errors * s.forward_calls) / n : 0);
+    add(seam.to, seam.from, s.reverse_calls, n > 0 ? (s.errors * s.reverse_calls) / n : 0);
+  }
+  for (const u of t.undeclared ?? []) {
+    add(u.from, u.to, u.calls, u.errors);
+  }
+  for (const g of t.ghost_edges ?? []) {
+    add(g.from.kind === "part" ? g.from.id : null, g.to.kind === "part" ? g.to.id : null, g.calls, g.errors);
+  }
+  return out;
+}
+
+/**
+ * The Traffic lens's headline (a fresh report only): the rate, the error share, how many seams
+ * carried calls, and what the map does not explain. Numbers are text; colour only repeats them.
+ */
+export function TrafficVitals({ traffic, quietSeams, seams, now = Date.now() }: { traffic: ObservedTraffic; quietSeams: number; seams: number; now?: number }) {
+  const v = trafficVitals(traffic, quietSeams);
+  const pct = v.calls > 0 ? (v.errors * 100) / v.calls : 0;
+  const offMap = v.undeclared + v.ghosts;
+  return (
+    <div className="vitals" data-testid="traffic-vitals" role="group" aria-label="Observed traffic">
+      <div className={`vital rate ${v.health}`}>
+        <span className="vital-label">
+          <i className="live-dot" aria-hidden="true" /> live calls
+        </span>
+        <span className="vital-value">
+          {compactRate(v.perMin)}
+          <small>/min</small>
+        </span>
+      </div>
+      <div className={`vital ${v.health}`}>
+        <span className="vital-label">errors</span>
+        <span className="vital-value">
+          {pct > 0 && pct < 0.1 ? "<0.1" : Math.round(pct * 10) / 10}
+          <small>%</small>
+        </span>
+      </div>
+      <div className="vital seams">
+        <span className="vital-label">seams carrying calls</span>
+        <span className="vital-value">
+          {v.liveSeams}
+          <small>/{seams}</small>
+        </span>
+      </div>
+      <div className={v.quietSeams > 0 ? "vital warn" : "vital"}>
+        <span className="vital-label">quiet seams</span>
+        <span className="vital-value">{v.quietSeams}</span>
+      </div>
+      <div className={offMap > 0 ? "vital warn" : "vital"}>
+        <span className="vital-label">not on the map</span>
+        <span className="vital-value">{offMap}</span>
+      </div>
+      <div className="vital when">
+        <span className="vital-label">observed</span>
+        <span className="vital-value small">
+          {traffic.observed_at ? relative(traffic.observed_at, now) : "now"} <small>over {windowText(traffic.window_secs ?? 3600)}</small>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /** Why the Traffic lens shows nothing, or null when the report is fresh (design §5.5). */
 export function unknownSentence(t: Pick<ObservedTraffic, "state" | "observed_at" | "error">, now = Date.now()): string | null {
   switch (t.state) {
@@ -77,11 +258,14 @@ interface ChevronProps {
   /** Reduced motion, or past the cap: one still chevron per direction. */
   reduced: boolean;
   length: number;
+  /** Calls the map does not declare: amber chevrons on the territory line. */
+  territory?: boolean | undefined;
 }
 
-export function TrafficChevrons({ id, path, forward, reverse, reduced, length }: ChevronProps) {
+export function TrafficChevrons({ id, path, forward, reverse, reduced, length, territory = false }: ChevronProps) {
   const base: CSSProperties = { offsetPath: `path('${path}')` };
   const seconds = tripSeconds(length);
+  const tone = territory ? " territory" : "";
   const out = [];
   for (const [dir, n] of [
     ["forward", forward],
@@ -93,13 +277,13 @@ export function TrafficChevrons({ id, path, forward, reverse, reduced, length }:
     // The rotation is set by the class (offset-rotate); the attribute says it for tests and tools.
     const rotate = dir === "reverse" ? "auto 180deg" : "auto";
     if (reduced) {
-      out.push(<div key={dir} className={`traffic ${dir} still`} aria-hidden="true" data-traffic={id} data-rotate={rotate} style={{ ...base, offsetDistance: `${dir === "reverse" ? 100 - STILL_AT : STILL_AT}%` }} />);
+      out.push(<div key={dir} className={`traffic ${dir}${tone} still`} aria-hidden="true" data-traffic={id} data-rotate={rotate} style={{ ...base, offsetDistance: `${dir === "reverse" ? 100 - STILL_AT : STILL_AT}%` }} />);
       continue;
     }
     for (let i = 0; i < n; i++) {
       const delay = Math.round((-seconds * i * 1000) / n) / 1000;
       out.push(
-        <div key={`${dir}-${i}`} className={`traffic ${dir}`} aria-hidden="true" data-traffic={id} data-rotate={rotate} style={{ ...base, animationDuration: `${seconds}s`, animationDelay: `${delay}s`, animationDirection: dir === "reverse" ? "reverse" : "normal" }} />,
+        <div key={`${dir}-${i}`} className={`traffic ${dir}${tone}`} aria-hidden="true" data-traffic={id} data-rotate={rotate} style={{ ...base, animationDuration: `${seconds}s`, animationDelay: `${delay}s`, animationDirection: dir === "reverse" ? "reverse" : "normal" }} />,
       );
     }
   }
@@ -127,7 +311,7 @@ export function TerritoryMark({ edge, windowSecs, path, labelX, labelY, reduced,
   const id = `territory-${edge.from}-${edge.to}`;
   return (
     <>
-      <TrafficChevrons id={id} path={path} forward={chevronCount(rate)} reverse={0} reduced={reduced || still} length={length} />
+      <TrafficChevrons id={id} path={path} forward={chevronCount(rate)} reverse={0} reduced={reduced || still} length={length} territory />
       <div className="seam-label territory-label" data-testid={id} title={`${edge.from} calls ${edge.to}, but no seam on the map joins them`} style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
         observed, not on the map · {rateText(rate)}
       </div>

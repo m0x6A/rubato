@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
-import { ghostTraffic, routeOverview } from "./fixtures/traffic.ts";
+import { freshTraffic, ghostTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
 
 const root = resolve(import.meta.dirname, "../..");
 const map = parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; retired?: string }[] };
@@ -619,6 +619,32 @@ test("a ghost taken into the draft becomes a part with its service, and its call
   // Leave the map as found.
   await panel.getByRole("button", { name: "Discard draft" }).click();
   await expect(panel).toContainText("empty");
+});
+
+test("a fresh traffic report opens the map on the Traffic lens, headed by its numbers", { tag: "@map.traffic-first" }, async ({ page }) => {
+  await routeOverview(page, freshTraffic);
+  await page.goto("/");
+  await expect(page.getByRole("radio", { name: "Traffic" })).toHaveAttribute("aria-checked", "true");
+  // freshTraffic: 1770 calls in 1 h on two seams and one undeclared edge, 12 of them failed.
+  const vitals = page.getByTestId("traffic-vitals");
+  await expect(vitals).toContainText("live calls30/min");
+  await expect(vitals).toContainText("errors0.7%");
+  await expect(vitals).toContainText("seams carrying calls2/");
+  await expect(vitals).toContainText("quiet seams1");
+  await expect(vitals).toContainText("not on the map1");
+  // web-server carries 20/min one way and server-github 5/min: both in the middle tier.
+  await expect(page.locator(".react-flow__edge.live")).toHaveCount(2);
+  await expect(page.locator(".react-flow__edge.live.live-2")).toHaveCount(2);
+  await expect(page.getByTestId("part-traffic-rubato-server")).toContainText("in 20");
+  await expect(page.getByTestId("node-plan-check")).toHaveClass(/unobserved/);
+  console.log("traffic-first: lens, 5 vitals, 2 live seams, 1 part rate, 1 quiet part checked");
+});
+
+test("a stale traffic report opens the map on Structure", { tag: "@map.traffic-first" }, async ({ page }) => {
+  await routeOverview(page, staleTraffic);
+  await page.goto("/");
+  await expect(page.getByRole("radio", { name: "Structure" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("traffic-vitals")).toHaveCount(0);
 });
 
 // Issue #144: the By repo grouping, readable and arranged by the team (ADR 0068). These run last

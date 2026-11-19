@@ -9,7 +9,8 @@ import { buildGraph } from "./graph.ts";
 import { MapView } from "./MapView.tsx";
 import { PARTICLE_CAP, particleBudget } from "./particles.tsx";
 import { SeamChip } from "./SeamChip.tsx";
-import { TerritoryMark, TrafficChevrons, chevronCount, chipTraffic, chevronsOn, perMinute, trafficLegend, unknownSentence } from "./traffic.tsx";
+import { PartCard } from "./PartCard.tsx";
+import { TerritoryMark, TrafficChevrons, TrafficVitals, chevronCount, chipTraffic, chevronsOn, compactRate, health, liveTier, partRates, perMinute, trafficLegend, trafficVitals, unknownSentence } from "./traffic.tsx";
 
 const css = readFileSync(resolve(import.meta.dirname, "../../styles.css"), "utf8");
 const PATH = "M0,0 C50,0 50,100 100,100";
@@ -85,7 +86,9 @@ describe("chevrons, by shape (design §5.2)", () => {
   it("the chevron's rule moves only under the motion switch, and its shape is a clipped point", () => {
     const rule = (sel: string) => css.split("\n").find((l) => l.startsWith(`${sel} {`)) ?? "";
     expect(rule(".traffic")).toMatch(/clip-path: polygon\(0 0, 55% 50%, 0 100%, 40% 100%, 95% 50%, 40% 0\)/);
-    expect(rule(".traffic")).toMatch(/background: var\(--ok\)/);
+    // Light on the pipe it rides (the pipe carries the green, amber or red); amber on territory.
+    expect(rule(".traffic")).toMatch(/background: var\(--chevron\)/);
+    expect(rule(".traffic.territory")).toMatch(/background: var\(--warn\)/);
     expect(rule(".traffic")).not.toMatch(/animation/);
     expect(css).toMatch(/^:root\[data-motion="full"\] \.traffic \{[^}]*animation-name: travel/m);
     expect(css).toMatch(/^\.traffic\.forward \{ offset-rotate: auto; \}$/m);
@@ -165,7 +168,7 @@ describe("findings on conduits (design §5.4)", () => {
     expect(r.container.querySelector(".moving")).toBeNull();
     // Static dotted amber, round caps; never the moving class's march.
     const rule = css.split("\n").find((l) => l.startsWith(".react-flow__edge.territory .react-flow__edge-path {")) ?? "";
-    expect(rule).toMatch(/stroke: var\(--warn\);.*stroke-dasharray: 1 5;.*stroke-linecap: round/);
+    expect(rule).toMatch(/stroke: var\(--warn\);.*stroke-dasharray: 1 8;.*stroke-linecap: round/);
     expect(css).not.toMatch(/\.territory[^{]*\{[^}]*animation/);
   });
 
@@ -215,5 +218,81 @@ describe("unknown, not quiet (design §5.5)", () => {
     expect(fresh).toContain("Observed calls move as chevrons, more of them for more calls. A hollow seam declares a connection nobody used in the last 1 h. A dotted amber line is traffic the map does not declare, and a dashed card at the right is a service that runs but is not on the map.");
     expect(fresh).toContain("2 services with no namespace and no part to match");
     expect(trafficLegend(withTraffic().traffic!).unmapped).toEqual(["billing", "checkout"]);
+  });
+});
+
+describe("traffic stands out: pipes, vitals and part rates", () => {
+  it("health: under 1 % failed is ok, under 5 % warn, 5 % and up bad; no calls is ok", () => {
+    expect([health(0, 0), health(0, 100), health(0.9, 100), health(1, 100), health(4.9, 100), health(5, 100), health(40, 40)]).toEqual(["ok", "ok", "ok", "warn", "warn", "bad", "bad"]);
+  });
+
+  it("a live seam's tier is its busier direction's chevron count", () => {
+    expect(liveTier({ seam: "s", forward_calls: 0, reverse_calls: 0, errors: 0 }, 3600)).toBe(0);
+    expect(liveTier({ seam: "s", forward_calls: 30, reverse_calls: 0, errors: 0 }, 3600)).toBe(1);
+    expect(liveTier({ seam: "s", forward_calls: 30, reverse_calls: 3600, errors: 0 }, 3600)).toBe(3);
+  });
+
+  it("compact rates read at a glance", () => {
+    expect([0, 0.05, 0.46, 7.25, 12.4, 340, 1240, 98_765].map(compactRate)).toEqual(["0", "<0.1", "0.5", "7.3", "12", "340", "1.2k", "98.8k"]);
+  });
+
+  it("vitals add every call the report saw: seams, undeclared and ghost edges", () => {
+    const t = withTraffic({
+      ghost_edges: [{ from: { kind: "ghost", service: { namespace: "shop", name: "checkout" } }, to: { kind: "part", id: "rubato-server" }, calls: 60, errors: 6 }],
+      ghosts: [{ service: { namespace: "shop", name: "checkout" }, calls_in: 0, calls_out: 60, errors: 6 }],
+    }).traffic as ObservedTraffic;
+    const v = trafficVitals(t, 1);
+    // 1230 on web-server, 240 undeclared, 60 to a ghost: 1530 calls in 1 h; 42 failed.
+    expect(v).toEqual({ perMin: 25.5, calls: 1530, errors: 42, health: "warn", liveSeams: 1, quietSeams: 1, undeclared: 1, ghosts: 1 });
+  });
+
+  it("the vitals strip says the numbers in text, with its tone as a class", () => {
+    const t = withTraffic().traffic as ObservedTraffic;
+    const r = render(<TrafficVitals traffic={t} quietSeams={1} seams={13} now={NOW} />);
+    const strip = r.getByTestId("traffic-vitals");
+    expect(strip).toHaveTextContent("live calls25/min");
+    expect(strip).toHaveTextContent("errors2.4%");
+    expect(strip).toHaveTextContent("seams carrying calls1/13");
+    expect(strip).toHaveTextContent("quiet seams1");
+    expect(strip).toHaveTextContent("not on the map1");
+    expect(strip).toHaveTextContent("observed30s ago over 1 h");
+    expect(strip.querySelector(".vital.rate")).toHaveClass("warn");
+    r.unmount();
+  });
+
+  it("part rates: calls a minute in and out of each part, over seams, territory and ghost edges", () => {
+    const t = withTraffic().traffic as ObservedTraffic;
+    const rates = partRates(t, [{ id: "web-server", from: "web", to: "rubato-server" }]);
+    expect(rates.get("web")).toMatchObject({ out: 20, in: 0.5 });
+    expect(rates.get("rubato-server")).toMatchObject({ in: 20, out: 0.5, calls: 1230, errors: 36 });
+    expect(rates.get("rubato-companion")).toMatchObject({ out: 4, in: 0 });
+    expect(rates.get("github")).toMatchObject({ in: 4, out: 0 });
+    expect(rates.has("plan-check")).toBe(false);
+  });
+
+  it("a part card in the Traffic lens shows its rates and glows by health; a quiet part steps back", () => {
+    const g = buildGraph(withTraffic());
+    const node = g.nodes.find((n) => n.id === "rubato-server");
+    if (!node) throw new Error("no rubato-server");
+    const r = render(<PartCard node={node} selected={false} traffic={{ in: 20, out: 0.5, calls: 1230, errors: 36 }} />);
+    expect(r.getByTestId("part-traffic-rubato-server")).toHaveTextContent("in 20");
+    expect(r.getByTestId("node-rubato-server")).toHaveClass("observed", "health-warn");
+    r.rerender(<PartCard node={node} selected={false} traffic="none" />);
+    expect(r.getByTestId("node-rubato-server")).toHaveClass("unobserved");
+    expect(r.queryByTestId("part-traffic-rubato-server")).toBeNull();
+    r.rerender(<PartCard node={node} selected={false} />);
+    expect(r.getByTestId("node-rubato-server")).not.toHaveClass("unobserved");
+    r.unmount();
+  });
+
+  it("the map opens on Traffic while a report is fresh, and on Structure when it is not", async () => {
+    const fresh = render(<MapView graph={buildGraph(withTraffic())} selected={null} onSelect={() => {}} />);
+    expect(fresh.getByRole("radio", { name: "Traffic" })).toHaveAttribute("aria-checked", "true");
+    expect(await fresh.findByTestId("traffic-vitals")).toBeInTheDocument();
+    fresh.unmount();
+    const stale = render(<MapView graph={buildGraph(withTraffic({ state: "stale" }))} selected={null} onSelect={() => {}} />);
+    expect(stale.getByRole("radio", { name: "Structure" })).toHaveAttribute("aria-checked", "true");
+    expect(stale.queryByTestId("traffic-vitals")).toBeNull();
+    stale.unmount();
   });
 });

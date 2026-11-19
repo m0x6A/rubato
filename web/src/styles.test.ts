@@ -232,6 +232,32 @@ describe("colour tokens reach their contrast", () => {
     }
   });
 
+  it("live pipes, their chevrons and the part kinds reach 3:1 where they are drawn", () => {
+    const failures: string[] = [];
+    let checked = 0;
+    const need = (name: string, a: string, b: string, where: string) => {
+      checked += 1;
+      const ratio = contrast(a, b);
+      if (ratio < 3) {
+        failures.push(`${name}: ${where} is ${ratio.toFixed(2)}:1`);
+      }
+    };
+    for (const [name, s] of both) {
+      for (const tone of ["ok", "warn", "bad"]) {
+        // A chevron rides its pipe; the pipe stands on the canvas.
+        need(name, s["chevron"] as string, s[`pipe-${tone}`] as string, `--chevron on --pipe-${tone}`);
+        need(name, s[`pipe-${tone}`] as string, s["canvas"] as string, `--pipe-${tone} on --canvas`);
+      }
+      for (const kind of ["context", "contract", "external"]) {
+        need(name, s[`kind-${kind}`] as string, s["panel"] as string, `--kind-${kind} on --panel`);
+        need(name, s[`kind-${kind}`] as string, s["node-top"] as string, `--kind-${kind} on --node-top`);
+      }
+    }
+    console.log(`checked ${checked} pipe, chevron and kind pairs`);
+    expect(failures).toEqual([]);
+    expect(checked).toBe(24);
+  });
+
   it("targets a pointer can hit are at least 24px high (WCAG 2.5.8)", () => {
     const targets = [".pin-menu > button", '.pin-menu-list [role="menuitem"]', ".seam-chip", ".lens button", ".tabs button"];
     for (const selector of targets) {
