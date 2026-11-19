@@ -50,6 +50,29 @@ export async function routeOverview(page: Page, edit: (o: Overview) => Overview)
   });
 }
 
+/**
+ * Issue #300 (ADR 0083): the fresh report with a lookback. plan-check was last seen within a day,
+ * the other instrumented parts with no calls were not seen in 7 d, and livekit and
+ * speech-provider carry no service on the map. With `lookback: false` no lookback has answered.
+ */
+export function quietTraffic(o: Overview, lookback = true): Overview {
+  const base = freshTraffic(o);
+  return {
+    ...base,
+    traffic: {
+      ...(base.traffic as ObservedTraffic),
+      last_seen: lookback ? [{ ref: { kind: "node", id: "plan-check" }, within_secs: 86_400 }] : [],
+      lookback_secs: lookback ? 604_800 : null,
+      not_instrumented: [
+        { kind: "node", id: "livekit" },
+        { kind: "node", id: "speech-provider" },
+        { kind: "seam", id: "web-livekit" },
+        { kind: "seam", id: "server-speech" },
+      ],
+    },
+  };
+}
+
 /** Directions with calls in `freshTraffic`: web-server both ways, server-github, the territory edge. */
 export const FRESH_DIRECTIONS = 4;
 

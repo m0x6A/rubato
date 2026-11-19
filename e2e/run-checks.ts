@@ -16,6 +16,7 @@ export const RUN_CHECKS = [
   { key: "session-telemetry", title: "each session runs with telemetry on and the rubato.* resource attributes", scenarios: ["@telemetry.session-attributes"] },
   { key: "otlp", title: "server and companion export the expected metrics, attribute keys and spans", scenarios: ["@telemetry.both-binaries-export"] },
   { key: "trace-link", title: "an envelope's send on the companion and its handling on the server are one trace", scenarios: ["@telemetry.companion-server-one-trace"] },
+  { key: "web-trace-link", title: "a call the web makes and the server's handling of it are one trace, the web's span relayed by the server", scenarios: ["@map.web-on-traffic"] },
   { key: "otlp-forbidden", title: "the companion exports no sessions-by-state metric and no session id", scenarios: ["@telemetry.no-per-session-metrics"] },
 ] as const;
 

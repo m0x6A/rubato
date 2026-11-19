@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { callPairs, spansOf, SPAN_KIND_CLIENT, SPAN_KIND_SERVER } from "./otlp-spans.ts";
+import { callPairs, spansOf, spansOfJson, SPAN_KIND_CLIENT, SPAN_KIND_SERVER } from "./otlp-spans.ts";
 
 // A hand-built export, so the reader is tested against the wire format and not against itself.
 const varint = (n: number): Buffer => {
@@ -68,4 +68,17 @@ test("must fail: a server span with no parent, another trace, or the wrong kind 
 test("a truncated body is an error, not an empty list", () => {
   const body = exported("rubato-server", [span({ id: "1111111111111111", name: TO.name, kind: SPAN_KIND_SERVER })]);
   assert.throws(() => spansOf(body.subarray(0, body.length - 3)));
+});
+
+test("OTLP/JSON, as the relay forwards the web's spans: service, hex ids, parent, name and kind (ADR 0082)", () => {
+  const spans = spansOfJson({
+    resourceSpans: [
+      {
+        resource: { attributes: [{ key: "service.name", value: { stringValue: "web" } }] },
+        scopeSpans: [{ spans: [{ traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "00f067aa0ba902b7", name: "GET /api/overview", kind: 3 }] }],
+      },
+    ],
+  });
+  assert.deepEqual(spans, [{ service: "web", traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "00f067aa0ba902b7", parentSpanId: "", name: "GET /api/overview", kind: 3 }]);
+  assert.deepEqual(spansOfJson({}), []);
 });

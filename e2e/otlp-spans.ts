@@ -108,3 +108,29 @@ export function callPairs(spans: OtlpSpan[], from: { service: string; name: stri
   }
   return pairs;
 }
+
+/**
+ * The spans of an OTLP/JSON `ExportTraceServiceRequest`, as the server's relay forwards the
+ * web's own spans (ADR 0082): ids are hex strings, the kind a number.
+ */
+export function spansOfJson(body: unknown): OtlpSpan[] {
+  type Attr = { key?: string; value?: { stringValue?: string } };
+  type Json = { resourceSpans?: { resource?: { attributes?: Attr[] }; scopeSpans?: { spans?: Record<string, unknown>[] }[] }[] };
+  const out: OtlpSpan[] = [];
+  for (const rs of (body as Json).resourceSpans ?? []) {
+    const service = rs.resource?.attributes?.find((a) => a.key === "service.name")?.value?.stringValue ?? "";
+    for (const scope of rs.scopeSpans ?? []) {
+      for (const s of scope.spans ?? []) {
+        out.push({
+          service,
+          traceId: String(s["traceId"] ?? ""),
+          spanId: String(s["spanId"] ?? ""),
+          parentSpanId: String(s["parentSpanId"] ?? ""),
+          name: String(s["name"] ?? ""),
+          kind: Number(s["kind"] ?? 0),
+        });
+      }
+    }
+  }
+  return out;
+}

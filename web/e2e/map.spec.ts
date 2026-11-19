@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
-import { freshTraffic, ghostTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
+import { freshTraffic, ghostTraffic, quietTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
 
 const root = resolve(import.meta.dirname, "../..");
 const map = parseYaml(readFileSync(resolve(root, "docs/design/rubato-map.yml"), "utf8")) as { nodes: { id: string; retired?: string }[] };
@@ -636,7 +636,8 @@ test("a fresh traffic report opens the map on the Traffic lens, headed by its nu
   await expect(page.locator(".react-flow__edge.live")).toHaveCount(2);
   await expect(page.locator(".react-flow__edge.live.live-2")).toHaveCount(2);
   await expect(page.getByTestId("part-traffic-rubato-server")).toContainText("in 20");
-  await expect(page.getByTestId("node-plan-check")).toHaveClass(/unobserved/);
+  // No lookback in this report: a part with no calls says nothing and does not step back (ADR 0083).
+  await expect(page.getByTestId("node-plan-check")).not.toHaveClass(/unobserved/);
   console.log("traffic-first: lens, 5 vitals, 2 live seams, 1 part rate, 1 quiet part checked");
 });
 
@@ -645,6 +646,57 @@ test("a stale traffic report opens the map on Structure", { tag: "@map.traffic-f
   await page.goto("/");
   await expect(page.getByRole("radio", { name: "Structure" })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByTestId("traffic-vitals")).toHaveCount(0);
+});
+
+test("a quiet part says when it was last seen, and a part nothing can observe is hatched, not faded", { tag: "@map.traffic-three-states" }, async ({ page }) => {
+  await routeOverview(page, quietTraffic);
+  await page.goto("/");
+  await expect(page.getByRole("radio", { name: "Traffic" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("part-quiet-plan-check")).toHaveText("last seen within a day");
+  await expect(page.getByTestId("node-plan-check")).toHaveClass(/\bseen\b/);
+  await expect(page.getByTestId("node-plan-check")).not.toHaveClass(/unobserved/);
+  await expect(page.getByTestId("part-quiet-system-map")).toHaveText("not seen in 7 d");
+  await expect(page.getByTestId("node-system-map")).toHaveClass(/unobserved/);
+  for (const id of ["livekit", "speech-provider"]) {
+    await expect(page.getByTestId(`node-${id}`)).toHaveClass(/\bblind\b/);
+    await expect(page.getByTestId(`node-${id}`)).not.toHaveClass(/unobserved/);
+    await expect(page.getByTestId(`part-quiet-${id}`)).toHaveText("not instrumented");
+  }
+  await expect(page.getByTestId("traffic-vitals")).toContainText("not instrumented2");
+  console.log("three states: 1 last seen, 1 not seen, 2 not instrumented checked");
+});
+
+test("before any lookback a quiet part says nothing and does not step back", { tag: "@map.traffic-three-states" }, async ({ page }) => {
+  await routeOverview(page, (o) => quietTraffic(o, false));
+  await page.goto("/");
+  await expect(page.getByTestId("node-system-map")).toBeVisible();
+  await expect(page.getByTestId("part-quiet-system-map")).toHaveCount(0);
+  await expect(page.getByTestId("node-system-map")).not.toHaveClass(/unobserved/);
+});
+
+test("the web sends each call's span to its own server, with the call's trace", { tag: "@map.web-on-traffic" }, async ({ page }) => {
+  // The dev server exports no traces, so the relay is answered here; the post is what the browser sent.
+  const posts: string[] = [];
+  await page.route("**/api/telemetry/traces", async (route) => {
+    posts.push(route.request().postData() ?? "");
+    await route.fulfill({ status: 202 });
+  });
+  const sent = new Map<string, string>();
+  page.on("request", (r) => {
+    const tp = r.headers()["traceparent"];
+    if (tp && r.url().includes("/api/overview")) sent.set(tp.split("-")[1] ?? "", tp.split("-")[2] ?? "");
+  });
+  await page.goto("/");
+  await expect.poll(() => posts.length, { timeout: 5000 }).toBeGreaterThan(0);
+  const spans = posts.flatMap((p) => (JSON.parse(p) as { resourceSpans: { scopeSpans: { spans: { traceId: string; spanId: string; name: string }[] }[] }[] }).resourceSpans[0]!.scopeSpans[0]!.spans);
+  const overview = spans.filter((s) => s.name === "GET /api/overview");
+  expect(overview.length).toBeGreaterThan(0);
+  for (const s of overview) {
+    expect(sent.get(s.traceId), `a span for a request that sent trace ${s.traceId}`).toBe(s.spanId);
+  }
+  // The relay's own post carries no traceparent and makes no span.
+  expect(spans.some((s) => s.name.includes("telemetry"))).toBe(false);
+  console.log(`web spans: ${spans.length} posted, ${overview.length} for the overview, each with its request's trace`);
 });
 
 // Issue #144: the By repo grouping, readable and arranged by the team (ADR 0068). These run last
