@@ -119,6 +119,7 @@ pulls           a pull request's view, merging as the person    pr_merges
 import          a plan written outside Rubato becomes your draft  (none)
 rooms           a plan's room: messages, seam notices, agents called in, turns  room_messages, room_agents, room_requests
 voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
+telemetry_relay  the web's own spans, rewritten and forwarded over OTLP (ADR 0082)   (none; token buckets in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 agent_reports   what each launched agent last said it is doing  agent_reports
@@ -155,7 +156,7 @@ agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_st
 `shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
 `scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
-its retired parts, for every reader that draws or offers ids, ADR 0077; `traffic.ts` `nothingObserved`, a fresh report with nothing in it; `finished.ts` the issues the
+its retired parts, for every reader that draws or offers ids, ADR 0077; `traffic.ts` `nothingObserved`, a fresh report with nothing in it; `trace.ts` the web's own client spans and their post to the relay, ADR 0082; `finished.ts` the issues the
 default views show and the Done views show, read from the server's `finished`; `panel.ts` the
 panel's three sizes, remembered per browser);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
@@ -209,7 +210,8 @@ pulls      OpenPull, RepoPulls, PullDetail, MergeOffer, PlanGate, plan_gate, mer
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 fleet      LaunchRole, FleetRequest, FleetAction, FleetResult, FleetOutcome, FleetEntry, LeadView, LEAD_HEADER, reasons, limits (ADR 0072; capability fleet)
 room       RoomMessage (with spoken), RoomAgent, RoomRequest, RoomView, RoomKey, RoomReply, call-in types, addressed_handles, reasons; ROOM, ROOM_MESSAGES, ROOM_AGENTS, ROOM_REQUEST
-traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
+telemetry_relay  the web span relay's limits (ADR 0082); TELEMETRY_TRACES
+traffic    TrafficReport (with SeenEdge, ADR 0083), ObservedTraffic (with LastSeen), SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped

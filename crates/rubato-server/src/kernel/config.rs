@@ -391,6 +391,55 @@ impl TokenKey {
     }
 }
 
+/// OTLP headers as `OTEL_EXPORTER_OTLP_HEADERS` writes them: `key=value` pairs, comma
+/// separated, values percent-encoded. Its `Debug` prints the names only (ADR 0082).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct OtlpHeaders(Vec<(String, String)>);
+
+impl OtlpHeaders {
+    /// Pairs without a name or an `=` are skipped; `%XX` is decoded, `+` is kept as it is.
+    pub fn parse(raw: &str) -> Self {
+        let decode = |v: &str| -> String {
+            let b = v.as_bytes();
+            let mut out = Vec::with_capacity(b.len());
+            let mut i = 0;
+            while i < b.len() {
+                let hex = |c: u8| (c as char).to_digit(16);
+                if b[i] == b'%'
+                    && i + 2 < b.len()
+                    && let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2]))
+                {
+                    out.push((h * 16 + l) as u8);
+                    i += 3;
+                    continue;
+                }
+                out.push(b[i]);
+                i += 1;
+            }
+            String::from_utf8_lossy(&out).into_owned()
+        };
+        Self(
+            raw.split(',')
+                .filter_map(|p| p.split_once('='))
+                .map(|(k, v)| (k.trim().to_owned(), decode(v.trim())))
+                .filter(|(k, _)| !k.is_empty())
+                .collect(),
+        )
+    }
+
+    pub fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+}
+
+impl std::fmt::Debug for OtlpHeaders {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|(k, _)| k))
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind: SocketAddr,
@@ -443,6 +492,9 @@ pub struct Config {
     pub web_dist: PathBuf,
     pub limits: Limits,
     pub otel_endpoint: Option<String>,
+    /// `OTEL_EXPORTER_OTLP_HEADERS`, read once for the web's span relay (ADR 0082). Printed by
+    /// name only, never logged.
+    pub otel_headers: OtlpHeaders,
     /// The workspace-scoped variables as set, unset kept apart from set-to-the-default: what the
     /// first start copies into `workspace_settings`, and what later starts warn about while
     /// they are still set (ADR 0075).
@@ -581,6 +633,9 @@ impl Config {
                 .unwrap_or_else(|| PathBuf::from("web/dist")),
             limits,
             otel_endpoint: env("OTEL_EXPORTER_OTLP_ENDPOINT"),
+            otel_headers: OtlpHeaders::parse(
+                env("OTEL_EXPORTER_OTLP_HEADERS").as_deref().unwrap_or(""),
+            ),
             seed: SeedEnv {
                 default_spend_cap_usd: env("RUBATO_DEFAULT_SPEND_CAP_USD")
                     .and_then(|v| v.parse().ok()),
@@ -793,6 +848,7 @@ impl Config {
             web_dist: PathBuf::from("web/dist"),
             limits: Limits::default(),
             otel_endpoint: None,
+            otel_headers: OtlpHeaders::default(),
             seed: SeedEnv::default(),
             pairing_ttl_secs: 900,
             pairing_max_pending: rubato_protocol::pairing::PAIRING_CODES_MAX_PENDING,

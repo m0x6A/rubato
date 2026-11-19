@@ -17,7 +17,7 @@ import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, NODE_HE
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 import { FlowParticles, type ParticleMode, particleBudget, particleMode } from "./particles.tsx";
-import { type PartTraffic, TerritoryMark, TrafficChevrons, TrafficVitals, chevronCount, chevronsOn, chipTraffic, compactRate, health, liveTier, partRates, perMinute, trafficLegend, trafficVitals, unknownSentence } from "./traffic.tsx";
+import { type PartTraffic, partTrafficOf, quietClass, quietState, seamChip, TerritoryMark, TrafficChevrons, TrafficVitals, chevronCount, chevronsOn, chipTraffic, compactRate, health, liveTier, partRates, perMinute, trafficLegend, trafficVitals, unknownSentence } from "./traffic.tsx";
 import { windowText } from "../findings/index.ts";
 import type { GhostPart, UndeclaredEdge } from "../../protocol.ts";
 import { endId, endText, ghostBand, ghostId, ghostsToDraw, isGhostId, serviceText } from "./territory.ts";
@@ -556,7 +556,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         position: box ? { x: box.x, y: box.y } : (held.current.get(n.id) ?? settled.get(n.id) ?? { x: 0, y: 0 }),
         ...(box?.parent ? { parentId: box.parent } : {}),
         // In the plan lens a part is painted by this plan only, not by every open plan.
-        data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id), draft: draftMarks?.get(n.id), editing, traffic: partTraffic ? (partTraffic.get(n.id) ?? "none") : undefined },
+        data: { node: planView ? { ...n, paint: planView.parts.get(n.id) ?? null } : n, selected: selectedNode === n.id, onPin, dim: litNow !== null && !litNow.nodes.has(n.id), draft: draftMarks?.get(n.id), editing, traffic: partTraffic && graph.traffic ? partTrafficOf(n.id, graph.traffic, partTraffic) : undefined },
         };
       }),
       ...ghostView.ghosts.map(
@@ -789,7 +789,9 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
       const c = { forward: chevronCount(perMinute(e.traffic.forward_calls, windowSecs)), reverse: chevronCount(perMinute(e.traffic.reverse_calls, windowSecs)) };
       return c.forward + c.reverse > 0 ? c : null;
     };
-    const chipFor = (e: GraphEdge) => (!showTraffic ? undefined : e.quietFor !== undefined ? `no calls in ${windowText(e.quietFor)}` : e.traffic ? chipTraffic(e.traffic, windowSecs) : undefined);
+    // A seam with no calls says when it was last seen, or that nothing can observe it (ADR 0083).
+    const seamQuiet = (e: GraphEdge) => quietState("seam", e.id, graph.traffic ?? { state: "not_configured" });
+    const chipFor = (e: GraphEdge) => (showTraffic ? seamChip(e, graph.traffic ?? { state: "not_configured" }) : undefined);
     const bundleEdges: BundleFlowEdge[] = [];
     for (const b of closed) {
       bundleEdges.push({
@@ -827,7 +829,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               showTraffic && e.quietFor !== undefined ? "quiet" : "",
               // A seam that carried calls is a live pipe: heavier for more calls, coloured by its error share.
               tone ? `live live-${tier} health-${tone}` : "",
-              showTraffic && !e.traffic && e.quietFor === undefined ? "unobserved" : "",
+              showTraffic && !e.traffic && e.quietFor === undefined ? quietClass(seamQuiet(e)) : "",
               draftMarks?.has(e.id) ? `draft draft-${draftMarks.get(e.id)?.state}` : "",
               litNow !== null && !litNow.seams.has(e.id) ? "dim" : "",
             ]

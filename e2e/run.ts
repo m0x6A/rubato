@@ -14,7 +14,8 @@ import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CheckLog } from "./run-checks.ts";
-import { callPairs, spansOf, type OtlpSpan } from "./otlp-spans.ts";
+import { callPairs, spansOf, spansOfJson, type OtlpSpan } from "./otlp-spans.ts";
+import { randomBytes } from "node:crypto";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const T = `/tmp/rubato-e2e-${process.pid}`;
@@ -112,7 +113,9 @@ async function main() {
       if (req.url === "/v1/traces") {
         // Decoded too (plan 287): which span is whose child, across the two binaries.
         try {
-          otlp.spans.push(...spansOf(raw));
+          // The server's own export is protobuf; the web's spans it relays are JSON (ADR 0082).
+          const json = String(req.headers["content-type"] ?? "").includes("json");
+          otlp.spans.push(...(json ? spansOfJson(JSON.parse(raw.toString("utf8"))) : spansOf(raw)));
         } catch (e) {
           otlp.unread.push(String(e));
         }
@@ -409,6 +412,51 @@ async function main() {
   for (const e of otlp.unread) checks.problem("trace-link", `a /v1/traces body could not be read: ${e}`);
   checks.reach("trace-link", otlp.spans.length);
   log(`otlp traces: decoded ${otlp.spans.length} span(s); ${calls().length} companion-to-server call(s) in one trace`);
+  // ADR 0082: what the browser does, done here: a call with a traceparent, then that call's
+  // client span posted to the relay. The receiver must see both, the server's under the web's.
+  const traceId = randomBytes(16).toString("hex");
+  const spanId = randomBytes(8).toString("hex");
+  const startNanos = (BigInt(Date.now()) * 1_000_000n).toString();
+  const call = await fetch(`${url}/api/overview`, { headers: { traceparent: `00-${traceId}-${spanId}-01` } });
+  const endNanos = (BigInt(Date.now()) * 1_000_000n).toString();
+  const relay = await fetch(`${url}/api/telemetry/traces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      resourceSpans: [
+        {
+          resource: { attributes: [{ key: "service.name", value: { stringValue: "web" } }] },
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId,
+                  spanId,
+                  name: "GET /api/overview",
+                  kind: 3,
+                  startTimeUnixNano: startNanos,
+                  endTimeUnixNano: endNanos,
+                  attributes: [
+                    { key: "http.request.method", value: { stringValue: "GET" } },
+                    { key: "url.path", value: { stringValue: "/api/overview" } },
+                    { key: "http.response.status_code", value: { intValue: String(call.status) } },
+                  ],
+                  status: { code: 0 },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  if (relay.status !== 202) checks.problem("web-trace-link", `the relay answered ${relay.status}, not 202`);
+  const webCalls = () => callPairs(otlp.spans, { service: "web", name: "GET /api/overview" }, { service: "rubato-server", name: "rubato.http.request" }).filter((p) => p.client.traceId === traceId);
+  await waitFor("the web's relayed span with the server's request span as its child", 30_000, async () => webCalls().length > 0).catch((e) =>
+    checks.problem("web-trace-link", `${String(e)}; decoded ${otlp.spans.filter((s) => s.service === "web").length} web span(s)`),
+  );
+  checks.reach("web-trace-link", otlp.spans.filter((s) => s.traceId === traceId).length);
+  log(`otlp traces: ${webCalls().length} web-to-server call(s) in one trace, relayed by the server`);
   log(`otlp receiver: ${[...otlp.posts.entries()].map(([p, n]) => `${p}×${n}`).join(", ")}; rubato names: ${otlp.names.size}`);
 
   console.log("\n=== Rubato v0 end to end ===");

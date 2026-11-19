@@ -10,10 +10,26 @@
         "$ref": "#/$defs/TrafficEdge"
       }
     },
+    "lookback_secs": {
+      "description": "The longest lookback the source asked, when it asked one: `seen` covers up to here, and\na part not in it was not seen that far back.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
     "observed_at": {
       "description": "When the source's window ended.",
       "type": "string",
       "format": "date-time"
+    },
+    "seen": {
+      "description": "Edges with calls in a longer lookback but none in the window (ADR 0083). Empty when the\nsource asked no lookback, or nothing was seen.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SeenEdge"
+      }
     },
     "truncated": {
       "description": "The source cut the edges at `MAX_EDGES`.",
@@ -33,6 +49,41 @@
     "edges"
   ],
   "$defs": {
+    "SeenEdge": {
+      "description": "Calls seen in a lookback longer than the report's window, but none in the window (ADR 0083).",
+      "type": "object",
+      "properties": {
+        "client": {
+          "type": "string"
+        },
+        "client_namespace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "server": {
+          "type": "string"
+        },
+        "server_namespace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "within_secs": {
+          "description": "The shortest lookback with calls, in seconds: one of `LOOKBACK_SECS`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "client",
+        "server",
+        "within_secs"
+      ]
+    },
     "TrafficEdge": {
       "description": "Calls observed from one service to another in a report's window: the shape of the\nOpenTelemetry Collector `servicegraph` connector's output.",
       "type": "object",

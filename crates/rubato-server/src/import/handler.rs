@@ -20,6 +20,7 @@ use rubato_protocol::{
     DraftFile, ImportRequest, ImportResponse, IssueRef, LaunchRequest, bundle_paths, plan_fit,
 };
 use serde_json::{Value, json};
+use tracing::Instrument as _;
 
 type Refused = (StatusCode, Json<Value>);
 
@@ -102,6 +103,9 @@ pub async fn import(
     let Some(text) = app
         .github
         .file(&issue.repo, &path, &head)
+        .instrument(crate::kernel::github::part_read(
+            crate::kernel::github::READS_PLAN,
+        ))
         .await
         .map_err(internal)?
     else {

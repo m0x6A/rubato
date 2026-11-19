@@ -832,3 +832,15 @@ body:has(.login) { background-color: var(--canvas); background-image: radial-gra
 .vital.rate .live-dot { background: var(--ok); }
 .vital.seams { border-top-color: var(--accent); }
 .vital.when { border-top-color: var(--kind-contract); }
+/* Quiet and not instrumented (ADR 0083): a part last seen in a lookback stays at full opacity with
+   the bucket in words; one nothing can observe is hatched and neutral, never faded as silent. The
+   hatch alternates the part face's own two surfaces, so text on it keeps their contrast. */
+.part-quiet { margin-top: 2px; padding: 3px 8px; border-radius: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); background: var(--raised); border: 1px solid var(--line); }
+.map-node.seen { border-color: var(--line-strong); }
+.map-node.seen .part-quiet { color: var(--chip-ink); }
+.map-node.blind { border-style: dashed; border-color: var(--quiet); background: repeating-linear-gradient(135deg, var(--node-top) 0 7px, var(--node-bottom) 7px 14px); box-shadow: var(--rim); }
+.map-node.blind .part-quiet { border-style: dashed; }
+.react-flow__edge.seen .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 2; }
+.react-flow__edge.blind .react-flow__edge-path { stroke: var(--quiet); stroke-width: 1.5; stroke-dasharray: 2 6; }
+.react-flow__edge.blind .conduit { opacity: 0.4; }
+.vital.blind { border-style: dashed; border-top-color: var(--quiet); }

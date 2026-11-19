@@ -7,8 +7,8 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
-    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic, voice,
-    web_link, webhooks, workspace_settings,
+    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages,
+    telemetry_relay, traffic, voice, web_link, webhooks, workspace_settings,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -184,6 +184,14 @@ pub fn router(app: App) -> Router {
         .route(auth_routes::LOGIN, get(auth::login))
         .route(auth_routes::CALLBACK, get(auth::callback))
         .route(auth_routes::LOGOUT, post(auth::logout))
+        // ADR 0082: the web's own client spans, rewritten and forwarded; 404 while the server
+        // exports no traces. The body cap is the relay's own.
+        .route(
+            rubato_protocol::telemetry_relay::routes::TELEMETRY_TRACES,
+            post(telemetry_relay::relay).layer(axum::extract::DefaultBodyLimit::max(
+                rubato_protocol::telemetry_relay::MAX_BODY_BYTES,
+            )),
+        )
         .route("/api/{*rest}", any(unknown_api_path))
         .route("/ws/{*rest}", any(unknown_api_path))
         .route("/auth/{*rest}", any(unknown_api_path))
@@ -218,7 +226,19 @@ pub fn router(app: App) -> Router {
                 res
             }
         }))
-        .layer(TraceLayer::new_for_http())
+        .layer({
+            // ADR 0082: a request with the browser's `traceparent` is a server span under it.
+            let span_app = app.clone();
+            TraceLayer::new_for_http()
+                .make_span_with(move |req: &axum::http::Request<axum::body::Body>| {
+                    crate::kernel::http::request_span(&span_app, req)
+                })
+                .on_response(
+                    |res: &Response, _latency: std::time::Duration, span: &tracing::Span| {
+                        crate::kernel::http::record_status(res, span)
+                    },
+                )
+        })
         .with_state(app)
 }
 
@@ -261,6 +281,97 @@ mod tests {
         (format!("http://{addr}"), tmp)
     }
 
+    /// ADR 0082: a request carrying the browser's `traceparent` is `rubato.http.request` of
+    /// kind server, in the browser's trace and under its span, with the route and status. One
+    /// without, or with one that does not parse, makes no such span. Each is counted. Fails on
+    /// purpose when `set_parent` is taken out: the span then starts its own trace.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_request_with_the_browsers_traceparent_is_a_server_span_under_it() {
+        use crate::kernel::telemetry::metric_reader;
+        use opentelemetry::trace::TracerProvider as _;
+        use rubato_protocol::otel::{attr, metric, span};
+        use tracing_subscriber::layer::SubscriberExt as _;
+        drop(crate::kernel::telemetry::capture::start());
+        let exporter = opentelemetry_sdk::trace::InMemorySpanExporter::default();
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry()
+                .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test"))),
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let (reader, metrics) = metric_reader::start();
+        let mut app = AppState::new(
+            pool,
+            Config::for_tests(url, "m0x6A"),
+            Arc::new(FakeGitHub::new()),
+        );
+        Arc::get_mut(&mut app).unwrap().metrics = metrics;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router(app)).await.unwrap() });
+        let http = reqwest::Client::new();
+        let health = format!("http://{addr}/api/health");
+        const SENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        for tp in [Some(SENT), None, Some("00-not-a-trace-01")] {
+            let mut req = http.get(&health);
+            if let Some(tp) = tp {
+                req = req.header("traceparent", tp);
+            }
+            assert_eq!(req.send().await.unwrap().status(), 200);
+        }
+        let mut spans = Vec::new();
+        for _ in 0..200 {
+            spans = exporter
+                .get_finished_spans()
+                .unwrap()
+                .into_iter()
+                .filter(|s| s.name == span::HTTP_REQUEST)
+                .collect();
+            if !spans.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            spans.len(),
+            1,
+            "only the request with a valid traceparent: {spans:?}"
+        );
+        let s = &spans[0];
+        assert_eq!(s.span_kind, opentelemetry::trace::SpanKind::Server);
+        assert_eq!(
+            format!("{:032x}", s.span_context.trace_id()),
+            "4bf92f3577b34da6a3ce929d0e0e4736"
+        );
+        assert_eq!(format!("{:016x}", s.parent_span_id), "00f067aa0ba902b7");
+        let attr_of = |k: &str| {
+            s.attributes
+                .iter()
+                .find(|kv| kv.key.as_str() == k)
+                .map(|kv| kv.value.to_string())
+        };
+        assert_eq!(attr_of("http.route").as_deref(), Some("/api/health"));
+        assert_eq!(attr_of("http.response.status_code").as_deref(), Some("200"));
+        let count = |outcome: &str| -> u64 {
+            reader
+                .points(metric::HTTP_TRACEPARENT)
+                .iter()
+                .filter(|p| p.attrs[attr::OUTCOME] == outcome)
+                .map(|p| p.value)
+                .sum()
+        };
+        assert_eq!(
+            (count("linked"), count("absent"), count("invalid")),
+            (1, 1, 1)
+        );
+    }
+
     /// Every route the server registers, with its method. Kept by hand: the probe fails when a
     /// line above goes missing, because the path then reaches the 404 fallback.
     fn known_routes() -> Vec<(Method, String)> {
@@ -297,6 +408,10 @@ mod tests {
                     .replace("{number}", "1"),
             ),
             (Method::POST, traffic_routes::TRAFFIC_DISMISSALS.into()),
+            (
+                Method::POST,
+                rubato_protocol::telemetry_relay::routes::TELEMETRY_TRACES.into(),
+            ),
             (
                 Method::DELETE,
                 format!("{}/1", traffic_routes::TRAFFIC_DISMISSALS),

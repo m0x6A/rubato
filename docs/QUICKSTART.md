@@ -153,9 +153,33 @@ The team's side of the setup:
    ```
 
    Tempo's metrics-generator takes the same as `service_graphs.dimensions`.
+
+   **The pairing wait must cover the web.** An edge needs the client span and the server span
+   of one call to reach the generator within its wait: the connector's `store.ttl` (2 s by
+   default) or Tempo's `service_graphs.wait` (10 s). The web posts its spans within 1 s through
+   the server's relay, and the server exports every 5 s (ADR 0082), so set at least 10 s:
+
+   ```yaml
+   connectors:
+     servicegraph:
+       dimensions: [service.namespace]
+       store:
+         ttl: 10s
+   ```
+
+   Grafana Cloud's generator waits 10 s. The dashboard panel "HTTP trace context" shows the
+   server's side: `linked` is a request under the web's span.
 3. **Calls to parts that emit nothing get `peer.service`.** For GitHub or a file, the caller sets
    `peer.service` on its client span. The connector then draws a virtual node, which has no
-   namespace.
+   namespace. The skill, plan-check and the server name the plan file and the map this way
+   (`peer.service=plan-file`, `system-map`), so those parts carry `service` without a namespace.
+4. **The web's own spans go through the server (ADR 0082).** With `OTEL_EXPORTER_OTLP_ENDPOINT`
+   set on the server, the web posts its client spans to `POST /api/telemetry/traces`, and the
+   server forwards them, rewritten to `service.name=web`, with its own OTLP headers. Without an
+   endpoint the route answers 404 and the web stops sending.
+5. **plan-check in CI.** Set the repository secrets `RUBATO_OTLP_ENDPOINT` and
+   `RUBATO_OTLP_HEADERS` to the same values as the server's; the plan-check step reads them. A
+   fork's pull request gets no secrets and emits nothing.
 
 A failing query API makes the state `failing` (log `traffic source failing`). A malformed answer
 is rejected and the previous report kept. A source set up wrong (a bad URL, window or label)

@@ -9,6 +9,7 @@ use anyhow::Result;
 use opentelemetry::KeyValue;
 use rubato_protocol::IssueRef;
 use rubato_protocol::otel::attr;
+use tracing::Instrument as _;
 
 /// Slug from the branch `issue/<n>-<slug>`.
 pub fn slug_of(branch: &str, number: u64) -> String {
@@ -34,7 +35,14 @@ pub async fn fetch_and_store(
     head_sha: &str,
 ) -> Result<()> {
     let path = plan_path(map, issue, branch);
-    match app.github.file(&issue.repo, &path, head_sha).await? {
+    match app
+        .github
+        .file(&issue.repo, &path, head_sha)
+        .instrument(crate::kernel::github::part_read(
+            crate::kernel::github::READS_PLAN,
+        ))
+        .await?
+    {
         Some(text) => match parse_plan(&text, &path) {
             Ok(mut plan) => {
                 plan.git_ref = Some(branch.to_owned());
@@ -102,6 +110,9 @@ pub async fn hash_on_branch(
     Ok(app
         .github
         .file(&issue.repo, &path, branch)
+        .instrument(crate::kernel::github::part_read(
+            crate::kernel::github::READS_PLAN,
+        ))
         .await?
         .map(|text| approval_hash(&text)))
 }

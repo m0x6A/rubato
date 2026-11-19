@@ -97,9 +97,26 @@ Feature: The system map
     When a person opens the map
     Then it shows the Traffic lens, headed by the calls a minute, the error share and what the map does not explain
     And each seam that carried calls is a pipe, heavier for more calls and coloured by its error share
-    And each part says its calls a minute in and out, and a part with no calls steps back
+    And each part says its calls a minute in and out
     When the report is not fresh
     Then the map opens on Structure
+
+  @map.traffic-three-states
+  Scenario: A part with no calls says what is known about it, and a part nothing can observe is not read as silent
+    Given a fresh traffic report with a lookback
+    When a person opens the map
+    Then a part with no calls in the window but calls in the last day says it was last seen within a day, at full opacity
+    And a part the lookback did not see says it was not seen in 7 d, and steps back
+    And a part with no service on the map is hatched and says it is not instrumented
+    When no lookback has answered yet
+    Then a part with no calls says nothing about when it was last seen, and does not step back
+
+  @map.web-on-traffic
+  Scenario: The calls the web makes show on the Traffic lens
+    Given a server that exports traces
+    When the web calls the server
+    Then the web sends each call's span to its own server, with the call's trace
+    And the server's handling of the call is a child of the web's span, in the same trace
 
   @map.ghosts-and-discrepancies
   Scenario: Observed traffic the map does not declare shows as ghosts and discrepancies

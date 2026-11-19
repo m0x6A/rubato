@@ -1828,6 +1828,24 @@
         "progress"
       ]
     },
+    "LastSeen": {
+      "description": "A quiet part or seam, and the shortest lookback it was seen in (ADR 0083).",
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/MapRef"
+        },
+        "within_secs": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ref",
+        "within_secs"
+      ]
+    },
     "LeadView": {
       "description": "A lead and its live workers, for the web (`Overview.leads`).",
       "type": "object",
@@ -2176,6 +2194,29 @@
           "description": "More ghosts or ghost edges were seen than the overview carries.",
           "type": "boolean",
           "default": false
+        },
+        "last_seen": {
+          "description": "Parts and declared seams with no calls in the window that were seen in a longer\nlookback, with the shortest one, in seconds (ADR 0083). Empty unless `fresh`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LastSeen"
+          }
+        },
+        "lookback_secs": {
+          "description": "The longest lookback asked, when one was: a quiet part or seam with `service` that is\nnot in `last_seen` was not seen that far back. Absent unless `fresh` and asked.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "not_instrumented": {
+          "description": "Parts without a `service`, and seams with such an end: nothing can observe them, so\nthey are never drawn as silent (ADR 0083). Empty unless `fresh`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapRef"
+          }
         },
         "observed_at": {
           "description": "When the last good report's window ended.",

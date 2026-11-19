@@ -37,9 +37,28 @@ enum Mode {
 /// One request the fake saw: its form fields and its authorization header.
 type Seen = (HashMap<String, String>, Option<String>);
 
+/// How the fake answers a lookback's queries (ADR 0083), apart from the window's.
+#[derive(Clone, Copy, PartialEq)]
+enum Look {
+    /// As the window's.
+    Same,
+    /// The 7 d query never answers in time.
+    HangWeek,
+    /// Every lookback query fails with this status.
+    Status(u16),
+}
+
 struct Fake {
     mode: Mutex<Mode>,
+    look: Mutex<Look>,
     seen: Mutex<Vec<Seen>>,
+}
+
+/// Whether a query is a lookback's: over 6 h, 1 d or 7 d rather than a window.
+fn is_lookback(q: &str) -> bool {
+    rubato_protocol::traffic::LOOKBACK_SECS
+        .iter()
+        .any(|s| q.contains(&format!("[{s}s]")))
 }
 
 async fn query(
@@ -57,8 +76,22 @@ async fn query(
     let failed = form
         .get("query")
         .is_some_and(|q| q.contains("request_failed_total"));
+    let q = form.get("query").cloned().unwrap_or_default();
     f.seen.lock().unwrap().push((form, auth));
     SERVED.fetch_add(1, Ordering::Relaxed);
+    if is_lookback(&q) {
+        let look = *f.look.lock().unwrap();
+        match look {
+            Look::Same => {}
+            Look::HangWeek if q.contains("[604800s]") => {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+            Look::HangWeek => {}
+            Look::Status(code) => {
+                return (StatusCode::from_u16(code).unwrap(), "no").into_response();
+            }
+        }
+    }
     let mode = f.mode.lock().unwrap().clone();
     match mode {
         Mode::Answer(req, fail) => {
@@ -76,6 +109,7 @@ async fn query(
 async fn fake(mode: Mode) -> (String, Arc<Fake>) {
     let f = Arc::new(Fake {
         mode: Mutex::new(mode),
+        look: Mutex::new(Look::Same),
         seen: Mutex::new(vec![]),
     });
     let app = axum::Router::new()
@@ -652,4 +686,132 @@ async fn every_connect_is_checked() {
     );
     assert!(e.contains("redirects are not followed"), "{e}");
     println!("checked 2 refused targets, 2 allowed, 1 redirect");
+}
+
+/// Lookback queries the fake has answered so far.
+fn lookbacks(f: &Fake) -> usize {
+    f.seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(form, _)| form.get("query").is_some_and(|q| is_lookback(q)))
+        .count()
+}
+
+/// ADR 0083: every edge any lookback saw, in the window or not, with the shortest lookback; the
+/// longest one asked. A one-hour window asks 6 h, 1 d and 7 d.
+#[tokio::test]
+async fn a_lookback_keeps_every_edge_it_saw_with_the_shortest_lookback() {
+    let (url, f) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    let l = PrometheusSource::new(config(&url, &[]))
+        .lookback_at(at())
+        .await
+        .unwrap()
+        .expect("a lookback");
+    assert_eq!(l.lookback_secs, 604_800);
+    // The fixture's five edges with calls, each first seen in the 6 h lookback.
+    assert_eq!(l.seen.len(), 5, "{:?}", l.seen);
+    assert!(
+        l.seen.iter().all(|e| e.within_secs == 21_600),
+        "{:?}",
+        l.seen
+    );
+    assert!(
+        l.seen.iter().any(|e| e.client == "web"),
+        "edges in the window are kept too"
+    );
+    assert_eq!(lookbacks(&f), 3, "6 h, 1 d and 7 d");
+    // A window of a day skips the lookbacks no longer than it.
+    let (url, f) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    let day = config(&url, &[("RUBATO_TRAFFIC_WINDOW_SECS", "86400")]);
+    let l = PrometheusSource::new(day)
+        .lookback_at(at())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(l.seen.iter().all(|e| e.within_secs == 604_800));
+    assert_eq!(lookbacks(&f), 1);
+}
+
+/// ADR 0083: the lookback runs on the first tick and then every tenth, after the window's
+/// report is written; the report carries its answer.
+#[tokio::test]
+async fn the_lookback_runs_on_the_first_tick_and_every_tenth() {
+    let (url, f) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    let (app, _tmp) = app(&url).await;
+    let mut fetcher = Fetcher::new(PrometheusSource::new(config(&url, &[])), Utc::now());
+    let mut asked = Vec::new();
+    for _ in 0..11 {
+        assert_eq!(fetcher.tick(&app, Utc::now()).await, Outcome::Ok);
+        asked.push(lookbacks(&f));
+    }
+    assert_eq!(
+        asked,
+        vec![3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 6],
+        "first tick, then the eleventh"
+    );
+    let latest = app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE).await;
+    let report = latest.report.unwrap();
+    assert_eq!(report.lookback_secs, Some(604_800));
+    assert_eq!(report.seen.len(), 5);
+    assert!(report.validate().is_ok());
+}
+
+/// Must not break (plan #300): a 7 d query that hangs never makes the window late or failing.
+/// The lookback times out under the fetch's timeout; the report is fresh and claims nothing.
+#[tokio::test]
+async fn a_hanging_lookback_leaves_the_window_fresh_and_claims_nothing() {
+    let (url, f) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    *f.look.lock().unwrap() = Look::HangWeek;
+    let (app, _tmp) = app(&url).await;
+    let mut fetcher = Fetcher::new(PrometheusSource::new(config(&url, &[])), Utc::now())
+        .with_timeout(Duration::from_millis(500));
+    let started = std::time::Instant::now();
+    assert_eq!(fetcher.tick(&app, Utc::now()).await, Outcome::Ok);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    let latest = app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE).await;
+    assert_eq!(failing(&latest.source), None);
+    let report = latest.report.expect("the window's report was written");
+    assert_eq!(report.lookback_secs, None, "no answer, no claim");
+    assert!(report.seen.is_empty());
+}
+
+/// A failing lookback keeps the previous answer; with none, nothing is claimed.
+#[tokio::test]
+async fn a_failing_lookback_keeps_the_previous_answer() {
+    let (url, f) = fake(Mode::Answer(REQUEST.into(), FAILED.into())).await;
+    *f.look.lock().unwrap() = Look::Status(500);
+    let (app, _tmp) = app(&url).await;
+    let mut fetcher = Fetcher::new(PrometheusSource::new(config(&url, &[])), Utc::now());
+    assert_eq!(fetcher.tick(&app, Utc::now()).await, Outcome::Ok);
+    let report = |app: &App| {
+        let app = app.clone();
+        async move {
+            app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE)
+                .await
+                .report
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        report(&app).await.lookback_secs,
+        None,
+        "failing since start: unknown"
+    );
+    *f.look.lock().unwrap() = Look::Same;
+    for _ in 0..10 {
+        fetcher.tick(&app, Utc::now()).await;
+    }
+    assert_eq!(report(&app).await.lookback_secs, Some(604_800));
+    *f.look.lock().unwrap() = Look::Status(500);
+    for _ in 0..10 {
+        fetcher.tick(&app, Utc::now()).await;
+    }
+    let r = report(&app).await;
+    assert_eq!(r.lookback_secs, Some(604_800), "the previous answer stays");
+    assert_eq!(r.seen.len(), 5);
 }

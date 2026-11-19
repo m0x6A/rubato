@@ -14,6 +14,7 @@ use rubato_protocol::pulls::{
     ChangedFile, CheckRun, PersonFacts, PlanAtHead, PlanGate, PullFacts, PullState, plan_gate,
 };
 use rubato_protocol::{ChecksStatus, IssueRef, plan_fit, trusted_author};
+use tracing::Instrument as _;
 
 /// The plan file at the head as read; parsed per request, since fit depends on the map.
 #[derive(Debug, Clone)]
@@ -208,7 +209,13 @@ async fn fetch(app: &App, map: &LoadedMap, repo: &str, number: u64) -> Result<Op
                 .find(|p| p.issue == issue)
                 .map(|p| p.path)
                 .unwrap_or_else(|| plans::plan_path(map, &issue, &pull.branch));
-            match gh.file(repo, &path, &head).await {
+            match gh
+                .file(repo, &path, &head)
+                .instrument(crate::kernel::github::part_read(
+                    crate::kernel::github::READS_PLAN,
+                ))
+                .await
+            {
                 Ok(Some(text)) => RawPlan::Text { path, text },
                 Ok(None) => RawPlan::Absent,
                 Err(e) => {

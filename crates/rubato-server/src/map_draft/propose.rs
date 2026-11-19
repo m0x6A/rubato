@@ -20,6 +20,7 @@ use opentelemetry::KeyValue;
 use rubato_protocol::map_draft::{DraftOp, ProposalState, ProposeResponse, routes};
 use rubato_protocol::otel::attr;
 use sha2::Digest;
+use tracing::Instrument as _;
 
 /// The reason values of a refused proposal, as counted in `rubato.web.rejected`.
 pub mod reason {
@@ -244,6 +245,9 @@ pub async fn propose(
     let on_branch = match app
         .github
         .file(&cfg.map_repo, &cfg.map_path, &cfg.map_ref)
+        .instrument(crate::kernel::github::part_read(
+            crate::kernel::github::READS_MAP,
+        ))
         .await
     {
         Ok(f) => f,
@@ -335,6 +339,9 @@ pub async fn propose(
     let written = app
         .github
         .file(&cfg.map_repo, &cfg.map_path, &row.branch)
+        .instrument(crate::kernel::github::part_read(
+            crate::kernel::github::READS_MAP,
+        ))
         .await
         .map_err(|e| fail("contents", e))?;
     if written.as_deref() != Some(content.as_str()) {

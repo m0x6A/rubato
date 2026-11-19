@@ -1,7 +1,7 @@
 //! The traffic source port, and the development file that fills it.
 
 use chrono::{DateTime, Utc};
-use rubato_protocol::TrafficReport;
+use rubato_protocol::{SeenEdge, TrafficReport};
 use std::path::PathBuf;
 
 /// Why a fetch gave no report.
@@ -15,12 +15,25 @@ pub enum SourceError {
     Parse(String),
 }
 
+/// What a lookback saw (ADR 0083): every edge with calls in any lookback, each with the shortest
+/// one, and the longest lookback asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lookback {
+    pub seen: Vec<SeenEdge>,
+    pub lookback_secs: u32,
+}
+
 /// Anything that can produce a `TrafficReport` (ADR 0039). One fetch per interval. Each backend
 /// is one adapter behind this port (ADR 0040).
 pub trait Source: Send + Sync {
     /// The adapter, as `rubato.traffic.source` names it.
     fn name(&self) -> &'static str;
     fn fetch(&self) -> impl Future<Output = Result<TrafficReport, SourceError>> + Send;
+    /// When each edge was last seen, over lookbacks longer than the window (ADR 0083). `None`
+    /// when the source has no such thing: then nothing is claimed about quiet parts.
+    fn lookback(&self) -> impl Future<Output = Result<Option<Lookback>, SourceError>> + Send {
+        async { Ok(None) }
+    }
 }
 
 /// The source config selects: one adapter or the other, never both (ADR 0040).
@@ -42,6 +55,14 @@ impl Source for ConfiguredSource {
         match self {
             ConfiguredSource::DevFile(s) => s.fetch().await,
             ConfiguredSource::Prometheus(s) => s.fetch().await,
+        }
+    }
+
+    async fn lookback(&self) -> Result<Option<Lookback>, SourceError> {
+        match self {
+            // The development file carries `seen` and `lookback_secs` in itself, if any.
+            ConfiguredSource::DevFile(_) => Ok(None),
+            ConfiguredSource::Prometheus(s) => s.lookback().await,
         }
     }
 }

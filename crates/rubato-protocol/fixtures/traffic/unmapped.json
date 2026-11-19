@@ -24,7 +24,8 @@
       "observed_parts": ["a", "b"],
       "unmapped_services": 2,
       "unmapped_sample": ["<img src=x>", "checkout"],
-      "truncated": false
+      "truncated": false,
+      "not_instrumented": [{ "kind": "node", "id": "f" }, { "kind": "seam", "id": "e-f" }]
     },
     "findings": []
   }

@@ -1044,6 +1044,8 @@ mod tests {
                     },
                 ],
                 truncated: false,
+                seen: vec![],
+                lookback_secs: None,
             }),
             source: SourceStatus::Configured {
                 fetch_secs: 60,

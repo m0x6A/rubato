@@ -36,6 +36,16 @@ fn resource(service_name: &'static str) -> opentelemetry_sdk::Resource {
     )
 }
 
+/// The `service.namespace` this server's telemetry carries (ADR 0080): the environment's, else
+/// `rubato`. The web's relayed spans carry the same one (ADR 0082).
+pub fn own_namespace() -> String {
+    use opentelemetry::Key;
+    use rubato_protocol::otel::{DEFAULT_SERVICE_NAMESPACE, semconv::SERVICE_NAMESPACE};
+    resource("rubato-server")
+        .get(&Key::from_static_str(SERVICE_NAMESPACE))
+        .map_or_else(|| DEFAULT_SERVICE_NAMESPACE.to_owned(), |v| v.to_string())
+}
+
 fn namespaced(resource: opentelemetry_sdk::Resource) -> opentelemetry_sdk::Resource {
     use opentelemetry::{Key, KeyValue};
     use rubato_protocol::otel::{DEFAULT_SERVICE_NAMESPACE, semconv::SERVICE_NAMESPACE};
@@ -112,6 +122,12 @@ pub struct Metrics {
     pub events_dropped: Counter<u64>,
     /// Inbound envelopes by what their `traceparent` gave: linked, absent, invalid (ADR 0081).
     pub inbound_traceparent: Counter<u64>,
+    /// HTTP requests by their `traceparent` (ADR 0082): `linked`, `absent`, `invalid`.
+    pub http_traceparent: Counter<u64>,
+    /// Posts to the web's span relay by `rubato.outcome` (ADR 0082).
+    pub telemetry_relay: Counter<u64>,
+    /// Spans the relay's rewrite dropped.
+    pub telemetry_relay_dropped: Counter<u64>,
     pub rate_limit_remaining: Gauge<u64>,
     pub rate_limit_limit: Gauge<u64>,
     pub plan_parse_failures: Counter<u64>,
@@ -160,6 +176,8 @@ pub struct Metrics {
     pub plans_approvals_opening: Gauge<u64>,
     pub pulls_merges_opening: Gauge<u64>,
     pub traffic_fetches: Counter<u64>,
+    /// Traffic lookbacks by `rubato.outcome` (ADR 0083).
+    pub traffic_lookback: Counter<u64>,
     /// Seconds; no unit, so the series is `rubato_traffic_report_age` as the alert names it.
     pub traffic_report_age: Gauge<u64>,
     pub traffic_seams_quiet: Gauge<u64>,
@@ -222,6 +240,9 @@ impl Metrics {
             issues_blocked_from: m.u64_gauge(otel::metric::ISSUES_BLOCKED_FROM).build(),
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
             inbound_traceparent: m.u64_counter(otel::metric::INBOUND_TRACEPARENT).build(),
+            http_traceparent: m.u64_counter(otel::metric::HTTP_TRACEPARENT).build(),
+            telemetry_relay: m.u64_counter(otel::metric::TELEMETRY_RELAY).build(),
+            telemetry_relay_dropped: m.u64_counter(otel::metric::TELEMETRY_RELAY_DROPPED).build(),
             rate_limit_remaining: m
                 .u64_gauge(otel::metric::GITHUB_RATE_LIMIT_REMAINING)
                 .build(),
@@ -270,6 +291,7 @@ impl Metrics {
             plans_approvals_opening: m.u64_gauge(otel::metric::PLANS_APPROVALS_OPENING).build(),
             pulls_merges_opening: m.u64_gauge(otel::metric::PULLS_MERGES_OPENING).build(),
             traffic_fetches: m.u64_counter(otel::metric::TRAFFIC_FETCHES).build(),
+            traffic_lookback: m.u64_counter(otel::metric::TRAFFIC_LOOKBACK).build(),
             traffic_report_age: m.u64_gauge(otel::metric::TRAFFIC_REPORT_AGE).build(),
             traffic_configured: m.u64_gauge(otel::metric::TRAFFIC_CONFIGURED).build(),
             traffic_seams_quiet: m.u64_gauge(otel::metric::TRAFFIC_SEAMS_QUIET).build(),

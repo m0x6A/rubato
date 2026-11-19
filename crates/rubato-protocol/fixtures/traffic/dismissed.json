@@ -44,7 +44,8 @@
         { "id": 4, "target": { "kind": "edge", "from": { "kind": "part", "id": "a" }, "to": { "kind": "part", "id": "gh" } }, "author": "teammate", "at": "2026-11-13T11:03:00Z" }
       ],
       "unmapped_services": 0,
-      "truncated": false
+      "truncated": false,
+      "not_instrumented": [{ "kind": "node", "id": "f" }, { "kind": "seam", "id": "e-f" }]
     },
     "findings": [
       { "kind": "seam_quiet", "seam": "a-b-events", "window_secs": 3600 },

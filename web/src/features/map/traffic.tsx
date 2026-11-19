@@ -131,8 +131,85 @@ export interface PartRate {
   calls: number;
 }
 
-/** What a part card shows in the Traffic lens: its rates, or "none" when the report saw no calls to or from it. */
-export type PartTraffic = PartRate | "none";
+/**
+ * A part or seam with no calls in the window (ADR 0083): seen in a longer lookback, not seen in
+ * the longest one asked, or unknown because no lookback has answered. Unknown claims nothing.
+ */
+export type QuietState = { quiet: "seen"; withinSecs: number } | { quiet: "not_seen"; lookbackSecs: number } | { quiet: "unknown" };
+
+/** What a part card shows in the Traffic lens: its rates, a quiet state, or that nothing can observe it. */
+export type PartTraffic = PartRate | QuietState | "not_instrumented";
+
+/** Whether `t` is a part's rates rather than a quiet or not-instrumented state. */
+export function isRate(t: PartTraffic): t is PartRate {
+  return typeof t === "object" && "in" in t;
+}
+
+/** The quiet state of a part or seam, or that it is not instrumented (ADR 0083). */
+export function quietState(kind: "node" | "seam", id: string, t: ObservedTraffic): QuietState | "not_instrumented" {
+  if ((t.not_instrumented ?? []).some((r) => r.kind === kind && r.id === id)) {
+    return "not_instrumented";
+  }
+  const seen = (t.last_seen ?? []).find((l) => l.ref.kind === kind && l.ref.id === id);
+  if (seen) {
+    return { quiet: "seen", withinSecs: seen.within_secs };
+  }
+  return t.lookback_secs ? { quiet: "not_seen", lookbackSecs: t.lookback_secs } : { quiet: "unknown" };
+}
+
+/** A part's state in the Traffic lens: its rates when it carried calls, else its quiet state. */
+export function partTrafficOf(id: string, t: ObservedTraffic, rates: Map<string, PartRate>): PartTraffic {
+  const q = quietState("node", id, t);
+  if (q === "not_instrumented") {
+    return q;
+  }
+  return rates.get(id) ?? q;
+}
+
+/** "within 6 h", "within a day", "within a week": the lookback's bucket in words, never a guessed time. */
+export function withinText(secs: number): string {
+  if (secs <= 21_600) {
+    return `within ${windowText(secs)}`;
+  }
+  return secs <= 86_400 ? "within a day" : secs <= 604_800 ? "within a week" : `within ${windowText(secs)}`;
+}
+
+/** The chip's words for a quiet state; nothing when nothing is known. */
+export function quietText(q: QuietState | "not_instrumented"): string | undefined {
+  if (q === "not_instrumented") {
+    return "not instrumented";
+  }
+  switch (q.quiet) {
+    case "seen":
+      return `last seen ${withinText(q.withinSecs)}`;
+    case "not_seen":
+      return `not seen in ${windowText(q.lookbackSecs)}`;
+    case "unknown":
+      return undefined;
+  }
+}
+
+/**
+ * What a seam's chip adds in the Traffic lens: its rate when it carried calls, "no calls in 1 h"
+ * when it is quiet as a finding, else when it was last seen or that nothing can observe it.
+ */
+export function seamChip(e: { id: string; quietFor?: number | undefined; traffic?: SeamTraffic | undefined }, t: ObservedTraffic): string | undefined {
+  if (e.quietFor !== undefined) {
+    return `no calls in ${windowText(e.quietFor)}`;
+  }
+  if (e.traffic) {
+    return chipTraffic(e.traffic, t.window_secs ?? 3600);
+  }
+  return quietText(quietState("seam", e.id, t));
+}
+
+/** The class a quiet state draws with: seen plainly, not seen faded, unknown plain, not instrumented hatched. */
+export function quietClass(q: QuietState | "not_instrumented"): string {
+  if (q === "not_instrumented") {
+    return "blind";
+  }
+  return q.quiet === "seen" ? "seen" : q.quiet === "not_seen" ? "unobserved" : "";
+}
 
 /** Calls a minute into and out of each map part, over declared seams, undeclared edges and ghost edges. */
 export function partRates(t: ObservedTraffic, seams: { id: string; from: string; to: string }[]): Map<string, PartRate> {
@@ -213,6 +290,10 @@ export function TrafficVitals({ traffic, quietSeams, seams, now = Date.now() }: 
       <div className={offMap > 0 ? "vital warn" : "vital"}>
         <span className="vital-label">not on the map</span>
         <span className="vital-value">{offMap}</span>
+      </div>
+      <div className="vital blind" title="Parts with no service on the map: nothing can observe them, so they are never drawn as silent">
+        <span className="vital-label">not instrumented</span>
+        <span className="vital-value">{(traffic.not_instrumented ?? []).filter((r) => r.kind === "node").length}</span>
       </div>
       <div className="vital when">
         <span className="vital-label">observed</span>

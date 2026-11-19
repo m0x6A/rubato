@@ -23,7 +23,8 @@
       "undeclared": [{ "from": "a", "to": "c", "calls": 3, "errors": 1 }],
       "observed_parts": ["a", "b", "c"],
       "unmapped_services": 0,
-      "truncated": true
+      "truncated": true,
+      "not_instrumented": [{ "kind": "node", "id": "f" }, { "kind": "seam", "id": "e-f" }]
     },
     "findings": [
       { "kind": "seam_quiet", "seam": "b-c", "window_secs": 3600 },

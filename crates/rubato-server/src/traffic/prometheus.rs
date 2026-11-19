@@ -5,8 +5,8 @@
 
 use super::source::{Source, SourceError};
 use chrono::{DateTime, TimeZone, Utc};
-use rubato_protocol::traffic::{MAX_EDGES, MAX_WINDOW_SECS, MIN_WINDOW_SECS};
-use rubato_protocol::{TrafficEdge, TrafficReport};
+use rubato_protocol::traffic::{LOOKBACK_SECS, MAX_EDGES, MAX_WINDOW_SECS, MIN_WINDOW_SECS};
+use rubato_protocol::{SeenEdge, TrafficEdge, TrafficReport};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
@@ -256,10 +256,15 @@ impl PrometheusConfig {
     /// (issue #288), only series whose client or server is in one of them: `or` keeps a series
     /// that matches both once.
     pub fn query(&self, metric: &str) -> String {
+        self.query_over(metric, self.window_secs)
+    }
+
+    /// The same query over `secs` instead of the window: a lookback (ADR 0083).
+    pub fn query_over(&self, metric: &str, secs: u32) -> String {
         let increase = |matcher: &str| {
             format!(
                 "increase({}{}{}[{}s])",
-                self.metric_prefix, metric, matcher, self.window_secs
+                self.metric_prefix, metric, matcher, secs
             )
         };
         let series = if self.namespaces.is_empty() {
@@ -359,14 +364,24 @@ impl PrometheusSource {
         }
     }
 
-    /// One instant query, the samples keyed by their pair of services.
+    /// One instant query over the window, the samples keyed by their pair of services.
     async fn samples(
         &self,
         metric: &str,
         at: DateTime<Utc>,
     ) -> Result<BTreeMap<Key, u64>, SourceError> {
+        self.samples_over(metric, self.config.window_secs, at).await
+    }
+
+    /// One instant query over `secs`.
+    async fn samples_over(
+        &self,
+        metric: &str,
+        secs: u32,
+        at: DateTime<Utc>,
+    ) -> Result<BTreeMap<Key, u64>, SourceError> {
         let form = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("query", &self.config.query(metric))
+            .append_pair("query", &self.config.query_over(metric, secs))
             .append_pair("time", &at.timestamp().to_string())
             .finish();
         let mut req = self
@@ -485,7 +500,54 @@ impl PrometheusSource {
             window_secs: self.config.window_secs,
             edges,
             truncated,
+            // The lookback task fills these (ADR 0083); the window fetch never does.
+            seen: Vec::new(),
+            lookback_secs: None,
         })
+    }
+}
+
+impl PrometheusSource {
+    /// The lookbacks at `at` (ADR 0083): the request totals over each lookback longer than the
+    /// window, shortest first. Every edge with calls in any of them, in the window or not, with
+    /// the shortest one; cut at `MAX_EDGES`, busiest lookback first.
+    pub async fn lookback_at(
+        &self,
+        at: DateTime<Utc>,
+    ) -> Result<Option<super::source::Lookback>, SourceError> {
+        let spans: Vec<u32> = LOOKBACK_SECS
+            .into_iter()
+            .filter(|s| *s > self.config.window_secs)
+            .collect();
+        let Some(&longest) = spans.last() else {
+            return Ok(None);
+        };
+        let mut first: BTreeMap<Key, u32> = BTreeMap::new();
+        for secs in spans {
+            for (key, calls) in self.samples_over("request_total", secs, at).await? {
+                if calls > 0 {
+                    first.entry(key).or_insert(secs);
+                }
+            }
+        }
+        let mut seen: Vec<SeenEdge> = first
+            .into_iter()
+            .map(
+                |((client, client_namespace, server, server_namespace), within_secs)| SeenEdge {
+                    client,
+                    server,
+                    client_namespace,
+                    server_namespace,
+                    within_secs,
+                },
+            )
+            .collect();
+        seen.sort_by_key(|e| e.within_secs);
+        seen.truncate(MAX_EDGES);
+        Ok(Some(super::source::Lookback {
+            seen,
+            lookback_secs: longest,
+        }))
     }
 }
 
@@ -496,5 +558,9 @@ impl Source for PrometheusSource {
 
     async fn fetch(&self) -> Result<TrafficReport, SourceError> {
         self.report_at(Utc::now()).await
+    }
+
+    async fn lookback(&self) -> Result<Option<super::source::Lookback>, SourceError> {
+        self.lookback_at(Utc::now()).await
     }
 }
