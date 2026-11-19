@@ -2128,6 +2128,109 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 117,
+      "title": "Every part on the Traffic lens (ADR 0082, ADR 0083)",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 166
+      },
+      "panels": []
+    },
+    {
+      "id": 118,
+      "title": "Web spans relayed",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 167
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Posts to the web's span relay (POST /api/telemetry/traces, ADR 0082) per hour by outcome: forwarded (rewritten and sent to the OTLP endpoint), off (the server exports no traces; the web stops), unauthenticated, too_large, invalid, rate_limited (past the per-login bucket), export_failed (the OTLP endpoint refused or did not answer; the log line telemetry relay export failed carries the status). Dropped spans are those the rewrite would not vouch for: an unknown route, not client-kind, or out of time. Forwarded with no web-server pipe on the Traffic lens: see HTTP trace context.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_telemetry_relay_total[1h])) or label_replace(sum(increase(rubato_telemetry_relay_dropped_total[1h])), \"rubato_outcome\", \"spans dropped\", \"\", \"\")",
+          "legendFormat": "{{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 119,
+      "title": "HTTP trace context",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 167
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "HTTP requests per hour by what their traceparent gave (ADR 0082): linked (a server span under the web's client span: the web-server pipe), absent (assets, health checks, scripts) and invalid. Linked falling while the web is used, or invalid rising, means the web's calls stopped pairing with the server's on the service graph.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_http_traceparent_total[1h]))",
+          "legendFormat": "{{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 120,
+      "title": "Traffic lookback",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 167
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Traffic lookbacks per hour by outcome (ADR 0083): ok, failed, timeout. The lookback asks the service graph over 6 h, 1 d and 7 d on the first fetch and every tenth, after the window's report. A failing one keeps the previous answer, or claims nothing: quiet parts then read without a last seen, never as not seen. The log line traffic lookback carries rubato.traffic.seen.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_workspace, rubato_outcome) (increase(rubato_traffic_lookback_total[1h]))",
+          "legendFormat": "{{rubato_workspace}} {{rubato_outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

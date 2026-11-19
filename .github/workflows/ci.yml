@@ -60,6 +60,12 @@ jobs:
       - run: pnpm test
       - name: Plan check on this repo's own plans
         run: pnpm plan-check --map docs/design/rubato-map.yml --plans "docs/plans/*.md"
+        # Plan #300: its reads of the plans and the map show on the Traffic lens. Without the
+        # secrets (a fork's pull request) the values are empty and it emits nothing, as before.
+        env:
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.RUBATO_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.RUBATO_OTLP_HEADERS }}
+          OTEL_RESOURCE_ATTRIBUTES: service.namespace=rubato
       - name: Every e2e test cites a scenario of features/ (ADR 0069)
         run: pnpm scenarios check
 
