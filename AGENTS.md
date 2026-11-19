@@ -119,6 +119,7 @@ pulls           a pull request's view, merging as the person    pr_merges
 import          a plan written outside Rubato becomes your draft  (none)
 rooms           a plan's room: messages, seam notices, agents called in, turns  room_messages, room_agents, room_requests
 voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
+telemetry_relay  the web's own spans, rewritten and forwarded over OTLP (ADR 0082)   (none; token buckets in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 agent_reports   what each launched agent last said it is doing  agent_reports

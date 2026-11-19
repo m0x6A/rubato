@@ -7,8 +7,8 @@
 use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
-    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages, traffic, voice,
-    web_link, webhooks, workspace_settings,
+    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages,
+    telemetry_relay, traffic, voice, web_link, webhooks, workspace_settings,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -184,6 +184,14 @@ pub fn router(app: App) -> Router {
         .route(auth_routes::LOGIN, get(auth::login))
         .route(auth_routes::CALLBACK, get(auth::callback))
         .route(auth_routes::LOGOUT, post(auth::logout))
+        // ADR 0082: the web's own client spans, rewritten and forwarded; 404 while the server
+        // exports no traces. The body cap is the relay's own.
+        .route(
+            rubato_protocol::telemetry_relay::routes::TELEMETRY_TRACES,
+            post(telemetry_relay::relay).layer(axum::extract::DefaultBodyLimit::max(
+                rubato_protocol::telemetry_relay::MAX_BODY_BYTES,
+            )),
+        )
         .route("/api/{*rest}", any(unknown_api_path))
         .route("/ws/{*rest}", any(unknown_api_path))
         .route("/auth/{*rest}", any(unknown_api_path))
@@ -400,6 +408,10 @@ mod tests {
                     .replace("{number}", "1"),
             ),
             (Method::POST, traffic_routes::TRAFFIC_DISMISSALS.into()),
+            (
+                Method::POST,
+                rubato_protocol::telemetry_relay::routes::TELEMETRY_TRACES.into(),
+            ),
             (
                 Method::DELETE,
                 format!("{}/1", traffic_routes::TRAFFIC_DISMISSALS),

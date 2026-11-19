@@ -74,7 +74,11 @@
           "id": "web",
           "kind": "context",
           "path": "web",
-          "repo": "m0x6A/rubato"
+          "repo": "m0x6A/rubato",
+          "service": {
+            "name": "web",
+            "namespace": "rubato"
+          }
         },
         {
           "description": "Claude Code skill installed in every connected repo. Loads map and ADRs, writes the plan, ships hook config.",
@@ -103,14 +107,20 @@
           "id": "plan-file",
           "kind": "contract",
           "path": "schema/plan.schema.json",
-          "repo": "m0x6A/rubato"
+          "repo": "m0x6A/rubato",
+          "service": {
+            "name": "plan-file"
+          }
         },
         {
           "description": "A team's system-map.yml. Node and seam ids referenced by pins and plans.",
           "id": "system-map",
           "kind": "contract",
           "path": "schema/system-map.schema.json",
-          "repo": "m0x6A/rubato"
+          "repo": "m0x6A/rubato",
+          "service": {
+            "name": "system-map"
+          }
         },
         {
           "description": "Issues, comments, PRs, checks, OAuth, REST, Projects v2 GraphQL, plan files on branches.",

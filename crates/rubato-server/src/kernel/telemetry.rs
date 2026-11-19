@@ -36,6 +36,16 @@ fn resource(service_name: &'static str) -> opentelemetry_sdk::Resource {
     )
 }
 
+/// The `service.namespace` this server's telemetry carries (ADR 0080): the environment's, else
+/// `rubato`. The web's relayed spans carry the same one (ADR 0082).
+pub fn own_namespace() -> String {
+    use opentelemetry::Key;
+    use rubato_protocol::otel::{DEFAULT_SERVICE_NAMESPACE, semconv::SERVICE_NAMESPACE};
+    resource("rubato-server")
+        .get(&Key::from_static_str(SERVICE_NAMESPACE))
+        .map_or_else(|| DEFAULT_SERVICE_NAMESPACE.to_owned(), |v| v.to_string())
+}
+
 fn namespaced(resource: opentelemetry_sdk::Resource) -> opentelemetry_sdk::Resource {
     use opentelemetry::{Key, KeyValue};
     use rubato_protocol::otel::{DEFAULT_SERVICE_NAMESPACE, semconv::SERVICE_NAMESPACE};
@@ -114,6 +124,10 @@ pub struct Metrics {
     pub inbound_traceparent: Counter<u64>,
     /// HTTP requests by their `traceparent` (ADR 0082): `linked`, `absent`, `invalid`.
     pub http_traceparent: Counter<u64>,
+    /// Posts to the web's span relay by `rubato.outcome` (ADR 0082).
+    pub telemetry_relay: Counter<u64>,
+    /// Spans the relay's rewrite dropped.
+    pub telemetry_relay_dropped: Counter<u64>,
     pub rate_limit_remaining: Gauge<u64>,
     pub rate_limit_limit: Gauge<u64>,
     pub plan_parse_failures: Counter<u64>,
@@ -227,6 +241,8 @@ impl Metrics {
             events_dropped: m.u64_counter(otel::metric::EVENTS_DROPPED).build(),
             inbound_traceparent: m.u64_counter(otel::metric::INBOUND_TRACEPARENT).build(),
             http_traceparent: m.u64_counter(otel::metric::HTTP_TRACEPARENT).build(),
+            telemetry_relay: m.u64_counter(otel::metric::TELEMETRY_RELAY).build(),
+            telemetry_relay_dropped: m.u64_counter(otel::metric::TELEMETRY_RELAY_DROPPED).build(),
             rate_limit_remaining: m
                 .u64_gauge(otel::metric::GITHUB_RATE_LIMIT_REMAINING)
                 .build(),

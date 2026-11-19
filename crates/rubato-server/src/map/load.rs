@@ -395,9 +395,10 @@ mod tests {
     /// instrumented.
     #[tokio::test(flavor = "current_thread")]
     async fn a_map_read_through_github_names_the_system_map() {
+        use crate::kernel::telemetry::capture;
         use opentelemetry::trace::TracerProvider as _;
         use tracing_subscriber::layer::SubscriberExt as _;
-        drop(crate::kernel::telemetry::capture::start());
+        drop(capture::start());
         let exporter = opentelemetry_sdk::trace::InMemorySpanExporter::default();
         let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
             .with_simple_exporter(exporter.clone())
