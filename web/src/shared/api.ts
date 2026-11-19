@@ -1,5 +1,7 @@
 /** The `web-server` seam from the browser side. Types are generated from the protocol schemas. */
 
+import { startSpan } from "./trace.ts";
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -50,12 +52,22 @@ export function failureText(e: unknown): string {
 
 /** The response body as text; an error status throws `ApiError` with the server's own words. */
 export async function requestText(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): Promise<string> {
-  const init: RequestInit = { method, credentials: "same-origin", headers: { ...headers } };
+  // ADR 0082: a client span for each API call, its traceparent on the request.
+  const span = startSpan(method, url);
+  const traced = span ? { traceparent: span.traceparent, ...headers } : headers;
+  const init: RequestInit = { method, credentials: "same-origin", headers: { ...traced } };
   if (body !== undefined) {
-    init.headers = { "Content-Type": "application/json", ...headers };
+    init.headers = { "Content-Type": "application/json", ...traced };
     init.body = JSON.stringify(body);
   }
-  const res = await fetch(url, init);
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (e) {
+    span?.end(0);
+    throw e;
+  }
+  span?.end(res.status);
   if (!res.ok) {
     if (res.status === 401) {
       raiseNeedsLogin();
