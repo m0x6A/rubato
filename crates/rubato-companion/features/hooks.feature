@@ -24,6 +24,14 @@ Feature: Forwarding Claude Code hook events
       | stop.json                      | Stop             | idle    |                   |
       | session-end.json               | SessionEnd       | ended   |                   |
 
+  Scenario: A forwarded hook travels with the trace context of its send
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And the companion daemon is running and connected
+    When Claude Code posts the recorded hook "stop.json" to the companion
+    Then the server receives a hook event "Stop" for session "0f8fad5b-d9cb-469f-a165-70867728950e"
+    And the envelope of that hook event carries a W3C traceparent of its own
+
   Scenario: A working hook after a permission prompt clears the cause
     Given a test server that approves pairing for user "m0x6A"
     And a paired companion for user "m0x6A"

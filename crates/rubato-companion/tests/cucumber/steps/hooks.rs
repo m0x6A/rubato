@@ -35,6 +35,31 @@ async fn then_hook(w: &mut RubatoWorld, event: String, session: String) {
     assert!(got.is_some(), "no hook {event} for {session}");
 }
 
+/// ADR 0081: every envelope names its own send span, in the form the server reads.
+#[then("the envelope of that hook event carries a W3C traceparent of its own")]
+async fn then_traceparent(w: &mut RubatoWorld) {
+    use rubato_protocol::otel::TraceParent;
+    let got = w.server().received.lock().await;
+    let sent: Vec<&str> = got
+        .iter()
+        .filter_map(|e| e.traceparent.as_deref())
+        .collect();
+    assert_eq!(sent.len(), got.len(), "every envelope carries one: {got:?}");
+    let hook = got
+        .iter()
+        .find(|e| matches!(e.message, CompanionMessage::Hook(_)))
+        .expect("the hook envelope");
+    let tp = hook.traceparent.as_deref().expect("a traceparent");
+    assert!(
+        TraceParent::parse(tp).is_some(),
+        "not a W3C traceparent: {tp}"
+    );
+    let mut unique = sent.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), sent.len(), "each envelope has its own span");
+}
+
 #[then(expr = "the companion reports that session with status {string} from source {string}")]
 async fn then_status(w: &mut RubatoWorld, status: String, source: String) {
     let reg = w.handles.as_ref().unwrap().registry.lock().await;
