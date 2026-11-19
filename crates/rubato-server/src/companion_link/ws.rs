@@ -254,6 +254,35 @@ fn on_replay(metrics: &Metrics, companion_id: Uuid, env: &CompanionEnvelope) {
     }
 }
 
+/// Put the inbound span under the companion's send span when the envelope names one (ADR 0081),
+/// and count what the field gave. It is used for nothing else: an envelope whose `traceparent`
+/// does not parse is handled like one without (plan 287 A2).
+fn link_to_sender(metrics: &Metrics, span: &tracing::Span, traceparent: Option<&str>) {
+    use opentelemetry::trace::{
+        SpanContext, SpanId, TraceContextExt as _, TraceFlags, TraceId, TraceState,
+    };
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+    let outcome = match traceparent.map(rubato_protocol::otel::TraceParent::parse) {
+        None => "absent",
+        Some(None) => "invalid",
+        Some(Some(tp)) => {
+            let remote = SpanContext::new(
+                TraceId::from(tp.trace_id),
+                SpanId::from(tp.span_id),
+                TraceFlags::new(tp.flags),
+                true,
+                TraceState::default(),
+            );
+            // Without an OpenTelemetry layer (no OTLP endpoint) there is nothing to parent.
+            let _ = span.set_parent(opentelemetry::Context::new().with_remote_span_context(remote));
+            "linked"
+        }
+    };
+    metrics
+        .inbound_traceparent
+        .add(1, &[KeyValue::new(attr::OUTCOME, outcome)]);
+}
+
 /// Record the envelope, update rows, and answer. Returns a reply when one is due.
 async fn on_envelope(
     app: &App,
@@ -279,7 +308,8 @@ async fn on_envelope(
     };
     // Declared empty so the `agent_report` arm can record them: `tracing` drops a record() of a
     // field the span did not declare (plan 226 §1).
-    let span = tracing::info_span!(span::INBOUND_EVENT, rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq, rubato.launch_id = tracing::field::Empty, rubato.issue = tracing::field::Empty, rubato.outcome = tracing::field::Empty);
+    let span = tracing::info_span!(span::INBOUND_EVENT, otel.kind = "server", rubato.companion_id = %companion_id, rubato.user = %pairing.user, kind, seq = env.seq, rubato.launch_id = tracing::field::Empty, rubato.issue = tracing::field::Empty, rubato.outcome = tracing::field::Empty);
+    link_to_sender(&app.metrics, &span, env.traceparent.as_deref());
     async move {
         let now = app.clock.now();
         if !matches!(env.message, CompanionMessage::Ack { .. }) {
@@ -1395,6 +1425,121 @@ mod tests {
         assert_eq!(n, 0);
     }
 
+    /// The inbound span closes when its last holder lets go, and sqlx's SQLite worker thread
+    /// holds the caller's span until after it has sent the result back. So a span may close a
+    /// moment after `on_envelope` returns: wait for it, never read once (#272).
+    async fn eventually<T>(what: &str, mut read: impl FnMut() -> Option<T>) -> T {
+        for _ in 0..400 {
+            if let Some(v) = read() {
+                return v;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("never saw {what}");
+    }
+
+    /// A thread's own subscriber whose spans go to an in-memory exporter, for the tests that
+    /// read a span's kind and parent. The capture's global subscriber is installed first, so
+    /// this one coming and going leaves every callsite with a listener.
+    fn exported_spans() -> (
+        opentelemetry_sdk::trace::InMemorySpanExporter,
+        opentelemetry_sdk::trace::SdkTracerProvider,
+        tracing::subscriber::DefaultGuard,
+    ) {
+        use opentelemetry::trace::TracerProvider as _;
+        use tracing_subscriber::layer::SubscriberExt as _;
+        drop(capture::start());
+        let exporter = opentelemetry_sdk::trace::InMemorySpanExporter::default();
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
+        let guard = tracing::subscriber::set_default(subscriber);
+        (exporter, provider, guard)
+    }
+
+    fn traceparent_count(reader: &metric_reader::Reader, outcome: &str) -> u64 {
+        reader
+            .points(metric::INBOUND_TRACEPARENT)
+            .iter()
+            .filter(|p| p.attrs[attr::OUTCOME] == outcome)
+            .map(|p| p.value)
+            .sum()
+    }
+
+    const SENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+    /// ADR 0081: the inbound span is kind server, in the trace the companion sent and under its
+    /// send span. Fails on purpose when `set_parent` is taken out: the span then starts its own
+    /// trace.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_envelope_with_a_traceparent_is_handled_under_the_span_that_sent_it() {
+        let (app, reader, pairing, _tmp) = spend_app().await;
+        let (exporter, _provider, _guard) = exported_spans();
+        let mut env = fixture("companion_heartbeat.json");
+        env.traceparent = Some(SENT.into());
+        on_envelope(&app, &pairing, env).await;
+        let inbound = eventually("the inbound span", || {
+            let spans = exporter.get_finished_spans().unwrap();
+            spans.into_iter().find(|s| s.name == span::INBOUND_EVENT)
+        })
+        .await;
+        assert_eq!(inbound.span_kind, opentelemetry::trace::SpanKind::Server);
+        assert_eq!(
+            format!("{:032x}", inbound.span_context.trace_id()),
+            "4bf92f3577b34da6a3ce929d0e0e4736"
+        );
+        assert_eq!(
+            format!("{:016x}", inbound.parent_span_id),
+            "00f067aa0ba902b7"
+        );
+        assert_eq!(traceparent_count(&reader, "linked"), 1);
+        assert_eq!(traceparent_count(&reader, "absent"), 0);
+        assert_eq!(traceparent_count(&reader, "invalid"), 0);
+    }
+
+    /// An older companion sends none, and a value that does not parse is handled as none
+    /// (plan 287 A2): both start their own trace, are still applied, and are counted apart.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_envelope_without_a_usable_traceparent_starts_its_own_trace_and_is_counted() {
+        let (app, reader, pairing, _tmp) = spend_app().await;
+        let (exporter, _provider, _guard) = exported_spans();
+        let absent = fixture("companion_heartbeat.json");
+        let seq = absent.seq;
+        let mut invalid = absent.clone();
+        invalid.seq = seq + 1;
+        invalid.traceparent = Some(SENT.to_uppercase());
+        let none = opentelemetry::trace::SpanId::INVALID;
+        for env in [absent, invalid] {
+            let seq = env.seq;
+            let reply = on_envelope(&app, &pairing, env).await;
+            assert_eq!(reply, Some(ServerMessage::Ack { seq }), "still applied");
+        }
+        let spans = eventually("both inbound spans", || {
+            let spans: Vec<_> = exporter
+                .get_finished_spans()
+                .unwrap()
+                .into_iter()
+                .filter(|s| s.name == span::INBOUND_EVENT)
+                .collect();
+            (spans.len() == 2).then_some(spans)
+        })
+        .await;
+        for s in &spans {
+            assert_eq!(s.span_kind, opentelemetry::trace::SpanKind::Server);
+            assert_eq!(s.parent_span_id, none, "a root span");
+            assert_ne!(
+                format!("{:032x}", s.span_context.trace_id()),
+                "4bf92f3577b34da6a3ce929d0e0e4736"
+            );
+        }
+        assert_eq!(traceparent_count(&reader, "absent"), 1);
+        assert_eq!(traceparent_count(&reader, "invalid"), 1);
+        assert_eq!(traceparent_count(&reader, "linked"), 0);
+        println!("checked 2 envelopes without a usable traceparent");
+    }
+
     /// Plan 226 §1: the span carries the launch, the issue and the outcome. Declared fields only;
     /// an undeclared one would be dropped silently.
     #[tokio::test(flavor = "current_thread")]
@@ -1404,14 +1549,17 @@ mod tests {
         let (events, _guard) = capture::start();
         on_envelope(&app, &pairing, live_snapshot(c, 1, Some(LAUNCH))).await;
         on_envelope(&app, &pairing, report(2, "x", &[])).await;
-        let events = events.lock().unwrap().clone();
-        let s = events
-            .iter()
-            .find(|e| {
-                e.message == format!("span {}", span::INBOUND_EVENT)
-                    && e.fields.get("kind").map(String::as_str) == Some("agent_report")
-            })
-            .unwrap_or_else(|| panic!("an inbound span for the report: {events:?}"));
+        let s = eventually("an inbound span for the report", || {
+            let events = events.lock().unwrap();
+            events
+                .iter()
+                .find(|e| {
+                    e.message == format!("span {}", span::INBOUND_EVENT)
+                        && e.fields.get("kind").map(String::as_str) == Some("agent_report")
+                })
+                .cloned()
+        })
+        .await;
         assert_eq!(s.fields.get("rubato.launch_id"), Some(&LAUNCH.to_string()));
         assert_eq!(
             s.fields.get("rubato.issue").map(String::as_str),
