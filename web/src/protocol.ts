@@ -2568,6 +2568,21 @@ ghosts?: GhostPart[]
  */
 ghosts_truncated?: boolean
 /**
+ * Parts and declared seams with no calls in the window that were seen in a longer
+ * lookback, with the shortest one, in seconds (ADR 0083). Empty unless `fresh`.
+ */
+last_seen?: LastSeen[]
+/**
+ * The longest lookback asked, when one was: a quiet part or seam with `service` that is
+ * not in `last_seen` was not seen that far back. Absent unless `fresh` and asked.
+ */
+lookback_secs?: (number | null)
+/**
+ * Parts without a `service`, and seams with such an end: nothing can observe them, so
+ * they are never drawn as silent (ADR 0083). Empty unless `fresh`.
+ */
+not_instrumented?: MapRef[]
+/**
  * When the last good report's window ended.
  */
 observed_at?: (string | null)
@@ -2641,6 +2656,13 @@ calls_out: number
  */
 errors: number
 service: ServiceId
+}
+/**
+ * A quiet part or seam, and the shortest lookback it was seen in (ADR 0083).
+ */
+export interface LastSeen {
+ref: MapRef
+within_secs: number
 }
 /**
  * Calls on one declared seam in the report's window, each way.
@@ -3274,9 +3296,19 @@ silent_for_secs: number
 export interface TrafficReport {
 edges: TrafficEdge[]
 /**
+ * The longest lookback the source asked, when it asked one: `seen` covers up to here, and
+ * a part not in it was not seen that far back.
+ */
+lookback_secs?: (number | null)
+/**
  * When the source's window ended.
  */
 observed_at: string
+/**
+ * Edges with calls in a longer lookback but none in the window (ADR 0083). Empty when the
+ * source asked no lookback, or nothing was seen.
+ */
+seen?: SeenEdge[]
 /**
  * The source cut the edges at `MAX_EDGES`.
  */
@@ -3316,6 +3348,19 @@ server: string
  * OpenTelemetry `service.namespace` of the callee, as it emits it.
  */
 server_namespace?: (string | null)
+}
+/**
+ * Calls seen in a lookback longer than the report's window, but none in the window (ADR 0083).
+ */
+export interface SeenEdge {
+client: string
+client_namespace?: (string | null)
+server: string
+server_namespace?: (string | null)
+/**
+ * The shortest lookback with calls, in seconds: one of `LOOKBACK_SECS`.
+ */
+within_secs: number
 }
 /**
  * The query of an utterance (`POST` `routes::VOICE_UTTERANCE`); the audio is the body.

@@ -107,6 +107,8 @@ pub mod attr {
     /// `report_status`, `plan_status`, `initialize`, `ping`, `tools/list`, `discovery` or
     /// `unknown`. Never a client-chosen string.
     pub const MCP_TOOL: &str = "rubato.mcp.tool";
+    /// Edges a traffic lookback saw (ADR 0083), on the `traffic lookback` log line.
+    pub const TRAFFIC_SEEN: &str = "rubato.traffic.seen";
 }
 
 /// Metric instrument names.
@@ -312,6 +314,16 @@ pub mod metric {
     /// Server: `PlanStatus` pushes, by `rubato.reason` (`welcome`, `change`) and
     /// `rubato.outcome` (`sent`, `offline`).
     pub const PLAN_STATUS_SENT: &str = "rubato.plan_status.sent";
+    /// Server: posts to the web's span relay (ADR 0082), by `rubato.outcome`: `forwarded`,
+    /// `off`, `unauthenticated`, `too_large`, `invalid`, `rate_limited`, `export_failed`.
+    pub const TELEMETRY_RELAY: &str = "rubato.telemetry.relay";
+    /// Server: spans the relay dropped in its rewrite (unknown route, not client-kind, out of time).
+    pub const TELEMETRY_RELAY_DROPPED: &str = "rubato.telemetry.relay.dropped";
+    /// Server: HTTP requests by their `traceparent` (ADR 0082), `rubato.outcome`: `linked`,
+    /// `absent`, `invalid`.
+    pub const HTTP_TRACEPARENT: &str = "rubato.http.traceparent";
+    /// Server: traffic lookbacks (ADR 0083), by `rubato.outcome`: `ok`, `failed`, `timeout`.
+    pub const TRAFFIC_LOOKBACK: &str = "rubato.traffic.lookback";
 }
 
 /// Span names.
@@ -326,6 +338,9 @@ pub mod span {
     pub const INBOUND_EVENT: &str = "rubato.inbound_event";
     /// Companion: one envelope built for the server, kind client (ADR 0081).
     pub const ENVELOPE_SEND: &str = "rubato.envelope.send";
+    /// Server: an HTTP request that carried a valid `traceparent`, kind server, under the
+    /// browser's client span (ADR 0082). Others stay internal.
+    pub const HTTP_REQUEST: &str = "rubato.http.request";
     pub const GITHUB_CALL: &str = "rubato.github.call";
     pub const WS_FANOUT: &str = "rubato.ws.fanout";
     pub const HANDOFF: &str = "rubato.handoff";
@@ -523,6 +538,7 @@ pub fn all_names() -> Vec<&'static str> {
         attr::TARGET_OWNER,
         attr::CLAUDE_AUTH,
         attr::MCP_TOOL,
+        attr::TRAFFIC_SEEN,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -584,6 +600,10 @@ pub fn all_names() -> Vec<&'static str> {
         metric::MCP_REPORTS,
         metric::MCP_NOT_INITIALIZED,
         metric::PLAN_STATUS_SENT,
+        metric::TELEMETRY_RELAY,
+        metric::TELEMETRY_RELAY_DROPPED,
+        metric::HTTP_TRACEPARENT,
+        metric::TRAFFIC_LOOKBACK,
         metric::SESSION_MESSAGES,
         metric::SESSION_MESSAGES_OLDEST_IDLE_QUEUED,
         metric::COMPANIONS_BY_CAPABILITY,
@@ -613,6 +633,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::RECONCILE,
         span::INBOUND_EVENT,
         span::ENVELOPE_SEND,
+        span::HTTP_REQUEST,
         span::GITHUB_CALL,
         span::WS_FANOUT,
         span::HANDOFF,

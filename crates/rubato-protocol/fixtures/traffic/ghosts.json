@@ -41,7 +41,8 @@
       "ghosts_truncated": false,
       "unmapped_services": 1,
       "unmapped_sample": ["f"],
-      "truncated": false
+      "truncated": false,
+      "not_instrumented": [{ "kind": "node", "id": "f" }, { "kind": "seam", "id": "e-f" }]
     },
     "findings": [
       { "kind": "seam_quiet", "seam": "a-b", "window_secs": 3600 },

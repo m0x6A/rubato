@@ -485,6 +485,9 @@ impl PrometheusSource {
             window_secs: self.config.window_secs,
             edges,
             truncated,
+            // The lookback task fills these (ADR 0083); the window fetch never does.
+            seen: Vec::new(),
+            lookback_secs: None,
         })
     }
 }

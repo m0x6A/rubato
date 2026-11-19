@@ -209,7 +209,8 @@ pulls      OpenPull, RepoPulls, PullDetail, MergeOffer, PlanGate, plan_gate, mer
 queue      QueuedIssue, QueueRequest, QueueOrder; QUEUE
 fleet      LaunchRole, FleetRequest, FleetAction, FleetResult, FleetOutcome, FleetEntry, LeadView, LEAD_HEADER, reasons, limits (ADR 0072; capability fleet)
 room       RoomMessage (with spoken), RoomAgent, RoomRequest, RoomView, RoomKey, RoomReply, call-in types, addressed_handles, reasons; ROOM, ROOM_MESSAGES, ROOM_AGENTS, ROOM_REQUEST
-traffic    TrafficReport, ObservedTraffic, SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
+telemetry_relay  the web span relay's limits (ADR 0082); TELEMETRY_TRACES
+traffic    TrafficReport (with SeenEdge, ADR 0083), ObservedTraffic (with LastSeen), SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped

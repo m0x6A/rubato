@@ -7,6 +7,7 @@
 //! no part is a ghost, drawn on the overlay and never made a part by Rubato; an end with neither
 //! is only counted.
 
+use crate::ids::MapRef;
 use crate::map::{ServiceId, SystemMap};
 use crate::progress::Finding;
 use chrono::{DateTime, Utc};
@@ -32,6 +33,11 @@ pub const MAX_GHOSTS: usize = 50;
 pub const MAX_GHOST_EDGES: usize = 200;
 /// At most this many dismissals per workspace (ADR 0060).
 pub const MAX_DISMISSALS: usize = 500;
+/// The lookbacks a source asks, shortest first, for when a quiet part or seam was last seen
+/// (ADR 0083). A source skips any no longer than its window.
+pub const LOOKBACK_SECS: [u32; 3] = [21_600, 86_400, 604_800];
+/// The longest lookback a report may carry.
+pub const MAX_LOOKBACK_SECS: u32 = 604_800;
 
 /// Calls observed from one service to another in a report's window: the shape of the
 /// OpenTelemetry Collector `servicegraph` connector's output.
@@ -55,6 +61,19 @@ pub struct TrafficEdge {
     pub errors: u64,
 }
 
+/// Calls seen in a lookback longer than the report's window, but none in the window (ADR 0083).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SeenEdge {
+    pub client: String,
+    pub server: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_namespace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_namespace: Option<String>,
+    /// The shortest lookback with calls, in seconds: one of `LOOKBACK_SECS`.
+    pub within_secs: u32,
+}
+
 /// What any source of observed traffic produces (ADR 0039).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TrafficReport {
@@ -66,6 +85,14 @@ pub struct TrafficReport {
     /// The source cut the edges at `MAX_EDGES`.
     #[serde(default)]
     pub truncated: bool,
+    /// Edges with calls in a longer lookback but none in the window (ADR 0083). Empty when the
+    /// source asked no lookback, or nothing was seen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seen: Vec<SeenEdge>,
+    /// The longest lookback the source asked, when it asked one: `seen` covers up to here, and
+    /// a part not in it was not seen that far back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lookback_secs: Option<u32>,
 }
 
 /// Why a report was rejected whole. The previous report stays until it goes stale.
@@ -90,23 +117,41 @@ impl Rejection {
 impl TrafficReport {
     /// Check the report against the limits (plan #104, A9).
     pub fn validate(&self) -> Result<(), Rejection> {
-        if self.edges.len() > MAX_EDGES {
+        if self.edges.len() > MAX_EDGES || self.seen.len() > MAX_EDGES {
             return Err(Rejection::TooManyEdges);
         }
         if !(MIN_WINDOW_SECS..=MAX_WINDOW_SECS).contains(&self.window_secs) {
             return Err(Rejection::BadWindow);
         }
-        if self.edges.iter().any(|e| {
-            [
-                Some(&e.client),
-                Some(&e.server),
-                e.client_namespace.as_ref(),
-                e.server_namespace.as_ref(),
-            ]
-            .into_iter()
-            .flatten()
-            .any(|s| s.len() > MAX_NAME_BYTES)
-        }) {
+        // A lookback is longer than the window and no longer than a week; so is each `seen`.
+        let lookback_ok = |secs: u32| secs > self.window_secs && secs <= MAX_LOOKBACK_SECS;
+        if self.lookback_secs.is_some_and(|l| !lookback_ok(l))
+            || self.seen.iter().any(|e| {
+                !lookback_ok(e.within_secs) || self.lookback_secs.is_none_or(|l| e.within_secs > l)
+            })
+        {
+            return Err(Rejection::BadWindow);
+        }
+        let names = self
+            .edges
+            .iter()
+            .map(|e| {
+                [
+                    Some(&e.client),
+                    Some(&e.server),
+                    e.client_namespace.as_ref(),
+                    e.server_namespace.as_ref(),
+                ]
+            })
+            .chain(self.seen.iter().map(|e| {
+                [
+                    Some(&e.client),
+                    Some(&e.server),
+                    e.client_namespace.as_ref(),
+                    e.server_namespace.as_ref(),
+                ]
+            }));
+        if names.flatten().flatten().any(|s| s.len() > MAX_NAME_BYTES) {
             return Err(Rejection::NameTooLong);
         }
         Ok(())
@@ -281,6 +326,26 @@ pub struct ObservedTraffic {
     /// The source cut the report at its edge limit.
     #[serde(default)]
     pub truncated: bool,
+    /// Parts and declared seams with no calls in the window that were seen in a longer
+    /// lookback, with the shortest one, in seconds (ADR 0083). Empty unless `fresh`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub last_seen: Vec<LastSeen>,
+    /// The longest lookback asked, when one was: a quiet part or seam with `service` that is
+    /// not in `last_seen` was not seen that far back. Absent unless `fresh` and asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lookback_secs: Option<u32>,
+    /// Parts without a `service`, and seams with such an end: nothing can observe them, so
+    /// they are never drawn as silent (ADR 0083). Empty unless `fresh`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_instrumented: Vec<MapRef>,
+}
+
+/// A quiet part or seam, and the shortest lookback it was seen in (ADR 0083).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LastSeen {
+    #[serde(rename = "ref")]
+    pub at: MapRef,
+    pub within_secs: u32,
 }
 
 /// The source as the server knows it, next to its latest report.
@@ -551,6 +616,8 @@ pub fn derive_traffic(
             calls: g.calls_in.saturating_add(g.calls_out),
         });
     }
+    // 7. When each quiet part and seam was last seen, and what cannot be seen (ADR 0083).
+    let (last_seen, not_instrumented) = seen_and_blind(map, report, &observed, &seams, &resolve);
     let traffic = ObservedTraffic {
         state: TrafficState::Fresh,
         observed_at: Some(report.observed_at),
@@ -566,8 +633,92 @@ pub fn derive_traffic(
         unmapped_services: u32::try_from(unmapped.len()).unwrap_or(u32::MAX),
         unmapped_sample: unmapped.into_iter().take(UNMAPPED_SAMPLE).collect(),
         truncated: report.truncated,
+        last_seen,
+        lookback_secs: report.lookback_secs,
+        not_instrumented,
     };
     (traffic, findings)
+}
+
+/// The quiet parts and seams of a fresh report seen in a lookback, each with the shortest one,
+/// and the parts and seams nothing can observe. Live parts and seams are in neither list.
+fn seen_and_blind<'m>(
+    map: &'m SystemMap,
+    report: &TrafficReport,
+    observed: &BTreeSet<&str>,
+    seams: &[SeamTraffic],
+    resolve: &dyn Fn(&Option<String>, &str) -> Resolved<'m>,
+) -> (Vec<LastSeen>, Vec<MapRef>) {
+    let live = |id: &str| {
+        map.node(id)
+            .is_some_and(|n| observed.contains(n.id.as_str()))
+    };
+    let instrumented = |id: &str| map.node(id).is_some_and(|n| n.service.is_some());
+    // The shortest lookback per part, and per ordered pair of parts.
+    let mut part_seen: BTreeMap<&str, u32> = BTreeMap::new();
+    let mut pair_seen: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+    for e in &report.seen {
+        let (Resolved::Part(a), Resolved::Part(b)) = (
+            resolve(&e.client_namespace, &e.client),
+            resolve(&e.server_namespace, &e.server),
+        ) else {
+            // A ghost or an unidentified end still says its known end was seen.
+            for (ns, name) in [
+                (&e.client_namespace, &e.client),
+                (&e.server_namespace, &e.server),
+            ] {
+                if let Resolved::Part(id) = resolve(ns, name) {
+                    let w = part_seen.entry(id).or_insert(e.within_secs);
+                    *w = (*w).min(e.within_secs);
+                }
+            }
+            continue;
+        };
+        if a == b {
+            continue;
+        }
+        for id in [a, b] {
+            let w = part_seen.entry(id).or_insert(e.within_secs);
+            *w = (*w).min(e.within_secs);
+        }
+        let w = pair_seen.entry((a, b)).or_insert(e.within_secs);
+        *w = (*w).min(e.within_secs);
+    }
+    let lit: BTreeSet<&str> = seams.iter().map(|s| s.seam.as_str()).collect();
+    let mut last_seen = Vec::new();
+    let mut blind = Vec::new();
+    for n in map.nodes.iter().filter(|n| !n.is_retired()) {
+        if !instrumented(&n.id) {
+            blind.push(MapRef::node(n.id.clone()));
+        } else if !live(&n.id)
+            && let Some(&w) = part_seen.get(n.id.as_str())
+        {
+            last_seen.push(LastSeen {
+                at: MapRef::node(n.id.clone()),
+                within_secs: w,
+            });
+        }
+    }
+    for s in map.seams.iter().filter(|s| !s.is_retired()) {
+        if !instrumented(&s.from) || !instrumented(&s.to) {
+            blind.push(MapRef::seam(s.id.clone()));
+            continue;
+        }
+        if lit.contains(s.id.as_str()) {
+            continue;
+        }
+        let both = [
+            (s.from.as_str(), s.to.as_str()),
+            (s.to.as_str(), s.from.as_str()),
+        ];
+        if let Some(w) = both.iter().filter_map(|k| pair_seen.get(k)).min() {
+            last_seen.push(LastSeen {
+                at: MapRef::seam(s.id.clone()),
+                within_secs: *w,
+            });
+        }
+    }
+    (last_seen, blind)
 }
 
 #[cfg(test)]
@@ -641,7 +792,249 @@ mod tests {
                 },
             ],
             truncated: false,
+            seen: vec![],
+            lookback_secs: None,
         }
+    }
+
+    fn seen(client: &str, server: &str, within_secs: u32) -> SeenEdge {
+        SeenEdge {
+            client: client.into(),
+            server: server.into(),
+            client_namespace: None,
+            server_namespace: None,
+            within_secs,
+        }
+    }
+
+    /// a, b and c carry calls; d carries a service but no calls in the window; e carries no
+    /// service. Seams c-d (quiet, both instrumented) and d-e (an end without service).
+    fn quiet_map() -> SystemMap {
+        let mut m = map();
+        m.nodes.push(node("d"));
+        m.nodes.push(MapNode {
+            service: None,
+            ..node("e")
+        });
+        m.seams.push(seam("c-d", "c", "d"));
+        m.seams.push(seam("d-e", "d", "e"));
+        m
+    }
+
+    #[test]
+    fn a_quiet_part_and_seam_say_when_they_were_last_seen() {
+        let r = TrafficReport {
+            seen: vec![
+                seen("c", "d", 86_400),
+                seen("d", "c", 21_600),
+                seen("d", "nobody", 604_800),
+            ],
+            lookback_secs: Some(604_800),
+            ..report(10)
+        };
+        r.validate().unwrap();
+        let (t, _) = derive_traffic(&quiet_map(), Some(&r), &configured(None), &[], now());
+        assert_eq!(t.lookback_secs, Some(604_800));
+        // d: the shortest lookback of any edge it is an end of; c-d: of either direction.
+        assert_eq!(
+            t.last_seen,
+            vec![
+                LastSeen {
+                    at: MapRef::node("d"),
+                    within_secs: 21_600
+                },
+                LastSeen {
+                    at: MapRef::seam("c-d"),
+                    within_secs: 21_600
+                },
+            ],
+            "{t:?}"
+        );
+        // Live parts and seams are never "last seen": they are observed.
+        assert!(
+            !t.last_seen
+                .iter()
+                .any(|l| l.at == MapRef::node("a") || l.at == MapRef::seam("a-b"))
+        );
+    }
+
+    #[test]
+    fn a_part_without_service_and_its_seams_are_not_instrumented_never_quiet() {
+        let r = TrafficReport {
+            seen: vec![seen("d", "e", 21_600)],
+            lookback_secs: Some(604_800),
+            ..report(10)
+        };
+        let (t, f) = derive_traffic(&quiet_map(), Some(&r), &configured(None), &[], now());
+        assert_eq!(
+            t.not_instrumented,
+            vec![MapRef::node("e"), MapRef::seam("d-e")],
+            "{t:?}"
+        );
+        assert!(
+            !t.last_seen.iter().any(|l| l.at == MapRef::seam("d-e")),
+            "{t:?}"
+        );
+        assert!(
+            !f.iter()
+                .any(|f| matches!(f, Finding::SeamQuiet { seam, .. } if seam == "d-e")),
+            "{f:?}"
+        );
+    }
+
+    #[test]
+    fn without_a_lookback_nothing_is_last_seen_and_unknown_stays_unknown() {
+        // An old source: no lookback asked, nothing claimed about how long a part was quiet.
+        let (t, _) = derive_traffic(
+            &quiet_map(),
+            Some(&report(10)),
+            &configured(None),
+            &[],
+            now(),
+        );
+        assert!(t.last_seen.is_empty() && t.lookback_secs.is_none(), "{t:?}");
+        // Any non-fresh state carries none of it.
+        let r = TrafficReport {
+            seen: vec![seen("c", "d", 21_600)],
+            lookback_secs: Some(604_800),
+            ..report(10)
+        };
+        let (t, _) = derive_traffic(
+            &quiet_map(),
+            Some(&r),
+            &configured(Some("gone")),
+            &[],
+            now(),
+        );
+        assert!(
+            t.last_seen.is_empty() && t.lookback_secs.is_none() && t.not_instrumented.is_empty(),
+            "{t:?}"
+        );
+        // A report written before ADR 0083 reads with neither field.
+        let old = r#"{"observed_at":"2026-11-13T12:00:00Z","window_secs":3600,"edges":[]}"#;
+        let old: TrafficReport = serde_json::from_str(old).unwrap();
+        assert!(old.seen.is_empty() && old.lookback_secs.is_none());
+    }
+
+    fn edge(client: (&str, Option<&str>), server: (&str, Option<&str>), calls: u64) -> TrafficEdge {
+        TrafficEdge {
+            client: client.0.into(),
+            client_namespace: client.1.map(str::to_owned),
+            server: server.0.into(),
+            server_namespace: server.1.map(str::to_owned),
+            calls,
+            errors: 0,
+        }
+    }
+
+    /// Rubato's own map (ADR 0082, plan #300): the web's relayed spans light `web-server`, and
+    /// with the server naming its reads, `server-plan-file` is not falsely quiet once
+    /// `plan-file` carries a service.
+    #[test]
+    fn on_rubatos_own_map_the_web_and_the_servers_reads_light_their_seams() {
+        let own: SystemMap =
+            serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
+        let rubato = Some("rubato");
+        let base = vec![
+            edge(("web", rubato), ("rubato-server", rubato), 600),
+            edge(("rubato", rubato), ("plan-file", None), 3),
+        ];
+        let r = |edges: Vec<TrafficEdge>| TrafficReport { edges, ..report(0) };
+        let (t, f) = derive_traffic(&own, Some(&r(base.clone())), &configured(None), &[], now());
+        assert!(
+            t.seams
+                .iter()
+                .any(|s| s.seam == "web-server" && s.forward_calls == 600),
+            "{t:?}"
+        );
+        assert!(t.seams.iter().any(|s| s.seam == "skill-plan-file"), "{t:?}");
+        assert!(
+            t.ghosts.is_empty(),
+            "web must be a part, not a ghost: {t:?}"
+        );
+        // Without the server's own plan-file reads, both ends are observed and declare a
+        // service: the seam reads quiet. That is the false finding the server's reads prevent.
+        assert!(
+            f.iter().any(
+                |f| matches!(f, Finding::SeamQuiet { seam, .. } if seam == "server-plan-file")
+            ),
+            "{f:?}"
+        );
+        let mut named = base;
+        named.push(edge(("rubato-server", rubato), ("plan-file", None), 12));
+        let (t, f) = derive_traffic(&own, Some(&r(named)), &configured(None), &[], now());
+        assert!(
+            t.seams.iter().any(|s| s.seam == "server-plan-file"),
+            "{t:?}"
+        );
+        assert!(
+            !f.iter().any(
+                |f| matches!(f, Finding::SeamQuiet { seam, .. } if seam == "server-plan-file")
+            ),
+            "{f:?}"
+        );
+        // livekit and speech-provider carry no service: not instrumented, with their seams.
+        for id in ["livekit", "speech-provider"] {
+            assert!(
+                t.not_instrumented.contains(&MapRef::node(id)),
+                "{id}: {t:?}"
+            );
+        }
+        assert!(
+            t.not_instrumented.contains(&MapRef::seam("web-livekit")),
+            "{t:?}"
+        );
+        assert!(!t.not_instrumented.contains(&MapRef::node("web")), "{t:?}");
+    }
+
+    #[test]
+    fn a_lookback_must_be_longer_than_the_window_and_at_most_a_week() {
+        let ok = TrafficReport {
+            seen: vec![seen("c", "d", 21_600)],
+            lookback_secs: Some(604_800),
+            ..report(0)
+        };
+        assert_eq!(ok.validate(), Ok(()));
+        let bad = [
+            (
+                "seen no longer than the window",
+                TrafficReport {
+                    seen: vec![seen("c", "d", 3600)],
+                    ..ok.clone()
+                },
+            ),
+            (
+                "seen without a lookback",
+                TrafficReport {
+                    lookback_secs: None,
+                    ..ok.clone()
+                },
+            ),
+            (
+                "seen beyond the lookback",
+                TrafficReport {
+                    lookback_secs: Some(21_600),
+                    seen: vec![seen("c", "d", 86_400)],
+                    ..ok.clone()
+                },
+            ),
+            (
+                "a lookback over a week",
+                TrafficReport {
+                    lookback_secs: Some(MAX_LOOKBACK_SECS + 1),
+                    seen: vec![],
+                    ..ok.clone()
+                },
+            ),
+        ];
+        for (name, r) in bad {
+            assert_eq!(r.validate(), Err(Rejection::BadWindow), "{name}");
+        }
+        let long = TrafficReport {
+            seen: vec![seen(&"x".repeat(MAX_NAME_BYTES + 1), "d", 21_600)],
+            ..ok
+        };
+        assert_eq!(long.validate(), Err(Rejection::NameTooLong));
     }
 
     fn configured(error: Option<&str>) -> SourceStatus {

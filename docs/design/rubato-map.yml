@@ -33,6 +33,7 @@ nodes:
 
   - id: web
     kind: context
+    service: { namespace: rubato, name: web }
     repo: m0x6A/rubato
     path: web
     description: React map view served by the server.
@@ -53,12 +54,14 @@ nodes:
 
   - id: plan-file
     kind: contract
+    service: { name: plan-file }
     repo: m0x6A/rubato
     path: schema/plan.schema.json
     description: The plan Markdown on an issue branch. Affected-parts and O-rows tables parsed to JSON.
 
   - id: system-map
     kind: contract
+    service: { name: system-map }
     repo: m0x6A/rubato
     path: schema/system-map.schema.json
     description: A team's system-map.yml. Node and seam ids referenced by pins and plans.

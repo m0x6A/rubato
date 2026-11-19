@@ -34,6 +34,7 @@ pub mod schema;
 pub mod session;
 pub mod session_log;
 pub mod session_message;
+pub mod telemetry_relay;
 pub mod traffic;
 pub mod voice;
 pub mod web_link;
@@ -123,8 +124,8 @@ pub use session_message::{
     SessionMessageState, SessionMessageView, room_turn_text,
 };
 pub use traffic::{
-    DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, ObservedTraffic, SeamTraffic,
-    SourceStatus, TrafficDismissal, TrafficEdge, TrafficEnd, TrafficReport, TrafficState,
+    DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, LastSeen, ObservedTraffic, SeamTraffic,
+    SeenEdge, SourceStatus, TrafficDismissal, TrafficEdge, TrafficEnd, TrafficReport, TrafficState,
     UndeclaredEdge, derive_traffic,
 };
 pub use voice::{
