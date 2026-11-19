@@ -100,3 +100,18 @@ mod tests {
         assert!(read_dev_issues(&tmp.path().join("missing.json")).is_err());
     }
 }
+
+/// The map part a GitHub file read is a read of (plan #300): the map or a plan file.
+pub const READS_MAP: &str = "system-map";
+pub const READS_PLAN: &str = "plan-file";
+
+/// A client span for reading a map part through GitHub, with `peer.service` the part's id, so
+/// the service graph draws the server's read of it (plan #300, ADR 0059). Instrument the
+/// `file` call with it: the `rubato.github.call` span sits inside.
+pub fn part_read(part: &'static str) -> tracing::Span {
+    tracing::info_span!(
+        rubato_protocol::otel::span::PART_READ,
+        otel.kind = "client",
+        peer.service = part
+    )
+}

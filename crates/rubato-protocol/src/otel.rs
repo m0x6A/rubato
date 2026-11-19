@@ -341,6 +341,10 @@ pub mod span {
     /// Server: an HTTP request that carried a valid `traceparent`, kind server, under the
     /// browser's client span (ADR 0082). Others stay internal.
     pub const HTTP_REQUEST: &str = "rubato.http.request";
+    /// Server: a read of a map part through GitHub (plan #300), kind client with `peer.service`
+    /// the part's id (`plan-file`, `system-map`), around the `rubato.github.call` that fetches
+    /// the bytes. Draws `server-plan-file` and `server-system-map` on the service graph.
+    pub const PART_READ: &str = "rubato.part.read";
     pub const GITHUB_CALL: &str = "rubato.github.call";
     pub const WS_FANOUT: &str = "rubato.ws.fanout";
     pub const HANDOFF: &str = "rubato.handoff";
@@ -634,6 +638,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::INBOUND_EVENT,
         span::ENVELOPE_SEND,
         span::HTTP_REQUEST,
+        span::PART_READ,
         span::GITHUB_CALL,
         span::WS_FANOUT,
         span::HANDOFF,

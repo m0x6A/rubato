@@ -10,6 +10,7 @@ use opentelemetry::KeyValue;
 use rubato_protocol::SystemMap;
 use rubato_protocol::otel::attr;
 use std::sync::Arc;
+use tracing::Instrument as _;
 
 /// Reload every workspace's map, in config order. Answers with `default`'s, which unprefixed
 /// routes serve; another workspace that fails is logged (`workspace map load failed`), counted
@@ -43,6 +44,9 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
         let yaml = app
             .github
             .file(&cfg.map_repo, &cfg.map_path, &cfg.map_ref)
+            .instrument(crate::kernel::github::part_read(
+                crate::kernel::github::READS_MAP,
+            ))
             .await?
             .context("map file not found")?;
         anyhow::Ok((sha, yaml))
@@ -134,6 +138,9 @@ pub async fn fetch_and_validate(app: &App, w: &WorkspaceEntry) -> Result<LoadedM
             let yaml = app
                 .github
                 .file(&w.map_repo, &w.map_path, &w.map_ref)
+                .instrument(crate::kernel::github::part_read(
+                    crate::kernel::github::READS_MAP,
+                ))
                 .await?
                 .context("map file not found")?;
             (sha, yaml)
@@ -380,6 +387,60 @@ mod tests {
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
         let kept = a.default_map().await.unwrap();
         assert_eq!(kept.map.name, "scenarios-fixture");
+    }
+
+    /// Plan #300: the server's read of the map through GitHub is a client span naming
+    /// `system-map` as its peer, so `server-system-map` shows on the service graph and is not
+    /// falsely quiet. The GitHub call is inside it. Fails on purpose when the read is not
+    /// instrumented.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_map_read_through_github_names_the_system_map() {
+        use opentelemetry::trace::TracerProvider as _;
+        use tracing_subscriber::layer::SubscriberExt as _;
+        drop(crate::kernel::telemetry::capture::start());
+        let exporter = opentelemetry_sdk::trace::InMemorySpanExporter::default();
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry()
+                .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test"))),
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let github = Arc::new(FakeGitHub::new());
+        github.with(|g| {
+            g.files.insert(
+                (
+                    "m0x6A/rubato".into(),
+                    "docs/design/rubato-map.yml".into(),
+                    "main".into(),
+                ),
+                MAP.into(),
+            );
+            g.branches
+                .insert("m0x6A/rubato".into(), vec![("main".into(), "sha1".into())]);
+        });
+        let cfg = Config::for_tests(
+            format!("sqlite://{}/t.db?mode=rwc", tmp.path().display()),
+            "m0x6A",
+        );
+        let (a, _reader) = app(cfg, github).await;
+        reload(&a).await.unwrap();
+        let reads: Vec<_> = exporter
+            .get_finished_spans()
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.name == rubato_protocol::otel::span::PART_READ)
+            .collect();
+        assert_eq!(reads.len(), 1, "{reads:?}");
+        let read = &reads[0];
+        assert_eq!(read.span_kind, opentelemetry::trace::SpanKind::Client);
+        let peer = read
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "peer.service")
+            .map(|kv| kv.value.to_string());
+        assert_eq!(peer.as_deref(), Some("system-map"));
     }
 
     #[tokio::test]
