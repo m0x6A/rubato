@@ -6,6 +6,7 @@ use crate::kernel::config::{Transport, check_server_url, warn_plain_http};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
+use rubato_protocol::otel::span;
 use rubato_protocol::pairing::routes;
 use rubato_protocol::{
     CompanionEnvelope, CompanionMessage, PROTOCOL_VERSION, ServerEnvelope, ServerMessage,
@@ -62,6 +63,23 @@ pub fn ws_url(server_url: &str, allow_plain_http: bool) -> Result<String> {
     Ok(format!("{ws}{}", routes::COMPANION_WS))
 }
 
+/// The W3C trace context of `span`, or `None` when the companion exports no traces (no
+/// OpenTelemetry layer, so no span context).
+fn traceparent_of(span: &tracing::Span) -> Option<String> {
+    use opentelemetry::trace::TraceContextExt as _;
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+    let cx = span.context();
+    let sc = cx.span().span_context().clone();
+    sc.is_valid().then(|| {
+        rubato_protocol::otel::TraceParent {
+            trace_id: u128::from_be_bytes(sc.trace_id().to_bytes()),
+            span_id: u64::from_be_bytes(sc.span_id().to_bytes()),
+            flags: sc.trace_flags().to_u8(),
+        }
+        .to_string()
+    })
+}
+
 impl Client {
     pub fn new(
         server_url: String,
@@ -90,10 +108,14 @@ impl Client {
         message: CompanionMessage,
     ) -> Result<CompanionEnvelope, ReservationError> {
         let seq = self.seq.next_seq()?;
+        // ADR 0081: the send is a client span, and the envelope carries its context, so the
+        // server's inbound span is its child. The outbox keeps the envelope as built: a resend
+        // after a reconnect names the same span.
+        let span = tracing::info_span!(span::ENVELOPE_SEND, otel.kind = "client", rubato.companion_id = %self.identity.companion_id, seq);
         Ok(CompanionEnvelope {
             seq,
             sent_at: Utc::now(),
-            traceparent: None,
+            traceparent: traceparent_of(&span),
             message,
         })
     }
@@ -351,6 +373,71 @@ mod tests {
             capabilities: vec![],
             client: rubato_protocol::ClientKind::Interactive,
         }
+    }
+
+    fn test_client() -> (Client, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let seq = Reservation::open(dir.path(), 0).unwrap();
+        (
+            Client::new("ws://127.0.0.1:1".into(), identity(), seq, 0),
+            dir,
+        )
+    }
+
+    /// ADR 0081: each envelope is built under a client span, and carries that span's trace
+    /// context. Read back from an in-memory exporter, so the ids are the exported span's own.
+    #[test]
+    fn an_envelope_carries_the_trace_context_of_its_client_span() {
+        use opentelemetry::trace::TracerProvider as _;
+        use rubato_protocol::otel::{TraceParent, span};
+        use tracing_subscriber::layer::SubscriberExt as _;
+        let exporter = opentelemetry_sdk::trace::InMemorySpanExporter::default();
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
+        let (mut client, _dir) = test_client();
+        let envs: Vec<CompanionEnvelope> = tracing::subscriber::with_default(subscriber, || {
+            (1..=3)
+                .map(|seq| client.envelope(CompanionMessage::Ack { seq }).unwrap())
+                .collect()
+        });
+        let spans = exporter.get_finished_spans().unwrap();
+        assert_eq!(spans.len(), 3, "one span per envelope");
+        for (env, s) in envs.iter().zip(&spans) {
+            assert_eq!(s.name, span::ENVELOPE_SEND);
+            assert_eq!(s.span_kind, opentelemetry::trace::SpanKind::Client);
+            let sent = env.traceparent.as_deref().expect("a traceparent");
+            let tp = TraceParent::parse(sent).expect("in the form the server reads");
+            assert_eq!(
+                format!("{:032x}", tp.trace_id),
+                format!("{:032x}", s.span_context.trace_id())
+            );
+            assert_eq!(
+                format!("{:016x}", tp.span_id),
+                format!("{:016x}", s.span_context.span_id())
+            );
+            // What a reconnect resends is the envelope as built: the same context again.
+            let resent: CompanionEnvelope =
+                serde_json::from_str(&serde_json::to_string(env).unwrap()).unwrap();
+            assert_eq!(resent.traceparent.as_deref(), Some(sent));
+        }
+        println!(
+            "checked {} envelopes against their exported spans",
+            envs.len()
+        );
+    }
+
+    /// Without trace export there is no span context, and the field is left out of the JSON.
+    #[test]
+    fn an_envelope_built_without_trace_export_has_no_traceparent() {
+        let (mut client, _dir) = test_client();
+        let env = tracing::subscriber::with_default(tracing_subscriber::registry(), || {
+            client.envelope(CompanionMessage::Ack { seq: 1 }).unwrap()
+        });
+        assert_eq!(env.traceparent, None);
+        assert!(!serde_json::to_string(&env).unwrap().contains("traceparent"));
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -29,8 +29,14 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Capture {
     }
 }
 
+/// The capture, and an OpenTelemetry layer with no exporter: spans get a trace context as they
+/// do in a companion that exports traces, so an envelope carries its `traceparent` (ADR 0081).
 pub fn install() {
-    let sub = tracing_subscriber::registry().with(Capture);
+    use opentelemetry::trace::TracerProvider as _;
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
+    let sub = tracing_subscriber::registry()
+        .with(Capture)
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("cucumber")));
     tracing::subscriber::set_global_default(sub).expect("one subscriber");
 }
 
