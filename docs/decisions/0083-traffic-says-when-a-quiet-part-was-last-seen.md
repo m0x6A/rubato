@@ -1,8 +1,8 @@
 # 0083. Observed traffic says when a quiet part or seam was last seen, and which are not instrumented; the lens draws three states
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-19
-- **Decided by:** agent (Claude Code, claude-opus-5-5, issue #300) — proposed; the three states are Mattias Jonsson's choice, 2026-11-19
+- **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-19 ("build it", then "merge all and fix all I need to do"), with plan #300 (PR #301); drafted by agent (Claude Code, claude-opus-5-5); the three states are Mattias Jonsson's choice, 2026-11-19
 - **Seam:** web-server
 - **Issue:** m0x6A/rubato#300
 
