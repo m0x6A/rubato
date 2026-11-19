@@ -118,7 +118,11 @@ describe("ghosts on the map", () => {
   it("draws ghosts and their edges in the Traffic lens only, beside parts that keep their place", async () => {
     const o = observed();
     const v = render(<MapView graph={buildGraph(o)} selected={null} onSelect={() => {}} />);
-    const part = await v.findByTestId("node-rubato-server", undefined, { timeout: 5000 });
+    // A fresh report opens the map on the Traffic lens.
+    await v.findByTestId("ghost-shop/checkout", undefined, { timeout: 5000 });
+    expect(v.getByRole("radio", { name: "Traffic" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(v.getByRole("radio", { name: "Structure" }));
+    const part = await v.findByTestId("node-rubato-server");
     expect(v.queryByTestId("ghost-shop/checkout")).toBeNull();
     const at = (el: HTMLElement) => (el.closest(".react-flow__node") as HTMLElement | null)?.style.transform;
     const before = at(part);

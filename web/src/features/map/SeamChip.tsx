@@ -1,6 +1,7 @@
 import { type OnPin, useIssueDrop } from "./drop.ts";
 import type { DraftMarkLike, GraphEdge } from "./graph.ts";
 import { windowText } from "../findings/index.ts";
+import { health } from "./traffic.tsx";
 
 interface Props {
   seam: GraphEdge;
@@ -22,7 +23,7 @@ interface Props {
 export function SeamChip({ seam, selected, onSelect, onPin, draft, traffic }: Props) {
   const { over, handlers } = useIssueDrop<HTMLButtonElement>({ kind: "seam", id: seam.id }, draft?.state === "added" ? undefined : onPin);
   const plans = seam.openPlans.length;
-  const classes = ["seam-chip", "nodrag", "nopan", seam.collision || seam.findings.length ? "collision" : seam.quietFor !== undefined ? "quiet" : plans ? "busy" : "", selected ? "selected" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
+  const classes = ["seam-chip", "nodrag", "nopan", seam.collision || seam.findings.length ? "collision" : seam.quietFor !== undefined ? "quiet" : plans ? "busy" : "", traffic && seam.traffic && seam.quietFor === undefined ? `live health-${health(seam.traffic.errors, seam.traffic.forward_calls + seam.traffic.reverse_calls)}` : "", selected ? "selected" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
   const pinned = seam.issues.length;
   return (
     <button

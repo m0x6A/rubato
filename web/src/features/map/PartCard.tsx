@@ -1,6 +1,7 @@
 import { STATE_LABEL } from "../../shared/format.ts";
 import { type OnPin, useIssueDrop } from "./drop.ts";
 import { type DraftMarkLike, type GraphNode, approvalCounts, issueCounts, sessionCounts } from "./graph.ts";
+import { type PartTraffic, compactRate, health } from "./traffic.tsx";
 
 interface Props {
   node: GraphNode;
@@ -11,6 +12,8 @@ interface Props {
   dim?: boolean | undefined;
   /** The shared draft adds, changes or removes this part: drawn dashed, with a badge. */
   draft?: DraftMarkLike | undefined;
+  /** In the Traffic lens on a fresh report: its calls a minute in and out, or "none". */
+  traffic?: PartTraffic | undefined;
 }
 
 /** The badge on a part or seam the draft touches. A draft id is not a map id: it takes no pins. */
@@ -48,7 +51,7 @@ function KindGlyph({ kind }: { kind: GraphNode["kind"] }) {
 }
 
 /** One part of the map. Renders without React Flow, so it is tested on its own. */
-export function PartCard({ node, selected, onPin, dim, draft }: Props) {
+export function PartCard({ node, selected, onPin, dim, draft, traffic }: Props) {
   // A part that exists only in the draft takes no pins (the server would refuse them).
   const { over, handlers } = useIssueDrop<HTMLDivElement>({ kind: "node", id: node.id }, draft?.state === "added" ? undefined : onPin);
   const issues = issueCounts(node.issues);
@@ -56,7 +59,8 @@ export function PartCard({ node, selected, onPin, dim, draft }: Props) {
   const approvals = approvalCounts(node.issues);
   // Breathing means a session is working here now; unknown, idle or ended never breathe (AGENTS.md).
   const working = (sessions.working ?? 0) > 0;
-  const classes = ["map-node", node.kind, node.paint ? `paint-${node.paint}` : "", working ? "work" : "", selected ? "selected" : "", dim ? "dim" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
+  const tone = traffic === undefined ? "" : traffic === "none" ? "unobserved" : `observed health-${health(traffic.errors, traffic.calls)}`;
+  const classes = ["map-node", node.kind, tone, node.paint ? `paint-${node.paint}` : "", working ? "work" : "", selected ? "selected" : "", dim ? "dim" : "", draft ? `draft draft-${draft.state}` : "", over ? "drop-over" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes} data-testid={`node-${node.id}`} title={node.description} {...handlers}>
       <div className="title">
@@ -94,6 +98,17 @@ export function PartCard({ node, selected, onPin, dim, draft }: Props) {
           </span>
         )}
       </div>
+      {traffic !== undefined && traffic !== "none" && (
+        <div className="part-traffic" data-testid={`part-traffic-${node.id}`} title="Calls a minute into and out of this part, observed over the report's window">
+          <span>
+            <span aria-hidden="true">↘</span> in <b>{compactRate(traffic.in)}</b>
+          </span>
+          <span>
+            <span aria-hidden="true">↗</span> out <b>{compactRate(traffic.out)}</b>
+          </span>
+          <span className="unit">/min</span>
+        </div>
+      )}
       {node.findings.length > 0 && <div className="warn">⚠ {node.findings.length} finding{node.findings.length === 1 ? "" : "s"}</div>}
       {over && <div className="drop-hint">Drop to pin here</div>}
       {node.issues.length > 0 && (

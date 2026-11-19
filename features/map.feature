@@ -91,6 +91,16 @@ Feature: The system map
     And they can step forward and back
     And nothing covers the step on the canvas
 
+  @map.traffic-first
+  Scenario: A fresh traffic report is the first thing the map shows
+    Given a fresh traffic report for the workspace
+    When a person opens the map
+    Then it shows the Traffic lens, headed by the calls a minute, the error share and what the map does not explain
+    And each seam that carried calls is a pipe, heavier for more calls and coloured by its error share
+    And each part says its calls a minute in and out, and a part with no calls steps back
+    When the report is not fresh
+    Then the map opens on Structure
+
   @map.ghosts-and-discrepancies
   Scenario: Observed traffic the map does not declare shows as ghosts and discrepancies
     Given a traffic report with calls to services the map does not have

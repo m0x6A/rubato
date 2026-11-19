@@ -52,6 +52,20 @@
   --dur-fill: 480ms;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Bolder colour: each part kind its own hue (non-text: the stripe and glyph); observed calls run
+     in pipes coloured by how they fare, with light chevrons on them (3:1 both ways, styles.test.ts). */
+  --kind-context: #22d3ee;
+  --kind-contract: #818cf8;
+  --kind-external: #fb923c;
+  --pipe-ok: #059669;
+  --pipe-warn: #b45309;
+  --pipe-bad: #dc2626;
+  --chevron: #f0fdf4;
+  --glow-pipe-ok: rgb(52 211 153 / 0.7);
+  --glow-pipe-warn: rgb(251 191 36 / 0.7);
+  --glow-pipe-bad: rgb(248 113 113 / 0.75);
+  --brand-gradient: linear-gradient(90deg, #22d3ee, #818cf8 28%, #f472b6 55%, #fbbf24 80%, #34d399);
+  --aurora: radial-gradient(55% 45% at 12% 8%, rgb(34 211 238 / 0.11), transparent 70%), radial-gradient(45% 40% at 88% 14%, rgb(129 140 248 / 0.12), transparent 70%), radial-gradient(50% 45% at 55% 100%, rgb(52 211 153 / 0.09), transparent 70%), radial-gradient(35% 35% at 5% 90%, rgb(244 114 182 / 0.07), transparent 70%);
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
@@ -96,6 +110,18 @@
     --glow-new: 0 0 0 1px var(--new), 0 6px 18px rgb(124 58 237 / 0.2);
     --glow-ok: 0 0 0 1px rgb(5 150 105 / 0.6), 0 6px 22px rgb(5 150 105 / 0.28);
     --glow-heat: 0 0 0 1px var(--heat), 0 4px 14px rgb(219 39 119 / 0.3);
+    --kind-context: #0891b2;
+    --kind-contract: #4f46e5;
+    --kind-external: #ea580c;
+    --pipe-ok: #059669;
+    --pipe-warn: #b45309;
+    --pipe-bad: #dc2626;
+    --chevron: #ffffff;
+    --glow-pipe-ok: rgb(5 150 105 / 0.45);
+    --glow-pipe-warn: rgb(217 119 6 / 0.45);
+    --glow-pipe-bad: rgb(220 38 38 / 0.45);
+    --brand-gradient: linear-gradient(90deg, #0891b2, #4f46e5 28%, #db2777 55%, #d97706 80%, #059669);
+    --aurora: radial-gradient(55% 45% at 12% 8%, rgb(8 145 178 / 0.10), transparent 70%), radial-gradient(45% 40% at 88% 14%, rgb(79 70 229 / 0.09), transparent 70%), radial-gradient(50% 45% at 55% 100%, rgb(5 150 105 / 0.08), transparent 70%), radial-gradient(35% 35% at 5% 90%, rgb(219 39 119 / 0.06), transparent 70%);
     color-scheme: light;
   }
 }
@@ -140,13 +166,25 @@
   --glow-new: 0 0 0 1px var(--new), 0 6px 18px rgb(124 58 237 / 0.2);
   --glow-ok: 0 0 0 1px rgb(5 150 105 / 0.6), 0 6px 22px rgb(5 150 105 / 0.28);
   --glow-heat: 0 0 0 1px var(--heat), 0 4px 14px rgb(219 39 119 / 0.3);
+  --kind-context: #0891b2;
+  --kind-contract: #4f46e5;
+  --kind-external: #ea580c;
+  --pipe-ok: #059669;
+  --pipe-warn: #b45309;
+  --pipe-bad: #dc2626;
+  --chevron: #ffffff;
+  --glow-pipe-ok: rgb(5 150 105 / 0.45);
+  --glow-pipe-warn: rgb(217 119 6 / 0.45);
+  --glow-pipe-bad: rgb(220 38 38 / 0.45);
+  --brand-gradient: linear-gradient(90deg, #0891b2, #4f46e5 28%, #db2777 55%, #d97706 80%, #059669);
+  --aurora: radial-gradient(55% 45% at 12% 8%, rgb(8 145 178 / 0.10), transparent 70%), radial-gradient(45% 40% at 88% 14%, rgb(79 70 229 / 0.09), transparent 70%), radial-gradient(50% 45% at 55% 100%, rgb(5 150 105 / 0.08), transparent 70%), radial-gradient(35% 35% at 5% 90%, rgb(219 39 119 / 0.06), transparent 70%);
   color-scheme: light;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--ink); font: 13px/1.45 var(--font-ui); font-feature-settings: "ss01"; -webkit-font-smoothing: antialiased; }
 .app { display: flex; flex-direction: column; height: 100%; }
-.topbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 20px; min-height: 56px; border-bottom: 1px solid var(--line); background: var(--bg); gap: 16px; }
+.topbar { position: relative; display: flex; justify-content: space-between; align-items: center; padding: 8px 20px; min-height: 56px; border-bottom: 1px solid var(--line); background: var(--bg); gap: 16px; }
 .brand { display: flex; gap: 12px; align-items: baseline; }
 .status { display: flex; gap: 8px; align-items: center; }
 .muted { color: var(--muted); font-size: 12px; }
@@ -174,7 +212,7 @@ body { background: var(--bg); color: var(--ink); font: 13px/1.45 var(--font-ui);
 .empty { display: grid; place-items: center; height: 100%; color: var(--muted); }
 .panel { border-left: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
 .tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
-.tabs button { min-height: 34px; padding: 6px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--chip-ink); }
+.tabs button { position: relative; min-height: 34px; padding: 6px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--chip-ink); }
 .tabs button.active { background: none; color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 .tabs .panel-size { margin-left: auto; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
 button, .button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); cursor: pointer; text-decoration: none; }
@@ -394,7 +432,7 @@ tr.chat-row > td { padding-top: 0; }
 /* Observed traffic (issue #104, design §5): a chevron, a filled point that says which way the
    calls go, in the green role; never a dot, ring or dash. How many travel says how many calls.
    Only in the Traffic lens; with reduced motion one sits still per direction. */
-.traffic { position: absolute; left: 0; top: 0; width: 9px; height: 7px; clip-path: polygon(0 0, 55% 50%, 0 100%, 40% 100%, 95% 50%, 40% 0); background: var(--ok); pointer-events: none; z-index: 1; }
+.traffic { position: absolute; left: 0; top: 0; width: 14px; height: 11px; clip-path: polygon(0 0, 55% 50%, 0 100%, 40% 100%, 95% 50%, 40% 0); background: var(--chevron); pointer-events: none; z-index: 1; }
 .traffic.forward { offset-rotate: auto; }
 .traffic.reverse { offset-rotate: auto 180deg; }
 :root[data-motion="full"] .traffic { animation-name: travel; animation-timing-function: linear; animation-iteration-count: infinite; }
@@ -405,15 +443,15 @@ tr.chat-row > td { padding-top: 0; }
 .react-flow__edge.quiet .react-flow__edge-path { stroke: var(--canvas); stroke-width: 6; }
 .seam-chip.quiet { color: var(--warn-ink); background: var(--warn-wash); border-color: var(--warn); }
 /* Traffic the map does not declare (finding UndeclaredTraffic): static amber dots, round caps. */
-.react-flow__edge.territory .react-flow__edge-path { stroke: var(--warn); stroke-width: 2.5; stroke-dasharray: 1 5; stroke-linecap: round; }
-.territory-label { font-family: var(--font-mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px; color: var(--warn-ink); background: var(--warn-wash); border: 1px dotted var(--warn); white-space: nowrap; }
+.react-flow__edge.territory .react-flow__edge-path { stroke: var(--warn); stroke-width: 4; stroke-dasharray: 1 8; stroke-linecap: round; }
+.territory-label { font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; color: var(--warn-ink); background: var(--warn-wash); border: 1.5px dashed var(--warn); box-shadow: 0 0 16px var(--glow-pipe-warn); white-space: nowrap; }
 /* A ghost part (issue #140): a service that runs but no part names. Dashed amber, static, never a part. */
-.ghost-card { width: 220px; min-height: 72px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 2px dashed var(--warn); border-radius: 8px; background: var(--warn-wash); color: var(--warn-ink); }
+.ghost-card { width: 220px; min-height: 72px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 2px dashed var(--warn); border-radius: 12px; background: var(--warn-wash); color: var(--warn-ink); box-shadow: 0 0 0 4px var(--panel), 0 0 28px 4px var(--glow-pipe-warn); }
 .ghost-card strong { font-size: 14px; overflow-wrap: anywhere; }
 .ghost-tag { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
 /* What the map and the observed system disagree about, under the Traffic lens's legend. */
 .discrepancies { padding: 8px 12px; border-top: 1px solid var(--warn); background: var(--warn-wash); max-height: 22vh; overflow: auto; }
-.discrepancies > summary { cursor: pointer; font-size: 13px; color: var(--warn-ink); }
+.discrepancies > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--warn-ink); }
 .discrepancies li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 0; }
 .discrepancy-actions { display: inline-flex; gap: 6px; }
 .service-fields { border: 1px solid var(--line, currentColor); border-radius: 6px; padding: 6px 8px; }
@@ -509,8 +547,8 @@ tr.chat-row > td { padding-top: 0; }
 .map-frame { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .map-band { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .map-band-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
-.map-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--canvas); }
-.map-canvas .react-flow { --xy-background-color-default: var(--canvas); --xy-background-pattern-dots-color-default: var(--grid); --xy-edge-stroke-default: var(--line-strong); }
+.map-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--aurora), var(--canvas); }
+.map-canvas .react-flow { --xy-background-color-default: transparent; --xy-background-pattern-dots-color-default: var(--grid); --xy-edge-stroke-default: var(--line-strong); }
 .react-flow__background-pattern.dots { fill: var(--grid); }
 /* particles and halos rest while a part is dragged or the page is hidden */
 .map-canvas.paused .particle, .map-canvas.paused .pulse, .map-canvas.paused .pulse-trail, .map-canvas.paused .map-node.work::after { animation-play-state: paused; }
@@ -731,3 +769,66 @@ tr.chat-row > td { padding-top: 0; }
 /* the login page: one lit slab on the dot field */
 .login { border-radius: 14px; box-shadow: var(--rim), var(--glow-accent); }
 body:has(.login) { background-color: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1.3px); background-size: 24px 24px; }
+/* Bolder colour (after #81): a brand stripe over the top bar, the active tab underlined in it, each
+   part kind in its own hue, and an aurora behind the map. Text never sits on the gradients. */
+.topbar::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--brand-gradient); }
+.brand > strong { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+.tabs button.active::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: -2px; height: 3px; border-radius: 3px; background: var(--brand-gradient); }
+.map-node::before { content: ""; position: absolute; left: 14px; right: 14px; top: -1px; height: 3px; border-radius: 0 0 4px 4px; background: var(--kind-context); pointer-events: none; }
+.map-node.contract::before { background: var(--kind-contract); }
+.map-node.external::before { background: var(--kind-external); }
+.map-node.context .kind-glyph { color: var(--kind-context); }
+.map-node.contract .kind-glyph { color: var(--kind-contract); }
+.map-node.external .kind-glyph { color: var(--kind-external); }
+/* The Traffic lens is the loudest thing on the map: live seams are glowing pipes, heavier for more
+   calls (the chevron tier) and coloured by their error share; a seam with no calls steps back.
+   Width and count say volume; colour repeats the error text on the chip and in the headline. */
+.live-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--quiet); flex: none; }
+.lens button.traffic-lens { font-weight: 600; }
+.lens button.traffic-lens.fresh .live-dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-wash), 0 0 10px var(--ok); }
+:root[data-motion="full"] .lens button.traffic-lens.fresh .live-dot, :root[data-motion="full"] .vital.rate .live-dot { animation: live-ping 1.8s var(--ease-in-out) infinite; }
+@keyframes live-ping { 0%, 100% { box-shadow: 0 0 0 2px var(--ok-wash), 0 0 6px var(--ok); } 50% { box-shadow: 0 0 0 5px var(--ok-wash), 0 0 16px var(--ok); } }
+.lens button.traffic-lens.fresh:not(.active) { color: var(--ok-ink); }
+.lens button.traffic-lens.active { background: var(--ok-wash); color: var(--ok-ink); box-shadow: inset 0 0 0 1.5px var(--ok), 0 0 18px var(--glow-pipe-ok); }
+.lens-rate { font-family: var(--font-mono); font-size: 11px; font-weight: 500; }
+.react-flow__edge.live .conduit { stroke-width: 22; opacity: 0.9; }
+.react-flow__edge.live .react-flow__edge-path { stroke: var(--pipe-ok); filter: drop-shadow(0 0 6px var(--glow-pipe-ok)); }
+.react-flow__edge.live.health-warn .react-flow__edge-path { stroke: var(--pipe-warn); filter: drop-shadow(0 0 6px var(--glow-pipe-warn)); }
+.react-flow__edge.live.health-bad .react-flow__edge-path { stroke: var(--pipe-bad); filter: drop-shadow(0 0 7px var(--glow-pipe-bad)); }
+.react-flow__edge.live-1 .react-flow__edge-path { stroke-width: 4; }
+.react-flow__edge.live-2 .react-flow__edge-path { stroke-width: 7; }
+.react-flow__edge.live-3 .react-flow__edge-path { stroke-width: 11; }
+.react-flow__edge.unobserved { opacity: 0.3; }
+.traffic.territory { background: var(--warn); }
+.seam-chip.live { font-weight: 600; color: var(--ok-ink); background: var(--ok-wash); border-color: var(--ok); box-shadow: 0 0 12px var(--glow-pipe-ok); }
+.seam-chip.live.health-warn { color: var(--warn-ink); background: var(--warn-wash); border-color: var(--warn); box-shadow: 0 0 12px var(--glow-pipe-warn); }
+.seam-chip.live.health-bad { color: var(--bad-ink); background: var(--bad-wash); border-color: var(--bad); box-shadow: 0 0 12px var(--glow-pipe-bad); }
+.map-node.observed { border-color: var(--ok); box-shadow: var(--rim), var(--shadow), 0 0 0 1px var(--ok), 0 0 26px var(--glow-pipe-ok); }
+.map-node.observed.health-warn { border-color: var(--warn); box-shadow: var(--rim), var(--shadow), 0 0 0 1px var(--warn), 0 0 26px var(--glow-pipe-warn); }
+.map-node.observed.health-bad { border-color: var(--bad); box-shadow: var(--rim), var(--shadow), 0 0 0 1px var(--bad), 0 0 26px var(--glow-pipe-bad); }
+.map-node.unobserved { opacity: 0.5; }
+.part-traffic { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; padding: 4px 8px; border-radius: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--ok-ink); background: var(--ok-wash); }
+.part-traffic b { font-size: 14px; font-weight: 700; }
+.part-traffic .unit { margin-left: auto; }
+.map-node.health-warn .part-traffic { color: var(--warn-ink); background: var(--warn-wash); }
+.map-node.health-bad .part-traffic { color: var(--bad-ink); background: var(--bad-wash); }
+/* The Traffic lens's headline: big numbers over the map, coloured by how the calls fare. */
+.vitals { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 2px; }
+.vital { display: flex; flex-direction: column; justify-content: space-between; gap: 2px; min-width: 112px; padding: 8px 12px; border: 1px solid var(--line); border-top: 3px solid var(--line-strong); border-radius: 10px; background: var(--raised); }
+.vital-label { display: flex; align-items: center; font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--chip-ink); }
+.vital-value { font-size: 24px; font-weight: 700; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.vital-value small { margin-left: 2px; font-size: 13px; font-weight: 500; }
+.vital-value.small { font-size: 15px; }
+.vital.ok { border-color: var(--ok); background: var(--ok-wash); }
+.vital.warn { border-color: var(--warn); background: var(--warn-wash); }
+.vital.bad { border-color: var(--bad); background: var(--bad-wash); }
+.vital.ok .vital-label, .vital.ok .vital-value { color: var(--ok-ink); }
+.vital.warn .vital-label, .vital.warn .vital-value { color: var(--warn-ink); }
+.vital.bad .vital-label, .vital.bad .vital-value { color: var(--bad-ink); }
+.vital.rate { min-width: 170px; box-shadow: 0 0 24px var(--glow-pipe-ok); }
+.vital.rate.warn { box-shadow: 0 0 24px var(--glow-pipe-warn); }
+.vital.rate.bad { box-shadow: 0 0 24px var(--glow-pipe-bad); }
+.vital.rate .vital-value { font-size: 34px; }
+.vital.rate .live-dot { background: var(--ok); }
+.vital.seams { border-top-color: var(--accent); }
+.vital.when { border-top-color: var(--kind-contract); }
