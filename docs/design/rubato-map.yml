@@ -89,6 +89,10 @@ nodes:
     kind: external
     description: "Speech-to-text and text-to-speech over an OpenAI-compatible HTTP API, local (Speaches, whisper.cpp, Kokoro) or hosted, chosen by configuration (ADR 0073)."
 
+  - id: service-graph
+    kind: external
+    description: "A Prometheus-compatible query API (Mimir, Prometheus) holding the OpenTelemetry servicegraph connector's call and failed-call counts, run by the team. Each workspace names its own in its traffic settings (ADRs 0040, 0075)."
+
 seams:
   - id: companion-server
     from: rubato-companion
@@ -249,6 +253,17 @@ seams:
     flows:
       - { kind: data, from: rubato-server, to: speech-provider, carries: "one utterance's audio to transcribe; the spoken cut of an agent's reply to synthesize" }
       - { kind: data, from: speech-provider, to: rubato-server, carries: "the transcript; the synthesized clip" }
+
+  - id: server-service-graph
+    from: rubato-server
+    to: service-graph
+    carries: "two PromQL instant queries (POST /api/v1/query) over traces_service_graph_request_total and …_request_failed_total, per workspace, behind the Source port"
+    owner: rubato-server
+    guard: "traffic/prometheus_tests.rs against a fake query API, with a must-fail matrix answer; rubato.traffic.fetches{outcome} and the TrafficReportStale alert"
+    description: "The server reads observed calls between services for each workspace with a traffic source, to draw the Traffic lens and find where the map and the territory disagree (ADRs 0040, 0059). A failing or stale source is unknown, never quiet."
+    flows:
+      - { kind: control, from: rubato-server, to: service-graph, carries: "the two instant queries over the window, with the workspace's configured headers" }
+      - { kind: data, from: service-graph, to: rubato-server, carries: "calls and failed calls per client and server service, with their namespaces" }
 
 # Journeys through the system, step by step over the flows above (ADR 0024). The map view plays
 # them. A step names `carries` only where its seam has two flows with the same kind and direction.

@@ -4,7 +4,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Flow } from "../../protocol.ts";
 import { arrowsFor } from "./flows.ts";
-import { FlowParticles, PARTICLE_CAP, particleBudget, particleMode, tripSeconds } from "./particles.tsx";
+import { FlowParticles, PARTICLE_CAP, particleBudget, particleMode, stillDistance, tripSeconds } from "./particles.tsx";
 
 const css = readFileSync(resolve(import.meta.dirname, "../../styles.css"), "utf8");
 const flow = (kind: Flow["kind"], from: string, to: string, carries: string): Flow => ({ kind, from, to, carries });
@@ -77,6 +77,17 @@ describe("what moves along an arrow (issue #81, design §5)", () => {
     const s = draw(arrowsFor(seam, "scenario")[1]!, "scenario", { step: true, reduced: true });
     expect(s.container.querySelectorAll(".pulse-trail")).toHaveLength(0);
     expect((s.container.querySelector(".pulse") as HTMLElement).style.offsetDistance).toBe("30%");
+  });
+
+  it("with its label's place known, the still marker sits clear of the label on the flow's start side", () => {
+    // 50 % along, 95 px half width: 107 px before the middle, or after it against the path.
+    expect(stillDistance(false, { at: 0.5, half: 95 })).toBe("max(4%, calc(50% - 107px))");
+    expect(stillDistance(true, { at: 0.5, half: 95 })).toBe("min(96%, calc(50% + 107px))");
+    // A label moved along the curve (the By repo grouping) moves the marker with it.
+    expect(stillDistance(false, { at: 0.66, half: 40 })).toBe("max(4%, calc(66% - 52px))");
+    // Must fail on purpose against the old fixed place: on a short curve 30 % lies under the label.
+    expect(stillDistance(false, { at: 0.5, half: 95 })).not.toBe(stillDistance(false));
+    expect([stillDistance(false), stillDistance(true)]).toEqual(["30%", "70%"]);
   });
 
   it("ambient trips take 2 to 6 s, by length", () => {
