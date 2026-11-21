@@ -78,6 +78,11 @@ const CHIP_ABOVE_FLOW = 24;
  * seam's direction has its head at the start. The seam's chip is an HTML label, which can take
  * a drop; a flow's label says what it carries.
  */
+/** About how wide a flow's label is drawn: its text clipped at 27 ch, the arrow, a proposed tag. */
+function flowLabelWidth(a: { label?: string | null | undefined; moving?: boolean | undefined }): number {
+  return textWidth(Math.min((a.label ?? "").length, 27) + 4 + (a.moving ? 9 : 0), 10.5, 16);
+}
+
 function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, markerStart, data }: EdgeProps<SeamFlowEdge>) {
   const offset = data?.arrow.offset ?? 0;
   const [path, midX, midY] = getBezierPath({ sourceX, sourceY: sourceY + offset, targetX, targetY: targetY + offset, sourcePosition, targetPosition });
@@ -101,7 +106,7 @@ function SeamEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
           {flow && flow.kind !== "structure" && (
             // Data is a filled dot, control a ring: the kind reads without colour. Particles travel
             // in the flow's own direction; with reduced motion one marker sits still (particles.tsx).
-            <FlowParticles id={flow.id} path={path} kind={flow.kind} reversed={flow.reversed} mode={data.particles} reduced={data.still} length={Math.hypot(targetX - sourceX, targetY - sourceY) * 1.15} />
+            <FlowParticles id={flow.id} path={path} kind={flow.kind} reversed={flow.reversed} mode={data.particles} reduced={data.still} length={Math.hypot(targetX - sourceX, targetY - sourceY) * 1.15} label={{ at: data.labelT ?? 0.5, half: flowLabelWidth(flow) / 2 }} />
           )}
           {flow && (
             // The whole text is in the label; CSS clips it to a layer's gap and lifts the clip while
@@ -764,7 +769,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           key: e.id,
           from: e.from,
           to: e.to,
-          arrows: arrows.map((a) => ({ offset: a.offset, label: a.kind === "structure" ? null : { width: textWidth(Math.min((a.label ?? "").length, 27) + 4 + (a.moving ? 9 : 0), 10.5, 16), height: 17 } })),
+          arrows: arrows.map((a) => ({ offset: a.offset, label: a.kind === "structure" ? null : { width: flowLabelWidth(a), height: 17 } })),
           chip: { width: textWidth(chipChars, 11, 22), height: 26 },
           chipAbove: CHIP_ABOVE_FLOW,
         };

@@ -3,7 +3,8 @@
  * particles travel on declared flows, dashes march on proposed ones (`.moving`, CSS only).
  * Data is a filled dot and control a ring, so the kind reads without colour. Every animation is
  * CSS, named only under `:root[data-motion="full"]`; with reduced motion one still marker of the
- * same shape sits at 30 % of the path, clear of the flow's label in the middle.
+ * same shape sits just before the flow's label (after it, for a flow against the path), so the
+ * label never covers it on a short curve; with no label known, at 30 % of the path.
  */
 import type { CSSProperties } from "react";
 import type { Arrow, Lens } from "./flows.ts";
@@ -29,8 +30,29 @@ export const PARTICLE_SPEED = 64;
 /** One trip of the scenario pulse. */
 export const PULSE_MS = 1200;
 const TRAIL = [60, 120, 180];
-/** Where the still marker sits, from the flow's own start. */
+/** Where the still marker sits, from the flow's own start, when its label's place is not known. */
 export const STILL_AT = 30;
+/** Room between the still marker's centre and its label's edge, in pixels. */
+export const STILL_GAP = 12;
+
+/** Where the flow's label sits: its place along the path (0–1) and half its width in pixels. */
+export interface LabelPlace {
+  at: number;
+  half: number;
+}
+
+/**
+ * The still marker's `offset-distance`: on the flow's own start side of its label, clear of it
+ * on any length of curve, and never off the path. Without a label, at `STILL_AT` %.
+ */
+export function stillDistance(reversed: boolean, label?: LabelPlace): string {
+  if (!label) {
+    return `${reversed ? 100 - STILL_AT : STILL_AT}%`;
+  }
+  const at = Math.round(label.at * 1000) / 10;
+  const clear = Math.ceil(label.half + STILL_GAP);
+  return reversed ? `min(96%, calc(${at}% + ${clear}px))` : `max(4%, calc(${at}% - ${clear}px))`;
+}
 
 /** How long one ambient trip takes along a path of this length, clamped to 2–6 s. */
 export function tripSeconds(length: number): number {
@@ -49,14 +71,16 @@ interface Props {
   reduced: boolean;
   /** About how long the path is, for the ambient trip time. */
   length: number;
+  /** Where the flow's label sits, so the still marker stays clear of it. */
+  label?: LabelPlace;
 }
 
-export function FlowParticles({ id, path, kind, reversed, mode, reduced, length }: Props) {
+export function FlowParticles({ id, path, kind, reversed, mode, reduced, length, label }: Props) {
   if (mode === "none") {
     return null;
   }
   const base: CSSProperties = { offsetPath: `path('${path}')` };
-  const still: CSSProperties = { ...base, offsetDistance: `${reversed ? 100 - STILL_AT : STILL_AT}%` };
+  const still: CSSProperties = { ...base, offsetDistance: stillDistance(reversed, label) };
   const direction = reversed ? "reverse" : "normal";
   if (mode === "step") {
     if (reduced) {
