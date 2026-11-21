@@ -158,7 +158,8 @@ agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_st
 `motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
 its retired parts, for every reader that draws or offers ids, ADR 0077; `traffic.ts` `nothingObserved`, a fresh report with nothing in it; `trace.ts` the web's own client spans and their post to the relay, ADR 0082; `finished.ts` the issues the
 default views show and the Done views show, read from the server's `finished`; `panel.ts` the
-panel's three sizes, remembered per browser);
+panel's three sizes, remembered per browser; `uuid.ts` a v4 id also over plain http, where
+browsers have no `crypto.randomUUID`, issue #304);
 `protocol.ts` (generated); features under `features/`, each with an `index.ts`, checked by
 `features/features.test.ts`:
 
