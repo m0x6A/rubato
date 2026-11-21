@@ -4,6 +4,7 @@ import { failureText } from "../../shared/api.ts";
 import { issueKey } from "../../shared/format.ts";
 import { newIssueApi } from "./api.ts";
 import { liveMap } from "../../shared/map.ts";
+import { uuid } from "../../shared/uuid.ts";
 
 interface Props {
   overview: Overview;
@@ -46,7 +47,7 @@ export function NewIssueForm({ overview, target: start, onCreated, onCancel, onN
   const map = overview.map.map;
   const repos = useMemo(() => reposOf(map), [map]);
   // One id per draft: a second press of Create cannot make a second issue.
-  const requestId = useRef(crypto.randomUUID());
+  const requestId = useRef(uuid());
   const [target, setTarget] = useState<MapRef>(start);
   const [repo, setRepo] = useState(repoFor(map, start) ?? repos[0] ?? "");
   const [title, setTitle] = useState("");
