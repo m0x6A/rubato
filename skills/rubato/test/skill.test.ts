@@ -101,9 +101,10 @@ describe("map.ts", () => {
     const repo = tempRepo("acme/pantry", "issue/7-restock");
     const s = await summarize(ws, repo);
     // Live parts only: tmux-ide and its seam are retired (ADR 0070, ADR 0077).
-    expect(s.nodes.length).toBe(12);
-    expect(s.seams.length).toBe(13);
+    expect(s.nodes.length).toBe(13);
+    expect(s.seams.length).toBe(14);
     expect(s.seams.map((x) => x.id)).toContain("skill-github");
+    expect(s.seams.map((x) => x.id)).toContain("server-service-graph");
     expect(s.map_version).toBe(git(dir, "rev-parse", "--short", "HEAD"));
     expect(s.repo).toBe("acme/pantry");
     expect(s.plan_path_template).toBe("features/{issue}-{slug}/plan.md");
@@ -121,7 +122,7 @@ describe("map.ts", () => {
     expect(s.nodes.map((n) => n.id)).not.toContain("tmux-ide");
     expect(s.seams.map((x) => x.id)).not.toContain("companion-tmux-ide");
     const text = render(s);
-    expect(text).toContain("12 nodes, 13 seams, 2 retired");
+    expect(text).toContain("13 nodes, 14 seams, 2 retired");
     expect(text).toContain("## Retired (do not use)");
     expect(text).toContain("- tmux-ide (node), retired by ADR 0070");
     expect(text).toContain("- companion-tmux-ide (seam), retired by ADR 0070");
