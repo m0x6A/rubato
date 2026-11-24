@@ -113,7 +113,7 @@ pub async fn get(db: &SqlitePool, id: &str) -> Result<Option<Row>> {
 /// A new workspace, last in the switcher. The unique index on the map answers a second
 /// workspace on one map with an error.
 pub async fn create(db: &SqlitePool, r: &Row) -> Result<Row> {
-    let mut tx = db.begin().await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let position: i64 =
         sqlx::query_scalar("SELECT COALESCE(MAX(position), -1) + 1 FROM workspace_settings")
             .fetch_one(&mut *tx)

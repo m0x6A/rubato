@@ -150,8 +150,10 @@ pub async fn put(
 }
 
 /// Remove every flat position and return what was removed. The grouping stays.
+/// Both clears read, then delete, so they take the write lock first (`BEGIN IMMEDIATE`): a
+/// deferred transaction whose read went stale under another commit fails at once (#272).
 pub async fn clear(db: &SqlitePool, ws: &str) -> Result<MapLayout> {
-    let mut tx = db.begin().await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let removed = MapLayout {
         positions: read_flat(&mut tx, ws).await?,
         ..Default::default()
@@ -166,7 +168,7 @@ pub async fn clear(db: &SqlitePool, ws: &str) -> Result<MapLayout> {
 
 /// Remove the By repo grouping, parts and boxes, and return what was removed. The flat map stays.
 pub async fn clear_grouped(db: &SqlitePool, ws: &str) -> Result<MapLayout> {
-    let mut tx = db.begin().await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let removed = read_grouped(&mut tx, ws).await?;
     sqlx::query("DELETE FROM map_layout_grouped WHERE workspace_id = ?")
         .bind(ws)
@@ -174,4 +176,84 @@ pub async fn clear_grouped(db: &SqlitePool, ws: &str) -> Result<MapLayout> {
         .await?;
     tx.commit().await?;
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::db::connect;
+
+    async fn seed(db: &SqlitePool, ws: &str) {
+        sqlx::query(
+            "INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at)
+             VALUES (?, 'part', 'web', 1, 2, 't', '2026-11-24T00:00:00Z')
+             ON CONFLICT (workspace_id, kind, id) DO NOTHING",
+        )
+        .bind(ws)
+        .execute(db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO map_layout (workspace_id, node_id, x, y, updated_by, updated_at)
+             VALUES (?, 'web', 1, 2, 't', '2026-11-24T00:00:00Z')
+             ON CONFLICT (workspace_id, node_id) DO NOTHING",
+        )
+        .bind(ws)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    /// Must fail with a deferred transaction: clearing reads, then deletes. In WAL mode a
+    /// deferred transaction whose read snapshot went stale under another writer's commit gets
+    /// SQLITE_BUSY at once, without the busy timeout, and the handler answered 500 (seen in CI
+    /// as "The map was not auto-arranged: Internal Server Error"). `BEGIN IMMEDIATE` waits.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clearing_while_another_connection_writes_never_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let db = connect(&url).await.unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = {
+            let (db, stop) = (db.clone(), stop.clone());
+            tokio::spawn(async move {
+                let mut n = 0u64;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    seed(&db, "other").await;
+                    sqlx::query("UPDATE map_layout SET x = x + 1 WHERE workspace_id = 'other'")
+                        .execute(&db)
+                        .await
+                        .unwrap();
+                    n += 1;
+                }
+                n
+            })
+        };
+        let rounds = 300;
+        let mut failures = Vec::new();
+        for _ in 0..rounds {
+            seed(&db, "default").await;
+            if let Err(e) = clear_grouped(&db, "default").await {
+                failures.push(format!("clear_grouped: {e:#}"));
+            }
+            seed(&db, "default").await;
+            if let Err(e) = clear(&db, "default").await {
+                failures.push(format!("clear: {e:#}"));
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let writes = writer.await.unwrap();
+        eprintln!(
+            "checked {} clears against {writes} concurrent writes",
+            rounds * 2
+        );
+        assert!(writes > 0, "the other connection never wrote");
+        assert!(
+            failures.is_empty(),
+            "{} of {} clears failed, first: {}",
+            failures.len(),
+            rounds * 2,
+            failures[0]
+        );
+    }
 }

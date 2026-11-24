@@ -66,7 +66,7 @@ pub async fn add(
     at: DateTime<Utc>,
 ) -> Result<Added> {
     let text = serde_json::to_string(key)?;
-    let mut tx = db.begin().await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let existing = sqlx::query(
         "SELECT id, target_key, author, created_at FROM traffic_dismissals WHERE workspace_id = ? AND target_key = ?",
     )
