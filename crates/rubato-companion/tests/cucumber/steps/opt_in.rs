@@ -59,12 +59,18 @@ fn run_hook(command: &str, payload: &serde_json::Value, launch_id: Option<String
     }
     let mut child = sh.spawn().unwrap();
     use std::io::Write;
-    child
+    // A hook that stands down (the opt-in in a launched session, `STAND_DOWN`) exits without
+    // reading its input, so the write can meet a closed pipe; Claude Code does not fail on that
+    // either. The exit status below is still checked.
+    match child
         .stdin
         .take()
         .unwrap()
         .write_all(payload.to_string().as_bytes())
-        .unwrap();
+    {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        r => r.unwrap(),
+    }
     let out = child.wait_with_output().unwrap();
     assert!(
         out.status.success(),

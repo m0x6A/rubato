@@ -235,12 +235,6 @@ async function main() {
     { repo: "acme/pantry", number: 2, target: { kind: "seam", id: "pantry-web-api" }, slug: "login-header" },
   ];
   const seen = new Map<string, string[]>();
-  for (const i of issues) {
-    await api("POST", "/api/pins", { issue: { repo: i.repo, number: i.number }, target: i.target });
-    const r = await api<{ command: { branch: string; session_id: string } }>("POST", "/api/launch", { issue: { repo: i.repo, number: i.number }, slug: i.slug });
-    log(`launched ${i.repo}#${i.number} on ${r.command.branch} (pinned to ${i.target.kind} ${i.target.id})`);
-    seen.set(`${i.repo}#${i.number}`, []);
-  }
   const record = (ov: Overview) => {
     for (const s of ov.issues) {
       const key = `${s.issue.repo}#${s.issue.number}`;
@@ -251,6 +245,16 @@ async function main() {
       }
     }
   };
+  for (const i of issues) {
+    seen.set(`${i.repo}#${i.number}`, []);
+    await api("POST", "/api/pins", { issue: { repo: i.repo, number: i.number }, target: i.target });
+    // Planned is read here, between the pin and the launch: read only after all three launches,
+    // a fast session was already Designing and the path started there (seen on CI 2026-11-19
+    // twice and 2026-11-25).
+    record(await overview());
+    const r = await api<{ command: { branch: string; session_id: string } }>("POST", "/api/launch", { issue: { repo: i.repo, number: i.number }, slug: i.slug });
+    log(`launched ${i.repo}#${i.number} on ${r.command.branch} (pinned to ${i.target.kind} ${i.target.id})`);
+  }
   // An issue is Designed as soon as its plan is pushed, which is before the session's last
   // hooks. Wait for the sessions to finish too, or the checks below race the Stop hook.
   const standinGlob = `${T}/repos/*-worktrees/**/.claude-standin.log`;
