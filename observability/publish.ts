@@ -21,7 +21,15 @@
  * dashboards go into, and keeps the group there as Grafana-managed rules evaluated against the
  * metrics datasource. No parent-folder header is sent: it would nest a second "Rubato" inside. Sending
  * a group replaces that group, so a rule removed from the file is removed from the stack. A
- * group or dashboard removed from the repository is not: delete it in Grafana.
+ * dashboard removed from the repository is not: delete it in Grafana.
+ *
+ * Who is told (#277): `alerts/receivers.json` maps a rule's `severity` label to a contact point.
+ * Each group is sent split by severity, as `<group>-<severity>`, with the
+ * X-Grafana-Alerting-Notification-Settings header naming that contact point, so the stack's
+ * notification policy tree, which other teams share, is never edited. A rule without a
+ * severity, a severity with no receiver, or a receiver the stack has no contact point for fails
+ * before the first write. After the writes, a group in the Rubato namespace that the files no
+ * longer produce is deleted; a dry run only names it.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -33,11 +41,13 @@ const REQUIRED = ["GRAFANA_URL", "GRAFANA_API_TOKEN", "GRAFANA_PROM_DS", "GRAFAN
 const CONVERT = "/api/convert/prometheus/config/v1/rules";
 
 export type Settings = { url: string; token: string; prom: string; loki: string; alertsPaused?: boolean };
-export type Files = { dashboards: { name: string; text: string }[]; rules: { name: string; text: string }[] };
+export type Files = { dashboards: { name: string; text: string }[]; rules: { name: string; text: string }[]; receivers?: Record<string, string> };
 export type Deps = { fetch?: typeof fetch; dryRun?: boolean; log?: (line: string) => void; wait?: (ms: number) => Promise<void> };
-export type Published = { dashboards: number; panels: number; groups: number; rules: number; dryRun: boolean };
+export type Published = { dashboards: number; panels: number; groups: number; rules: number; removed: string[]; dryRun: boolean };
 
 type Group = { name: string; interval?: string; rules: Record<string, unknown>[] };
+/** A group as it is sent: one severity, and the contact point its alerts go to. */
+type Routed = Group & { receiver: string; severity: string };
 type Dashboard = { uid?: string; title?: string; panels?: unknown[] } & Record<string, unknown>;
 
 /** The settings that are unset or blank. An unset secret reaches a workflow as "". */
@@ -150,15 +160,55 @@ function groupsOf(file: { name: string; text: string }): Group[] {
   return groups;
 }
 
+/**
+ * Each group split by its rules' severity, in the order the severities first appear, each part
+ * named `<group>-<severity>` and carrying the contact point receivers.json names for it.
+ */
+export function routed(files: Files): Routed[] {
+  const receivers = files.receivers ?? {};
+  return files.rules.flatMap((file) =>
+    groupsOf(file).flatMap((group) => {
+      const parts = new Map<string, Record<string, unknown>[]>();
+      for (const rule of group.rules) {
+        const name = String(rule["alert"] ?? rule["record"] ?? "?");
+        const severity = (rule["labels"] as Record<string, unknown> | undefined)?.["severity"];
+        if (typeof severity !== "string" || !severity) {
+          throw new Error(`${file.name}: rule ${name} in group ${group.name} has no severity label`);
+        }
+        if (!receivers[severity]) {
+          throw new Error(`${file.name}: rule ${name} in group ${group.name} has severity ${JSON.stringify(severity)}, which receivers.json names no contact point for`);
+        }
+        parts.set(severity, [...(parts.get(severity) ?? []), rule]);
+      }
+      return [...parts].map(([severity, rules]) => ({ ...group, name: `${group.name}-${severity}`, rules, severity, receiver: receivers[severity]! }));
+    }),
+  );
+}
+
+/** Every receiver the groups name is a contact point on the stack, or the publish stops here. */
+async function checkContactPoints(s: Settings, deps: Deps, groups: Routed[]): Promise<void> {
+  // The Alertmanager's receiver list: names only, readable without provisioning rights.
+  const path = "/api/alertmanager/grafana/config/api/v1/receivers";
+  const names = new Set(parsed<{ name: string }[]>(await call(s, deps, "GET", path), "GET", path).map((r) => r.name));
+  const seen = new Map<string, string>();
+  groups.forEach((g) => seen.set(g.receiver, seen.get(g.receiver) ?? g.severity));
+  for (const [receiver, severity] of seen) {
+    if (!names.has(receiver)) {
+      throw new Error(`contact point ${JSON.stringify(receiver)} (for severity ${severity}) is not on the stack; make it, or change alerts/receivers.json`);
+    }
+  }
+}
+
 export async function publish(files: Files, s: Settings, deps: Deps = {}): Promise<Published> {
   const log = deps.log ?? (() => {});
   // Everything that can be wrong with the files or the settings is found before the first write.
-  const groups = files.rules.flatMap(groupsOf);
+  const groups = routed(files);
   const prom = await datasourceUid(s, deps, s.prom, "GRAFANA_PROM_DS");
   const loki = await datasourceUid(s, deps, s.loki, "GRAFANA_LOKI_DS");
   const dashboards = files.dashboards.map((f) => resolveDashboard(f.text, { "${DS_PROMETHEUS}": prom, "${DS_LOKI}": loki }, f.name));
+  await checkContactPoints(s, deps, groups);
   const folder = await folderUid(s, deps);
-  const out: Published = { dashboards: 0, panels: 0, groups: 0, rules: 0, dryRun: deps.dryRun ?? false };
+  const out: Published = { dashboards: 0, panels: 0, groups: 0, rules: 0, removed: [], dryRun: deps.dryRun ?? false };
 
   for (const dashboard of dashboards) {
     const sent = dashboard.panels?.length ?? 0;
@@ -177,13 +227,15 @@ export async function publish(files: Files, s: Settings, deps: Deps = {}): Promi
     out.panels += sent;
   }
 
-  for (const group of groups) {
+  const namespace = `${CONVERT}/${encodeURIComponent(FOLDER.title)}`;
+  for (const { receiver, severity: _, ...group } of groups) {
     if (!deps.dryRun) {
-      const path = `${CONVERT}/${encodeURIComponent(FOLDER.title)}`;
+      const path = namespace;
       await call(s, deps, "POST", path, toYaml(group), {
         headers: {
           "Content-Type": "application/yaml",
           "X-Grafana-Alerting-Datasource-UID": prom,
+          "X-Grafana-Alerting-Notification-Settings": JSON.stringify({ receiver }),
           ...(s.alertsPaused ? { "X-Grafana-Alerting-Alert-Rules-Paused": "true" } : {}),
         },
       });
@@ -196,9 +248,24 @@ export async function publish(files: Files, s: Settings, deps: Deps = {}): Promi
         }
       });
     }
-    log(`rule group ${group.name}: ${group.rules.length} rules${s.alertsPaused ? " (paused)" : ""}`);
+    log(`rule group ${group.name}: ${group.rules.length} rules to ${receiver}${s.alertsPaused ? " (paused)" : ""}`);
     out.groups += 1;
     out.rules += group.rules.length;
+  }
+
+  // Groups left in the namespace that the files no longer produce, deleted only after every
+  // group above was written (routed() refuses files with no groups, so this never empties it).
+  if (out.groups > 0) {
+    const back = await call(s, deps, "GET", namespace, undefined, { headers: { Accept: "application/yaml" }, allow404: true });
+    const stored = back.status === 404 ? [] : Object.values(parsed<Record<string, Group[]> | null>(back, "GET", namespace, parseYaml) ?? {}).flat();
+    const sent = new Set(groups.map((g) => g.name));
+    for (const name of stored.map((g) => g.name).filter((n) => !sent.has(n))) {
+      if (!deps.dryRun) {
+        await call(s, deps, "DELETE", `${namespace}/${encodeURIComponent(name)}`);
+      }
+      log(`rule group ${name} ${deps.dryRun ? "would be removed" : "removed"}: the files no longer produce it`);
+      out.removed.push(name);
+    }
   }
   return out;
 }
@@ -274,7 +341,8 @@ function readFiles(here: string): Files {
       .filter((n) => n.endsWith(end))
       .sort()
       .map((name) => ({ name, text: readFileSync(resolve(here, dir, name), "utf8") }));
-  return { dashboards: read("dashboards", ".json"), rules: read("alerts", ".rules.yml") };
+  const receivers = JSON.parse(readFileSync(resolve(here, "alerts", "receivers.json"), "utf8")) as Record<string, string>;
+  return { dashboards: read("dashboards", ".json"), rules: read("alerts", ".rules.yml"), receivers };
 }
 
 const invoked = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -295,7 +363,7 @@ if (invoked) {
       r.missing.forEach((m) => console.log(`  - ${m}`));
     } else {
       const r = await publish(files, s, { dryRun: argv.includes("--dry-run"), log: (l) => console.log(`  ${l}`) });
-      console.log(`observability publish${r.dryRun ? " (dry run, nothing written)" : ""}: ${r.dashboards} dashboard(s) with ${r.panels} panels, ${r.rules} alert rule(s) in ${r.groups} group(s)`);
+      console.log(`observability publish${r.dryRun ? " (dry run, nothing written)" : ""}: ${r.dashboards} dashboard(s) with ${r.panels} panels, ${r.rules} alert rule(s) in ${r.groups} group(s), ${r.removed.length} group(s) ${r.dryRun ? "to remove" : "removed"}`);
     }
   } catch (e) {
     console.error(`observability publish failed: ${(e as Error).message}`);
