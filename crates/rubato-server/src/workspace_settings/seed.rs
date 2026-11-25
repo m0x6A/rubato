@@ -51,7 +51,7 @@ pub async fn start(app: &App) -> Result<Started> {
 /// from `RUBATO_MAP_*`), each with the traffic source and launch defaults the environment sets
 /// (a one-time copy, plan 189 Decision 7). Writes nothing once the table has a row.
 async fn seed(app: &App) -> Result<usize> {
-    let mut tx = app.db.begin().await?;
+    let mut tx = app.db.begin_with("BEGIN IMMEDIATE").await?;
     if store::count(&mut tx).await? > 0 {
         return Ok(0);
     }
