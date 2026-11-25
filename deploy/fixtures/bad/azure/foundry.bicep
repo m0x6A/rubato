@@ -1,6 +1,6 @@
 // Must fail: key auth off, a model on `latest`, and the key read into an output.
 resource account 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
-  name: 'rubato-speech'
+  name: 'rubato-ai'
   location: 'swedencentral'
   kind: 'AIServices'
   sku: {

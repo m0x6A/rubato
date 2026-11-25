@@ -1,7 +1,7 @@
 /**
  * Checks Rubato's stack files (#315): only `app` runs without a profile, LiveKit runs only under
  * the `voice` profile at a pinned version, and its keys come from the names Rubato signs with,
- * never from its config file. The speech account (deploy/azure/speech.bicep) pins its models, keeps
+ * never from its config file. The Foundry account (deploy/azure/foundry.bicep) pins its models, keeps
  * key auth on and never outputs its key. Run with `pnpm deploy:check`; tested by `compose.test.ts`.
  */
 import { readFileSync } from "node:fs";
@@ -51,13 +51,13 @@ export function check(composeText: string, livekitText: string, speechText: stri
   rule(env.LIVEKIT_KEYS === LIVEKIT_KEYS, `livekit LIVEKIT_KEYS must be ${JSON.stringify(LIVEKIT_KEYS)}`);
   rule(!("keys" in livekit) && !("key_file" in livekit), "livekit.yaml must hold no keys");
 
-  // The speech account is Bicep, read as text: no Bicep parser in Node.
+  // The Foundry account is Bicep, read as text: no Bicep parser in Node.
   const code = speechText.replace(/(^|\s)\/\/.*$/gm, "$1");
-  rule(!/listKeys/i.test(code), "speech.bicep must not read the account key (listKeys)");
+  rule(!/listKeys/i.test(code), "foundry.bicep must not read the account key (listKeys)");
   const versions = [...code.matchAll(/^\s*version:\s*'([^']*)'/gm)].map((m) => m[1]);
   const loose = versions.filter((v) => !PINNED_MODEL.test(v));
-  rule(versions.length > 0 && loose.length === 0, `speech.bicep must pin every model version: ${versions.length === 0 ? "(none)" : loose.join(", ")}`);
-  rule(/^\s*disableLocalAuth:\s*false\b/m.test(code), "speech.bicep must keep key auth on (disableLocalAuth: false)");
+  rule(versions.length > 0 && loose.length === 0, `foundry.bicep must pin every model version: ${versions.length === 0 ? "(none)" : loose.join(", ")}`);
+  rule(/^\s*disableLocalAuth:\s*false\b/m.test(code), "foundry.bicep must keep key auth on (disableLocalAuth: false)");
 
   return { services: Object.keys(services).length, rules, problems };
 }
@@ -65,7 +65,7 @@ export function check(composeText: string, livekitText: string, speechText: stri
 const here = dirname(fileURLToPath(import.meta.url));
 export function checkDir(dir: string): Result {
   const read = (f: string) => readFileSync(resolve(dir, f), "utf8");
-  return check(read("compose.yaml"), read("livekit.yaml"), read("azure/speech.bicep"));
+  return check(read("compose.yaml"), read("livekit.yaml"), read("azure/foundry.bicep"));
 }
 
 const invoked = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

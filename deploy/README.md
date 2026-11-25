@@ -50,29 +50,33 @@ docker compose up -d --pull never
 A plain `up` with the profile unset leaves a running `livekit` container where it is. Off,
 every voice route answers 404 `voice_off` and the page's CSP is as ADR 0066 says.
 
-## Speech on Azure AI Foundry
+## Azure AI Foundry
 
-The speech provider (ADR 0073) for agents to hear and answer in a voice channel: one Foundry
-account, `rubato-speech` in resource group `rubato` on the developer subscription, declared in
-`azure/speech.bicep`. It holds `gpt-4o-transcribe` and `gpt-4o-mini-tts`, both GlobalStandard, in
-East US 2: the one region with both current speech models. Speech leaves the EU; the round trip
-adds about 0.1 s to a turn that waits on the agent anyway. Rubato calls it over the
-OpenAI-compatible v1 API, `https://rubato-speech.openai.azure.com/openai/v1`.
+One Foundry account for the models Rubato calls, `rubato-ai` in resource group `rubato` on the
+developer subscription, declared in `azure/foundry.bicep`. Today it is the speech provider (ADR
+0073), for agents to hear and answer in a voice channel: `gpt-4o-transcribe` and
+`gpt-4o-mini-tts`, both GlobalStandard, in East US 2, the one region with both current speech
+models. Speech leaves the EU; the round trip adds about 0.1 s to a turn that waits on the agent
+anyway.
+
+Speech goes to the OpenAI-compatible v1 API, `https://rubato-ai.openai.azure.com/openai/v1`,
+except transcription: v1 answers it with 404 `DeploymentNotFound`, so it goes to the
+deployment's own URL with an `api-version` query (the server keeps a query on a base URL, #319).
 
 Create it (a person runs this; it changes nothing on the host):
 
 ```sh
 az group create -n rubato -l eastus2
-az deployment group what-if -g rubato -f deploy/azure/speech.bicep
-az deployment group create -g rubato -f deploy/azure/speech.bicep
+az deployment group what-if -g rubato -f deploy/azure/foundry.bicep
+az deployment group create -g rubato -f deploy/azure/foundry.bicep
 ```
 
 Add to the stack's `.env`:
 
 ```sh
 RUBATO_SPEECH=openai_compatible
-RUBATO_STT_URL=https://rubato-speech.openai.azure.com/openai/v1
-RUBATO_TTS_URL=https://rubato-speech.openai.azure.com/openai/v1
+RUBATO_STT_URL=https://rubato-ai.openai.azure.com/openai/deployments/gpt-4o-transcribe?api-version=2025-03-01-preview
+RUBATO_TTS_URL=https://rubato-ai.openai.azure.com/openai/v1
 RUBATO_STT_MODEL=gpt-4o-transcribe        # the deployment name
 RUBATO_TTS_MODEL=gpt-4o-mini-tts
 RUBATO_TTS_VOICE=alloy                     # or ash, coral, echo, nova, sage, shimmer, …
@@ -84,13 +88,13 @@ RUBATO_TTS_API_KEY=<the same key>
 The key goes from Azure to the host over stdin, never printed and never on a command line:
 
 ```sh
-k=$(az cognitiveservices account keys list -n rubato-speech -g rubato --query key1 -o tsv)
+k=$(az cognitiveservices account keys list -n rubato-ai -g rubato --query key1 -o tsv)
 printf 'RUBATO_STT_API_KEY=%s\nRUBATO_TTS_API_KEY=%s\n' "$k" "$k" | ssh <host> 'cat >> /opt/stacks/rubato/.env'
 unset k
 ```
 
 Then `docker compose up -d --pull never`. The consent panel names
-`rubato-speech.openai.azure.com`.
+`rubato-ai.openai.azure.com`.
 
 Limits and cost:
 - Each deployment takes 50 thousand tokens a minute, far more than a room uses. Raise
@@ -101,12 +105,14 @@ Limits and cost:
 
 Turn it off: remove the `RUBATO_SPEECH`, `RUBATO_STT_*` and `RUBATO_TTS_*` lines and run `up`
 again; people still hear each other. Remove it: `az group delete -n rubato`. Rotate the key:
-`az cognitiveservices account keys regenerate -n rubato-speech -g rubato --key-name key1`, then
+`az cognitiveservices account keys regenerate -n rubato-ai -g rubato --key-name key1`, then
 move it as above.
 
 At 3 am: `rubato.voice.speech{rubato.voice.op, rubato.outcome}` and the `SpeechProviderFailing`
 alert. In the server log, 401 means the key in `.env` is not the account's, 429 the quota, 404 a
-wrong URL or deployment name.
+wrong URL or deployment name. Probing by hand with curl: East US 2
+drops OpenSSL's TLS 1.3 handshake (curl prints 000), so add `--tls-max 1.2`; the server's rustls
+is not affected.
 
 ## At 3 am
 

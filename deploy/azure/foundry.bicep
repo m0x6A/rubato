@@ -1,6 +1,7 @@
-// Rubato's speech provider on Azure AI Foundry (ADR 0073): one AIServices account with a
-// speech-to-text and a text-to-speech deployment, reached over the OpenAI-compatible v1 API.
-// Applied by hand (deploy/README.md, "Speech on Azure AI Foundry"); checked by deploy/check.ts.
+// Rubato's Azure AI Foundry account: one AIServices account for the models Rubato calls. Today
+// that is the speech provider (ADR 0073), a speech-to-text and a text-to-speech deployment; more
+// deployments join the list below. Applied by hand (deploy/README.md, "Azure AI Foundry");
+// checked by deploy/check.ts.
 // The key never leaves Azure through this file: no output reads it.
 
 targetScope = 'resourceGroup'
@@ -11,7 +12,7 @@ targetScope = 'resourceGroup'
 param location string = 'eastus2'
 
 @description('Account name, also its subdomain: https://<name>.openai.azure.com')
-param accountName string = 'rubato-speech'
+param accountName string = 'rubato-ai'
 
 param tags object = {
   Application: 'Rubato'
