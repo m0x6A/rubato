@@ -5,8 +5,10 @@
 
 targetScope = 'resourceGroup'
 
-@description('Region of the account. Sweden Central has both models.')
-param location string = 'swedencentral'
+// East US 2 is the one region with both current speech models and the quota for them; the extra
+// ~0.1 s round trip is small next to the agent's turn.
+@description('Region of the account')
+param location string = 'eastus2'
 
 @description('Account name, also its subdomain: https://<name>.openai.azure.com')
 param accountName string = 'rubato-speech'
@@ -19,18 +21,18 @@ param tags object = {
 // Deployment name = the model field Rubato sends (RUBATO_STT_MODEL, RUBATO_TTS_MODEL).
 var deployments = [
   {
-    name: 'gpt-4o-mini-transcribe'
-    model: 'gpt-4o-mini-transcribe'
-    version: '2025-12-15'
-    sku: 'GlobalStandard' // may be processed outside the EU (chosen 2026-11-25)
-    capacity: 10
+    name: 'gpt-4o-transcribe'
+    model: 'gpt-4o-transcribe'
+    version: '2025-03-20'
+    sku: 'GlobalStandard' // processed wherever Azure has capacity (chosen 2026-11-25)
+    capacity: 50 // thousand tokens a minute, of the region's 400
   }
   {
-    name: 'tts'
-    model: 'tts'
-    version: '001'
-    sku: 'Standard' // regional: runs in the account's region
-    capacity: 3 // the region's whole quota: 3 requests a minute
+    name: 'gpt-4o-mini-tts'
+    model: 'gpt-4o-mini-tts'
+    version: '2025-12-15'
+    sku: 'GlobalStandard'
+    capacity: 50 // of the region's 600
   }
 ]
 
