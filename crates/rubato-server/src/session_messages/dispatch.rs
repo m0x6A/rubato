@@ -242,6 +242,23 @@ fn waits_for_input(s: &SessionState) -> bool {
                 && s.blocked_by == Some(rubato_protocol::BlockCause::IdlePrompt)))
 }
 
+/// Every capability a companion may announce in Hello, each a series on
+/// `rubato.companions.by_capability` (0 when no connected companion has it). The cutover waits
+/// for `session_input`, `draft_mirror` and `plan_handoff` on every companion (QUICKSTART §3); the
+/// list once stopped at the first (#274). `skill:` and `claude_auth:` carry values and stay off.
+const COMPANION_CAPABILITIES: [&str; 10] = [
+    capability::HOOK_ALLOWLIST,
+    capability::SESSION_INPUT,
+    capability::DRAFT_MIRROR,
+    capability::PLAN_HANDOFF,
+    capability::DRAFT_RESTORE,
+    capability::SESSION_STOP,
+    capability::ROOM_TURNS,
+    capability::AGENT_MCP,
+    capability::HEADLESS,
+    capability::FLEET,
+];
+
 /// Gauges, each poll tick: the oldest message queued for a launch whose session waits for input
 /// (alert `SessionMessageStuck`), and connected companions by capability.
 pub async fn record_gauges(app: &App, sessions: &[SessionState]) {
@@ -262,11 +279,7 @@ pub async fn record_gauges(app: &App, sessions: &[SessionState]) {
     app.metrics
         .session_messages_oldest_idle_queued
         .record(oldest, &[]);
-    for (cap, n) in app.capability_counts(&[
-        capability::SESSION_INPUT,
-        capability::HOOK_ALLOWLIST,
-        capability::AGENT_MCP,
-    ]) {
+    for (cap, n) in app.capability_counts(&COMPANION_CAPABILITIES) {
         app.metrics
             .companions_by_capability
             .record(n, &[KeyValue::new(attr::CAPABILITY, cap)]);

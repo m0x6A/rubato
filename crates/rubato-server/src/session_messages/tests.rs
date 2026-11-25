@@ -497,3 +497,37 @@ async fn stop_goes_past_a_message_in_flight() {
     dispatch::dispatch(&h.app, h.launch).await;
     assert!(pushed(&mut rx).iter().all(|(id, _)| *id != s));
 }
+
+/// The "Companions by capability" panel shows what the cutover waits for (QUICKSTART §3, #274):
+/// `session_input`, `draft_mirror` and `plan_handoff`, not only the first. A capability nobody
+/// announced reads 0, so the panel says it is missing rather than leaving it out.
+#[tokio::test]
+async fn the_capability_gauge_counts_what_planning_in_rubato_needs() {
+    let planning = [
+        capability::SESSION_INPUT,
+        capability::DRAFT_MIRROR,
+        capability::PLAN_HANDOFF,
+    ];
+    let h = harness().await;
+    let _rx = connect_companion(&h, &planning);
+    dispatch::record_gauges(&h.app, &[]).await;
+    let by_cap: std::collections::BTreeMap<String, u64> = h
+        .reader
+        .points(metric::COMPANIONS_BY_CAPABILITY)
+        .into_iter()
+        .map(|p| (p.attrs[attr::CAPABILITY].clone(), p.value))
+        .collect();
+    for cap in planning {
+        assert_eq!(by_cap.get(cap), Some(&1), "{cap} in {by_cap:?}");
+    }
+    let others: Vec<_> = by_cap
+        .iter()
+        .filter(|(c, _)| !planning.contains(&c.as_str()))
+        .collect();
+    assert!(others.iter().all(|(_, n)| **n == 0), "{others:?}");
+    assert!(
+        by_cap.contains_key(capability::ROOM_TURNS) && by_cap.contains_key(capability::HEADLESS),
+        "every capability a companion announces is on the gauge: {by_cap:?}"
+    );
+    println!("checked {} capabilities on the gauge", by_cap.len());
+}

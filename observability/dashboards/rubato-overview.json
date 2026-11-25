@@ -1754,7 +1754,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Connected companions per capability they announced in Hello (ADR 0051). Planning in Rubato is switched on (the cutover) only once every companion shows session_input; one that does not is an older companion its owner must upgrade.",
+      "description": "Connected companions per capability they announced in Hello (ADR 0051). Every capability a companion can announce has a series, 0 when no connected companion has it. Planning in Rubato is switched on (the cutover) only once every companion shows session_input, draft_mirror and plan_handoff; one that does not is an older companion its owner must upgrade.",
       "targets": [
         {
           "refId": "A",
