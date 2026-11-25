@@ -14,6 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const files: Files = {
   dashboards: [{ name: "rubato-overview.json", text: readFileSync(resolve(here, "dashboards/rubato-overview.json"), "utf8") }],
   rules: [{ name: "rubato.rules.yml", text: readFileSync(resolve(here, "alerts/rubato.rules.yml"), "utf8") }],
+  receivers: JSON.parse(readFileSync(resolve(here, "alerts/receivers.json"), "utf8")) as Record<string, string>,
 };
 const settings: Settings = { url: "https://grafana.test", token: "t0ken", prom: "prom-name", loki: "loki-name" };
 
@@ -25,6 +26,10 @@ type Options = {
   /** Change what is read back, to make verification fail. */
   readBack?: { panels?: number; rules?: number };
   metrics?: string[];
+  /** Contact points on the stack; the committed receivers by default. */
+  contactPoints?: string[];
+  /** Groups already in the Rubato namespace before the publish. */
+  existing?: { name: string; rules: unknown[] }[];
 };
 
 /** A Grafana that keeps what it is sent. */
@@ -33,7 +38,8 @@ function grafana(o: Options = {}) {
   const folders = [...(o.folders ?? [])];
   const datasources = o.datasources ?? { "prom-name": "prom-uid", "loki-name": "loki-uid" };
   const dashboards = new Map<string, { panels: unknown[]; title: string }>();
-  const groups = new Map<string, { name: string; rules: unknown[] }[]>();
+  const groups = new Map<string, { name: string; rules: unknown[] }[]>(o.existing ? [["Rubato", [...o.existing]]] : []);
+  const contactPoints = o.contactPoints ?? ["m0x6a", "pantrypilot-email"];
   const json = (status: number, body: unknown) => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
   const fetcher = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
@@ -67,7 +73,16 @@ function grafana(o: Options = {}) {
       const d = dashboards.get(p.slice("/api/dashboards/uid/".length));
       return d ? json(200, { dashboard: { ...d, panels: o.readBack?.panels === undefined ? d.panels : d.panels.slice(0, o.readBack.panels) } }) : json(404, {});
     }
+    if (p === "/api/alertmanager/grafana/config/api/v1/receivers") {
+      return json(200, ["empty", ...contactPoints].map((name) => ({ name, active: true, integrations: [] })));
+    }
     const convert = "/api/convert/prometheus/config/v1/rules/";
+    if (p.startsWith(convert) && call.method === "DELETE") {
+      const [ns, name] = p.slice(convert.length).split("/").map(decodeURIComponent);
+      const before = groups.get(ns!) ?? [];
+      groups.set(ns!, before.filter((g) => g.name !== name));
+      return json(before.some((g) => g.name === name) ? 202 : 404, { status: "success" });
+    }
     if (p.startsWith(convert) && call.method === "POST") {
       const ns = decodeURIComponent(p.slice(convert.length));
       const group = parseYaml(call.body) as { name: string; rules: unknown[] };
@@ -95,8 +110,8 @@ test("publishes the committed dashboard and rules, reads them back, and reports 
   const r = await publish(files, settings, { fetch: g.fetcher });
   const committed = JSON.parse(files.dashboards[0]!.text) as { panels: unknown[] };
   const rules = (parseYaml(files.rules[0]!.text) as { groups: { rules: unknown[] }[] }).groups.flatMap((x) => x.rules);
-  assert.deepEqual(r, { dashboards: 1, panels: committed.panels.length, groups: 1, rules: rules.length, dryRun: false });
-  console.log(`published ${r.dashboards} dashboard (${r.panels} panels), ${r.rules} alert rules in ${r.groups} group`);
+  assert.deepEqual(r, { dashboards: 1, panels: committed.panels.length, groups: 2, rules: rules.length, removed: [], dryRun: false });
+  console.log(`published ${r.dashboards} dashboard (${r.panels} panels), ${r.rules} alert rules in ${r.groups} groups`);
 
   // The folder did not exist, so it was made once and both kinds went into it.
   assert.deepEqual(g.folders, [{ uid: "rubato", title: "Rubato" }]);
@@ -109,16 +124,54 @@ test("publishes the committed dashboard and rules, reads them back, and reports 
   assert.ok(!text.includes("${DS_"), "no datasource placeholder is left");
   assert.ok(text.includes('"uid":"prom-uid"') && text.includes('"uid":"loki-uid"'));
 
-  // The rules travel as the committed Prometheus rules, evaluated against the metrics datasource.
-  const rulesCall = writes(g.calls).find((c) => c.path.startsWith("/api/convert/"))!;
-  assert.equal(rulesCall.path, "/api/convert/prometheus/config/v1/rules/Rubato");
-  assert.equal(rulesCall.headers["X-Grafana-Alerting-Datasource-UID"], "prom-uid");
-  // No parent folder: the namespace is the folder, found by its title in the root.
-  assert.equal(rulesCall.headers["X-Grafana-Alerting-Folder-UID"], undefined);
-  assert.equal(rulesCall.headers["X-Grafana-Alerting-Alert-Rules-Paused"], undefined);
-  const group = parseYaml(rulesCall.body) as { name: string; rules: { alert: string; expr: string }[] };
-  assert.equal(group.name, "rubato");
-  assert.deepEqual(group.rules, rules);
+  // The rules travel as the committed Prometheus rules, evaluated against the metrics datasource,
+  // one group per severity, each naming its contact point (#277).
+  const rulesCalls = writes(g.calls).filter((c) => c.path.startsWith("/api/convert/"));
+  assert.equal(rulesCalls.length, 2);
+  const sentGroups = rulesCalls.map((c) => {
+    assert.equal(c.path, "/api/convert/prometheus/config/v1/rules/Rubato");
+    assert.equal(c.headers["X-Grafana-Alerting-Datasource-UID"], "prom-uid");
+    // No parent folder: the namespace is the folder, found by its title in the root.
+    assert.equal(c.headers["X-Grafana-Alerting-Folder-UID"], undefined);
+    assert.equal(c.headers["X-Grafana-Alerting-Alert-Rules-Paused"], undefined);
+    const group = parseYaml(c.body) as { name: string; interval?: string; rules: { alert: string; labels: { severity: string } }[] };
+    const receiver = (JSON.parse(c.headers["X-Grafana-Alerting-Notification-Settings"]!) as { receiver: string }).receiver;
+    return { name: group.name, receiver, severities: [...new Set(group.rules.map((x) => x.labels.severity))], rules: group.rules };
+  });
+  assert.deepEqual(sentGroups.map(({ name, receiver, severities }) => ({ name, receiver, severities })), [
+    { name: "rubato-page", receiver: "m0x6a", severities: ["page"] },
+    { name: "rubato-ticket", receiver: "pantrypilot-email", severities: ["ticket"] },
+  ]);
+  // Every committed rule is sent once, unchanged.
+  const sentRules = sentGroups.flatMap((x) => x.rules);
+  assert.equal(sentRules.length, rules.length);
+  assert.deepEqual(new Set(sentRules.map((x) => JSON.stringify(x))), new Set(rules.map((x) => JSON.stringify(x))));
+  console.log(`routed: ${sentGroups.map((x) => `${x.name} ${x.rules.length} → ${x.receiver}`).join(", ")}`);
+  // Nothing else was there, so nothing was deleted.
+  assert.deepEqual(g.calls.filter((c) => c.method === "DELETE"), []);
+});
+
+test("a group the files no longer produce is deleted after the writes, and only in Rubato", async () => {
+  const g = grafana({ existing: [{ name: "rubato", rules: [{ alert: "CompanionSilent" }] }] });
+  const lines: string[] = [];
+  const r = await publish(files, settings, { fetch: g.fetcher, log: (l) => lines.push(l) });
+  assert.deepEqual(r.removed, ["rubato"]);
+  assert.deepEqual(g.groups.get("Rubato")!.map((x) => x.name).sort(), ["rubato-page", "rubato-ticket"]);
+  const deletes = g.calls.filter((c) => c.method === "DELETE");
+  assert.deepEqual(deletes.map((c) => c.path), ["/api/convert/prometheus/config/v1/rules/Rubato/rubato"]);
+  // The delete comes after every write.
+  const lastPost = g.calls.map((c) => c.method).lastIndexOf("POST");
+  assert.ok(g.calls.indexOf(deletes[0]!) > lastPost);
+  assert.ok(lines.includes("rule group rubato removed: the files no longer produce it"));
+});
+
+test("a dry run names the group it would delete and deletes nothing", async () => {
+  const g = grafana({ existing: [{ name: "rubato", rules: [] }] });
+  const lines: string[] = [];
+  const r = await publish(files, settings, { fetch: g.fetcher, dryRun: true, log: (l) => lines.push(l) });
+  assert.deepEqual(r.removed, ["rubato"]);
+  assert.deepEqual(writes(g.calls), []);
+  assert.ok(lines.includes("rule group rubato would be removed: the files no longer produce it"));
 });
 
 test("an existing folder is reused, whatever its uid", async () => {
@@ -149,7 +202,7 @@ test("publishing twice leaves one dashboard and one group", async () => {
   await publish(files, settings, { fetch: g.fetcher });
   await publish(files, settings, { fetch: g.fetcher });
   assert.equal(g.dashboards.size, 1);
-  assert.equal(g.groups.get("Rubato")!.length, 1);
+  assert.equal(g.groups.get("Rubato")!.length, 2);
   assert.equal(g.folders.length, 1);
 });
 
@@ -182,7 +235,27 @@ test("a dashboard that reads back with fewer panels fails", async () => {
 
 test("rules that read back short fail", async () => {
   const g = grafana({ readBack: { rules: 1 } });
-  await assert.rejects(publish(files, settings, { fetch: g.fetcher, wait: noWait }), /group rubato reads back with 1 rules, sent \d+/);
+  await assert.rejects(publish(files, settings, { fetch: g.fetcher, wait: noWait }), /group rubato-page reads back with 1 rules, sent 5/);
+});
+
+test("must fail: a rule without a severity, or with one no receiver is named for, fails before any write", async () => {
+  const rule = (labels: string) => `groups:\n  - name: g\n    rules:\n      - alert: A\n        expr: up == 0\n${labels}`;
+  const cases: [string, RegExp][] = [
+    [rule(""), /x\.rules\.yml: rule A in group g has no severity label/],
+    [rule("        labels:\n          severity: shout\n"), /x\.rules\.yml: rule A in group g has severity "shout", which receivers\.json names no contact point for/],
+  ];
+  for (const [text, err] of cases) {
+    const g = grafana();
+    await assert.rejects(publish({ ...files, rules: [{ name: "x.rules.yml", text }] }, settings, { fetch: g.fetcher }), err);
+    assert.deepEqual(writes(g.calls), []);
+  }
+  console.log(`receivers: checked ${cases.length} unroutable rules`);
+});
+
+test("must fail: a receiver that is not a contact point on the stack fails before any write", async () => {
+  const g = grafana({ contactPoints: ["m0x6a"] });
+  await assert.rejects(publish(files, settings, { fetch: g.fetcher }), /contact point "pantrypilot-email" \(for severity ticket\) is not on the stack/);
+  assert.deepEqual(writes(g.calls), []);
 });
 
 test("a datasource placeholder nobody resolves is refused", () => {
