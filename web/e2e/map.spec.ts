@@ -499,8 +499,12 @@ test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@
   // Draw a seam: drag from the right handle of web to the left handle of billing.
   const from = page.locator('.react-flow__node[data-id="web"] .react-flow__handle.source');
   const to = page.locator('.react-flow__node[data-id="billing"] .react-flow__handle.target');
-  await from.hover();
-  await page.mouse.down();
+  // The press goes to the handle itself: depending on the layout and on how many issues earlier
+  // tests pinned, the web-server seam chip can sit over web's handle. Move and release stay real.
+  const start = (await from.boundingBox())!;
+  const [sx, sy] = [start.x + start.width / 2, start.y + start.height / 2];
+  await page.mouse.move(sx, sy);
+  await from.dispatchEvent("mousedown", { button: 0, buttons: 1, clientX: sx, clientY: sy });
   const target = (await to.boundingBox())!;
   await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 12 });
   await page.mouse.up();
