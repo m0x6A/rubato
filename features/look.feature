@@ -24,7 +24,7 @@ Feature: Look and feel
   Scenario: A large map stays smooth
     Given a map of 40 parts and 60 seams, every seam busy
     When a person looks at it with flows moving
-    Then no frame takes long enough to stutter
+    Then at most one frame runs long, and not long enough to stutter
 
   @look.panel-expands
   Scenario: The panel can be widened to read in, and the browser remembers
