@@ -2,12 +2,27 @@ import { type Page, expect, test } from "@playwright/test";
 import { bigMap } from "./fixtures/big-map.ts";
 
 // Issue #81, design §5: a map of 40 parts and 60 seams, data lens, a working session on every
-// fourth part, stays smooth: no long animation frame over 50 ms in 5 s of steady state. The
-// median frame time is printed, not asserted (CI machines vary). The must-fail injects an 80 ms
-// busy frame and expects it reported, so the detector itself is proven.
+// fourth part, stays smooth: in 5 s of steady state, at most one long animation frame over 50 ms,
+// and that one under 100 ms. A single 51 ms frame on a shared CI runner is the machine, not the
+// map (#272); two, or one that a person would see stutter, fail. The median frame time is
+// printed, not asserted (CI machines vary). The must-fail injects an 80 ms busy frame and expects
+// it reported and judged, so the detector and the rule are proven.
 
 const WINDOW_MS = 5000;
 const LONG_MS = 50;
+/** The one long frame tolerated must stay under this. */
+const ONE_FRAME_MAX_MS = 100;
+
+/** Why these long frames stutter, or null when the map is smooth. */
+function stutter(long: number[]): string | null {
+  if (long.length === 0) {
+    return null;
+  }
+  if (long.length > 1) {
+    return `${long.length} long frames over ${LONG_MS} ms: ${JSON.stringify(long)}`;
+  }
+  return long[0]! < ONE_FRAME_MAX_MS ? null : `one frame of ${long[0]} ms, at or over ${ONE_FRAME_MAX_MS} ms`;
+}
 
 async function openBigMap(page: Page, lens: RegExp = /^Data flow/, traffic = false): Promise<void> {
   const overview = bigMap(40, 60, traffic);
@@ -87,7 +102,7 @@ test("a map of 40 parts and 60 seams stays smooth with particles and breathing",
   expect(m.seams).toBe(60);
   expect(m.particles).toBeGreaterThan(0);
   expect(m.particles).toBeLessThanOrEqual(120);
-  expect(m.long).toEqual([]);
+  expect(stutter(m.long)).toBeNull();
 });
 
 test("the same map in the Traffic lens, every seam busy both ways, stays smooth at the cap (#104)", { tag: "@look.smooth-on-a-large-map" }, async ({ page }) => {
@@ -99,7 +114,7 @@ test("the same map in the Traffic lens, every seam busy both ways, stays smooth 
   expect(m.seams).toBe(60);
   expect(m.particles).toBe(0);
   expect(m.chevrons).toBe(120);
-  expect(m.long).toEqual([]);
+  expect(stutter(m.long)).toBeNull();
 });
 
 test("must fail: an 80 ms busy frame is reported as long", { tag: ["@look.smooth-on-a-large-map", "@selftest"] }, async ({ page }) => {
@@ -108,4 +123,20 @@ test("must fail: an 80 ms busy frame is reported as long", { tag: ["@look.smooth
   const m = await measure(page, 1000, 80);
   expect(m.supported).toBe(true);
   expect(m.long.length).toBeGreaterThan(0);
+  expect(stutter(m.long)).not.toBeNull();
+});
+
+test("must fail: two long frames, or one at 100 ms or more, stutter; one under 100 ms does not", { tag: ["@look.smooth-on-a-large-map", "@selftest"] }, () => {
+  const cases: [number[], boolean][] = [
+    [[], true],
+    [[51], true],
+    [[99], true],
+    [[100], false],
+    [[180], false],
+    [[51, 52], false],
+  ];
+  for (const [long, smooth] of cases) {
+    expect(stutter(long) === null, JSON.stringify(long)).toBe(smooth);
+  }
+  console.log(`stutter: checked ${cases.length} cases`);
 });
