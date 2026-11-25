@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RoomMessage, VoiceAvailability } from "../../protocol.ts";
 import { ApiError } from "../../shared/api.ts";
+import { uuid } from "../../shared/uuid.ts";
 import type { RoomKey } from "./api.ts";
 import { roomFailureText } from "./api.ts";
 import { classifyJoinError, consented, pickFormat, rememberConsent, repliesToSpeak, UTTERANCE_MAX_SECS, voiceApi } from "./voice.ts";
@@ -23,7 +24,7 @@ const browserDeps: VoiceDeps = {
   isTypeSupported: (t) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t),
   audio: (src) => new Audio(src),
   secure: () => window.isSecureContext,
-  newId: () => crypto.randomUUID(),
+  newId: () => uuid(),
 };
 
 interface Props {

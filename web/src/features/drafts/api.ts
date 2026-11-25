@@ -1,5 +1,6 @@
 import type { DraftOpRequest, ProposeResponse } from "../../protocol.ts";
 import { request, requestText } from "../../shared/api.ts";
+import { uuid } from "../../shared/uuid.ts";
 import { scoped } from "../../shared/workspace.ts";
 
 /** One change to the map, as the draft stores it. */
@@ -7,7 +8,7 @@ export type MapOp = DraftOpRequest;
 
 export const draftsApi = {
   /** Add an operation. The id made here lets a retried request add it once. */
-  addOp: (op: MapOp) => request<void>("POST", scoped("/api/map/draft/ops"), { ...op, op_id: crypto.randomUUID() }),
+  addOp: (op: MapOp) => request<void>("POST", scoped("/api/map/draft/ops"), { ...op, op_id: uuid() }),
   removeOp: (seq: number) => request<void>("DELETE", scoped(`/api/map/draft/ops/${seq}`)),
   discard: () => request<void>("POST", scoped("/api/map/draft/discard")),
   restore: () => request<void>("POST", scoped("/api/map/draft/restore")),
