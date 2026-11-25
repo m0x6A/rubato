@@ -1,0 +1,56 @@
+# Rubato's stack, as it runs in /opt/stacks/rubato on the apps host (Dockge). A deploy copies this
+# file and livekit.yaml there and sets the app's image tag; redeploy with
+# `docker compose up -d --pull never`, not Dockge's Update button. See README.md.
+#
+# Without a profile only `app` runs. `COMPOSE_PROFILES=voice` in the stack's .env adds LiveKit for
+# a plan room's voice channel (ADR 0073); Rubato itself never starts or talks to it.
+services:
+  app:
+    image: local/rubato:sha-b14523f # pinned; a rollback is the previous tag
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  livekit:
+    profiles: ["voice"]
+    image: livekit/livekit-server:v1.13.11 # pinned, never latest; checked by compose.test.ts
+    restart: unless-stopped
+    # On a bridge network LiveKit advertises the container's IP and media never connects.
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      # The pair Rubato signs join tokens with, written once in .env.
+      LIVEKIT_KEYS: "${RUBATO_LIVEKIT_API_KEY}: ${RUBATO_LIVEKIT_API_SECRET}"
+      # The address browsers on the LAN reach this host at.
+      NODE_IP: "${LIVEKIT_NODE_IP}"
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7880/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,13 @@
+# LiveKit for a plan room's voice channel (ADR 0073), LAN only. Keys come from LIVEKIT_KEYS
+# (compose.yaml), never from this file; the node IP from NODE_IP.
+port: 7880
+# Signalling only on loopback: browsers reach it as wss:// through the host's https proxy (#276).
+bind_addresses:
+  - 127.0.0.1
+rtc:
+  tcp_port: 7881
+  # One UDP port for all media instead of a range.
+  udp_port: 7882
+  use_external_ip: false
+logging:
+  level: info

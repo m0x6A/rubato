@@ -1,0 +1,4 @@
+# Must fail: keys written into the config.
+port: 7880
+keys:
+  devkey: secret
