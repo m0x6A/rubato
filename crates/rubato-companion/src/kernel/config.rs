@@ -79,7 +79,8 @@ pub struct CompanionConfig {
     pub limits: Limits,
     /// Prices by model id prefix, longest prefix wins. Empty means spend is not measured.
     pub pricing: BTreeMap<String, ModelPrice>,
-    /// Permission mode passed to Claude Code at launch.
+    /// Permission mode passed to Claude Code at launch: `auto` unless the config names another
+    /// (`acceptEdits` for an account without auto mode).
     pub permission_mode: String,
     /// Deadline for every git and tmux call of a launch; a launch that hits it is
     /// `Failed` (plan 40 S3, A1).
@@ -141,7 +142,7 @@ impl Default for CompanionConfig {
             tmux_min_version: "3.7".into(),
             limits: Limits::default(),
             pricing: BTreeMap::new(),
-            permission_mode: "acceptEdits".into(),
+            permission_mode: "auto".into(),
             command_timeout_secs: crate::kernel::proc::DEFAULT_TIMEOUT.as_secs(),
             skill_dir: None,
             mode: rubato_protocol::ClientKind::Interactive,
@@ -477,6 +478,18 @@ mod tests {
         assert!(retired_keys("companion:\n  tmux_command: tmux\nrepos: []\n").is_empty());
         assert!(retired_keys("not: [yaml").is_empty());
         println!("checked {} retired keys", RETIRED_KEYS.len());
+    }
+
+    /// Launched sessions start in auto mode unless the config names another; a config that
+    /// names one keeps it.
+    #[test]
+    fn launches_start_in_auto_mode_unless_the_config_names_another() {
+        let none = Workspace::parse("repos: []\n").unwrap();
+        assert_eq!(none.companion.permission_mode, "auto");
+        let set =
+            Workspace::parse("companion:\n  permission_mode: acceptEdits\nrepos: []\n").unwrap();
+        assert_eq!(set.companion.permission_mode, "acceptEdits");
+        println!("checked 2 configs for the permission mode");
     }
 
     /// The old name is found and flagged: `RUBATO_WORKSPACE`, a `workspace.yml` left alone, or one
