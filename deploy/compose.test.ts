@@ -29,6 +29,9 @@ test("must fail: the bad fixture breaks every rule", () => {
       "livekit image must be pinned to an exact vX.Y.Z",
       "livekit LIVEKIT_KEYS must be \"${RUBATO_LIVEKIT_API_KEY}",
       "livekit.yaml must hold no keys",
+      "speech.bicep must not read the account key (listKeys)",
+      "speech.bicep must pin every model version",
+      "speech.bicep must keep key auth on (disableLocalAuth",
     ],
   );
 });

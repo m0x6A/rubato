@@ -50,6 +50,62 @@ docker compose up -d --pull never
 A plain `up` with the profile unset leaves a running `livekit` container where it is. Off,
 every voice route answers 404 `voice_off` and the page's CSP is as ADR 0066 says.
 
+## Speech on Azure AI Foundry
+
+The speech provider (ADR 0073) for agents to hear and answer in a voice channel: one Foundry
+account, `rubato-speech` in resource group `rubato` on the developer subscription, declared in
+`azure/speech.bicep`. It holds `gpt-4o-mini-transcribe` (GlobalStandard: may be processed
+outside the EU) and `tts` (Standard, in Sweden Central). Rubato calls it over the
+OpenAI-compatible v1 API, `https://rubato-speech.openai.azure.com/openai/v1`.
+
+Create it (a person runs this; it changes nothing on the host):
+
+```sh
+az group create -n rubato -l swedencentral
+az deployment group what-if -g rubato -f deploy/azure/speech.bicep
+az deployment group create -g rubato -f deploy/azure/speech.bicep
+```
+
+Add to the stack's `.env`:
+
+```sh
+RUBATO_SPEECH=openai_compatible
+RUBATO_STT_URL=https://rubato-speech.openai.azure.com/openai/v1
+RUBATO_TTS_URL=https://rubato-speech.openai.azure.com/openai/v1
+RUBATO_STT_MODEL=gpt-4o-mini-transcribe   # the deployment name
+RUBATO_TTS_MODEL=tts
+RUBATO_TTS_VOICE=alloy
+RUBATO_STT_API_KEY=<the account key>
+RUBATO_TTS_API_KEY=<the same key>
+# RUBATO_SPEECH_LANGUAGE=en               # optional; the model detects it otherwise
+```
+
+The key goes from Azure to the host over stdin, never printed and never on a command line:
+
+```sh
+k=$(az cognitiveservices account keys list -n rubato-speech -g rubato --query key1 -o tsv)
+printf 'RUBATO_STT_API_KEY=%s\nRUBATO_TTS_API_KEY=%s\n' "$k" "$k" | ssh <host> 'cat >> /opt/stacks/rubato/.env'
+unset k
+```
+
+Then `docker compose up -d --pull never`. The consent panel names
+`rubato-speech.openai.azure.com`.
+
+Limits and cost:
+- TTS is capped at 3 requests a minute: the region's whole quota. A fourth spoken reply in a minute
+  is refused (429) and counts as a failed `rubato.voice.speech{rubato.voice.op="tts"}`.
+- Transcription is about $0.003 a minute of speech. The subscription's monthly credit caps spend.
+- Azure may keep what it is sent for abuse monitoring for up to 30 days.
+
+Turn it off: remove the `RUBATO_SPEECH`, `RUBATO_STT_*` and `RUBATO_TTS_*` lines and run `up`
+again; people still hear each other. Remove it: `az group delete -n rubato`. Rotate the key:
+`az cognitiveservices account keys regenerate -n rubato-speech -g rubato --key-name key1`, then
+move it as above.
+
+At 3 am: `rubato.voice.speech{rubato.voice.op, rubato.outcome}` and the `SpeechProviderFailing`
+alert. In the server log, 401 means the key in `.env` is not the account's, 429 the quota, 404 a
+wrong URL or deployment name.
+
 ## At 3 am
 
 The Voice panel on the Rubato overview counts `rubato.voice.join_failed{rubato.reason}` from
