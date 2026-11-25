@@ -1,0 +1,13 @@
+# Must fail every rule of check.ts: app in a profile, an extra unprofiled service, livekit
+# unpinned, in two profiles, with keys of its own.
+services:
+  app:
+    profiles: ["web"]
+    image: local/rubato:sha-0000000
+  redis:
+    image: redis:7
+  livekit:
+    profiles: ["voice", "default"]
+    image: livekit/livekit-server:latest
+    environment:
+      - "LIVEKIT_KEYS=devkey: secret"
