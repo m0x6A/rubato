@@ -159,6 +159,16 @@ fn bearer(
     }
 }
 
+/// `{base}{path}`, keeping a query the base carries after the path: Azure's deployment URLs need
+/// `?api-version=…` (`…/openai/deployments/<name>?api-version=…` becomes
+/// `…/openai/deployments/<name>/audio/transcriptions?api-version=…`).
+fn endpoint(base: &str, path: &str) -> String {
+    match base.split_once('?') {
+        Some((head, query)) => format!("{}{path}?{query}", head.trim_end_matches('/')),
+        None => format!("{}{path}", base.trim_end_matches('/')),
+    }
+}
+
 /// The file name a provider expects for a media type: some read the format from it.
 fn file_name(mime: &str) -> &'static str {
     let m = mime.to_ascii_lowercase();
@@ -196,7 +206,7 @@ impl Speech for OpenAiCompatible {
         if let Some(l) = language.or(self.c.language.as_deref()) {
             form = form.text("language", l.to_owned());
         }
-        let url = format!("{}/audio/transcriptions", self.c.stt_url);
+        let url = endpoint(&self.c.stt_url, "/audio/transcriptions");
         let body = self
             .send(bearer(self.http.post(url), self.c.stt_key.as_ref()).multipart(form))
             .await?;
@@ -210,7 +220,7 @@ impl Speech for OpenAiCompatible {
     }
 
     async fn synthesize(&self, text: &str) -> Result<SpeechClip, SpeechError> {
-        let url = format!("{}/audio/speech", self.c.tts_url);
+        let url = endpoint(&self.c.tts_url, "/audio/speech");
         let body = serde_json::json!({
             "model": self.c.tts_model,
             "input": text,
@@ -234,7 +244,7 @@ impl Speech for OpenAiCompatible {
 mod tests {
     use super::*;
     use axum::Router;
-    use axum::extract::{Multipart, State};
+    use axum::extract::{Multipart, RawQuery, State};
     use axum::http::{HeaderMap, StatusCode};
     use axum::routing::post;
     use std::sync::Mutex;
@@ -243,6 +253,7 @@ mod tests {
     struct Seen {
         fields: Vec<(String, String)>,
         auth: Option<String>,
+        query: Option<String>,
         speech: Option<serde_json::Value>,
     }
 
@@ -253,6 +264,7 @@ mod tests {
         let seen: Shared = Arc::default();
         async fn stt(
             State((seen, mode)): State<(Shared, &'static str)>,
+            RawQuery(query): RawQuery,
             headers: HeaderMap,
             mut form: Multipart,
         ) -> (StatusCode, String) {
@@ -271,6 +283,7 @@ mod tests {
             {
                 let mut g = seen.lock().unwrap();
                 g.fields = s;
+                g.query = query;
                 g.auth = headers
                     .get("authorization")
                     .map(|v| v.to_str().unwrap().to_owned());
@@ -301,6 +314,7 @@ mod tests {
         let app = Router::new()
             .route("/v1/audio/transcriptions", post(stt))
             .route("/v1/audio/speech", post(tts))
+            .route("/v1/deployments/stt/audio/transcriptions", post(stt))
             .with_state((seen.clone(), mode));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -350,6 +364,39 @@ mod tests {
             Some("audio/ogg;codecs=opus")
         );
         assert_eq!(s.auth.as_deref(), Some("Bearer sk-test"));
+    }
+
+    /// An Azure deployment URL keeps its `?api-version=` after the path Rubato adds; a base
+    /// without a query, or with a trailing slash, reads as before.
+    #[tokio::test]
+    async fn a_query_on_the_base_url_stays_after_the_path() {
+        assert_eq!(
+            endpoint("https://x.openai.azure.com/openai/v1", "/audio/speech"),
+            "https://x.openai.azure.com/openai/v1/audio/speech"
+        );
+        assert_eq!(
+            endpoint(
+                "https://x/openai/deployments/stt/?api-version=2025-03-01-preview",
+                "/audio/transcriptions"
+            ),
+            "https://x/openai/deployments/stt/audio/transcriptions?api-version=2025-03-01-preview"
+        );
+        let (base, seen) = stub("ok").await;
+        let a = adapter(
+            &format!("{base}/deployments/stt?api-version=2025-03-01-preview"),
+            Duration::from_secs(5),
+        );
+        let text = a
+            .transcribe(b"x".to_vec(), "audio/webm", None)
+            .await
+            .unwrap();
+        assert_eq!(text, "why this seam?");
+        assert_eq!(
+            seen.lock().unwrap().query.as_deref(),
+            Some("api-version=2025-03-01-preview"),
+            "the stub answers only on the deployment path, and saw the query"
+        );
+        println!("checked 2 URLs and 1 call with a query on the base");
     }
 
     #[tokio::test]
