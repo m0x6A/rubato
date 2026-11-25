@@ -10,6 +10,7 @@
 import type { MapLayout } from "../../protocol.ts";
 import { NODE_HEIGHT, NODE_WIDTH, type RepoGroup } from "./graph.ts";
 import type { MoveChange, XY } from "./layout.ts";
+import { mergeNodes } from "./nodes.ts";
 
 /** Room inside a box around its parts; the top holds the repo's name. ELK lays out with the same. */
 export const BOX_PAD = { left: 24, top: 48, right: 24, bottom: 24 } as const;
@@ -159,6 +160,16 @@ interface Fittable {
   parentId?: string | undefined;
   measured?: { width?: number | undefined; height?: number | undefined } | undefined;
   style?: object | undefined;
+}
+
+/**
+ * A refresh of the overview: `wanted` merged onto what React Flow drew (`mergeNodes`), then every
+ * box fitted to its parts as measured. `placeGrouped` sizes a box from the default card height,
+ * so without the refit a box was as tall as that until the next change, and two browsers could
+ * show one box at two heights: a card taller than the default, at the bottom, left it short.
+ */
+export function refreshNodes<N extends Fittable & { data: unknown; parentId?: string }>(current: N[], wanted: N[]): N[] {
+  return refitBoxes(mergeNodes(current, wanted));
 }
 
 /** Every box resized to fit its parts where they are now: while a part is dragged, its box follows. */

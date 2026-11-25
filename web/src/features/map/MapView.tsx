@@ -1,7 +1,6 @@
 import { Background, BaseEdge, Controls, type Edge, EdgeLabelRenderer, type EdgeProps, Handle, MarkerType, type Node, type NodeChange, type NodeProps, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getBezierPath, useReactFlow } from "@xyflow/react";
 import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { caption, playerReducer, resolveScenario } from "./scenario.ts";
-import { mergeNodes } from "./nodes.ts";
 import type { IssueRef, MapLayout, MapRef, Plan } from "../../protocol.ts";
 import { issueKey } from "../../shared/format.ts";
 import { planLens } from "./lens.ts";
@@ -10,7 +9,7 @@ import { lit } from "./explain.ts";
 import { type Arrow, LENSES, type Lens, arrowsFor, flowCounts } from "./flows.ts";
 import { type OnPin, useIssueDrop } from "./drop.ts";
 import { hasIssueDrag } from "../../shared/dnd.ts";
-import { type Grouping, boxRepo, clampInBox, groupedToSave, placeGrouped, refitBoxes, savedIds, settle, settledGrouped } from "./grouped.ts";
+import { type Grouping, boxRepo, clampInBox, groupedToSave, placeGrouped, refitBoxes, refreshNodes, savedIds, settle, settledGrouped } from "./grouped.ts";
 import { type Bundle, badgeState, bundleKey, bundlesOf, isOpen as bundleIsOpen } from "./bundles.ts";
 import { type LabelStack, type Rect, bezierAt, placeLabels, textWidth } from "./labels.ts";
 import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, NODE_HEIGHT, NODE_WIDTH, layout, layoutByRepo } from "./graph.ts";
@@ -587,7 +586,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   const [nodes, setNodes] = useState<AnyFlowNode[]>([]);
   const groupingRef = useRef(grouping);
   groupingRef.current = grouping;
-  useEffect(() => setNodes((current) => mergeNodes(current, wanted)), [wanted]);
+  useEffect(() => setNodes((current) => refreshNodes(current, wanted)), [wanted]);
   const toSave = useRef<{ positions: Record<string, XY>; grouped: Record<string, XY>; boxes: Record<string, XY> }>({ positions: {}, grouped: {}, boxes: {} });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settledRef = useRef(settled);
