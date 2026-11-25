@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NODE_HEIGHT, NODE_WIDTH } from "./graph.ts";
-import { BOX_PAD, type Grouping, clampInBox, fitBox, groupedToSave, placeGrouped, refitBoxes, savedIds, settle, settledGrouped } from "./grouped.ts";
+import { BOX_PAD, type Grouping, clampInBox, fitBox, groupedToSave, placeGrouped, refitBoxes, refreshNodes, savedIds, settle, settledGrouped } from "./grouped.ts";
 
 const at = (x: number, y: number) => ({ x, y });
 const size = () => ({ width: NODE_WIDTH, height: NODE_HEIGHT });
@@ -104,5 +104,18 @@ describe("the By repo arrangement (issue #144, ADR 0068)", () => {
     expect(fitted[2]).toBe(nodes[2]);
     // Unchanged when it already fits: the same object, so React Flow is not told twice.
     expect(refitBoxes(fitted)[0]).toBe(fitted[0]);
+  });
+
+  it("a refresh of the overview keeps each box fitted to its measured parts, not to the default card height", () => {
+    // The box as placeGrouped sizes it, from NODE_HEIGHT; the part as React Flow measured it, taller.
+    type Drawn = { id: string; type: string; position: { x: number; y: number }; data: unknown; parentId?: string; style?: object; measured?: { width: number; height: number } };
+    const wanted: Drawn[] = [
+      { id: "repo:acme/auth", type: "repo", position: at(0, 0), data: {}, style: { width: 400 + NODE_WIDTH + BOX_PAD.right, height: 300 + NODE_HEIGHT + BOX_PAD.bottom } },
+      { id: "auth-api", type: "map", position: at(400, 300), parentId: "repo:acme/auth", data: {} },
+    ];
+    const current = [wanted[0]!, { ...wanted[1]!, measured: { width: NODE_WIDTH, height: NODE_HEIGHT + 8 } }];
+    const next = refreshNodes(current, wanted);
+    expect(next[1]?.measured).toEqual({ width: NODE_WIDTH, height: NODE_HEIGHT + 8 });
+    expect(next[0]?.style).toEqual({ width: 400 + NODE_WIDTH + BOX_PAD.right, height: 300 + NODE_HEIGHT + 8 + BOX_PAD.bottom });
   });
 });
