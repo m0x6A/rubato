@@ -120,8 +120,8 @@ function PlanDetail({ issue, overview, me, onBack, onOpenIssue, onNotice, onResu
         <button type="button" onClick={onBack}>
           ← all plans
         </button>{" "}
-        <button type="button" className="link" data-testid="plan-open-issue" onClick={() => onOpenIssue(issue.issue)}>
-          Open issue
+        <button type="button" data-testid="plan-open-issue" onClick={() => onOpenIssue(issue.issue)} title="The issue: its sessions, pins and room">
+          Open issue →
         </button>
       </p>
       <h2 ref={heading} tabIndex={-1}>

@@ -16,7 +16,10 @@ export function openIssuesOf(overview: Overview, repo: string): Row[] {
   const tracked: Row[] = overview.issues
     .filter((i) => same(i.issue.repo) && !isFinished(i))
     .map((i) => ({ issue: i.issue, title: i.title ?? `#${i.issue.number}`, labels: [], updated_at: null, url: i.url ?? null, tracked: true }));
-  return [...tracked, ...backlog].sort((a, b) => b.issue.number - a.issue.number);
+  // An unpinned issue with a plan is in both lists: count it once, as tracked.
+  const seen = new Set(tracked.map((r) => `${r.issue.repo.toLowerCase()}#${r.issue.number}`));
+  const rest = backlog.filter((r) => !seen.has(`${r.issue.repo.toLowerCase()}#${r.issue.number}`));
+  return [...tracked, ...rest].sort((a, b) => b.issue.number - a.issue.number);
 }
 
 /** A repo's open pull requests and open issues, folded under its rack unit (issue #82). */

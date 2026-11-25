@@ -134,6 +134,6 @@ describe("the team track", () => {
       ["done", "1"],
     ]);
     expect(segments.reduce((n, s) => n + Number(s.style.flexGrow), 0)).toBe(issues.length);
-    expect(track).toHaveTextContent("3 issues");
+    expect(track).toHaveTextContent("3 tracked issues");
   });
 });

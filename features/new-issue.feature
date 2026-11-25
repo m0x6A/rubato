@@ -13,3 +13,10 @@ Feature: New issue from the map
     When they create an issue from a part
     Then GitHub gets the issue from the App installation
     And the new issue opens, pinned to that part
+
+  @new-issue.choose-place
+  Scenario: A new issue started with nothing selected asks where it fits
+    Given a team member with no part or seam selected
+    When they start "New issue…"
+    Then Where it fits asks them to choose a part or seam
+    And the issue cannot be created until they choose one

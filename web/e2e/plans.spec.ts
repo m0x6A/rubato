@@ -24,7 +24,7 @@ test("plans from voice-note issues show where they fit", { tag: ["@plans.found-b
   await expect(where.getByTestId("data-models")).toContainText("crosses companion-server");
   await expect(where.getByTestId("accept-why")).toContainText("cannot comment as you");
   // Not pinned, it still shows on the parts its plan names.
-  await expect(page.getByTestId("node-rubato-companion")).toContainText("planned here");
+  await expect(page.getByTestId("node-rubato-companion")).toContainText("plans name it");
 });
 
 // Issue #265: the Plans tab is a board. Its columns sit side by side once the panel is wide, a

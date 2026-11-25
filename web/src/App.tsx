@@ -25,6 +25,15 @@ import { PANEL_ACTION, type PanelSize, nextPanelSize, readPanelSize, storePanelS
 
 type Tab = "issues" | "plans" | "companions" | "repos";
 
+/** A tab's count, quiet next to its name; the button's aria-label says what it counts. */
+function TabCount({ n, live = false }: { n: number; live?: boolean }) {
+  return (
+    <span className={live && n > 0 ? "tab-count live" : "tab-count"} aria-hidden="true">
+      {n}
+    </span>
+  );
+}
+
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [needsLogin, setNeedsLogin] = useState(false);
@@ -35,7 +44,8 @@ export function App() {
   const [selectedIssue, setSelectedIssue] = useState<IssueRef | null>(null);
   const [selection, setSelection] = useState<MapRef | null>(null);
   // "New issue here…": the part or seam a new issue is being written for (ADR 0025).
-  const [newIssueAt, setNewIssueAt] = useState<MapRef | null>(null);
+  // Started from "New issue…" with nothing selected, the place is still to be chosen (null).
+  const [newIssueAt, setNewIssueAt] = useState<{ at: MapRef | null } | null>(null);
   const [tab, setTab] = useState<Tab>("issues");
   // Edit mode: the draft panel shows, parts connect, a double-click on the canvas asks for a part.
   const [editing, setEditing] = useState(false);
@@ -238,6 +248,32 @@ export function App() {
     }
   }, []);
 
+  // Escape closes what is open in the panel, innermost first: a form, an issue, then the selection.
+  // Not while typing, and not when a menu or dialog already took the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) {
+        return;
+      }
+      const t = e.target as HTMLElement | null;
+      if (t && (t.closest("input, textarea, select, [contenteditable=\"true\"], [role=\"menu\"], dialog") !== null)) {
+        return;
+      }
+      if (newIssueAt) {
+        setNewIssueAt(null);
+      } else if (selectedIssue) {
+        setSelectedIssue(null);
+      } else if (selection) {
+        setSelection(null);
+      } else {
+        return;
+      }
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [newIssueAt, selectedIssue, selection]);
+
   const onUnpin = async (req: PinRequest) => {
     try {
       await pinsApi.removePin(req);
@@ -398,7 +434,7 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <strong>Rubato</strong>
-          {overview && <span className="map-version">map {overview.map.map.name} @ {overview.map.version.slice(0, 7)}</span>}
+          {overview && <span className="map-version" title={`The map file as read at commit ${overview.map.version}; plans name parts of this version`}>map {overview.map.map.name} @ {overview.map.version.slice(0, 7)}</span>}
           {overview && <WorkspaceSwitcher overview={overview} onSwitch={switchWorkspace} />}
           {/* Always drawn, also with one workspace, where the switcher is not (ADR 0075). */}
           {overview && (
@@ -442,6 +478,7 @@ export function App() {
                 newPartAt.current = at;
                 setAddPartFocus((n) => n + 1);
               }}
+              onConfigure={() => setConfiguring(true)}
               trafficActions={<Discrepancies overview={overview} onTake={onTake} onDismiss={(k) => void onDismiss(k)} onUndo={(id) => void onUndismiss(id)} busy={trafficBusy} canWrite={me !== null} />}
             />
           ) : (
@@ -454,26 +491,28 @@ export function App() {
           ) : (
           <>
           <nav className="tabs">
-            <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
-              Issues{overview ? ` (${openIssues(overview).length})` : ""}
+            <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} aria-label={overview ? `Issues (${openIssues(overview).length})` : undefined} title="Open issues Rubato tracks: pinned to the map, or with a plan">
+              Issues{overview && <TabCount n={openIssues(overview).length} />}
             </button>
-            <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")} data-testid="tab-plans">
-              Plans{overview ? ` (${groupPlans(overview).proposed.length} proposed)` : ""}
+            <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")} data-testid="tab-plans" aria-label={overview ? `Plans (${groupPlans(overview).proposed.length} proposed)` : undefined} title="Plans waiting for approval are counted">
+              Plans{overview && <TabCount n={groupPlans(overview).proposed.length} />}
             </button>
             {/* Dragging an issue over this tab opens it, so the issue can be dropped on a lane. */}
             <button
               className={tab === "companions" ? "active" : ""}
               onClick={() => setTab("companions")}
+              aria-label={overview ? `Companions (${overview.companions.filter((c) => c.connected).length} live)` : undefined}
+              title="Connected companions are counted"
               onDragEnter={(e) => {
                 if (hasIssueDrag(e)) {
                   setTab("companions");
                 }
               }}
             >
-              Companions{overview ? ` (${overview.companions.filter((c) => c.connected).length} live)` : ""}
+              Companions{overview && <TabCount n={overview.companions.filter((c) => c.connected).length} live />}
             </button>
-            <button className={tab === "repos" ? "active" : ""} onClick={() => setTab("repos")} data-testid="tab-repos">
-              Repos{overview ? ` (${(overview.repos ?? []).length})` : ""}
+            <button className={tab === "repos" ? "active" : ""} onClick={() => setTab("repos")} data-testid="tab-repos" aria-label={overview ? `Repos (${(overview.repos ?? []).length})` : undefined}>
+              Repos{overview && <TabCount n={(overview.repos ?? []).length} />}
             </button>
             {/* One button, three sizes (#265). Stacked under 901 px, the panel has one size. */}
             {sideBySide && (
@@ -496,18 +535,19 @@ export function App() {
           {overview && <Findings findings={overview.findings} />}
           {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} prefill={prefill} />}
           {/* The map explains what is selected; an open issue takes the panel instead. */}
-          {overview && tab === "issues" && !newIssueAt && !selected && liveMap(overview.map.map).nodes[0] && (
+          {/* With a part or seam selected, its inspector offers "New issue here…" instead. */}
+          {overview && tab === "issues" && !newIssueAt && !selected && !selection && liveMap(overview.map.map).nodes[0] && (
             <p className="new-issue-start">
-              <button type="button" data-testid="new-issue-start" onClick={() => setNewIssueAt(selection ?? { kind: "node", id: liveMap(overview.map.map).nodes[0]?.id ?? "" })}>
+              <button type="button" data-testid="new-issue-start" onClick={() => setNewIssueAt({ at: null })}>
                 New issue…
               </button>
             </p>
           )}
           {overview && tab === "issues" && newIssueAt && (
             <NewIssueForm
-              key={`${newIssueAt.kind}:${newIssueAt.id}`}
+              key={newIssueAt.at ? `${newIssueAt.at.kind}:${newIssueAt.at.id}` : "anywhere"}
               overview={overview}
-              target={newIssueAt}
+              target={newIssueAt.at}
               onCancel={() => setNewIssueAt(null)}
               onNotice={(text) => setNotice(text)}
               onCreated={(issue) => {
@@ -526,7 +566,7 @@ export function App() {
                 setTab("issues");
                 setSelectedIssue(issue);
               }}
-              onNewIssue={setNewIssueAt}
+              onNewIssue={(at) => setNewIssueAt({ at })}
             />
           )}
           {overview && tab === "issues" && (
@@ -547,6 +587,7 @@ export function App() {
                 void refresh();
               }}
               onShowSeam={(id) => onSelectOnMap({ kind: "seam", id })}
+              onPairCompanion={() => setTab("companions")}
             />
           )}
           {overview && tab === "plans" && (

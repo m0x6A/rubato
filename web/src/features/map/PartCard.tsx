@@ -85,8 +85,8 @@ export function PartCard({ node, selected, onPin, dim, draft, traffic }: Props) 
         ))}
         {node.paint && <span className={`badge ${node.paint === "new" ? "designing" : ""}`}>{node.paint} by a plan</span>}
         {node.planned.length > 0 && (
-          <span className="badge planned-here" title={node.planned.map((i) => `#${i.issue.number}`).join(", ")}>
-            {node.planned.length} planned here
+          <span className="badge planned-here" title={`Open plans that name this part, of issues not pinned here: ${node.planned.map((i) => `#${i.issue.number}`).join(", ")}`}>
+            {node.planned.length} plan{node.planned.length === 1 ? "" : "s"} name it
           </span>
         )}
         {node.models > 0 && (

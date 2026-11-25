@@ -36,3 +36,11 @@ Feature: Companions
     When anyone opens Companions or the issue
     Then the line is shown under that session with how long ago it was said
     And it is never shown as a state, and never under another companion's session
+
+  @companions.pairing-steps
+  Scenario: Pairing says how, step by step
+    Given a person with no companion connected
+    When they open an issue
+    Then the issue says a companion starts sessions, with a way to pair one
+    When they follow it
+    Then Companions shows the command to run with this Rubato's address, where the code goes, and how to start the companion

@@ -60,7 +60,7 @@ export function StageRail({ state, blockedFrom }: { state: ProgressState; blocke
   return (
     <div className={`stage-rail ${state}`} data-testid="stage-rail" role="img" aria-label={label}>
       {RAIL.map((r, i) => (
-        <span key={r.state} className={["station", i < at ? "past" : i === at ? mark : ""].filter(Boolean).join(" ")}>
+        <span key={r.state} title={r.label} className={["station", i < at ? "past" : i === at ? mark : ""].filter(Boolean).join(" ")}>
           <i aria-hidden="true" />
           <span className="label">{r.label}</span>
         </span>
@@ -141,14 +141,14 @@ export function TeamTrack({ issues }: { issues: IssueSummary[] }) {
   const present = TRACK_ORDER.filter((s) => counts.get(s));
   const words = present.map((s) => `${counts.get(s)} ${STATE_LABEL[s].toLowerCase()}`).join(" · ");
   return (
-    <div className="team-track" data-testid="team-track" title={words}>
+    <div className="team-track" data-testid="team-track" title={`Open issues Rubato tracks (pinned, or with a plan): ${words || "none"}`}>
       <div className="track-bar" aria-hidden="true">
         {present.map((s) => (
           <span key={s} className={`segment ${s}`} data-state={s} style={{ flexGrow: counts.get(s) }} />
         ))}
       </div>
       <span className="track-words">
-        {issues.length} issue{issues.length === 1 ? "" : "s"}
+        {issues.length} tracked issue{issues.length === 1 ? "" : "s"}
         <span className="sr-only">: {words}</span>
       </span>
     </div>

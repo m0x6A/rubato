@@ -111,7 +111,7 @@ describe("open on GitHub by default (#265)", () => {
     others = [issue(1, "web", { progress: at(1, "designed") }), issue(2, "web", { progress: at(2, "done") }), issue(3, "web", { progress: at(3, "designed"), closed: true, finished: true })];
     render(<App />);
     expect(await screen.findByRole("button", { name: "Issues (1)" })).toBeInTheDocument();
-    expect(screen.getByTestId("team-track")).toHaveTextContent("1 issue");
+    expect(screen.getByTestId("team-track")).toHaveTextContent("1 tracked issue");
     expect(screen.getByTestId("issues-view-done")).toHaveTextContent("Done (2)");
   });
 });

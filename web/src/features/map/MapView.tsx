@@ -267,6 +267,8 @@ interface Props {
   onAddPartAt?: ((at: XY) => void) | undefined;
   /** Shown under the Traffic lens's legend: what to do about each discrepancy (issue #140). */
   trafficActions?: ReactNode | undefined;
+  /** Opens Configure workspace: offered where the map says something is set there. */
+  onConfigure?: (() => void) | undefined;
 }
 
 /** A burst of arrow-key moves, or the end of a drag, becomes one write after this pause. */
@@ -274,7 +276,7 @@ const SAVE_AFTER_MS = 250;
 /** How long Play shows each step; one trip of the pulse is `PULSE_MS` in particles.tsx. */
 const STEP_MS = 2400;
 
-function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt, trafficActions }: Props) {
+function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt, trafficActions, onConfigure }: Props) {
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }> | null>(null);
   const { fitView, screenToFlowPosition, getNode, getViewport, setCenter } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -1021,6 +1023,11 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           {scenario.unplaced > 0 && <p className="scenario-note">{scenario.unplaced} of its steps cannot be drawn: the map no longer declares their flow.</p>}
         </div>
       )}
+      {editing && (
+        <p className="edit-hint" data-testid="edit-hint">
+          <strong>Editing the shared draft.</strong> Double-click the canvas to add a part, drag from the dot on a part&apos;s right edge to another part to draw a seam, or select a part or seam to change it in the panel. Nothing reaches the map until the draft is proposed and merged.
+        </p>
+      )}
       {lens === "traffic" && trafficFresh && graph.traffic && <TrafficVitals traffic={graph.traffic} quietSeams={vitalsAt?.quietSeams ?? 0} seams={graph.edges.length} />}
       {lens !== "scenario" && (
         <div className="legend" data-testid="legend">
@@ -1042,7 +1049,7 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
             </>
           )}
           {lens === "structure" && "Each arrow points from the part that depends to the part it depends on."}
-          {lens === "traffic" && <TrafficLegendText traffic={traffic} />}
+          {lens === "traffic" && <TrafficLegendText traffic={traffic} onConfigure={onConfigure} />}
           {lens === "data" && (
             <>
               <svg width="34" height="8" aria-hidden="true">
@@ -1120,10 +1127,22 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
 }
 
 /** The Traffic lens's legend: why nothing is shown, or what chevrons, hollow seams and dotted lines mean (design §5.5, §5.6). */
-function TrafficLegendText({ traffic }: { traffic: NonNullable<Graph["traffic"]> }) {
+function TrafficLegendText({ traffic, onConfigure }: { traffic: NonNullable<Graph["traffic"]>; onConfigure?: (() => void) | undefined }) {
   const unknown = unknownSentence(traffic);
   if (unknown) {
-    return <>{unknown}</>;
+    return (
+      <>
+        <span>{unknown}</span>
+        {traffic.state === "not_configured" && onConfigure && (
+          <>
+            {" "}
+            <button type="button" className="legend-action" onClick={onConfigure}>
+              Configure workspace…
+            </button>
+          </>
+        )}
+      </>
+    );
   }
   const l = trafficLegend(traffic);
   return (

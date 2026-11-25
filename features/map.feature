@@ -83,6 +83,20 @@ Feature: The system map
     When they follow one of its seams
     Then the inspector says what the seam carries and who is woken when it breaks
 
+  @map.escape-closes
+  Scenario: Escape closes what the panel opened, innermost first
+    Given a person who selected a part and opened an issue
+    When they press Escape
+    Then the issue closes and the part stays selected
+    When they press Escape again
+    Then the part is no longer selected
+    And Escape inside a text field or an open menu does nothing more
+
+  @map.edit-hint
+  Scenario: Edit mode says how to edit the map
+    When a person turns on Edit map
+    Then the map says how to add a part, how to draw a seam, and that nothing changes until the draft is merged
+
   @map.play-journey
   Scenario: A journey plays step by step over the map
     Given the map declares the journey "start a session on an issue"
