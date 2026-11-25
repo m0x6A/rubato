@@ -1,8 +1,8 @@
 # 0081. A companion envelope may carry a W3C `traceparent`, so companion and server share a trace
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-18
-- **Decided by:** agent (session on m0x6A/rubato#287), on Mattias Jonsson's answer of 2026-11-18 ("Optional field in the envelope"); a human accepts
+- **Decided by:** Mattias Jonsson (m0x6A), accepted in the Claude Code session 2026-11-24 ("Yes"), on his answer of 2026-11-18 ("Optional field in the envelope"); drafted by agent (session on m0x6A/rubato#287)
 - **Seam:** companion-server
 - **Issue:** m0x6A/rubato#287
 

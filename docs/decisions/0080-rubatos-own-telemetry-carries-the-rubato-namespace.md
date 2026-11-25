@@ -1,8 +1,8 @@
 # 0080. Rubato's own parts emit `service.namespace` `rubato` unless their environment sets another
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-18
-- **Decided by:** agent (session on m0x6A/rubato#290), on Mattias Jonsson's answer of 2026-11-18 ("Rubato sets a default", value `rubato`); a human accepts
+- **Decided by:** Mattias Jonsson (m0x6A), accepted in the Claude Code session 2026-11-24 ("Yes"), on his answer of 2026-11-18 ("Rubato sets a default", value `rubato`); drafted by agent (session on m0x6A/rubato#290)
 - **Seam:** companion-claude-code (the launch's `OTEL_RESOURCE_ATTRIBUTES`); the other emitters cross no seam of the map
 - **Issue:** m0x6A/rubato#290
 
