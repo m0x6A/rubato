@@ -10,7 +10,7 @@ whether this branch fixes it. Decider for the fixes: agent (Claude), for a perso
 | --- | --- | --- | --- |
 | 1 | Panel tabs | At 1440 px the tabs wrapped onto two rows ("Repos" and "WIDER" alone on the second), and "(3 proposed)", "(0 live)" made the row long. | One row: each count is a quiet chip, the accessible name still says what it counts; the panel-size button is a glyph with its name as tooltip. |
 | 2 | Issues list and Not pinned | An unpinned issue with a plan (#901, #914, #915) was listed twice: once tracked ("not pinned") and again under Not pinned. | Not pinned leaves out what the list above already shows (`@issues.listed-once`). |
-| 3 | Repos tab | The rack said "9 open issues", the folded list under it "12 open issues": the same three issues counted twice. | The folded list counts each issue once. |
+| 3 | Repos tab | The rack said "9 open issues", the folded list under it "12 open issues": the same three issues counted twice. | The folded list lists and counts each issue once. (An issue just created through Rubato is in the list before the next GitHub poll adds it to the rack.) |
 | 4 | Header | "4 ISSUES" next to "9 open issues" in Repos, with nothing saying they count different things. | "4 tracked issues", with a tooltip saying what tracked means. |
 | 5 | Map and panel | Escape did nothing: the inspector or an open issue could only be closed with its button. | Escape closes the innermost thing: the new-issue form, then the issue, then the selection; never while typing or in a menu (`@map.escape-closes`). |
 | 6 | Inspector | Two "new issue" buttons at once: "New issue…" above the inspector and "New issue here…" in it. | The generic button shows only when nothing is selected. |

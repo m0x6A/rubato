@@ -8,18 +8,16 @@ test("an issue with a plan but no pin is listed once, and counted once", { tag: 
   await expect(page.getByTestId("issue-row-915")).toContainText("not pinned");
   await expect(page.getByTestId("backlog")).toBeVisible();
   await expect(page.getByTestId("backlog-row-915")).toHaveCount(0);
-  // The repo's folded list counts every open issue once, as its rack unit does.
+  // The repo's folded list lists and counts every open issue once. (Its count is not compared with
+  // the rack's: an issue just created through Rubato is tracked before the next GitHub poll lists
+  // it, and other tests create issues in parallel.)
   await page.getByTestId("tab-repos").click();
-  // Other tests create issues in parallel, so read both counts together until they agree.
-  const rack = page.getByTestId("repo-m0x6A/rubato").locator(".rack-bar.open_issues em");
-  const summary = page.getByTestId("repo-work-m0x6A/rubato").locator("summary");
-  await expect
-    .poll(async () => {
-      const racked = Number(await rack.innerText());
-      const listed = Number(/(\d+) open issue/.exec(await summary.innerText())?.[1] ?? NaN);
-      return racked === listed;
-    })
-    .toBe(true);
+  const work = page.getByTestId("repo-work-m0x6A/rubato");
+  await work.locator("summary").click();
+  await expect(work.getByTestId("repo-issue-915")).toHaveCount(1);
+  const ids = await work.getByTestId("repo-issues").locator("li").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-testid")));
+  expect(new Set(ids).size).toBe(ids.length);
+  await expect(work.locator("summary")).toContainText(`${ids.length} open issue`);
 });
 
 test("Escape closes the issue, then the selection; not while typing", { tag: ["@map.escape-closes"] }, async ({ page }) => {
