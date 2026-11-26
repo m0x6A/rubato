@@ -550,6 +550,10 @@ pub struct Overview {
     /// Each live lead and its live workers, from the current snapshots; empty while the flag is off.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub leads: Vec<crate::fleet::LeadView>,
+    /// The context graph's sources and how fresh each is (ADR 0084). Absent while the server's
+    /// flag is off and from an older server. Never an input to progress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph: Option<crate::graph::GraphOverview>,
     pub generated_at: DateTime<Utc>,
 }
 

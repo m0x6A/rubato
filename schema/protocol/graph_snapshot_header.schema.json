@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GraphSnapshotHeader",
+  "description": "The first line of a snapshot body (`routes::GRAPH_SNAPSHOT`).",
+  "type": "object",
+  "properties": {
+    "content_hash": {
+      "description": "Over the lines after this one, as [`GraphSourceInfo::content_hash`].",
+      "type": "string"
+    },
+    "edges": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "format": {
+      "description": "[`SNAPSHOT_FORMAT`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generator": {
+      "description": "The extraction's version; a bump rebuilds every source once.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "head_sha": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "type": "string"
+    },
+    "map_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "nodes": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "source": {
+      "type": "string"
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "format",
+    "source",
+    "kind",
+    "generator",
+    "content_hash",
+    "generated_at",
+    "nodes",
+    "edges"
+  ]
+}

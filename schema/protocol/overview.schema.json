@@ -57,6 +57,17 @@
       "type": "string",
       "format": "date-time"
     },
+    "graph": {
+      "description": "The context graph's sources and how fresh each is (ADR 0084). Absent while the server's\nflag is off and from an older server. Never an input to progress.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GraphOverview"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "issues": {
       "type": "array",
       "items": {
@@ -1647,6 +1658,93 @@
         "calls_in",
         "calls_out",
         "errors"
+      ]
+    },
+    "GraphOverview": {
+      "description": "`Overview.graph`: absent while the server's context graph flag is off.",
+      "type": "object",
+      "properties": {
+        "regen_secs": {
+          "description": "The regeneration interval, so the web can say when a source is stale.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GraphSourceStatus"
+          }
+        }
+      },
+      "required": [
+        "regen_secs"
+      ]
+    },
+    "GraphSourceStatus": {
+      "description": "One source as the Overview shows it: what [`GraphSourceInfo`] says, with the build's own\ntimes, and nothing built yet as a state of its own.",
+      "type": "object",
+      "properties": {
+        "checked_at": {
+          "description": "When a tick last found the stored rows current. Its age is what \"stale\" is judged from.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "edges": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
+        "error": {
+          "description": "The newest build's error, when the newest build failed. The rows are the last good ones.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generated_at": {
+          "description": "Absent until the first build.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "head_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "map_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nodes": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
+        "source": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "kind"
       ]
     },
     "IssueRef": {
