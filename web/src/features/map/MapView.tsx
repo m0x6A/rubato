@@ -738,10 +738,12 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
     const closed = [...bundles.values()].filter((b) => !bundleIsOpen(b, openBy));
     return { bundles, closed, folded: new Set(closed.flatMap((b) => b.seams.map((sm) => sm.id))) };
   }, [grouping, graph, litNow, hoveredBundles, pinnedBundles, dragBundle]);
-  // Where along its curve each seam's labels and each bundle's badge sit in the grouping: clear of
-  // the part cards and of each other (labels.ts). The flat map keeps every label at its middle.
+  // Where along its curve each seam's labels and each bundle's badge sit: clear of the part
+  // cards and of each other (labels.ts). On the flat map only the Structure lens's chips move:
+  // two seams between the same parts would otherwise share a spot. Its flow lenses keep their
+  // middles, where each flow's still marker (reduced motion) is known to stay clear of the labels.
   const labelTs = useMemo(() => {
-    if (!grouping) {
+    if (!grouping && (lens !== "structure" || planView)) {
       return new Map<string, number>();
     }
     const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -1017,9 +1019,24 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               </ol>
             </details>
           </div>
-          <p className="scenario-caption" data-testid="scenario-caption" aria-live="polite">
+          {/* A screen reader hears the whole step; the eye gets who tells whom first, what it means,
+              then what crosses on one line, read in full on hover. */}
+          <p className="sr-only" data-testid="scenario-caption" aria-live="polite">
             {caption(scenario, player.step)}
           </p>
+          {scenario.steps[player.step] && (
+            <div className="scenario-step" aria-hidden="true">
+              <span className="scenario-step-head">
+                <strong>
+                  {scenario.steps[player.step]?.from} → {scenario.steps[player.step]?.to}
+                </strong>
+                {scenario.steps[player.step]?.says && <> — {scenario.steps[player.step]?.says}</>}
+              </span>
+              <span className="scenario-carries" title={scenario.steps[player.step]?.carries}>
+                <span className={`flow-kind ${scenario.steps[player.step]?.kind}`}>{scenario.steps[player.step]?.kind}</span> {scenario.steps[player.step]?.carries}
+              </span>
+            </div>
+          )}
           {scenario.unplaced > 0 && <p className="scenario-note">{scenario.unplaced} of its steps cannot be drawn: the map no longer declares their flow.</p>}
         </div>
       )}

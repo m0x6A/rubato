@@ -4,7 +4,8 @@
  * lies on a part card (a seam that leaves a box crosses the box's last column) or on another
  * label (two curves that cross). So each seam's labels (its chip and the flow labels below it, or
  * a bundle's badge) try points along the curve, from the middle outwards, and take the first that
- * touches no part card and no label placed before them. The flat map keeps its middles.
+ * touches no part card and no label placed before them. The flat map places its seam chips the
+ * same way on the Structure lens; its flow lenses keep their middles.
  */
 import type { XY } from "./layout.ts";
 

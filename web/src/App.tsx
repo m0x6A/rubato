@@ -47,6 +47,9 @@ export function App() {
   // Started from "New issue…" with nothing selected, the place is still to be chosen (null).
   const [newIssueAt, setNewIssueAt] = useState<{ at: MapRef | null } | null>(null);
   const [tab, setTab] = useState<Tab>("issues");
+  // The Plans tab shows the open issue's plan only when it was opened from the board; coming
+  // from another tab, it shows the board, and the issue stays open under Issues.
+  const [planFromBoard, setPlanFromBoard] = useState(false);
   // Edit mode: the draft panel shows, parts connect, a double-click on the canvas asks for a part.
   const [editing, setEditing] = useState(false);
   const [addPartFocus, setAddPartFocus] = useState(0);
@@ -494,7 +497,12 @@ export function App() {
             <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} aria-label={overview ? `Issues (${openIssues(overview).length})` : undefined} title="Open issues Rubato tracks: pinned to the map, or with a plan">
               Issues{overview && <TabCount n={openIssues(overview).length} />}
             </button>
-            <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")} data-testid="tab-plans" aria-label={overview ? `Plans (${groupPlans(overview).proposed.length} proposed)` : undefined} title="Plans waiting for approval are counted">
+            <button className={tab === "plans" ? "active" : ""} onClick={() => {
+                if (tab !== "plans") {
+                  setPlanFromBoard(false);
+                }
+                setTab("plans");
+              }} data-testid="tab-plans" aria-label={overview ? `Plans (${groupPlans(overview).proposed.length} proposed)` : undefined} title="Plans waiting for approval are counted">
               Plans{overview && <TabCount n={groupPlans(overview).proposed.length} />}
             </button>
             {/* Dragging an issue over this tab opens it, so the issue can be dropped on a lane. */}
@@ -594,8 +602,11 @@ export function App() {
             <PlansBoard
               overview={overview}
               me={me}
-              selected={selected}
-              onSelect={setSelectedIssue}
+              selected={planFromBoard ? selected : null}
+              onSelect={(issue) => {
+                setPlanFromBoard(issue !== null);
+                setSelectedIssue(issue);
+              }}
               onOpenIssue={(issue) => {
                 setTab("issues");
                 setSelectedIssue(issue);

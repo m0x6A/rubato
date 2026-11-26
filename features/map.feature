@@ -92,6 +92,12 @@ Feature: The system map
     Then the part is no longer selected
     And Escape inside a text field or an open menu does nothing more
 
+  @map.labels-apart
+  Scenario: Two seams between the same parts keep their chips apart
+    Given two seams that join the same two parts
+    When a person reads the flat map
+    Then both chips can be read, neither on top of the other
+
   @map.edit-hint
   Scenario: Edit mode says how to edit the map
     When a person turns on Edit map

@@ -78,3 +78,17 @@ Feature: Plans
     When a person opens its plan file
     Then the text is rendered as Markdown, with the raw text one press away
     And HTML, scripts and images in the plan put nothing on the page but text and links
+
+  @plans.board-from-another-tab
+  Scenario: Plans opened from another tab shows the board, and the open issue stays open
+    Given a person with an issue open under Issues
+    When they open the Plans tab
+    Then they see the board of plans, not that issue's plan
+    And back under Issues the issue is still open
+
+  @plans.approve-by-comment
+  Scenario: When Rubato cannot comment as a person, Accept plan says what to comment instead
+    Given a plan that fits, and a Rubato that cannot comment as the person
+    When they read Accept plan
+    Then it says why it cannot post, and gives the exact Approved: comment to post on the issue themselves
+    And Review and approval names both ways to approve

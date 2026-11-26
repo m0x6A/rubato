@@ -28,20 +28,22 @@ whether this branch fixes it. Decider for the fixes: agent (Claude), for a perso
 | 18 | Stage rail | Seven segments, only the current one labelled. | Each station names itself on hover. |
 | 19 | Not pinned | An issue key there leaves for GitHub, while the same key in the list above opens it in Rubato. | The external link is marked ↗ with "Open on GitHub". |
 | 20 | Header | "map rubato @ 5fc6857" unexplained. | Tooltip: the commit the map was read at. |
+| 21 | Flat map | Two seams between the same parts (`companion-claude-code`, `companion-mcp`) drew their chips on one spot; crossing curves did the same. | On the Structure lens the flat map places its chips as By repo does: along the curve, clear of cards and earlier chips (`@map.labels-apart`). The flow lenses keep their labels at the middle, where the reduced-motion still marker is known to stay uncovered. |
+| 22 | Issue detail | The plan's parts were listed twice: the Parts affected table and "The plan on the map". | The issue detail leaves the table out; the plans board keeps it. |
+| 23 | Where it fits | All 13 parts as chips, with the affected ones outlined. | The plan's parts and seams only; the rest fold behind "+11 parts it leaves alone". |
+| 24 | Review and approval | With no GitHub App, Accept plan was disabled ("cannot comment as you") while the section below said to comment `Approved:`: no way forward from the button. | Accept plan gives the exact comment to post yourself; the section names both ways (`@plans.approve-by-comment`). |
+| 25 | Scenario player | The caption printed the whole flow text and was cut at two lines. | Who tells whom and what it means on one line, what crosses on a second line with the full text on hover; a screen reader still hears the whole step. |
+| 26 | Plans tab | With an issue open, the Plans tab showed that issue's plan, not the board. | From another tab it shows the board; the issue stays open under Issues (`@plans.board-from-another-tab`). |
 
-## Seen and left for later
+## Still open
 
-- **Seam labels overlap on the flat map**: `companion-mcp` sits over `companion-claude-code`; on Data flow the flow labels pile up around `rubato-server`. A layout change (label placement, ELK), larger than this pass.
-- **The issue detail says the plan twice**: Where it fits shows the Parts affected table, and "The plan on the map" below lists the same changes.
-- **Where it fits lists all 13 parts** as chips, with the affected ones outlined; only the affected ones matter to the reader.
-- **Review and approval contradicts Accept plan** while the cutover is unset: the section asks for an `Approved:` comment and the card offers Accept plan, which then says this Rubato cannot comment. Goes away once the cutover is set (ADR 0055).
-- **The scenario caption** prints the whole flow text of a step and is cut at two lines.
-- **Plans tab with an issue open** shows that issue's plan, not the board; going back takes "← all plans".
-- **Telemetry relay 404**: with no relay configured, every page load logs one failed request in the console (the client stops after it, `shared/trace.ts`).
+- **Where two curves cross in a crowded spot, two chips can still touch** (on the flat map, `skill-system-map` and `server-plan-file`): the placement takes the spot with the least overlap when no spot is clear.
+- **The Data flow and Control flow lenses stay dense** where many flows cross a narrow gap between two columns (around `rubato-server`). Moving their labels along the curve was tried and dropped: with six flows in one gap there is no clear spot, and a moved label covered the scenario's still marker under reduced motion (`motion.spec.ts`). Widening the gaps is a layout choice for the team (Auto-arrange), not something the page should do by itself.
+- **Telemetry relay 404**: with no relay configured, each page load logs one failed request in the developer console, after which the client stops (ADR 0082). Avoiding it would need a server capability flag in the protocol, a seam change; it is not visible to people using the page.
 
 ## How it was checked
 
 - `pnpm typecheck` and `pnpm test` in `web/`: 476 unit tests pass.
-- `web/e2e/ux.spec.ts`: five browser tests for the scenarios above, against the seeded servers.
+- `web/e2e/ux.spec.ts`: eight browser tests for the scenarios above, against the seeded servers.
 - The full `web/e2e/run.sh` suite, and `pnpm scenarios check`.
 - Screenshots before and after at 1440×900 and 390×844; the page no longer scrolls sideways on a phone.

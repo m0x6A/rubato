@@ -85,3 +85,38 @@ test("edit mode says how to edit the map", { tag: ["@map.edit-hint"] }, async ({
   await page.getByRole("button", { name: "Edit map" }).click();
   await expect(hint).toHaveCount(0);
 });
+
+test("Plans from another tab shows the board; the open issue stays open", { tag: ["@plans.board-from-another-tab"] }, async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("issue-row-915").click();
+  await expect(page.getByTestId("issue-detail")).toBeVisible();
+  await page.getByTestId("tab-plans").click();
+  await expect(page.getByTestId("plan-columns")).toBeVisible();
+  await expect(page.getByTestId("plan-detail")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Issues/ }).click();
+  await expect(page.getByTestId("issue-detail")).toBeVisible();
+});
+
+test("Accept plan gives the comment to post when Rubato cannot post it", { tag: ["@plans.approve-by-comment"] }, async ({ page }) => {
+  // The dev server is not a GitHub App, so it cannot comment as the person.
+  await page.goto("/");
+  await page.getByTestId("issue-row-914").click();
+  const why = page.getByTestId("issue-detail").getByTestId("accept-why");
+  await expect(why).toContainText("cannot comment as you");
+  await expect(why).toContainText(/Instead, comment Approved: plan [0-9a-f]{10} on issue\/914-voice on the issue yourself/);
+  await expect(page.getByTestId("plan-approval")).toContainText("Accept plan above, or a team member comments");
+});
+
+test("two seams between the same parts keep their chips apart", { tag: ["@map.labels-apart"] }, async ({ page }) => {
+  await page.goto("/");
+  // companion-claude-code and companion-mcp both join rubato-companion and claude-code.
+  await expect(page.getByTestId("seam-companion-mcp")).toBeVisible();
+  // Labels are placed once the cards are measured: poll until the two chips sit apart.
+  await expect
+    .poll(async () => {
+      const a = await page.getByTestId("seam-companion-claude-code").boundingBox();
+      const b = await page.getByTestId("seam-companion-mcp").boundingBox();
+      return Boolean(a && b) && (a!.x + a!.width <= b!.x || b!.x + b!.width <= a!.x || a!.y + a!.height <= b!.y || b!.y + b!.height <= a!.y);
+    })
+    .toBe(true);
+});
