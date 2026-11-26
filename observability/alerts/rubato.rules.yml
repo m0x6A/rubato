@@ -110,6 +110,25 @@ groups:
           summary: "The context graph source {{ $labels.rubato_graph_source }} was last current {{ $value }}s ago: agents read an old graph"
           panel: Context graph source age
 
+      # #322, ADR 0086: a companion's copy of the context graph has been behind the list the
+      # server announced for three regeneration intervals: a snapshot that never matches its
+      # hash, a route that refuses, a copy that cannot be written. The server looks healthy from
+      # its own side (ContextGraphStale stays silent), so this is the only rule that sees it.
+      # The gauge is 0 while the copy matches and is observed when collected, so it rises with
+      # no sync at all. Without the server's interval series it falls back to the default 900 s.
+      - alert: ContextGraphCopyBehind
+        expr: |
+          max by (rubato_companion_id) (rubato_graph_copy_behind)
+            > on () group_left () (3 * (max(rubato_graph_regen_interval) or vector(900)))
+        for: 0m
+        labels:
+          severity: ticket
+          seam: companion-server
+          owner: rubato-server
+        annotations:
+          summary: "Companion {{ $labels.rubato_companion_id }}'s copy of the context graph has been behind for {{ $value | humanizeDuration }}: its agents read an old graph"
+          panel: Context graph snapshots served and synced
+
       # #122, ADR 0051: a message has waited more than 10 minutes while its launched session
       # waits for input (last hook Stop or idle_prompt; a fresh launch never counts). The queue
       # does not move: the companion is not live, lacks session_input, or keeps answering not_idle.

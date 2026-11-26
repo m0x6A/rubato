@@ -3,6 +3,7 @@ mod discovery;
 mod drafts;
 mod fleet;
 mod fork;
+mod graph_copy;
 mod handoff;
 mod headless;
 mod hooks;

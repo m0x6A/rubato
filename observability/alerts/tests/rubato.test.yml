@@ -337,6 +337,41 @@ tests:
       - eval_time: 8m
         alertname: ContextGraphStale
         exp_alerts: []
+  # #322 (ADR 0086): one companion's copy falls behind and stays behind; past three intervals
+  # it fires for that companion alone. The other is in step (0) and silent. The server's
+  # interval series is absent here, so the bar is three default intervals, 2700 s.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_graph_copy_behind{rubato_companion_id="c-behind"}'
+        values: "600x5 3000x5"
+      - series: 'rubato_graph_copy_behind{rubato_companion_id="c-in-step"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ContextGraphCopyBehind
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: ContextGraphCopyBehind
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: companion-server
+              owner: rubato-server
+              rubato_companion_id: c-behind
+            exp_annotations:
+              summary: "Companion c-behind's copy of the context graph has been behind for 50m 0s: its agents read an old graph"
+              panel: Context graph snapshots served and synced
+  # A server with a longer interval moves the bar: 3000 s is within three intervals of 1800 s.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_graph_regen_interval'
+        values: "1800x10"
+      - series: 'rubato_graph_copy_behind{rubato_companion_id="c-behind"}'
+        values: "3000x10"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ContextGraphCopyBehind
+        exp_alerts: []
   # The flag off: no gauge of the graph at all, and the rule stays silent.
   - interval: 1m
     input_series:

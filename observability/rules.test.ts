@@ -64,6 +64,18 @@ const mutants: Mutant[] = [
     caughtBy: "alertname: ContextGraphStale, time: 8m",
   },
   {
+    why: "#322: a companion's stale copy fires alone, not folded into every companion's max",
+    from: "max by (rubato_companion_id) (rubato_graph_copy_behind)",
+    to: "max(rubato_graph_copy_behind)",
+    caughtBy: "alertname: ContextGraphCopyBehind, time: 8m",
+  },
+  {
+    why: "#322: without the server's interval series ContextGraphCopyBehind falls back to 900 s, never silent",
+    from: "(3 * (max(rubato_graph_regen_interval) or vector(900)))",
+    to: "(3 * max(rubato_graph_regen_interval))",
+    caughtBy: "alertname: ContextGraphCopyBehind, time: 8m",
+  },
+  {
     why: "#105: without the threshold series CompanionSilent falls back to 600 s, never silent",
     from: " or vector(600)",
     to: "",

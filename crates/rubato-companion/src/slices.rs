@@ -33,6 +33,7 @@ const SLICES: &[&str] = &[
     "session_input",
     "plan_mirror",
     "agent_mcp",
+    "graph",
 ];
 
 /// The composition root plus this check. Twin of rubato-server's `slices.rs`.

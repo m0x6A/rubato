@@ -136,6 +136,10 @@ async fn main() -> Result<()> {
                 ),
                 None => println!("not paired"),
             }
+            // This machine's copy of the context graph (ADR 0086): what it holds and how old.
+            for line in rubato_companion::graph::report(&state_dir).await {
+                println!("{line}");
+            }
             // The port and the header file's path, never the endpoint file: it holds the token
             // (ADR 0063).
             let Some(ep) = HookEndpoint::load(&state_dir) else {
