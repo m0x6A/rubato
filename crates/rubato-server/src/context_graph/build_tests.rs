@@ -376,3 +376,53 @@ fn a_sources_age_rises_from_its_last_current_check_also_when_it_was_never_built(
         3600
     );
 }
+
+/// Manual, against GitHub itself: the octocrab adapter's head call and tarball download (the
+/// redirect, the frames, the cap), and the extraction of a real archive.
+///
+/// `RUBATO_MANUAL_GITHUB_TOKEN=$(gh auth token) cargo test -p rubato-server manual_real_github -- --ignored --nocapture`
+#[tokio::test]
+#[ignore = "needs RUBATO_MANUAL_GITHUB_TOKEN and the network"]
+async fn manual_real_github_head_tarball_and_extraction() {
+    use crate::kernel::github::{GitHubApi, Octo, Tarball};
+    let token = std::env::var("RUBATO_MANUAL_GITHUB_TOKEN").expect("RUBATO_MANUAL_GITHUB_TOKEN");
+    let repo = std::env::var("RUBATO_MANUAL_GITHUB_REPO").unwrap_or_else(|_| REPO.to_owned());
+    let octo = Octo::new(&token).unwrap();
+    let head = octo.default_head(&repo).await.unwrap().expect("a head");
+    assert_eq!(head.len(), 40, "{head}");
+    assert_eq!(
+        octo.default_head("m0x6A/no-such-repository-here")
+            .await
+            .unwrap(),
+        None
+    );
+    let started = std::time::Instant::now();
+    let Tarball::Gz(gz) = octo
+        .tarball(
+            &repo,
+            &head,
+            rubato_protocol::limits::GRAPH_TARBALL_MAX_BYTES,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("over the cap");
+    };
+    let took = started.elapsed();
+    assert_eq!(
+        octo.tarball(&repo, &head, 1024).await.unwrap(),
+        Tarball::TooLarge
+    );
+    let got = read_tarball(&gz, &repo).unwrap();
+    println!(
+        "{repo} at {head}: {} bytes compressed in {took:?}; {} files, {} ADRs, {} scenarios, {} slices, {} unread, cut: {:?}",
+        gz.len(),
+        got.counts.files,
+        got.counts.adrs,
+        got.counts.scenarios,
+        got.counts.slices,
+        got.counts.unread_documents,
+        got.truncated
+    );
+    assert!(got.counts.files > 100);
+}
