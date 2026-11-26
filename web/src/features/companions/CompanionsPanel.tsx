@@ -37,9 +37,22 @@ export function CompanionsPanel({ overview, me, onChanged, ...queueActions }: Pr
   return (
     <section data-testid="companions">
       <h3>Pair a companion</h3>
+      {/* The companion runs your sessions on your own machine; Rubato never reaches into it. */}
+      <ol className="pair-steps">
+        <li>
+          On your machine, run:
+          <code>rubato-companion pair --server {typeof window === "undefined" ? "<this Rubato's URL>" : window.location.origin}</code>
+        </li>
+        <li>Type the code it shows here and approve it as yourself.</li>
+        <li>
+          Start it; its lane shows below, and pinned issues get Start session:
+          <code>rubato-companion run</code>
+        </li>
+      </ol>
       <form className="stack" onSubmit={approve}>
-        <input data-testid="pair-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="code shown by rubato-companion pair" />
-        <button type="submit" disabled={code.trim().length < 8}>
+        <label htmlFor="pair-code">Code from rubato-companion pair</label>
+        <input id="pair-code" data-testid="pair-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-1234" autoComplete="off" spellCheck={false} />
+        <button type="submit" disabled={code.trim().length < 8} title={code.trim().length < 8 ? "Type the whole code first" : undefined}>
           Approve
         </button>
       </form>

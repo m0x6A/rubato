@@ -13,6 +13,8 @@ interface Props {
   lanes?: PairingInfo[] | undefined;
   queue?: QueuedIssue[] | undefined;
   onQueue?: ((issue: IssueRef, companionId: string) => void) | undefined;
+  /** Issues already listed above (an unpinned issue with a plan is tracked): not listed twice. */
+  listedAbove?: ReadonlySet<string> | undefined;
 }
 
 /** "5 min ago" under an hour, as the design words it; the shared short form beyond that. */
@@ -72,9 +74,9 @@ function matches(i: OpenIssue, needle: string): boolean {
  * "Not pinned": the open issues of the map's repos that Rubato does not track yet (design S2).
  * A failed or missing listing is said per repo; an empty list is claimed only for listed repos.
  */
-export function Backlog({ backlog, map, onPin, lanes = [], queue = [], onQueue }: Props) {
+export function Backlog({ backlog, map, onPin, lanes = [], queue = [], onQueue, listedAbove }: Props) {
   const [filter, setFilter] = useState("");
-  const all = backlog?.issues ?? [];
+  const all = (backlog?.issues ?? []).filter((i) => !listedAbove?.has(issueKey(i.issue)));
   const repos = backlog?.repos ?? [];
   const needle = filter.trim().toLowerCase();
   const shown = needle ? all.filter((i) => matches(i, needle)) : all;
@@ -94,8 +96,9 @@ export function Backlog({ backlog, map, onPin, lanes = [], queue = [], onQueue }
               <li key={issueKey(i.issue)} className="issue-row backlog-row" data-testid={`backlog-row-${i.issue.number}`} draggable onDragStart={(e) => setIssueDrag(e, i.issue)} title="Drag onto a part or a seam of the map to pin">
                 <span className="issue-main">
                   {/* Not draggable on its own: a drag that starts on the link drags the row, not a URL. */}
-                  <a href={i.url} target="_blank" rel="noreferrer" draggable={false}>
+                  <a href={i.url} target="_blank" rel="noreferrer" draggable={false} title="Open on GitHub">
                     {issueKey(i.issue)}
+                    <span aria-hidden="true"> ↗</span>
                   </a>{" "}
                   <span>{i.title}</span>
                   {(i.labels ?? []).length > 0 && (

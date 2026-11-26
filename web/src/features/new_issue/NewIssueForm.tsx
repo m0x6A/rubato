@@ -8,8 +8,8 @@ import { uuid } from "../../shared/uuid.ts";
 
 interface Props {
   overview: Overview;
-  /** Where it was started: preselected, and where the issue is pinned. */
-  target: MapRef;
+  /** Where it was started: preselected, and where the issue is pinned. Null: the person chooses. */
+  target: MapRef | null;
   onCreated: (issue: IssueRef) => void;
   onCancel: () => void;
   onNotice: (text: string) => void;
@@ -48,8 +48,8 @@ export function NewIssueForm({ overview, target: start, onCreated, onCancel, onN
   const repos = useMemo(() => reposOf(map), [map]);
   // One id per draft: a second press of Create cannot make a second issue.
   const requestId = useRef(uuid());
-  const [target, setTarget] = useState<MapRef>(start);
-  const [repo, setRepo] = useState(repoFor(map, start) ?? repos[0] ?? "");
+  const [target, setTarget] = useState<MapRef | null>(start);
+  const [repo, setRepo] = useState((start ? repoFor(map, start) : undefined) ?? repos[0] ?? "");
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [does, setDoes] = useState("");
@@ -61,6 +61,7 @@ export function NewIssueForm({ overview, target: start, onCreated, onCancel, onN
   const [message, setMessage] = useState<string | null>(null);
 
   const missing = [
+    !target && "a part or seam under Where it fits",
     !title.trim() && "a title",
     !summary.trim() && "a summary",
     lines(does).length === 0 && "a line under What the change does",
@@ -71,7 +72,7 @@ export function NewIssueForm({ overview, target: start, onCreated, onCancel, onN
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!can || missing.length > 0 || busy) {
+    if (!can || missing.length > 0 || busy || !target) {
       return;
     }
     const req: NewIssueRequest = {
@@ -120,17 +121,25 @@ export function NewIssueForm({ overview, target: start, onCreated, onCancel, onN
       </header>
       {!can && (
         <p className="warn" data-testid="new-issue-unavailable">
-          This Rubato cannot create issues: it needs a GitHub App installation with Issues: write. Until then, open the issue on GitHub and end its body with <code className="mono">Map: {target.kind} {target.id}</code>.
+          This Rubato cannot create issues: it needs a GitHub App installation with Issues: write. Until then, open the issue on GitHub and end its body with <code className="mono">Map: {target ? `${target.kind} ${target.id}` : "node <id>"}</code>.
         </p>
       )}
       <form onSubmit={(e) => void submit(e)} aria-label="New issue">
         <label>
           Where it fits
-          <select value={encode(target)} onChange={(e) => {
+          <select value={target ? encode(target) : ""} required onChange={(e) => {
+            if (!e.target.value) {
+              return;
+            }
             const t = decode(e.target.value);
             setTarget(t);
             setRepo(repoFor(map, t) ?? repo);
           }}>
+            {!target && (
+              <option value="" disabled>
+                Choose a part or seam…
+              </option>
+            )}
             <optgroup label="Parts">
               {liveMap(map).nodes.map((n) => (
                 <option key={n.id} value={encode({ kind: "node", id: n.id })}>

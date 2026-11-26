@@ -30,11 +30,11 @@ export function nextPanelSize(size: PanelSize): PanelSize {
   return SIZES[(SIZES.indexOf(size) + 1) % SIZES.length] ?? "normal";
 }
 
-/** What the button does next, as its accessible name, and the short word it shows. */
+/** What the button does next, as its accessible name, and the glyph it shows (the tab row has no room for a word). */
 export const PANEL_ACTION: Record<PanelSize, { name: string; word: string }> = {
-  normal: { name: "Widen panel", word: "Wider" },
-  wide: { name: "Fill the window with the panel", word: "Full" },
-  full: { name: "Back to normal panel width", word: "Narrow" },
+  normal: { name: "Widen panel", word: "⇤" },
+  wide: { name: "Fill the window with the panel", word: "⇤⇤" },
+  full: { name: "Back to normal panel width", word: "⇥" },
 };
 
 /** Whether the map and the panel sit side by side. True where the browser cannot say. */

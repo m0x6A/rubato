@@ -16,3 +16,11 @@ Feature: Issues
     When a person switches the Issues list to Done
     Then both are listed, the closed one marked closed
     And a finished issue's detail offers nothing that starts work
+
+  @issues.listed-once
+  Scenario: An issue with a plan but no pin is listed once
+    Given an open issue nobody pinned, whose plan Rubato found by its branch
+    When a person opens Issues
+    Then the issue is listed with the tracked issues as not pinned
+    And Not pinned does not list it a second time
+    And its repository counts it once

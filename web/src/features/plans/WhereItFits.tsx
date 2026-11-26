@@ -14,6 +14,7 @@ export function WhereItFits({
   onNotice,
   approvalsInRubato = false,
   readOnly = false,
+  partsTable = true,
 }: {
   issue: IssueSummary;
   map: SystemMap;
@@ -23,6 +24,8 @@ export function WhereItFits({
   approvalsInRubato?: boolean;
   /** The issue is finished: where the plan fitted, with no Accept and no Import (#265). */
   readOnly?: boolean;
+  /** The Parts affected table; left out where the page lists the plan's changes already (the issue detail). */
+  partsTable?: boolean;
 }) {
   // Retired parts are drawn nowhere (ADR 0077).
   const map = liveMap(full);
@@ -51,14 +54,14 @@ export function WhereItFits({
         </ul>
       )}
       <div className="system-strip" data-testid="system-strip" aria-label="The system map, with this plan's parts lit">
-        {map.nodes.map((n) => {
-          const s = status.get(n.id);
-          return (
-            <span key={n.id} className={`strip-part ${s ?? "untouched"}`} title={s ? `${n.id}: ${s}` : n.id}>
+        {/* The plan's parts first; the rest of the map folds behind one line. */}
+        {map.nodes
+          .filter((n) => status.has(n.id))
+          .map((n) => (
+            <span key={n.id} className={`strip-part ${status.get(n.id)}`} title={`${n.id}: ${status.get(n.id)}`}>
               {n.id}
             </span>
-          );
-        })}
+          ))}
         {(map.seams ?? [])
           .filter((s) => touched.has(s.id))
           .map((s) => (
@@ -66,30 +69,44 @@ export function WhereItFits({
               ⇄ {s.id}
             </span>
           ))}
+        {map.nodes.some((n) => !status.has(n.id)) && (
+          <details className="strip-rest">
+            <summary>+{map.nodes.filter((n) => !status.has(n.id)).length} parts it leaves alone</summary>
+            {map.nodes
+              .filter((n) => !status.has(n.id))
+              .map((n) => (
+                <span key={n.id} className="strip-part untouched" title={n.id}>
+                  {n.id}
+                </span>
+              ))}
+          </details>
+        )}
       </div>
       {plan && (
         <>
-          <h4>Parts affected</h4>
-          <table className="mini" data-testid="parts-affected">
-            <thead>
-              <tr>
-                <th>Part</th>
-                <th>Status</th>
-                <th>What changes</th>
-                <th>Seams</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan.affected_parts.map((p) => (
-                <tr key={p.node}>
-                  <td>{p.node}</td>
-                  <td>{p.status}</td>
-                  <td>{p.change}</td>
-                  <td className="muted">{(p.seams ?? []).join(", ")}</td>
+          {partsTable && <h4>Parts affected</h4>}
+          {partsTable && (
+            <table className="mini" data-testid="parts-affected">
+              <thead>
+                <tr>
+                  <th>Part</th>
+                  <th>Status</th>
+                  <th>What changes</th>
+                  <th>Seams</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {plan.affected_parts.map((p) => (
+                  <tr key={p.node}>
+                    <td>{p.node}</td>
+                    <td>{p.status}</td>
+                    <td>{p.change}</td>
+                    <td className="muted">{(p.seams ?? []).join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           <h4>Data models</h4>
           {groups.length === 0 ? (
             <p className="muted" data-testid="no-data-models">

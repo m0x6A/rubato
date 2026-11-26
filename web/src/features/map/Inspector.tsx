@@ -172,6 +172,8 @@ export function Inspector({ overview, selection, onSelect, onSelectIssue, onNewI
           <dt>Guard</dt>
           <dd className={s.guard ? undefined : "gap"}>{s.guard ?? `no guard ${NOT_DESCRIBED.replace("not ", "")}`}</dd>
         </dl>
+        <h3>Touching it now</h3>
+        <TouchingNow touching={x.touching} onSelectIssue={onSelectIssue} />
         <h3>Flows</h3>
         {x.flows.length ? <SeamFlows flows={x.flows} onSelect={onSelect} /> : <p className="gap">What crosses this seam is {NOT_DESCRIBED}.</p>}
         <SeamTrafficRows traffic={overview.traffic ?? undefined} findings={overview.findings} seam={s} />
@@ -190,8 +192,6 @@ export function Inspector({ overview, selection, onSelect, onSelectIssue, onNewI
         ) : (
           <p className="muted">No open plan has written an O-row for this seam.</p>
         )}
-        <h3>Touching it now</h3>
-        <TouchingNow touching={x.touching} onSelectIssue={onSelectIssue} />
       </section>
     );
   }
@@ -212,6 +212,8 @@ export function Inspector({ overview, selection, onSelect, onSelectIssue, onNewI
           </a>
         </p>
       )}
+      <h3>Touching it now</h3>
+      <TouchingNow touching={x.touching} onSelectIssue={onSelectIssue} />
       <h3>Receives</h3>
       <FlowList lines={x.incoming} direction="from" onSelect={onSelect} />
       <h3>Sends</h3>
@@ -252,8 +254,6 @@ export function Inspector({ overview, selection, onSelect, onSelectIssue, onNewI
       ) : (
         <p className="muted">Nothing on the map.</p>
       )}
-      <h3>Touching it now</h3>
-      <TouchingNow touching={x.touching} onSelectIssue={onSelectIssue} />
     </section>
   );
 }

@@ -134,7 +134,9 @@ test("drag a not-pinned issue onto a part and onto a seam", { tag: ["@pins.drag-
   await expect(page.getByTestId("backlog-row-903")).toHaveCount(0);
 
   // The issue nobody dragged is still not pinned, and both targets now count their issue.
-  await expect(page.getByTestId("backlog-row-901")).toBeVisible();
+  // #901 has a plan, so it is listed with the tracked issues, as not pinned, and only there.
+  await expect(page.getByTestId("issue-row-901")).toContainText("not pinned");
+  await expect(page.getByTestId("backlog-row-901")).toHaveCount(0);
   await expect(page.getByTestId("node-rubato-server")).toContainText("planned");
   await expect(page.getByTestId("seam-web-server")).toContainText("1 issue");
 });

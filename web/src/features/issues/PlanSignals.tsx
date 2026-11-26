@@ -44,12 +44,12 @@ export function PlanSignals({ issue }: { issue: IssueSummary }) {
             </>
           ) : (
             <span className="muted">
-              not approved: a team member comments <code>Approved: plan &lt;sha&gt;</code>
+              not approved yet: Accept plan above, or a team member comments <code>Approved: plan &lt;sha&gt;</code> on the issue
             </span>
           )}
         </li>
       </ul>
-      <p className="muted">Read from issue comments by team members, at least every 5 minutes.</p>
+      <p className="muted">Read from the issue&apos;s comments by team members, at least every 5 minutes, so an approval can take that long to show.</p>
     </div>
   );
 }

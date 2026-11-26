@@ -36,6 +36,8 @@ interface Props {
   onShowSeam?: ((seam: string) => void) | undefined;
   /** Start your own lead agent on the issue (ADR 0072): offered only with the orchestrator on. */
   onLaunchLead?: ((issue: IssueRef, companionId: string) => void) | undefined;
+  /** Opens the Companions tab, where a companion is paired: the way to "Start session". */
+  onPairCompanion?: (() => void) | undefined;
 }
 
 /** Companions the current user may queue issues on: their own, paired, not revoked (ADR 0020). */
@@ -56,7 +58,7 @@ export function ownConnectedCompanions(overview: Overview, me: Me | null) {
 
 const ORDER = ["blocked", "unknown", "building", "designing", "designed", "started", "in_review", "planned", "done"] as const;
 
-export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice, onShowSeam, onLaunchLead }: Props) {
+export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice, onShowSeam, onLaunchLead, onPairCompanion }: Props) {
   const own = ownConnectedCompanions(overview, me);
   // A lead only with the server's flag on, on a companion of yours that runs leads (ADR 0072).
   const leadOn = overview.orchestrator ? own.find((c) => c.can_lead) : undefined;
@@ -102,7 +104,12 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
         {selected.title && <p>{selected.title}</p>}
         <div className="instruments">
           <StageRail state={selected.progress.state} blockedFrom={selected.progress.blocked_from} />
-          <SpendGauge spend={selected.spend_usd ?? 0} cap={selected.plan?.spend_cap_usd} />
+          {/* The gauge once something was spent or a session ran; before that, one line says the cap. */}
+          {(selected.spend_usd ?? 0) > 0 || (selected.sessions ?? []).length > 0 || (selected.spend_history ?? []).length > 0 ? (
+            <SpendGauge spend={selected.spend_usd ?? 0} cap={selected.plan?.spend_cap_usd} />
+          ) : selected.plan?.spend_cap_usd ? (
+            <span className="muted spend-cap-note">spend cap ${selected.plan.spend_cap_usd.toFixed(0)} · nothing spent yet</span>
+          ) : null}
           <SpendSparkline points={selected.spend_history ?? []} />
         </div>
         <p>
@@ -137,7 +144,16 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
         ) : null}
         {finished || own.length > 0 ? null : (
           <p className="muted" data-testid="no-companion">
-            No companion of yours is connected; start one with <code>rubato-companion run</code>.
+            To start a session on this issue, connect a companion of yours: run <code>rubato-companion run</code> on your machine
+            {onPairCompanion && (
+              <>
+                , or{" "}
+                <button type="button" className="link" onClick={onPairCompanion}>
+                  pair one first
+                </button>
+              </>
+            )}
+            .
           </p>
         )}
         <h3 style={{ marginTop: 12 }}>Pinned to</h3>
@@ -206,7 +222,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
         {(selected.plan || selected.fit) && (
           <>
             <h3 style={{ marginTop: 12 }}>Plan · {selected.plan?.path ?? "does not parse"}</h3>
-            <WhereItFits issue={selected} map={overview.map.map} me={me} onNotice={(t) => onNotice?.(t)} approvalsInRubato={Boolean(overview.comment_approvals_until)} readOnly={finished} />
+            <WhereItFits issue={selected} map={overview.map.map} me={me} partsTable={!selected.plan} onNotice={(t) => onNotice?.(t)} approvalsInRubato={Boolean(overview.comment_approvals_until)} readOnly={finished} />
             {selected.plan?.assumed && selected.plan.assumed.some((a) => a.scope === "seam") && (
               <p className="warn">⚠ {selected.plan.assumed.filter((a) => a.scope === "seam").length} seam-level question(s) wait for a human.</p>
             )}
@@ -325,7 +341,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           </li>
         )}
       </ul>
-      {view === "open" && <Backlog backlog={overview.backlog} map={overview.map.map} onPin={onPin} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />}
+      {view === "open" && <Backlog backlog={overview.backlog} map={overview.map.map} onPin={onPin} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} listedAbove={new Set(open.map((i) => issueKey(i.issue)))} />}
       {view === "open" && (overview.unpinned_sessions ?? []).length > 0 && (
         <p className="muted">
           {(overview.unpinned_sessions ?? []).length} session{(overview.unpinned_sessions ?? []).length === 1 ? "" : "s"} on branches outside the convention (unpinned).

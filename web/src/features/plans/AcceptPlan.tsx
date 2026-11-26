@@ -21,6 +21,8 @@ export function AcceptPlan({ issue, me, onDone, said: kept }: { issue: IssueSumm
   const sha = issue.plan_sha;
   const counted = issue.approval?.version === "current";
   const fits = issue.fit?.fits ?? false;
+  // Rubato may not comment as this person: they can still post the same comment themselves.
+  const cannotAct = Boolean(sha) && fits && me !== null && !me.can_act_on_github;
   const why = !sha
     ? "There is no plan file to accept."
     : !fits
@@ -65,7 +67,17 @@ export function AcceptPlan({ issue, me, onDone, said: kept }: { issue: IssueSumm
           {issue.plan?.git_ref ? ` on ${issue.plan.git_ref}` : ""} · posted as you
         </span>
       )}
-      {why && <div className="muted" data-testid="accept-why">{why}</div>}
+      {why && (
+        <div className="muted" data-testid="accept-why">
+          {why}
+          {cannotAct && sha && (
+            <>
+              {" "}
+              Instead, comment <code>Approved: plan {sha.slice(0, 10)}{issue.plan?.git_ref ? ` on ${issue.plan.git_ref}` : ""}</code> on the issue yourself; it counts the same.
+            </>
+          )}
+        </div>
+      )}
       {said && <div role="status">{said}</div>}
     </div>
   );

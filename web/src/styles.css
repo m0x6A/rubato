@@ -208,13 +208,13 @@ body { background: var(--bg); color: var(--ink); font: 13px/1.45 var(--font-ui);
   .body[data-panel="full"] { grid-template-columns: 1fr; }
   .body[data-panel="full"] .panel { border-left: 0; }
 }
-.map { position: relative; min-height: 0; }
+.map { position: relative; min-height: 0; min-width: 0; }
 .empty { display: grid; place-items: center; height: 100%; color: var(--muted); }
 .panel { border-left: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
-.tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
-.tabs button { position: relative; min-height: 34px; padding: 6px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--chip-ink); }
+.tabs { flex: none; display: flex; gap: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+.tabs button { position: relative; flex: none; white-space: nowrap; min-height: 34px; padding: 6px 8px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--chip-ink); }
 .tabs button.active { background: none; color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
-.tabs .panel-size { margin-left: auto; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.tabs .panel-size { margin-left: auto; flex: none; min-width: 32px; font-size: 14px; }
 button, .button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); cursor: pointer; text-decoration: none; }
 button.active, .button.primary, button.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); font-weight: 600; }
 /* A step that cannot be taken back, asked a second time (Stop session, ADR 0062). */
@@ -514,10 +514,12 @@ tr.chat-row > td { padding-top: 0; }
 .lane .drop-hint { font-size: 12px; color: var(--accent-ink); font-weight: 600; }
 /* the inspector: the map explains what is selected */
 .inspector { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; }
-.inspector header { display: flex; align-items: baseline; gap: 8px; }
-.inspector header h2 { font-size: 15px; margin-right: auto; }
-.inspector header .kind { font-size: 10px; color: var(--chip-ink); text-transform: uppercase; }
-.inspector header button { padding: 2px 10px; min-height: 24px; }
+/* The name gets its own row; kind and actions sit under it, never squeezing it. */
+.inspector header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.inspector header h2 { font-size: 15px; flex: 1 1 auto; margin-right: auto; overflow-wrap: anywhere; }
+.inspector header:has(.kind) h2 { flex-basis: 100%; margin-right: 0; }
+.inspector header .kind { font-size: 10px; color: var(--chip-ink); text-transform: uppercase; margin-right: auto; }
+.inspector header button { padding: 2px 10px; min-height: 24px; white-space: nowrap; }
 .inspector h3 { margin-top: 6px; color: var(--chip-ink); }
 .inspector h4 { font-size: 12px; margin-top: 4px; color: var(--chip-ink); }
 .inspector dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
@@ -559,7 +561,8 @@ tr.chat-row > td { padding-top: 0; }
 .scenario-controls button { min-width: 32px; min-height: 28px; }
 .scenario-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .scenario-key { font-size: 12px; color: var(--chip-ink); display: inline-flex; align-items: center; gap: 4px; }
-.scenario-caption { margin: 0; font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.scenario-step { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; }
+.scenario-carries { font-size: 12px; color: var(--chip-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scenario-note { margin: 0; font-size: 12px; color: var(--muted); }
 .scenario-steps { font-size: 12px; }
 .scenario-steps ol { margin: 4px 0 0; padding-left: 20px; max-height: 160px; overflow: auto; }
@@ -844,3 +847,27 @@ body:has(.login) { background-color: var(--canvas); background-image: radial-gra
 .react-flow__edge.blind .react-flow__edge-path { stroke: var(--quiet); stroke-width: 1.5; stroke-dasharray: 2 6; }
 .react-flow__edge.blind .conduit { opacity: 0.4; }
 .vital.blind { border-style: dashed; border-top-color: var(--quiet); }
+
+/* UX walkthrough (2026-11-26) */
+/* The panel's tabs stay on one row: the count is a quiet chip, the button's aria-label says what it counts. */
+.tabs::-webkit-scrollbar { display: none; }
+.tab-count { display: inline-block; min-width: 1.6em; margin-left: 5px; padding: 0 5px; border-radius: 999px; background: var(--raised); border: 1px solid var(--line); font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5; font-weight: 500; text-align: center; color: var(--chip-ink); }
+.tabs button.active .tab-count { border-color: var(--accent); color: var(--ink); }
+.tab-count.live { border-color: var(--ok); color: var(--ok-ink); }
+/* Edit mode says how to edit. */
+.edit-hint { margin: 0; font-size: 12px; color: var(--ink); padding: 4px 8px; border-radius: 6px; border: 1px dashed var(--accent); background: var(--raised); }
+.legend .legend-action { padding: 1px 8px; min-height: 22px; font-size: 12px; margin-left: 4px; }
+/* Pairing, step by step. */
+.pair-steps { margin: 0 0 8px; padding-left: 20px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.pair-steps code { display: block; margin-top: 2px; padding: 3px 6px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); white-space: nowrap; overflow-x: auto; }
+.spend-cap-note { font-family: var(--font-mono); font-size: 11px; align-self: center; }
+/* On a phone the lens switch scrolls sideways instead of breaking each label over three lines. */
+@media (max-width: 900px) {
+  .lens { min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .lens::-webkit-scrollbar { display: none; }
+  .lens button { flex: none; white-space: nowrap; }
+}
+.strip-rest { display: contents; }
+.strip-rest > summary { font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px dashed var(--line); color: var(--chip-ink); cursor: pointer; list-style: none; }
+.strip-rest > summary::-webkit-details-marker { display: none; }
+.strip-rest[open] > summary { opacity: 0.7; }
