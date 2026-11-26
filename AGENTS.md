@@ -308,6 +308,7 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A speech provider failing every call for 10 minutes while people use voice (`SpeechProviderFailing`, ADR 0073).
 - A lead agent's request refused for touching another person's agent, or for a forged identity (`FleetCrossOwner`, ADR 0072).
 - A GitHub App webhook that has stopped delivering while the catch-up poll finds changes, or a delivery not applied for 5 minutes (`GitHubWebhooksSilent`, `GitHubWebhooksStuck`, ADR 0074).
+- A context graph source that no tick has found current for three regeneration intervals, while its flag is on (`ContextGraphStale`, ADR 0084).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

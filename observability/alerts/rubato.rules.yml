@@ -92,6 +92,24 @@ groups:
           summary: "The traffic report of workspace {{ if $labels.rubato_workspace }}{{ $labels.rubato_workspace }}{{ else }}default{{ end }} is {{ $value }}s old: the Traffic lens says unknown"
           panel: Traffic report age
 
+      # #322, ADR 0084: no tick has found a context graph source current for three regeneration
+      # intervals: a build that keeps failing, a stopped timer, GitHub refusing. Agents still get
+      # answers, from the last good graph and with its age; this says the age is no longer
+      # normal. The age is read from the stored time when collected, so it rises with no tick at
+      # all. With the flag off neither gauge is exported and the rule stays silent.
+      - alert: ContextGraphStale
+        expr: |
+          max by (rubato_graph_source) (rubato_graph_source_age)
+            > on () group_left () (3 * max(rubato_graph_regen_interval))
+        for: 0m
+        labels:
+          severity: ticket
+          seam: server-github
+          owner: rubato-server
+        annotations:
+          summary: "The context graph source {{ $labels.rubato_graph_source }} was last current {{ $value }}s ago: agents read an old graph"
+          panel: Context graph source age
+
       # #122, ADR 0051: a message has waited more than 10 minutes while its launched session
       # waits for input (last hook Stop or idle_prompt; a fresh launch never counts). The queue
       # does not move: the companion is not live, lacks session_input, or keeps answering not_idle.

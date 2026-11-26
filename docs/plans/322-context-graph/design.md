@@ -160,9 +160,9 @@ attributes that `every_github_call_span_is_a_client_span_that_names_its_peer` de
 counted on `rubato.github.calls`, both seeded in `FakeGitHub` and `LocalGit`:
 
 - `default_head(repo) -> Option<String>`: the default branch's head sha.
-- `tarball(repo, sha)`: a byte stream, with its own total deadline (120 s) and no retry inside a
-  tick; the next tick is the retry. The redirect to the archive host is followed inside the one
-  client span.
+- `tarball(repo, sha, max_bytes)`: the gzipped archive, or *too large* over the cap, with its
+  own total deadline (120 s) and no retry inside a tick; the next tick is the retry. The
+  redirect to the archive host is followed inside the one client span.
 
 The App's Contents: read permission already covers both (`docs/QUICKSTART.md:34`). Budget: one
 call per repository per tick while nothing changes, which is 4 per repository per hour at the
@@ -171,8 +171,9 @@ is left out of the first version (plan A7).
 
 ### 4.2 Files and documents
 
-The tarball is read as a stream, entry by entry, through a bounded reader; neither the archive
-nor the repository is ever whole in memory or on disk.
+The compressed archive is read into memory under its cap, in frames, and decompressed as a
+stream, entry by entry, through a bounded reader. The repository itself is never whole in
+memory, and nothing is written to disk.
 
 - every tracked file becomes a `file` node, with its language from its extension;
 - `docs/decisions/*.md`, or the `decisions` directory the map names: the header fields of
@@ -306,7 +307,8 @@ and the queries (§7) live in a new library crate, `crates/rubato-graph`, used b
 and names neither binary. `rubato-protocol` stays without I/O and carries the wire types.
 
 **Dependencies.** The server gains `tar` and `flate2` (both MIT OR Apache-2.0) to read the
-tarball and write snapshots, besides tree-sitter (ADR 0085). The companion gains `sqlx` with the
+tarball and write snapshots, and names `http-body-util` (MIT, already in the lock file through
+octocrab) to read the download in frames, besides tree-sitter (ADR 0085). The companion gains `sqlx` with the
 `sqlite` feature, `flate2` and `sha2` (all MIT OR Apache-2.0); the workspace already compiles
 `sqlx` and `sha2` for the server. Each is pinned as its siblings are; ADRs 0084 and 0086 record
 them.

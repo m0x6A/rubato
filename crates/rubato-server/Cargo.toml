@@ -12,6 +12,11 @@ path = "src/main.rs"
 [dependencies]
 rubato-protocol = { path = "../rubato-protocol" }
 rubato-graph = { path = "../rubato-graph" }
+# Reading a repository tarball for the context graph (ADR 0084): the response body in frames,
+# then gzip and tar as a stream.
+http-body-util = "0.1"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
 anyhow = "1"
 thiserror.workspace = true
 serde.workspace = true

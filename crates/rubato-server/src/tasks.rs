@@ -913,6 +913,16 @@ pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
             }
         }
     });
+    // The context graph's timer, only with its flag on (ADR 0084). Essential: it never ends on
+    // an error, so ending is a fault.
+    if let Some(cfg) = app.config.context_graph.clone() {
+        let (app, shutdown) = (app.clone(), shutdown.clone());
+        tasks.spawn("context_graph", Kind::Essential, async move {
+            let every = std::time::Duration::from_secs(u64::from(cfg.regen_secs));
+            crate::context_graph::run(app, every, shutdown).await;
+            Ok(())
+        });
+    }
     tasks.spawn("poll", Kind::Essential, async move {
         run(app, shutdown).await;
         Ok(())

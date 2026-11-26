@@ -43,6 +43,15 @@ fn count_call(endpoint: &'static str, pages: u64) {
         );
 }
 
+/// A repository's tarball at one commit, as GitHub serves it: gzip, with one top-level
+/// directory. Held compressed, under the caller's cap; the caller decompresses it as a stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tarball {
+    Gz(Vec<u8>),
+    /// Larger than the cap the caller gave. Not an error: the caller marks its source cut.
+    TooLarge,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueInfo {
     pub title: String,
@@ -242,6 +251,18 @@ pub trait GitHubApi: Send + Sync {
     /// The newest PR whose head is `branch`.
     async fn pull_for_branch(&self, repo: &str, branch: &str) -> Result<Option<PullInfo>>;
     async fn checks(&self, repo: &str, sha: &str) -> Result<ChecksStatus>;
+    /// The default branch's head sha, for the context graph (ADR 0084): one call. `None` when
+    /// the repository is not there, is empty, or this connection cannot see it.
+    async fn default_head(&self, _repo: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    /// The repository's tarball at `sha`, at most `max_bytes` compressed (ADR 0084). One call,
+    /// never retried here: the next tick is the retry.
+    async fn tarball(&self, _repo: &str, _sha: &str, _max_bytes: u64) -> Result<Tarball> {
+        Err(anyhow::anyhow!(
+            "this GitHub connection cannot download a repository"
+        ))
+    }
     /// One pull request, any state; None when it does not exist (ADR 0034, read for a view).
     async fn pull(&self, _repo: &str, _number: u64) -> Result<Option<PullFull>> {
         Err(anyhow::anyhow!(
@@ -769,6 +790,58 @@ impl GitHubApi for Octo {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "repo_head"))]
+    async fn default_head(&self, repo: &str) -> Result<Option<String>> {
+        count_call("repo_head", 1);
+        let (o, r) = split_repo(repo)?;
+        // `HEAD` is the default branch: its name is never asked for.
+        let route = format!("/repos/{o}/{r}/commits/HEAD");
+        match self
+            .client
+            .get::<serde_json::Value, _, ()>(route, None::<&()>)
+            .await
+        {
+            Ok(v) => Ok(v.get("sha").and_then(|s| s.as_str()).map(str::to_owned)),
+            // 404: not there, or not covered. 409: the repository is empty.
+            Err(octocrab::Error::GitHub { source, .. })
+                if matches!(source.status_code.as_u16(), 404 | 409) =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "tarball"))]
+    async fn tarball(&self, repo: &str, sha: &str, max_bytes: u64) -> Result<Tarball> {
+        use http_body_util::BodyExt;
+        count_call("tarball", 1);
+        let (o, r) = split_repo(repo)?;
+        // The redirect to the archive host is followed inside this one call and span.
+        let resp = self
+            .client
+            .repos(o, r)
+            .download_tarball(sha.to_owned())
+            .await?;
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "tarball of {repo}: HTTP {}",
+            resp.status()
+        );
+        let mut body = resp.into_body();
+        let mut out: Vec<u8> = Vec::new();
+        while let Some(frame) = body.frame().await {
+            let Ok(data) = frame?.into_data() else {
+                continue;
+            };
+            if (out.len() + data.len()) as u64 > max_bytes {
+                return Ok(Tarball::TooLarge);
+            }
+            out.extend_from_slice(&data);
+        }
+        Ok(Tarball::Gz(out))
     }
 
     #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "branches"))]
@@ -1813,7 +1886,7 @@ mod tests {
         let src = include_str!("api.rs");
         let (sites, lacking) = call_sites_lacking_kind_or_peer(src);
         assert!(
-            sites >= 26,
+            sites >= 28,
             "found only {sites} call sites; the pattern is wrong"
         );
         assert_eq!(

@@ -46,6 +46,24 @@ const mutants: Mutant[] = [
     caughtBy: "alertname: TrafficReportStale, time: 8m",
   },
   {
+    why: "#322: a context graph source is stale past three intervals, not past four",
+    from: "> on () group_left () (3 * max(rubato_graph_regen_interval))",
+    to: "> on () group_left () (4 * max(rubato_graph_regen_interval))",
+    caughtBy: "alertname: ContextGraphStale, time: 8m",
+  },
+  {
+    why: "#322: the bar follows the configured interval; it is not the default's 2700 s",
+    from: "> on () group_left () (3 * max(rubato_graph_regen_interval))",
+    to: "> 2700",
+    caughtBy: "alertname: ContextGraphStale, time: 8m",
+  },
+  {
+    why: "#322: a stale source fires alone, not folded into the server's max",
+    from: "max by (rubato_graph_source) (rubato_graph_source_age)",
+    to: "max(rubato_graph_source_age)",
+    caughtBy: "alertname: ContextGraphStale, time: 8m",
+  },
+  {
     why: "#105: without the threshold series CompanionSilent falls back to 600 s, never silent",
     from: " or vector(600)",
     to: "",
