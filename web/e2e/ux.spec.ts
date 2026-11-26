@@ -10,9 +10,16 @@ test("an issue with a plan but no pin is listed once, and counted once", { tag: 
   await expect(page.getByTestId("backlog-row-915")).toHaveCount(0);
   // The repo's folded list counts every open issue once, as its rack unit does.
   await page.getByTestId("tab-repos").click();
-  const rack = page.getByTestId("repo-m0x6A/rubato");
-  const racked = Number(await rack.locator(".rack-bar.open_issues em").innerText());
-  await expect(page.getByTestId("repo-work-m0x6A/rubato").locator("summary")).toContainText(`${racked} open issue`);
+  // Other tests create issues in parallel, so read both counts together until they agree.
+  const rack = page.getByTestId("repo-m0x6A/rubato").locator(".rack-bar.open_issues em");
+  const summary = page.getByTestId("repo-work-m0x6A/rubato").locator("summary");
+  await expect
+    .poll(async () => {
+      const racked = Number(await rack.innerText());
+      const listed = Number(/(\d+) open issue/.exec(await summary.innerText())?.[1] ?? NaN);
+      return racked === listed;
+    })
+    .toBe(true);
 });
 
 test("Escape closes the issue, then the selection; not while typing", { tag: ["@map.escape-closes"] }, async ({ page }) => {
