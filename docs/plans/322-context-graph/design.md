@@ -566,16 +566,16 @@ tested: S7 reads a fixture copy written with S2's crate.
 
 | # | Slice | Parts |
 | --- | --- | --- |
-| S1 | Protocol: `graph` module, capability, `GraphSources`, `Overview.graph`, routes, limits, otel names; schemas regenerated | rubato-protocol |
-| S2 | `crates/rubato-graph`: schema, `replace_source`, snapshot read and write, queries. Server slice skeleton, the flag and its start-up refusals, the store, status in the Overview | rubato-server |
-| S3 | GitHub port (`default_head`, `tarball`), the repo source with files and documents, the timer, metrics, `ContextGraphStale` with its test, dashboard row | rubato-server |
-| S4 | The workspace sources and the team source | rubato-server |
-| S5 | Code extraction with tree-sitter (ADR 0085) | rubato-server |
-| S6a | Server: announce, the snapshot route, who may read | rubato-server |
-| S6b | Companion: the `graph` slice, sync and local copy, `ContextGraphCopyBehind` | rubato-companion |
-| S7 | The five tools on `/mcp`, the read-only guards | rubato-companion |
-| S8 | `/mcp/read`, `rubato-companion mcp`, the fork marker, `status`, the skill's text, QUICKSTART | rubato-companion, skill-rubato |
-| S9 | The Repos view, the scenario, e2e | web |
+| S1 #324 | Protocol: `graph` module, capability, `GraphSources`, `Overview.graph`, routes, limits, otel names; schemas regenerated | rubato-protocol |
+| S2 #325 | `crates/rubato-graph`: schema, `replace_source`, snapshot read and write, queries. Server slice skeleton, the flag and its start-up refusals, the store, status in the Overview | rubato-server |
+| S3 #326 | GitHub port (`default_head`, `tarball`), the repo source with files and documents, the timer, metrics, `ContextGraphStale` with its test, dashboard row | rubato-server |
+| S4 #327 | The workspace sources and the team source | rubato-server |
+| S5 #328 | Code extraction with tree-sitter (ADR 0085) | rubato-server |
+| S6a #329 | Server: announce, the snapshot route, who may read | rubato-server |
+| S6b #330 | Companion: the `graph` slice, sync and local copy, `ContextGraphCopyBehind` | rubato-companion |
+| S7 #331 | The five tools on `/mcp`, the read-only guards | rubato-companion |
+| S8 #332 | `/mcp/read`, `rubato-companion mcp`, the fork marker, `status`, the skill's text, QUICKSTART | rubato-companion, skill-rubato |
+| S9 #333 | The Repos view, the scenario, e2e | web |
 
 AGENTS.md changes with the code, not here: the repository layout gains `crates/rubato-graph`,
 said to hold no slice and to be outside the layout tests (S2); the slice blocks gain
