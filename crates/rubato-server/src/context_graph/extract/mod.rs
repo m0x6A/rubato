@@ -3,7 +3,10 @@
 //! without GitHub and without SQLite. No file's contents are kept; a decision document's
 //! Decision section is, capped.
 
+mod code;
 mod docs;
+
+pub use code::CodeCounts;
 
 use rubato_protocol::graph::{GraphEdge, GraphNode, id, kind};
 use rubato_protocol::limits;
@@ -18,6 +21,8 @@ pub struct Counts {
     pub slices: usize,
     /// Documents of a known place that did not read as one (an ADR with no title line).
     pub unread_documents: usize,
+    /// Symbols, imports and references from source files (ADR 0085).
+    pub code: CodeCounts,
 }
 
 /// One repository, extracted.
@@ -34,6 +39,7 @@ pub struct Extracted {
 pub struct Extractor {
     repo: String,
     out: Extracted,
+    code: code::Code,
 }
 
 fn language(path: &str) -> Option<&'static str> {
@@ -77,6 +83,7 @@ impl Extractor {
         Self {
             repo: repo.to_owned(),
             out: Extracted::default(),
+            code: code::Code::new(),
         }
     }
 
@@ -122,6 +129,10 @@ impl Extractor {
             ]),
         });
         let Some(text) = text else { return };
+        if code::Lang::of(path).is_some() && !code::is_vendored(path) {
+            self.code.file(path, text);
+            return;
+        }
         if docs::is_adr_path(path) {
             match docs::adr(&self.repo, path, text) {
                 Some((node, edges)) => {
@@ -142,16 +153,31 @@ impl Extractor {
         }
     }
 
-    pub fn finish(mut self) -> Extracted {
-        if self.out.nodes.len() > limits::GRAPH_NODES_MAX {
-            self.out.nodes.truncate(limits::GRAPH_NODES_MAX);
-            self.cut("nodes");
+    pub fn finish(self) -> Extracted {
+        let Extractor {
+            repo,
+            mut out,
+            code,
+        } = self;
+        let paths: std::collections::BTreeSet<String> = out
+            .nodes
+            .iter()
+            .filter(|n| n.kind == kind::node::FILE)
+            .filter_map(|n| n.path.clone())
+            .collect();
+        let (nodes, edges, counts) = code.finish(&repo, &paths);
+        out.nodes.extend(nodes);
+        out.edges.extend(edges);
+        out.counts.code = counts;
+        if out.nodes.len() > limits::GRAPH_NODES_MAX {
+            out.nodes.truncate(limits::GRAPH_NODES_MAX);
+            out.truncated.get_or_insert("nodes");
         }
-        if self.out.edges.len() > limits::GRAPH_EDGES_MAX {
-            self.out.edges.truncate(limits::GRAPH_EDGES_MAX);
-            self.cut("edges");
+        if out.edges.len() > limits::GRAPH_EDGES_MAX {
+            out.edges.truncate(limits::GRAPH_EDGES_MAX);
+            out.truncated.get_or_insert("edges");
         }
-        self.out
+        out
     }
 }
 

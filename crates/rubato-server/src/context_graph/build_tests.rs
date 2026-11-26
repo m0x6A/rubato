@@ -291,39 +291,69 @@ async fn a_source_is_removed_only_when_a_loaded_map_no_longer_names_its_reposito
     assert!(store.node(&id::adr(REPO, "0071")).await.unwrap().is_none());
 }
 
+/// Wait until `done` holds; panic with `what` after ten seconds.
+async fn until(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "never: {what}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 #[tokio::test]
 async fn the_timer_ticks_at_start_and_then_once_an_interval() {
     let (app, github, _tmp) = serve().await;
     let (stop, shutdown) = tokio::sync::watch::channel(false);
-    let every = Duration::from_millis(400);
+    let every = Duration::from_millis(1500);
     let task = tokio::spawn(run(app.clone(), every, shutdown));
+    let key = source_key::repo(REPO);
+    let store = store(&app).unwrap();
 
-    // At start: one tick, the build. Nothing more before the interval is over.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // At start: one tick, the build.
+    until("the first build", || calls(&github, "tarball") == 1).await;
+    // Nothing more well inside the interval.
+    tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
         (calls(&github, "default_head"), calls(&github, "tarball")),
         (1, 1)
     );
-    // After one interval: the head is asked for again, and nothing is downloaded.
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(
-        (calls(&github, "default_head"), calls(&github, "tarball")),
-        (2, 1)
-    );
+    // After the interval: the head is asked for again, and nothing is downloaded.
+    until("the second tick", || calls(&github, "default_head") == 2).await;
+    assert_eq!(calls(&github, "tarball"), 1);
     // The head moves: the next tick rebuilds.
     github.with(|g| {
         g.heads.insert(REPO.into(), "sha2".into());
         g.tarballs
             .insert((REPO.into(), "sha2".into()), tarball(&fixture_files()));
     });
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    until("the rebuild", || calls(&github, "tarball") == 2).await;
+    for _ in 0..500 {
+        if store
+            .source(&key)
+            .await
+            .unwrap()
+            .unwrap()
+            .head_sha
+            .as_deref()
+            == Some("sha2")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!(
-        (calls(&github, "default_head"), calls(&github, "tarball")),
-        (3, 2)
+        store
+            .source(&key)
+            .await
+            .unwrap()
+            .unwrap()
+            .head_sha
+            .as_deref(),
+        Some("sha2")
     );
 
     stop.send(true).unwrap();
-    tokio::time::timeout(Duration::from_secs(2), task)
+    tokio::time::timeout(Duration::from_secs(5), task)
         .await
         .expect("the timer ends at shutdown")
         .unwrap();
@@ -415,7 +445,9 @@ async fn manual_real_github_head_tarball_and_extraction() {
         octo.tarball(&repo, &head, 1024).await.unwrap(),
         Tarball::TooLarge
     );
+    let parse = std::time::Instant::now();
     let got = read_tarball(&gz, &repo).unwrap();
+    println!("extracted in {:?}: {:?}", parse.elapsed(), got.counts.code);
     println!(
         "{repo} at {head}: {} bytes compressed in {took:?}; {} files, {} ADRs, {} scenarios, {} slices, {} unread, cut: {:?}",
         gz.len(),

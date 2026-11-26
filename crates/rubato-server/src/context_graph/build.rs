@@ -19,7 +19,7 @@ use std::time::Duration;
 use tracing::Instrument;
 
 /// The extraction's version. A bump rebuilds every repository source once, at its next tick.
-pub const GENERATOR: u32 = 1;
+pub const GENERATOR: u32 = 2;
 
 /// The whole of one tarball download. The next tick is the retry.
 const TARBALL_DEADLINE: Duration = Duration::from_secs(120);
@@ -212,6 +212,13 @@ async fn build_repo(app: &App, store: &Store, repo: &str, key: &str) -> Result<O
     if let Some(cap) = extracted.truncated {
         metrics::truncated(key, cap);
     }
+    if !extracted.counts.code.broken_grammars.is_empty() {
+        tracing::error!(
+            rubato.graph.source = %key,
+            grammars = ?extracted.counts.code.broken_grammars,
+            "context graph: a grammar's queries did not compile; its files give no symbols"
+        );
+    }
     let counts = extracted.counts.clone();
     let build = Build {
         source: key.to_owned(),
@@ -251,6 +258,11 @@ async fn build_repo(app: &App, store: &Store, repo: &str, key: &str) -> Result<O
                 scenarios = counts.scenarios,
                 slices = counts.slices,
                 unread_documents = counts.unread_documents,
+                symbols = counts.code.symbols,
+                imports = counts.code.imports,
+                references = counts.code.references,
+                unresolved_references = counts.code.unresolved,
+                files_with_syntax_errors = counts.code.with_errors,
                 "context graph source built"
             );
             Ok(Outcome::Built)

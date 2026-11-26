@@ -10,8 +10,9 @@
 //! approvals.
 //!
 //! Built so far: the store and each source's status (#325), repository sources on a timer with
-//! their files and decision documents (#326), and the workspace and team sources from what the
-//! server already holds (#327). Symbols arrive with #328, the snapshot route with #329.
+//! their files and decision documents (#326), the workspace and team sources from what the
+//! server already holds (#327), and symbols, imports and references from source files (#328).
+//! The snapshot route arrives with #329.
 
 mod build;
 mod extract;

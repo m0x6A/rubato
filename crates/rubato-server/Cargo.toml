@@ -17,6 +17,13 @@ rubato-graph = { path = "../rubato-graph" }
 http-body-util = "0.1"
 flate2 = "1"
 tar = { version = "0.4", default-features = false }
+# Symbols, imports and references for the context graph (ADR 0085). Exact versions: a grammar
+# upgrade can change which symbols are found, and comes with a bump of the generator version.
+tree-sitter = "=0.27.2"
+tree-sitter-tags = "=0.27.2"
+tree-sitter-rust = "=0.24.2"
+tree-sitter-typescript = "=0.23.2"
+tree-sitter-javascript = "=0.25.0"
 anyhow = "1"
 thiserror.workspace = true
 serde.workspace = true
