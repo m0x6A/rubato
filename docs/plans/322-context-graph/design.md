@@ -103,7 +103,7 @@ may add any of them.
 | `plans` | plan → issue | team |
 | `affects` | plan → `map:<id>` (detail: status, what changes) | team |
 | `touches` | plan → `map:<id>` | team |
-| `cites` | plan → adr | team |
+| `cites` | plan → adr; declared, not built yet: the server keeps a plan's parsed tables, not its ADR pins | team |
 | `for` | pull → issue (the branch names the issue) | team |
 | `defines` | file → symbol | repo |
 | `imports` | file → file, or file → package | repo |

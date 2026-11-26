@@ -24,6 +24,7 @@ pub use poll::{
 pub use pulls::{PullsPass, list_repo_pulls, list_repo_pulls_in, repo_pulls};
 pub use store::{
     IssueMeta, all_approvals, all_decisions, all_issue_meta, all_prs, all_reviews,
-    approved_branches, backlog, issue_meta, link_comments, pr_for, set_target_sha, uncovered,
+    approved_branches, backlog, issue_meta, link_comments, open_issue_authors, pr_for,
+    set_target_sha, uncovered,
 };
-pub use suggest::{SUGGEST_THRESHOLD, suggest};
+pub use suggest::{SUGGEST_THRESHOLD, suggest, trusted};

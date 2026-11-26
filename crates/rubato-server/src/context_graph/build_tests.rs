@@ -100,8 +100,10 @@ async fn a_tick_builds_a_repository_once_and_then_only_asks_for_its_head() {
     let (app, github, _tmp) = serve().await;
     let key = source_key::repo(REPO);
 
+    // The workspace's and the team's sources are built by the same tick (#327); these tests
+    // look at the repository's.
     let first = tick(&app).await;
-    assert_eq!(first.built, std::slice::from_ref(&key));
+    assert!(first.built.contains(&key), "{first:?}");
     assert_eq!(
         (calls(&github, "default_head"), calls(&github, "tarball")),
         (1, 1)
@@ -115,9 +117,9 @@ async fn a_tick_builds_a_repository_once_and_then_only_asks_for_its_head() {
 
     // Nothing moved: one call, no tarball, no new rows.
     let second = tick(&app).await;
-    assert_eq!(
-        (second.built.len(), second.unchanged),
-        (0, vec![key.clone()])
+    assert!(
+        second.built.is_empty() && second.unchanged.contains(&key),
+        "{second:?}"
     );
     assert_eq!(
         (calls(&github, "default_head"), calls(&github, "tarball")),
@@ -246,7 +248,7 @@ async fn repositories_build_one_after_the_other_and_an_uncovered_one_is_not_aske
         .await
         .unwrap();
     let t = tick(&app).await;
-    assert_eq!(t.built.len(), 2);
+    assert_eq!(t.built.iter().filter(|k| k.starts_with("repo/")).count(), 2);
     let order: Vec<(&str, String)> = github
         .calls()
         .into_iter()

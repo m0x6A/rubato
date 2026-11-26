@@ -5,11 +5,12 @@
 
 use super::extract::{Extracted, Extractor};
 use super::metrics;
+use super::{team, workspace};
 use crate::kernel::github::Tarball;
 use crate::kernel::state::App;
 use anyhow::{Context, Result};
 use rubato_graph::{Build, Replaced, Store};
-use rubato_protocol::graph::{kind, source_key};
+use rubato_protocol::graph::{GraphEdge, GraphNode, kind, source_key};
 use rubato_protocol::limits;
 use rubato_protocol::otel::span;
 use std::collections::BTreeSet;
@@ -279,18 +280,72 @@ pub async fn tick(app: &App) -> Tick {
             continue;
         }
         let key = source_key::repo(repo);
-        match self::repo(app, &store, repo).await {
-            Outcome::Built => tick.built.push(key.clone()),
-            Outcome::Unchanged | Outcome::Lost => tick.unchanged.push(key.clone()),
-            Outcome::Failed(reason) => tick.failed.push((key.clone(), reason)),
-        }
+        note(&mut tick, &key, self::repo(app, &store, repo).await);
         wanted.insert(key);
+    }
+    // What the server itself holds: each workspace's map and pins, and the team's shared facts.
+    let maps: Vec<(String, std::sync::Arc<crate::kernel::state::LoadedMap>)> = app
+        .maps
+        .read()
+        .await
+        .iter()
+        .map(|(ws, m)| (ws.clone(), m.clone()))
+        .collect();
+    for (ws, loaded) in &maps {
+        let key = source_key::workspace(ws);
+        let built = match crate::pins::list(&app.db, ws).await {
+            Ok(pins) => Ok(workspace::build(ws, &loaded.map, &pins)),
+            Err(e) => Err(("pins", e)),
+        };
+        note(
+            &mut tick,
+            &key,
+            derived(
+                app,
+                &store,
+                &key,
+                kind::source::WORKSPACE,
+                Some(&loaded.version),
+                built,
+            )
+            .await,
+        );
+        wanted.insert(key);
+    }
+    if !maps.is_empty() {
+        let built = team_input(app, &maps)
+            .await
+            .map(|input| team::build(&input));
+        note(
+            &mut tick,
+            source_key::TEAM,
+            derived(
+                app,
+                &store,
+                source_key::TEAM,
+                kind::source::TEAM,
+                None,
+                built,
+            )
+            .await,
+        );
+        wanted.insert(source_key::TEAM.to_owned());
     }
     // Never on a tick with no map loaded: the list a companion is sent is the truth, and one
     // bad tick must not empty every copy.
     if !named.is_empty() {
         for row in store.sources().await.unwrap_or_default() {
-            if row.kind != kind::source::REPO || wanted.contains(&row.source) {
+            if wanted.contains(&row.source) {
+                continue;
+            }
+            if row.kind != kind::source::REPO {
+                // A workspace that is no longer held: its map and pins go with it.
+                if row.kind == kind::source::WORKSPACE
+                    && let Ok(true) = store.remove_source(&row.source).await
+                {
+                    tracing::info!(rubato.graph.source = %row.source, "context graph source removed");
+                    tick.removed.push(row.source);
+                }
                 continue;
             }
             // Uncovered now, covered before: keep what was built until the map stops naming it.
@@ -323,6 +378,163 @@ pub async fn tick(app: &App) -> Tick {
         app.notify("context_graph");
     }
     tick
+}
+
+fn note(tick: &mut Tick, key: &str, outcome: Outcome) {
+    match outcome {
+        Outcome::Built => tick.built.push(key.to_owned()),
+        Outcome::Unchanged | Outcome::Lost => tick.unchanged.push(key.to_owned()),
+        Outcome::Failed(reason) => tick.failed.push((key.to_owned(), reason)),
+    }
+}
+
+type Graph = (Vec<GraphNode>, Vec<GraphEdge>);
+
+/// Store a source built from what the server already holds. It is built every tick and its
+/// rows are written only when they hash differently, so an unchanged workspace is never
+/// announced again.
+async fn derived(
+    app: &App,
+    store: &Store,
+    key: &str,
+    source_kind: &str,
+    map_version: Option<&str>,
+    built: Result<Graph, Failed>,
+) -> Outcome {
+    let span = tracing::info_span!(
+        span::GRAPH_BUILD,
+        rubato.graph.source = %key,
+        rubato.outcome = tracing::field::Empty,
+        rubato.reason = tracing::field::Empty,
+    );
+    let now = app.clock.now();
+    let outcome = async {
+        let was_failing = matches!(store.source(key).await, Ok(Some(row)) if row.error.is_some());
+        let stored: Result<Outcome, Failed> = async {
+            let (nodes, edges) = built?;
+            let generation = store
+                .begin_build(key, source_kind)
+                .await
+                .map_err(|e| ("store", e.into()))?;
+            let truncated =
+                nodes.len() > limits::GRAPH_NODES_MAX || edges.len() > limits::GRAPH_EDGES_MAX;
+            let build = Build {
+                source: key.to_owned(),
+                kind: source_kind.to_owned(),
+                head_sha: None,
+                map_version: map_version.map(str::to_owned),
+                generator: GENERATOR,
+                generated_at: now,
+                truncated,
+                nodes: nodes.into_iter().take(limits::GRAPH_NODES_MAX).collect(),
+                edges: edges.into_iter().take(limits::GRAPH_EDGES_MAX).collect(),
+            };
+            Ok(
+                match store
+                    .replace_source(Some(generation), build, now)
+                    .await
+                    .map_err(|e| ("store", e.into()))?
+                {
+                    Replaced::Written { .. } => Outcome::Built,
+                    Replaced::Unchanged { .. } => Outcome::Unchanged,
+                    Replaced::Lost => Outcome::Lost,
+                },
+            )
+        }
+        .await;
+        match stored {
+            Ok(outcome) => outcome,
+            Err((reason, e)) => {
+                let _ = store.record_error(key, now, &format!("{e:#}")).await;
+                if !was_failing {
+                    tracing::warn!(
+                        rubato.graph.source = %key,
+                        rubato.reason = reason,
+                        error = %format!("{e:#}"),
+                        "context graph build failed"
+                    );
+                }
+                Outcome::Failed(reason)
+            }
+        }
+    }
+    .instrument(span.clone())
+    .await;
+    span.record("rubato.outcome", outcome.as_str());
+    span.record("rubato.reason", outcome.reason());
+    metrics::build(key, &outcome);
+    outcome
+}
+
+/// What the team source is built from, read through the other slices' roots.
+async fn team_input(
+    app: &App,
+    maps: &[(String, std::sync::Arc<crate::kernel::state::LoadedMap>)],
+) -> Result<team::Input, Failed> {
+    let mut repos: Vec<team::RepoFact> = Vec::new();
+    for (ws, loaded) in maps {
+        for name in loaded.map.repos_named() {
+            match repos.iter_mut().find(|r| r.name.eq_ignore_ascii_case(name)) {
+                Some(r) => r.workspaces.push(ws.clone()),
+                None => repos.push(team::RepoFact {
+                    name: name.to_owned(),
+                    workspaces: vec![ws.clone()],
+                }),
+            }
+        }
+    }
+    let pinned = crate::pins::list_all(&app.db)
+        .await
+        .map_err(|e| ("pins", e))?
+        .into_iter()
+        .map(|p| (p.issue.repo, p.issue.number))
+        .collect();
+    let issues = crate::github_poll::all_issue_meta(&app.db)
+        .await
+        .map_err(|e| ("issues", e))?
+        .into_iter()
+        .map(|(issue, m)| {
+            (
+                issue,
+                team::IssueFact {
+                    title: m.title,
+                    state: m.github_state,
+                    url: m.url,
+                },
+            )
+        })
+        .collect();
+    let authors = crate::github_poll::open_issue_authors(&app.db)
+        .await
+        .map_err(|e| ("issues", e))?;
+    let plans = crate::plans::all(&app.db)
+        .await
+        .map_err(|e| ("plans", e))?
+        .into_iter()
+        .filter_map(|row| {
+            Some(team::PlanFact {
+                issue: row.issue,
+                branch: row.branch,
+                path: row.path,
+                plan: row.plan?,
+            })
+        })
+        .collect();
+    let pulls = crate::github_poll::repo_pulls(&app.db)
+        .await
+        .map_err(|e| ("pulls", e))?
+        .into_iter()
+        .flat_map(|r| r.pulls)
+        .collect();
+    Ok(team::Input {
+        repos,
+        pinned,
+        issues,
+        authors,
+        app_login: app.github.app_login(),
+        plans,
+        pulls,
+    })
 }
 
 /// The timer: a tick at start, then one every `every`, until shutdown. It never ends on an

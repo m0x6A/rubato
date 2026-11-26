@@ -9,13 +9,15 @@
 //! overview carries no `graph`. The graph is never an input to progress, pins, plans or
 //! approvals.
 //!
-//! Built so far: the store and each source's status (#325), and repository sources on a timer
-//! with their files and decision documents (#326). The workspace and team sources arrive with
-//! #327, symbols with #328, the snapshot route with #329.
+//! Built so far: the store and each source's status (#325), repository sources on a timer with
+//! their files and decision documents (#326), and the workspace and team sources from what the
+//! server already holds (#327). Symbols arrive with #328, the snapshot route with #329.
 
 mod build;
 mod extract;
 mod metrics;
+mod team;
+mod workspace;
 
 pub use build::{GENERATOR, Outcome, Tick, run, tick};
 
@@ -90,5 +92,7 @@ fn status(r: &SourceRow) -> GraphSourceStatus {
 
 #[cfg(test)]
 mod build_tests;
+#[cfg(test)]
+mod derived_tests;
 #[cfg(test)]
 mod tests;
