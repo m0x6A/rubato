@@ -46,6 +46,7 @@ const SLICES: &[&str] = &[
     "voice",
     "telemetry_relay",
     "traffic",
+    "context_graph",
     "spend_history",
     "agent_reports",
     "plan_status",

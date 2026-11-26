@@ -865,8 +865,13 @@ async fn the_session_cache_starts_from_the_stored_snapshots() {
 #[tokio::test]
 async fn derived_state_is_never_stored() {
     let h = harness().await;
-    let cols = db::all_columns(&h.app.db).await.unwrap();
+    let mut cols = db::all_columns(&h.app.db).await.unwrap();
     assert!(cols.len() > 30, "schema has columns");
+    // The context graph's own file is checked with the rest (ADR 0084).
+    let graph = rubato_graph::Store::open("sqlite::memory:").await.unwrap();
+    let graph_cols = graph.all_columns().await.unwrap();
+    assert!(graph_cols.len() >= 25, "the graph file has columns");
+    cols.extend(graph_cols);
     let offenders: Vec<_> = cols
         .iter()
         .filter(|(t, c)| {

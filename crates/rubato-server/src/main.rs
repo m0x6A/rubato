@@ -5,7 +5,7 @@ use rubato_server::kernel::github::{
 };
 use rubato_server::kernel::state::AppState;
 use rubato_server::kernel::{db, telemetry};
-use rubato_server::{app, map, tasks, workspace_settings};
+use rubato_server::{app, context_graph, map, tasks, workspace_settings};
 use std::future::IntoFuture;
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ async fn main() -> Result<()> {
     config.report_cutover();
     config.report_webhooks();
     config.report_voice();
+    config.report_context_graph();
     let pool = db::connect(&config.database_url).await?;
     let dev_issues = match &config.dev_issues {
         Some(path) => {
@@ -93,6 +94,8 @@ async fn main() -> Result<()> {
     workspace_settings::start(&state).await?;
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
+    // The context graph's own file, when its flag is on (ADR 0084).
+    context_graph::start(&state).await?;
     tasks::warm_sessions(&state).await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let background = tasks::spawn(state.clone(), shutdown_rx.clone());

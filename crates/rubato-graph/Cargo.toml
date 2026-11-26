@@ -1,0 +1,20 @@
+[package]
+name = "rubato-graph"
+description = "The context graph's store (ADR 0084, ADR 0086): schema, whole-source replace, snapshots and queries. A library for rubato-server and rubato-companion; it holds no slice and names neither."
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[dependencies]
+rubato-protocol = { path = "../rubato-protocol" }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+flate2 = "1"
+sha2 = "0.10"
+serde_json.workspace = true
+chrono = { workspace = true, features = ["std"] }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tempfile = "3"

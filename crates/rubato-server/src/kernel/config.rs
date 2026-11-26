@@ -16,6 +16,19 @@ pub const TRAFFIC_FETCH_SECS: (u32, u32, u32) = (15, 60, 300);
 pub const MIN_COMPANION_SILENT_SECS: u64 = 60;
 /// The catch-up interval's range and default with webhooks on (ADR 0074).
 pub const CATCHUP_SECS: (u64, u64, u64) = (300, 900, 3600);
+/// The context graph's regeneration interval's range and default (ADR 0084): a source is stale
+/// after three.
+pub const GRAPH_REGEN_SECS: (u32, u32, u32) = (300, 900, 86_400);
+
+/// The context graph (ADR 0084), present only with `RUBATO_CONTEXT_GRAPH=1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextGraphConfig {
+    /// Seconds between regenerations (`RUBATO_GRAPH_REGEN_SECS`).
+    pub regen_secs: u32,
+    /// The graph's own SQLite file (`RUBATO_GRAPH_DATABASE_URL`); by default beside the main
+    /// database, so it lands on the same volume.
+    pub database_url: String,
+}
 
 /// The GitHub App's webhook secret (`RUBATO_GITHUB_WEBHOOK_SECRET`, ADR 0074). Read once into the
 /// config; `Debug` never prints it, and nothing logs, stores or sends it.
@@ -520,6 +533,8 @@ pub struct Config {
     pub orchestrator: bool,
     /// Live workers per lead (`RUBATO_FLEET_MAX`, default 4).
     pub fleet_max: u32,
+    /// The context graph (`RUBATO_CONTEXT_GRAPH`, ADR 0084); `None` while it is off, the default.
+    pub context_graph: Option<ContextGraphConfig>,
     pub warnings: Vec<String>,
 }
 
@@ -665,6 +680,11 @@ impl Config {
             voice: voice_from(env, env("RUBATO_DEV_USER").is_some())?,
             orchestrator: orchestrator_on(env("RUBATO_ORCHESTRATOR").as_deref())?,
             fleet_max: fleet_max(env("RUBATO_FLEET_MAX").as_deref(), &mut warnings),
+            context_graph: context_graph_from(
+                env,
+                &env("RUBATO_DATABASE_URL").unwrap_or_else(|| "sqlite://rubato.db?mode=rwc".into()),
+                &mut warnings,
+            )?,
             warnings,
         };
         let open = exposure(
@@ -675,6 +695,13 @@ impl Config {
             env("RUBATO_OPEN_LOGIN").as_deref(),
         )?;
         config.warnings.extend(open);
+        if config.context_graph.is_some() {
+            graph_exposure(
+                config.github_app.is_some(),
+                is_local(config.bind, &config.public_url),
+                env("RUBATO_OPEN_LOGIN").is_some(),
+            )?;
+        }
         Ok(config)
     }
 
@@ -702,6 +729,18 @@ impl Config {
             speech: v.speech.is_some(),
             speech_hosts: hosts,
         })
+    }
+
+    /// One line at start: the context graph off, or on with its interval (ADR 0084).
+    pub fn report_context_graph(&self) {
+        match &self.context_graph {
+            None => tracing::info!(context_graph = "off", "context graph"),
+            Some(g) => tracing::info!(
+                context_graph = "on",
+                regen_secs = g.regen_secs,
+                "context graph"
+            ),
+        }
     }
 
     /// One line at start: voice off, or on with what is configured (never a secret).
@@ -858,6 +897,7 @@ impl Config {
             voice: None,
             orchestrator: false,
             fleet_max: rubato_protocol::fleet::limits::FLEET_MAX_DEFAULT,
+            context_graph: None,
             warnings: Vec::new(),
         }
     }
@@ -970,6 +1010,80 @@ fn insecure_cookie_warning(public_url: &str, warnings: &mut Vec<String>) {
     }
 }
 
+/// The context graph from the environment (ADR 0084). Off unless `RUBATO_CONTEXT_GRAPH` is `1`
+/// or `true`; anything else but `0`, `false` or unset stops the start.
+pub fn context_graph_from(
+    get: impl Fn(&str) -> Option<String>,
+    main_database_url: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Option<ContextGraphConfig>> {
+    match get("RUBATO_CONTEXT_GRAPH").as_deref().map(str::trim) {
+        None | Some("0") | Some("false") => return Ok(None),
+        Some("1") | Some("true") => {}
+        Some(other) => anyhow::bail!("RUBATO_CONTEXT_GRAPH={other:?}: use 1 or 0"),
+    }
+    Ok(Some(ContextGraphConfig {
+        regen_secs: graph_regen_secs(get("RUBATO_GRAPH_REGEN_SECS").as_deref(), warnings),
+        database_url: get("RUBATO_GRAPH_DATABASE_URL")
+            .unwrap_or_else(|| graph_url_beside(main_database_url)),
+    }))
+}
+
+/// `RUBATO_GRAPH_REGEN_SECS`, clamped to 300–86400; unset or unreadable is 900.
+fn graph_regen_secs(v: Option<&str>, warnings: &mut Vec<String>) -> u32 {
+    let (min, default, max) = GRAPH_REGEN_SECS;
+    let Some(v) = v else { return default };
+    match v.parse::<u32>() {
+        Ok(n) if (min..=max).contains(&n) => n,
+        Ok(n) => {
+            let c = n.clamp(min, max);
+            warnings.push(format!(
+                "RUBATO_GRAPH_REGEN_SECS={n} is outside {min}–{max}; regenerating every {c} s"
+            ));
+            c
+        }
+        Err(_) => {
+            warnings.push(format!(
+                "RUBATO_GRAPH_REGEN_SECS={v:?} is not a number; regenerating every {default} s"
+            ));
+            default
+        }
+    }
+}
+
+/// The graph file's URL when none is set: the main database's, with `-graph` in the file name.
+/// In memory stays in memory.
+fn graph_url_beside(main: &str) -> String {
+    if main.contains(":memory:") {
+        return "sqlite::memory:".into();
+    }
+    let (path, query) = main.split_once('?').unwrap_or((main, "mode=rwc"));
+    let path = match path.strip_suffix(".db") {
+        Some(stem) => format!("{stem}-graph.db"),
+        None => format!("{path}-graph"),
+    };
+    format!("{path}?{query}")
+}
+
+/// Who could read the graph decides whether it may be on (ADR 0084, ADR 0086): a companion
+/// reads it with its pairing, and anyone who can log in can pair. So it needs the GitHub App,
+/// whose team record gates the read, unless only this machine reaches the server; and it never
+/// runs beside `RUBATO_OPEN_LOGIN`.
+fn graph_exposure(has_app: bool, local: bool, open_login: bool) -> Result<()> {
+    anyhow::ensure!(
+        !open_login,
+        "RUBATO_CONTEXT_GRAPH and RUBATO_OPEN_LOGIN are both set: any GitHub account could pair a \
+         companion and read the structure of every repository on the map. Unset one (ADR 0086)"
+    );
+    anyhow::ensure!(
+        has_app || local,
+        "RUBATO_CONTEXT_GRAPH is set without the GitHub App and the server is not local: nothing \
+         would check that a companion's owner is on the team. Configure the App \
+         (RUBATO_GITHUB_APP_*), or unset RUBATO_CONTEXT_GRAPH (ADR 0086)"
+    );
+    Ok(())
+}
+
 /// `RUBATO_ORCHESTRATOR`: `1` or `true` turns the lead agent on (ADR 0072); unset, `0` or `false`
 /// leaves it off. Anything else stops the start.
 fn orchestrator_on(v: Option<&str>) -> Result<bool> {
@@ -1026,6 +1140,103 @@ mod tests {
     }
 
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
+
+    /// ADR 0084: the context graph is off unless `RUBATO_CONTEXT_GRAPH` says on.
+    #[test]
+    fn the_context_graph_is_off_by_default_and_its_interval_is_clamped() {
+        let main = "sqlite:///data/rubato.db?mode=rwc";
+        let mut w = Vec::new();
+        assert_eq!(context_graph_from(vars(&[]), main, &mut w).unwrap(), None);
+        for off in ["0", "false"] {
+            let got = context_graph_from(vars(&[("RUBATO_CONTEXT_GRAPH", off)]), main, &mut w);
+            assert_eq!(got.unwrap(), None);
+        }
+        assert!(
+            context_graph_from(vars(&[("RUBATO_CONTEXT_GRAPH", "yes")]), main, &mut w).is_err()
+        );
+        assert!(
+            Config::for_tests("sqlite::memory:".into(), "m0x6A")
+                .context_graph
+                .is_none()
+        );
+
+        let on = context_graph_from(vars(&[("RUBATO_CONTEXT_GRAPH", "1")]), main, &mut w)
+            .unwrap()
+            .unwrap();
+        assert_eq!(on.regen_secs, 900);
+        assert_eq!(on.database_url, "sqlite:///data/rubato-graph.db?mode=rwc");
+        assert!(w.is_empty(), "{w:?}");
+
+        let cases = [
+            ("60", 300, true),
+            ("300", 300, false),
+            ("3600", 3600, false),
+            ("999999", 86_400, true),
+            ("soon", 900, true),
+        ];
+        for (set, want, warned) in cases {
+            let mut w = Vec::new();
+            let c = context_graph_from(
+                vars(&[
+                    ("RUBATO_CONTEXT_GRAPH", "true"),
+                    ("RUBATO_GRAPH_REGEN_SECS", set),
+                    ("RUBATO_GRAPH_DATABASE_URL", "sqlite:///g.db"),
+                ]),
+                main,
+                &mut w,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(c.regen_secs, want, "{set}");
+            assert_eq!(c.database_url, "sqlite:///g.db");
+            assert_eq!(!w.is_empty(), warned, "{set}: {w:?}");
+        }
+        println!("checked {} intervals", cases.len());
+    }
+
+    #[test]
+    fn the_graph_file_lands_beside_the_main_database() {
+        let cases = [
+            (
+                "sqlite://rubato.db?mode=rwc",
+                "sqlite://rubato-graph.db?mode=rwc",
+            ),
+            (
+                "sqlite:///data/rubato.db",
+                "sqlite:///data/rubato-graph.db?mode=rwc",
+            ),
+            (
+                "sqlite:///data/main.sqlite?mode=rwc",
+                "sqlite:///data/main.sqlite-graph?mode=rwc",
+            ),
+            ("sqlite::memory:", "sqlite::memory:"),
+        ];
+        for (main, want) in cases {
+            assert_eq!(graph_url_beside(main), want, "{main}");
+        }
+    }
+
+    /// ADR 0086: a pairing reads the graph, so the graph needs what gates a pairing's owner.
+    #[test]
+    fn the_context_graph_refuses_an_open_server() {
+        // has_app, local, open_login
+        assert!(
+            graph_exposure(true, false, false).is_ok(),
+            "the App, on the LAN"
+        );
+        assert!(
+            graph_exposure(false, true, false).is_ok(),
+            "no App, loopback only"
+        );
+        let e = graph_exposure(false, false, false).unwrap_err().to_string();
+        assert!(e.contains("without the GitHub App"), "{e}");
+        for (has_app, local) in [(true, true), (true, false), (false, true)] {
+            let e = graph_exposure(has_app, local, true)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("RUBATO_OPEN_LOGIN"), "{e}");
+        }
+    }
 
     /// ADR 0073: voice is off unless `RUBATO_VOICE` says on, and the test config has none.
     #[test]
