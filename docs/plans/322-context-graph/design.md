@@ -396,7 +396,8 @@ With the link down the tools keep answering from the copy, and every answer says
 
 **Who gets what.** Every paired companion whose owner has a fresh team record receives every
 source. File and symbol names of every map repository therefore reach every such machine,
-whichever repositories that person works in. This is plan question Q1, for a person to answer.
+whichever repositories that person works in. That was plan question Q1; Mattias chose it on
+2026-11-27 (plan Decision 18).
 
 ## 7. To agents: five read-only tools
 

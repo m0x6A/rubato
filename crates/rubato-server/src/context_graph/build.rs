@@ -389,6 +389,10 @@ pub async fn tick(app: &App) -> Tick {
     if tick.changed() {
         app.notify("context_graph");
     }
+    // Companions are told when what they should hold changed, not on every tick (ADR 0086).
+    if !(tick.built.is_empty() && tick.removed.is_empty()) {
+        super::serve::announce_all(app).await;
+    }
     tick
 }
 

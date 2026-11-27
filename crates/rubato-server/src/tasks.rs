@@ -913,6 +913,24 @@ pub fn spawn(app: App, shutdown: watch::Receiver<bool>) -> Tasks {
             }
         }
     });
+    // Right after a companion is welcomed, what its copy of the context graph should hold
+    // (ADR 0086). Best effort: the next change announces again.
+    if app.config.context_graph.is_some() {
+        let (app, mut shutdown) = (app.clone(), shutdown.clone());
+        tasks.spawn("context_graph_welcome", Kind::BestEffort, async move {
+            let mut welcomed = app.subscribe_welcomed();
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => return Ok(()),
+                    got = welcomed.recv() => match got {
+                        Ok(c) => { crate::context_graph::announce_to(&app, c).await; }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+                    },
+                }
+            }
+        });
+    }
     // The context graph's timer, only with its flag on (ADR 0084). Essential: it never ends on
     // an error, so ending is a fault.
     if let Some(cfg) = app.config.context_graph.clone() {

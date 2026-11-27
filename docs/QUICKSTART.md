@@ -127,8 +127,9 @@ flag on the server needs the GitHub App unless it is local, and refuses to start
 `RUBATO_OPEN_LOGIN` (ADR 0086). Each paired companion keeps a copy and serves five read-only
 `graph_*` tools from it to the sessions it launches. A session you start by hand gets the same
 tools once you run, once per machine, `claude mcp add --scope user rubato-graph -- rubato-companion mcp`;
-`rubato-companion status` says what the copy holds. (The server's side of the copy, issue #329,
-is not built yet, so no copy arrives from a real server until it is.)
+`rubato-companion status` says what the copy holds. A companion is sent the graph only while its
+owner has logged in to Rubato within the last 7 days (the team record of ADR 0022), so the owner
+of a headless companion logs in at least once a week.
 
 Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
 setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`

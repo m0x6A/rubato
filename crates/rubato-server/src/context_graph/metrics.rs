@@ -36,6 +36,7 @@ impl Observed {
 struct Instruments {
     builds: Counter<u64>,
     truncated: Counter<u64>,
+    snapshots: Counter<u64>,
     observed: std::sync::Arc<Mutex<Observed>>,
 }
 
@@ -86,6 +87,7 @@ fn instruments() -> &'static Instruments {
         Instruments {
             builds: m.u64_counter(metric::GRAPH_BUILDS).build(),
             truncated: m.u64_counter(metric::GRAPH_TRUNCATED).build(),
+            snapshots: m.u64_counter(metric::GRAPH_SNAPSHOTS).build(),
             observed,
         }
     })
@@ -101,6 +103,13 @@ pub(super) fn build(source: &str, outcome: &Outcome) {
         attrs.push(KeyValue::new(attr::DROP_REASON, outcome.reason()));
     }
     instruments().builds.add(1, &attrs);
+}
+
+/// One snapshot request, by outcome.
+pub(super) fn snapshot(outcome: &'static str) {
+    instruments()
+        .snapshots
+        .add(1, &[KeyValue::new(attr::OUTCOME, outcome)]);
 }
 
 /// A cap cut a source.

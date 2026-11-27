@@ -17,6 +17,7 @@ export const RUN_CHECKS = [
   { key: "otlp", title: "server and companion export the expected metrics, attribute keys and spans", scenarios: ["@telemetry.both-binaries-export"] },
   { key: "trace-link", title: "an envelope's send on the companion and its handling on the server are one trace", scenarios: ["@telemetry.companion-server-one-trace"] },
   { key: "web-trace-link", title: "a call the web makes and the server's handling of it are one trace, the web's span relayed by the server", scenarios: ["@map.web-on-traffic"] },
+  { key: "graph-copy", title: "the companion keeps a copy of the context graph the server built, and a session started by hand reads it", scenarios: ["@context-graph.companion-keeps-a-copy", "@context-graph.by-hand-over-stdio"] },
   { key: "otlp-forbidden", title: "the companion exports no sessions-by-state metric and no session id", scenarios: ["@telemetry.no-per-session-metrics"] },
 ] as const;
 

@@ -411,6 +411,8 @@ async fn on_envelope(
                     .into_iter()
                     // A lead's fleet requests, only with the orchestrator flag on (ADR 0072).
                     .chain(app.config.orchestrator.then(|| rubato_protocol::capability::FLEET.to_owned()))
+                    // It builds the context graph and serves snapshots, only with its flag on (ADR 0086).
+                    .chain(app.config.context_graph.is_some().then(|| rubato_protocol::capability::CONTEXT_GRAPH.to_owned()))
                     .collect(),
                 })
             }
