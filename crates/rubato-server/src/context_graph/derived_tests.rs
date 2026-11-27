@@ -83,7 +83,7 @@ fn a_workspaces_map_becomes_parts_seams_flows_and_pins() {
             .summary
             .as_deref()
             .unwrap()
-            .starts_with("One per team")
+            .starts_with("One per server")
     );
     // A retired part is still a part, and says so (ADR 0077).
     let retired = node(&nodes, &id::part("default", "tmux-ide"));
