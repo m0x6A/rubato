@@ -191,3 +191,17 @@ pub async fn launch_not_started(
         .await?;
     Ok(r.rows_affected() > 0)
 }
+
+/// Drop every queued issue on these companions inside the caller's transaction: their pairings
+/// were just revoked (Decision 15, ADR 0088), so nobody can start them. Returns how many rows.
+pub async fn drop_companions(conn: &mut SqliteConnection, companions: &[Uuid]) -> Result<u64> {
+    let mut n = 0;
+    for c in companions {
+        n += sqlx::query("DELETE FROM companion_queue WHERE companion_id = ?")
+            .bind(c.to_string())
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+    }
+    Ok(n)
+}

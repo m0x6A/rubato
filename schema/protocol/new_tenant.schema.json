@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NewTenant",
+  "description": "`POST` on the operator page: a new tenant, its installations and its first admin.",
+  "type": "object",
+  "properties": {
+    "first_admin": {
+      "description": "A GitHub login, resolved to a user id at creation.",
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "installations": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0
+      }
+    },
+    "name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "first_admin"
+  ]
+}

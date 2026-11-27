@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AdminInstallation",
+  "description": "One installation of the App, on the operator page.",
+  "type": "object",
+  "properties": {
+    "account_login": {
+      "type": "string"
+    },
+    "account_type": {
+      "$ref": "#/$defs/AccountType"
+    },
+    "installation_id": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "state": {
+      "$ref": "#/$defs/InstallationState"
+    },
+    "tenant": {
+      "description": "The tenant it is attached to, or was before it was detached.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "installation_id",
+    "account_login",
+    "account_type",
+    "state"
+  ],
+  "$defs": {
+    "AccountType": {
+      "description": "Whether a GitHub account is a person or an organisation.",
+      "type": "string",
+      "enum": [
+        "User",
+        "Organization"
+      ]
+    },
+    "InstallationState": {
+      "description": "Where an installation of the App stands, as the operator page shows it (design §3.3).",
+      "oneOf": [
+        {
+          "description": "Installed on GitHub, attached to no tenant: never read.",
+          "type": "string",
+          "const": "unattached"
+        },
+        {
+          "description": "Attached; its repositories are read.",
+          "type": "string",
+          "const": "attached"
+        },
+        {
+          "description": "GitHub suspended it; attached but not read.",
+          "type": "string",
+          "const": "suspended"
+        },
+        {
+          "description": "Detached or deleted; its rows are kept, hidden, until an operator purges them.",
+          "type": "string",
+          "const": "detached"
+        }
+      ]
+    }
+  }
+}

@@ -97,7 +97,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
 `/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073); slices:
+(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth` reaches tenancy, ADR 0087); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -131,6 +131,8 @@ overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
 workspace_settings  each workspace's settings: seeded once, read and changed at runtime, create and delete (ADR 0075)  workspace_settings
+tenants         who belongs to which tenant, its installations and repositories, the seed (ADR 0087)  tenants, tenant_installations, tenant_members, tenant_repos
+admin           people and tenants across slices: the admission adapter, the identity guard (ADR 0088)  (none)
 ```
 <!-- /slices -->
 <!-- slices: rubato-companion -->
@@ -196,7 +198,7 @@ modules, each with the types and `routes` its seam uses (every type re-exported 
 ```text
 agent      AgentReport, PlanStatus, DraftStatus, BranchStatus, AgentLine (ADR 0071; capability agent_mcp)
 approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
-auth       Me; ME, LOGIN, CALLBACK, LOGOUT
+auth       Me (with tenants and operator); ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
 session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
 hook       HookEvent
@@ -221,6 +223,7 @@ voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, Voice
 web_link   WebEvent; WEB_WS
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
 workspace_settings  WorkspaceSettings, TrafficSourceSettings, SecretState, SourceFields, SourceField, WorkspaceSettingsUpdate, TrafficSourceUpdate, SecretUpdate, NewWorkspace, SettingsRefusal, reasons; SETTINGS, WORKSPACE, TRAFFIC_SOURCES
+tenant     TenantInfo, Role, MemberView, InviteRequest, RoleChange, AccountType, InstallationState, AdminInstallation, NewTenant, AdminTenant, is_tenant_id, reasons; MEMBERS, MEMBER, ADMIN_* (ADR 0087, 0088)
 ```
 
 The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).

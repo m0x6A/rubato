@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemberView",
+  "description": "One member of a tenant, as the members page lists them. `joined` is false until the invited\nperson has logged in once (Assumption A4: invites do not expire).",
+  "type": "object",
+  "properties": {
+    "github_id": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "invited_at": {
+      "description": "RFC 3339.",
+      "type": "string"
+    },
+    "invited_by": {
+      "type": "string"
+    },
+    "joined": {
+      "type": "boolean"
+    },
+    "login": {
+      "type": "string"
+    },
+    "role": {
+      "$ref": "#/$defs/Role"
+    }
+  },
+  "required": [
+    "github_id",
+    "login",
+    "role",
+    "invited_by",
+    "invited_at",
+    "joined"
+  ],
+  "$defs": {
+    "Role": {
+      "description": "A member's role in one tenant (ADR 0088). An operator is not a role: it comes from the\nserver's configuration, never from a tenant.",
+      "oneOf": [
+        {
+          "description": "Invites, changes roles, removes members, and creates, edits and deletes workspaces.",
+          "type": "string",
+          "const": "admin"
+        },
+        {
+          "description": "Uses the tenant's workspaces.",
+          "type": "string",
+          "const": "member"
+        }
+      ]
+    }
+  }
+}

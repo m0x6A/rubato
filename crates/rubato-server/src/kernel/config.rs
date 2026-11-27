@@ -535,6 +535,9 @@ pub struct Config {
     pub fleet_max: u32,
     /// The context graph (`RUBATO_CONTEXT_GRAPH`, ADR 0084); `None` while it is off, the default.
     pub context_graph: Option<ContextGraphConfig>,
+    /// `RUBATO_OPERATORS`: the GitHub user ids that may use the operator page (ADR 0088). Ids,
+    /// not logins: a login can be renamed and reused. Not a role inside any tenant.
+    pub operators: Vec<u64>,
     pub warnings: Vec<String>,
 }
 
@@ -685,6 +688,7 @@ impl Config {
                 &env("RUBATO_DATABASE_URL").unwrap_or_else(|| "sqlite://rubato.db?mode=rwc".into()),
                 &mut warnings,
             )?,
+            operators: operators(env("RUBATO_OPERATORS").as_deref())?,
             warnings,
         };
         let open = exposure(
@@ -898,9 +902,34 @@ impl Config {
             orchestrator: false,
             fleet_max: rubato_protocol::fleet::limits::FLEET_MAX_DEFAULT,
             context_graph: None,
+            operators: Vec::new(),
             warnings: Vec::new(),
         }
     }
+
+    /// Whether `github_id` is listed in `RUBATO_OPERATORS` (ADR 0088).
+    pub fn is_operator(&self, github_id: Option<i64>) -> bool {
+        github_id.is_some_and(|id| u64::try_from(id).is_ok_and(|id| self.operators.contains(&id)))
+    }
+}
+
+/// `RUBATO_OPERATORS`: comma-separated GitHub user ids. A value that does not read stops the
+/// start: an operator list silently cut short would lock the operator out, one with a login in
+/// it would mean someone else after a rename (ADR 0088).
+fn operators(v: Option<&str>) -> Result<Vec<u64>> {
+    let Some(v) = v else { return Ok(Vec::new()) };
+    let mut out = Vec::new();
+    for part in v.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let id: u64 = part.parse().map_err(|_| {
+            anyhow::anyhow!(
+                "RUBATO_OPERATORS: {part:?} is not a GitHub user id; list numeric ids (GET /users/<login> shows a login's id), not logins"
+            )
+        })?;
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    Ok(out)
 }
 
 /// `RUBATO_COMMENT_APPROVALS_UNTIL`: an RFC 3339 time, or unset. A value that does not read
@@ -1322,6 +1351,19 @@ mod tests {
     }
 
     /// The fake adapter echoes uploads: only a dev server (loopback, ADR 0064) may use it.
+    #[test]
+    fn operators_are_numeric_github_ids() {
+        assert_eq!(operators(None).unwrap(), Vec::<u64>::new());
+        assert_eq!(operators(Some(" 12, 34,12 ,")).unwrap(), vec![12, 34]);
+        let err = operators(Some("12,octocat")).unwrap_err().to_string();
+        assert!(err.contains("\"octocat\" is not a GitHub user id"), "{err}");
+        let mut c = Config::for_tests("sqlite::memory:".into(), "dev");
+        c.operators = vec![7];
+        assert!(c.is_operator(Some(7)));
+        assert!(!c.is_operator(Some(8)));
+        assert!(!c.is_operator(None));
+    }
+
     #[test]
     fn the_fake_speech_adapter_needs_the_dev_user() {
         let on = vars(&[("RUBATO_VOICE", "1"), ("RUBATO_SPEECH", "fake")]);

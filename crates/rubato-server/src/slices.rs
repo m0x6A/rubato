@@ -54,10 +54,19 @@ const SLICES: &[&str] = &[
     "web_link",
     "webhooks",
     "workspace_settings",
+    "tenants",
+    "admin",
 ];
 
 /// The composition root plus this check.
-const ROOT_FILES: &[&str] = &["lib.rs", "main.rs", "app.rs", "tasks.rs", "slices.rs"];
+const ROOT_FILES: &[&str] = &[
+    "lib.rs",
+    "main.rs",
+    "app.rs",
+    "tasks.rs",
+    "slices.rs",
+    "scoping.rs",
+];
 
 #[derive(Debug, Default)]
 struct Report {

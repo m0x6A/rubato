@@ -90,5 +90,12 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::workspace_settings::NewWorkspace>("new_workspace"),
         one::<crate::workspace_settings::SourceFields>("source_fields"),
         one::<crate::workspace_settings::SettingsRefusal>("settings_refusal"),
+        one::<crate::tenant::TenantInfo>("tenant_info"),
+        one::<crate::tenant::MemberView>("member_view"),
+        one::<crate::tenant::InviteRequest>("invite_request"),
+        one::<crate::tenant::RoleChange>("role_change"),
+        one::<crate::tenant::AdminInstallation>("admin_installation"),
+        one::<crate::tenant::NewTenant>("new_tenant"),
+        one::<crate::tenant::AdminTenant>("admin_tenant"),
     ]
 }

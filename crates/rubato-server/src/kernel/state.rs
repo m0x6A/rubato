@@ -131,6 +131,9 @@ pub struct AppState {
     /// The speech adapter while voice is on with a provider configured (ADR 0073). Tests swap it
     /// for a counting or blocking fake with `set_speech`.
     speech: std::sync::RwLock<Option<Arc<dyn Speech>>>,
+    /// Who a login is across tenants (ADR 0087, 0088): the composition root installs the
+    /// tenancy adapter with `set_admission`; until then nobody is in a tenant.
+    admission: std::sync::RwLock<Arc<dyn crate::kernel::admission::Admission>>,
 }
 
 /// One value per type, made on first use: lets a slice keep in-memory state on the `App`
@@ -188,6 +191,7 @@ impl AppState {
             .map(crate::kernel::speech::from_config);
         Arc::new(Self {
             speech: std::sync::RwLock::new(speech),
+            admission: std::sync::RwLock::new(Arc::new(crate::kernel::admission::Unwired)),
             db,
             config: Arc::new(config),
             github,
@@ -266,6 +270,16 @@ impl AppState {
     /// The speech adapter, if one is configured (ADR 0073).
     pub fn speech(&self) -> Option<Arc<dyn Speech>> {
         self.speech.read().unwrap().clone()
+    }
+
+    /// Install the admission adapter (the composition root, at start; tests that need it).
+    pub fn set_admission(&self, a: Arc<dyn crate::kernel::admission::Admission>) {
+        *self.admission.write().unwrap() = a;
+    }
+
+    /// The admission adapter, to call without holding the lock across an await.
+    pub fn admission(&self) -> Arc<dyn crate::kernel::admission::Admission> {
+        self.admission.read().unwrap().clone()
     }
 
     /// Replace the speech adapter: tests use a counting or blocking fake.

@@ -24,6 +24,19 @@
     "login": {
       "type": "string"
     },
+    "operator": {
+      "description": "Listed in `RUBATO_OPERATORS`: may use the operator page (ADR 0088).",
+      "type": "boolean",
+      "default": false
+    },
+    "tenants": {
+      "description": "The tenants this person is a member of, with their role in each (ADR 0087).",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/TenantInfo"
+      }
+    },
     "voice": {
       "description": "A plan room's voice channel (ADR 0073); absent while `RUBATO_VOICE` is off.",
       "anyOf": [
@@ -40,6 +53,41 @@
     "login"
   ],
   "$defs": {
+    "Role": {
+      "description": "A member's role in one tenant (ADR 0088). An operator is not a role: it comes from the\nserver's configuration, never from a tenant.",
+      "oneOf": [
+        {
+          "description": "Invites, changes roles, removes members, and creates, edits and deletes workspaces.",
+          "type": "string",
+          "const": "admin"
+        },
+        {
+          "description": "Uses the tenant's workspaces.",
+          "type": "string",
+          "const": "member"
+        }
+      ]
+    },
+    "TenantInfo": {
+      "description": "One tenant the person is a member of, as `Me` lists it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "role"
+      ]
+    },
     "VoiceAvailability": {
       "description": "Whether voice is on for this server, on `Me` only while it is (ADR 0073).",
       "type": "object",

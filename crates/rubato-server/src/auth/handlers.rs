@@ -146,6 +146,24 @@ pub async fn callback(
         },
         Err(e) => return login_failed_upstream(&app, "user_lookup", &e.to_string()),
     };
+    // A login GitHub now gives another id belongs to someone else: the adapter revokes what
+    // the old person held before anything of this login is written (Decision 15).
+    match app
+        .admission()
+        .before_login(&app, &user.login, user.id)
+        .await
+    {
+        Ok(false) => {}
+        Ok(true) => {
+            tracing::warn!(login = %user.login, "identity changed: the login has a new GitHub id; the old person's sessions, tokens and pairings are revoked");
+            app.reject(
+                routes::CALLBACK,
+                rubato_protocol::tenant::reason::IDENTITY_CHANGED,
+                &user.login,
+            );
+        }
+        Err(e) => return login_failed_here(e),
+    }
     // As a GitHub App: the person is on the team when their account can access the
     // installation the server acts as (ADR 0022). A failed lookup is a fault of ours or of
     // GitHub, not "no access", and answers differently.
@@ -219,6 +237,13 @@ pub async fn callback(
         Ok(id) => id,
         Err(e) => return login_failed_here(e),
     };
+    if let Err(e) = app
+        .admission()
+        .after_login(&app, &user.login, user.id)
+        .await
+    {
+        tracing::error!(login = %user.login, error = %format!("{e:#}"), "noting the login on its memberships failed");
+    }
     let mut res = Redirect::to("/").into_response();
     let secure = app.config.public_url.starts_with("https");
     res.headers_mut().append(
@@ -284,11 +309,30 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
 
 pub async fn me(State(app): State<App>, super::CurrentUser(login): super::CurrentUser) -> Json<Me> {
     let can = super::tokens::can_act(&app, &login).await;
+    let github_id = store::github_id_of(&app.db, &login)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %format!("{e:#}"), "reading the GitHub id for Me failed");
+            None
+        });
+    let tenants = match github_id {
+        Some(id) => app
+            .admission()
+            .tenants_of(&app, id)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %format!("{e:#}"), "reading tenants for Me failed");
+                Vec::new()
+            }),
+        None => Vec::new(),
+    };
     Json(Me {
         login,
         avatar_url: None,
         can_act_on_github: can.is_ok(),
         cannot_act_reason: can.err().map(str::to_owned),
         voice: app.config.voice_availability(),
+        tenants,
+        operator: app.config.is_operator(github_id),
     })
 }

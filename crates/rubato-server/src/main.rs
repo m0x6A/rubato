@@ -92,6 +92,9 @@ async fn main() -> Result<()> {
     let state = AppState::new(pool, config, github);
     // ADR 0075: seed workspace_settings once, then the database is the registry's source.
     workspace_settings::start(&state).await?;
+    // ADR 0087, 0088: who a login is across tenants, and tenant `default` on the first start.
+    state.set_admission(std::sync::Arc::new(rubato_server::admin::Admission));
+    rubato_server::tenants::start(&state).await?;
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
     // The context graph's own file, when its flag is on (ADR 0084).

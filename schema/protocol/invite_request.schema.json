@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InviteRequest",
+  "description": "`POST` members: invite a GitHub login. The server resolves it to a user id at invite time;\nthe id is what counts after (ADR 0088).",
+  "type": "object",
+  "properties": {
+    "login": {
+      "type": "string"
+    },
+    "role": {
+      "$ref": "#/$defs/Role",
+      "default": "member"
+    }
+  },
+  "required": [
+    "login"
+  ],
+  "$defs": {
+    "Role": {
+      "description": "A member's role in one tenant (ADR 0088). An operator is not a role: it comes from the\nserver's configuration, never from a tenant.",
+      "oneOf": [
+        {
+          "description": "Invites, changes roles, removes members, and creates, edits and deletes workspaces.",
+          "type": "string",
+          "const": "admin"
+        },
+        {
+          "description": "Uses the tenant's workspaces.",
+          "type": "string",
+          "const": "member"
+        }
+      ]
+    }
+  }
+}
