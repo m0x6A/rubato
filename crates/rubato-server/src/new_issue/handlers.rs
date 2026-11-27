@@ -99,14 +99,26 @@ pub async fn create(
             format!("{} is not a repo the map names", req.repo),
         ));
     }
-    if !app.github.can_write() {
+    // ADR 0087: only through the installation that covers the repository, in its tenant.
+    if app.github.tenant_of(&req.repo).is_none() {
+        return Err(refuse(
+            reason::CANNOT_WRITE,
+            StatusCode::CONFLICT,
+            format!(
+                "No installation of the GitHub App attached to a tenant covers {}.",
+                req.repo
+            ),
+        ));
+    }
+    let gh = app.github.unscoped(&req.repo);
+    if !gh.can_write() {
         return Err(refuse(
             reason::CANNOT_WRITE,
             StatusCode::CONFLICT,
             "This Rubato cannot write to GitHub: it runs on a personal token or none, and only a GitHub App installation can open issues.".into(),
         ));
     }
-    if !app.github.can_create_issues() {
+    if !gh.can_create_issues() {
         return Err(refuse(
             reason::NO_ISSUE_PERMISSION,
             StatusCode::CONFLICT,
@@ -136,11 +148,7 @@ pub async fn create(
     }
 
     let body = render_issue(&req, &user);
-    match app
-        .github
-        .create_issue(&req.repo, req.title.trim(), &body)
-        .await
-    {
+    match gh.create_issue(&req.repo, req.title.trim(), &body).await {
         Ok((number, url)) => {
             let issue = rubato_protocol::IssueRef::new(req.repo.clone(), number);
             store::created(&app.db, &req.request_id, number, &url)
@@ -169,7 +177,7 @@ pub async fn create(
             ))
         }
         Err(e) => {
-            let refused = !app.github.can_create_issues();
+            let refused = !gh.can_create_issues();
             tracing::warn!(
                 step = "create",
                 rubato.repo = %req.repo,

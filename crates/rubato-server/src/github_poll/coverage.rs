@@ -3,17 +3,28 @@
 //! installation a repo left out of it would look like "no branch, no plan, no issue". So each
 //! tick the installation's repositories are listed and every repo the map or a tracked issue
 //! names that is not among them is recorded, warned about and shown as a finding.
+//!
+//! With the App's installations routed by tenant (ADR 0087), the listing is the tenancy rows
+//! `admin::refresh_installations` keeps: a repository is covered when an attached, not suspended
+//! installation covers it.
 
 use super::store;
 use crate::kernel::state::App;
 use chrono::Utc;
 use std::collections::BTreeSet;
 
-/// Record the repos of `needed` the installation does not cover. On a port that is not an
-/// installation nothing is called: the gauge is 0 and nothing is uncovered.
+/// Record the repos of `needed` no installation covers. On a port that is not an installation
+/// nothing is called: the gauge is 0 and nothing is uncovered.
 pub async fn check_coverage(app: &App, needed: &BTreeSet<String>) {
-    let uncovered: Vec<String> = if app.github.is_installation() {
-        match app.github.installation_repos().await {
+    let one = app.github.live().into_iter().next().map(|l| l.client);
+    let uncovered: Vec<String> = if app.github.routes_by_installation() {
+        needed
+            .iter()
+            .filter(|r| app.github.tenant_of(r).is_none())
+            .cloned()
+            .collect()
+    } else if let Some(one) = one.filter(|c| c.is_installation()) {
+        match one.installation_repos().await {
             Ok(covered) => needed
                 .iter()
                 .filter(|r| !covered.iter().any(|c| c.eq_ignore_ascii_case(r)))

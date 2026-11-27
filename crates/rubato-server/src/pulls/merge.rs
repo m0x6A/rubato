@@ -161,6 +161,7 @@ pub async fn merge(
     }
     let merged = async {
         app.github
+            .as_person()
             .merge_as(&token, &repo, req.number, &req.head_sha, req.method)
             .await
     }

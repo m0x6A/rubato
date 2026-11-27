@@ -13,6 +13,7 @@ pub mod signer;
 pub mod speech;
 pub mod state;
 pub mod telemetry;
+pub mod tenancy;
 pub mod workspaces;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

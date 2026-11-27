@@ -3,6 +3,7 @@
 
 mod api;
 mod app;
+mod apps;
 mod fake;
 mod local;
 
@@ -13,6 +14,7 @@ pub use api::{
     USER_WRITE_TIMEOUT, issues_from_page, summarize_check_runs,
 };
 pub use app::{AppCheckError, check_app};
+pub use apps::{Attached, Client, GitHubApps, Live, MakeClient, NotCovered, Routes};
 pub use fake::{FakeGitHub, FakeInner};
 pub use local::{DevPull, LocalGit};
 

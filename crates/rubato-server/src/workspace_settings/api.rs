@@ -372,7 +372,7 @@ async fn member_token(app: &App, user: &str) -> Result<String, Refusal> {
 }
 
 async fn readable(app: &App, token: &str, user: &str, repo: &str) -> Result<(), Refusal> {
-    app.github.repo_as(token, repo).await.map(|_| ()).map_err(|e| {
+    app.github.as_person().repo_as(token, repo).await.map(|_| ()).map_err(|e| {
         tracing::info!(login = user, rubato.repo = repo, error = %format!("{e:#}"), "the member cannot read the repo");
         Refusal::unprocessable(
             reason::REPO_UNREADABLE,

@@ -3094,7 +3094,7 @@ async fn without_the_app_login_stays_open() {
     let plain = session_cookie(&app, "anyone", None).await;
     assert_eq!(statuses(&url, &plain).await, [200, 201, 101]);
     assert!(
-        !app.github.can_write(),
+        !app.github.as_person().can_write(),
         "and such a server cannot propose map changes"
     );
 }

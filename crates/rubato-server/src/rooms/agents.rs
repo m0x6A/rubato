@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use rubato_protocol::{LeftReason, RequestState, RoomAgent, RoomKey, RoomRequest, agent_handle};
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 /// One stay of an agent in a room.
@@ -256,6 +256,38 @@ pub async fn requests_in(db: &SqlitePool, room: &RoomKey) -> Result<Vec<RoomRequ
     .fetch_all(db)
     .await?;
     rows.iter().map(|r| request(r).map(|(_, q)| q)).collect()
+}
+
+/// The repositories of a detached installation (design §3.3): every agent still in one of their
+/// rooms is dismissed and every pending request withdrawn, inside the caller's transaction.
+/// Returns (agents, requests).
+pub async fn leave_repos(
+    conn: &mut SqliteConnection,
+    repos: &[String],
+    at: DateTime<Utc>,
+) -> Result<(u64, u64)> {
+    let (mut agents, mut requests) = (0, 0);
+    for repo in repos {
+        agents += sqlx::query(
+            "UPDATE room_agents SET left_at = ?, left_reason = ? WHERE repo = ? COLLATE NOCASE AND left_at IS NULL",
+        )
+        .bind(ts(at))
+        .bind(reason_name(LeftReason::Dismissed))
+        .bind(repo)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        requests += sqlx::query(
+            "UPDATE room_requests SET state = ?, answered_at = ? WHERE repo = ? COLLATE NOCASE AND state = 'pending'",
+        )
+        .bind(state_name(RequestState::Withdrawn))
+        .bind(ts(at))
+        .bind(repo)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    }
+    Ok((agents, requests))
 }
 
 /// Answer a pending request. False when it was answered already.

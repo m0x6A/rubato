@@ -3,6 +3,8 @@
 //! inside the caller's transaction, so two admins acting at once cannot both pass it.
 
 use crate::kernel::db::ts;
+use crate::kernel::github::{Attached, Routes};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::tenant::reason;
@@ -318,4 +320,181 @@ pub async fn note_login(
     .execute(db)
     .await?;
     Ok(())
+}
+
+/// The live routes (design §5.1): every attached installation (not detached), with whether it
+/// is suspended, and every live repository of those.
+pub async fn live_routes(db: &SqlitePool) -> Result<Routes> {
+    let mut routes = Routes::default();
+    let rows = sqlx::query(
+        "SELECT installation_id, tenant_id, suspended_at FROM tenant_installations WHERE detached_at IS NULL",
+    )
+    .fetch_all(db)
+    .await?;
+    for r in rows {
+        let Some(tenant) = TenantId::parse(&r.get::<String, _>("tenant_id")) else {
+            continue;
+        };
+        routes.installations.insert(
+            r.get::<i64, _>("installation_id") as u64,
+            Attached {
+                tenant,
+                suspended: r.get::<Option<String>, _>("suspended_at").is_some(),
+            },
+        );
+    }
+    let repos: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT r.repo, r.installation_id FROM tenant_repos r \
+         JOIN tenant_installations i ON i.installation_id = r.installation_id AND i.tenant_id = r.tenant_id \
+         WHERE r.detached_at IS NULL AND i.detached_at IS NULL",
+    )
+    .fetch_all(db)
+    .await?;
+    routes.repos = repos
+        .into_iter()
+        .map(|(repo, id)| (repo.to_ascii_lowercase(), id as u64))
+        .collect();
+    Ok(routes)
+}
+
+/// The tenant an installation is attached to, and whether it is suspended; `None` when it is
+/// not attached or was detached.
+pub async fn attached(
+    conn: &mut SqliteConnection,
+    installation_id: u64,
+) -> Result<Option<(String, bool)>> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT tenant_id, suspended_at FROM tenant_installations WHERE installation_id = ? AND detached_at IS NULL",
+    )
+    .bind(installation_id as i64)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(|(t, s)| (t, s.is_some())))
+}
+
+/// What one listing of an installation's repositories changed (design §5.3).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Synced {
+    pub added: Vec<String>,
+    /// Live before, absent from the listing now: tombstoned.
+    pub removed: Vec<String>,
+    /// Named by the listing but held by another tenant, live or tombstoned: left as they are.
+    pub conflicts: Vec<String>,
+}
+
+/// Make `tenant_repos` follow one listing of `installation`'s repositories, inside the caller's
+/// transaction. A repository another tenant holds is not taken (a repository belongs to one
+/// tenant, ADR 0087); one this tenant held under an old installation moves to this one, live.
+pub async fn sync_repos(
+    conn: &mut SqliteConnection,
+    tenant: &str,
+    installation_id: u64,
+    listed: &[String],
+    now: DateTime<Utc>,
+) -> Result<Synced> {
+    let id = installation_id as i64;
+    let mut out = Synced::default();
+    for repo in listed {
+        let held: Option<(String, i64, Option<String>)> = sqlx::query_as(
+            "SELECT tenant_id, installation_id, detached_at FROM tenant_repos WHERE repo = ?",
+        )
+        .bind(repo)
+        .fetch_optional(&mut *conn)
+        .await?;
+        match held {
+            Some((t, _, _)) if t != tenant => out.conflicts.push(repo.clone()),
+            Some((_, was, detached)) => {
+                if was != id || detached.is_some() {
+                    out.added.push(repo.clone());
+                }
+                sqlx::query(
+                    "UPDATE tenant_repos SET installation_id = ?, seen_at = ?, detached_at = NULL WHERE repo = ?",
+                )
+                .bind(id)
+                .bind(ts(now))
+                .bind(repo)
+                .execute(&mut *conn)
+                .await?;
+            }
+            None => {
+                sqlx::query(
+                    "INSERT INTO tenant_repos (repo, tenant_id, installation_id, seen_at) VALUES (?, ?, ?, ?)",
+                )
+                .bind(repo)
+                .bind(tenant)
+                .bind(id)
+                .bind(ts(now))
+                .execute(&mut *conn)
+                .await?;
+                out.added.push(repo.clone());
+            }
+        }
+    }
+    let live: Vec<String> = sqlx::query_scalar(
+        "SELECT repo FROM tenant_repos WHERE installation_id = ? AND detached_at IS NULL ORDER BY repo",
+    )
+    .bind(id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for repo in live {
+        if listed.iter().any(|l| l.eq_ignore_ascii_case(&repo)) {
+            continue;
+        }
+        sqlx::query("UPDATE tenant_repos SET detached_at = ? WHERE repo = ?")
+            .bind(ts(now))
+            .bind(&repo)
+            .execute(&mut *conn)
+            .await?;
+        out.removed.push(repo);
+    }
+    Ok(out)
+}
+
+/// GitHub suspended (`Some`) or unsuspended (`None`) the installation.
+pub async fn set_suspended(
+    conn: &mut SqliteConnection,
+    installation_id: u64,
+    at: Option<DateTime<Utc>>,
+) -> Result<bool> {
+    let n = sqlx::query(
+        "UPDATE tenant_installations SET suspended_at = ? WHERE installation_id = ? AND detached_at IS NULL",
+    )
+    .bind(at.map(ts))
+    .bind(installation_id as i64)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    Ok(n == 1)
+}
+
+/// Detach an installation (design §3.3): it and its live repositories are tombstoned, inside
+/// the caller's transaction. Their rows stay, hidden, until an operator purges them. Returns the
+/// repositories tombstoned now.
+pub async fn detach_installation(
+    conn: &mut SqliteConnection,
+    installation_id: u64,
+    now: DateTime<Utc>,
+) -> Result<Vec<String>> {
+    let id = installation_id as i64;
+    sqlx::query(
+        "UPDATE tenant_installations SET detached_at = ? WHERE installation_id = ? AND detached_at IS NULL",
+    )
+    .bind(ts(now))
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    let repos: Vec<String> = sqlx::query_scalar(
+        "SELECT repo FROM tenant_repos WHERE installation_id = ? AND detached_at IS NULL ORDER BY repo",
+    )
+    .bind(id)
+    .fetch_all(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE tenant_repos SET detached_at = ? WHERE installation_id = ? AND detached_at IS NULL",
+    )
+    .bind(ts(now))
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(repos)
 }

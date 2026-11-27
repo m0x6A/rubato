@@ -647,6 +647,26 @@ impl Octo {
         })
     }
 
+    /// A client for calls made with a person's own token only (`repo_as`, `merge_as`,
+    /// `comment_as`), when the server acts as App installations (ADR 0087): it carries no
+    /// credential of its own.
+    pub fn for_people(base_uri: Option<&str>) -> Result<Self> {
+        let mut b = octocrab::Octocrab::builder()
+            .set_connect_timeout(Some(CONNECT_TIMEOUT))
+            .set_read_timeout(Some(READ_TIMEOUT));
+        if let Some(uri) = base_uri {
+            b = b.base_uri(uri)?;
+        }
+        Ok(Self {
+            client: b.build()?,
+            base: base_uri.map(str::to_owned),
+            installation: false,
+            as_app: None,
+            issues_write: Default::default(),
+            app_login: Default::default(),
+        })
+    }
+
     /// A client acting as the installation of a GitHub App (ADR 0022). Call from inside the
     /// runtime. The settings are checked by `kernel::github::check_app` before this is used.
     pub fn for_installation(app: &GitHubApp, base_uri: Option<&str>) -> Result<Self> {

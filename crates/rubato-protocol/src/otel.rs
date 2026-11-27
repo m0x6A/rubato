@@ -40,6 +40,10 @@ pub mod attr {
     /// Retired map ids a plan names (ADR 0077): reported by the plan check, never failed.
     pub const PLAN_RETIRED_IDS: &str = "rubato.plan.retired_ids";
     pub const GITHUB_ENDPOINT: &str = "rubato.github.endpoint";
+    /// The App installation a GitHub call or gauge is made through (ADR 0087).
+    pub const GITHUB_INSTALLATION: &str = "rubato.github.installation";
+    /// The tenant a request, poll pass or gauge acts for (ADR 0087).
+    pub const TENANT: &str = "rubato.tenant";
     /// The tmux version a companion found at start (`tmux -V`, ADR 0070).
     pub const TMUX_VERSION: &str = "rubato.tmux.version";
     pub const DROP_REASON: &str = "rubato.reason";
@@ -545,6 +549,8 @@ pub fn all_names() -> Vec<&'static str> {
         attr::PLAN_O_ROWS_MISSING,
         attr::PLAN_RETIRED_IDS,
         attr::GITHUB_ENDPOINT,
+        attr::GITHUB_INSTALLATION,
+        attr::TENANT,
         attr::TMUX_VERSION,
         attr::RECONCILE_PANES,
         attr::DROP_REASON,

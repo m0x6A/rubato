@@ -87,7 +87,7 @@ pub async fn overview(
         layout,
         queue,
         draft,
-        can_create_issues: app.github.can_create_issues(),
+        can_create_issues: app.github.can_create_issues_anywhere(),
         repos: built.repos,
         pulls: built.pulls,
         traffic: built.traffic,

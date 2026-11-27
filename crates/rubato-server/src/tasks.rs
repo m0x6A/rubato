@@ -12,9 +12,9 @@
 
 use crate::kernel::state::{App, LoadedMap};
 use crate::{
-    agent_reports, approve, auth, companion_link, github_poll, launch, map, map_draft, new_issue,
-    overview, pairing, pins, plan_status, plans, pulls, queue, rooms, session_messages, traffic,
-    webhooks,
+    admin, agent_reports, approve, auth, companion_link, github_poll, launch, map, map_draft,
+    new_issue, overview, pairing, pins, plan_status, plans, pulls, queue, rooms, session_messages,
+    traffic, webhooks,
 };
 use anyhow::{Result, anyhow};
 use chrono::Utc;
@@ -282,6 +282,7 @@ impl Poller {
     /// what pending deliveries name and the tracked issues not read since start. The rows read
     /// at the start are settled; housekeeping and the rate-limit read follow.
     pub async fn webhook_tick(&mut self, app: &App, lane: Lane, catchup: bool) -> Result<()> {
+        apply_installation_changes(app).await;
         let pending = webhooks::pending(app).await;
         let r = async {
             let targets: Vec<webhooks::Target> = pending.iter().map(|p| p.target.clone()).collect();
@@ -308,6 +309,7 @@ impl Poller {
     /// A webhook wake (design 208 D6): only what the pending deliveries name, then the web is
     /// told. No housekeeping, no deadline moves.
     pub async fn refresh(&mut self, app: &App) -> Result<()> {
+        apply_installation_changes(app).await;
         let pending = webhooks::pending(app).await;
         if pending.is_empty() {
             return Ok(());
@@ -337,10 +339,6 @@ impl Poller {
         {
             tracing::error!(error = %e, "map reload after a map-branch push failed");
         }
-        let Some(map) = app.default_map().await else {
-            tracing::warn!("no map loaded; skipping poll");
-            return Ok(None);
-        };
         // Pinned in any workspace: each issue is read once, whatever views show it (ADR 0048).
         let mut issues: BTreeSet<IssueRef> = pins::list_all(&app.db)
             .await?
@@ -380,6 +378,26 @@ impl Poller {
             .iter()
             .map(|(k, v)| (k.clone(), std::sync::Arc::clone(v)))
             .collect();
+        // No anchor map (design §5.3): with none loaded there is nothing to read.
+        if maps.is_empty() {
+            tracing::warn!("no map loaded; skipping poll");
+            return Ok(None);
+        }
+        // Each installation's repositories, listed as it, become its tenant's before anything is
+        // listed or coverage judged (ADR 0087, design §5.3).
+        if targets.is_none() || lane == Lane::Full {
+            let r = admin::refresh_installations(app).await;
+            if r.installations > 0 {
+                tracing::debug!(
+                    installations = r.installations,
+                    failed = r.failed,
+                    added = r.added,
+                    removed = r.removed,
+                    conflicts = r.conflicts,
+                    "installations refreshed"
+                );
+            }
+        }
         let systems: Vec<(&str, &rubato_protocol::SystemMap)> =
             maps.iter().map(|(k, v)| (k.as_str(), &v.map)).collect();
         // With targets, only the repos they name, unless this is a full lane (every 300 s, so
@@ -433,17 +451,33 @@ impl Poller {
         // Every distinct repo of every workspace, once (ADR 0048), and the repos of tracked work.
         let mut repos: BTreeSet<String> = app.union_repos().await.into_iter().collect();
         repos.extend(issues.iter().map(|i| i.repo.clone()));
+        // A repository no attached installation covers is not read (ADR 0087): its issues are
+        // left out of this pass, and coverage shows it as a finding.
+        let before = issues.len();
+        issues.retain(|i| app.github.tenant_of(&i.repo).is_some());
+        if issues.len() < before {
+            tracing::debug!(
+                skipped = before - issues.len(),
+                "issues of repositories no tenant covers are not read"
+            );
+        }
         *app.polled_repos.lock().unwrap() = repos.iter().map(|r| r.to_ascii_lowercase()).collect();
         if targets.is_none() || lane == Lane::Full {
             github_poll::check_coverage(app, &repos).await;
         }
         // As an installation, on the full lane: whether Issues: write is granted (ADR 0025), so a
         // re-approved installation is noticed within five minutes and no restart.
-        if lane == Lane::Full
-            && app.github.is_installation()
-            && let Err(e) = app.github.refresh_issue_permission().await
-        {
-            tracing::warn!(error = %format!("{e:#}"), "reading the installation's permissions failed");
+        if lane == Lane::Full && app.github.is_installation() {
+            for live in app.github.live() {
+                if let Err(e) = live.client.refresh_issue_permission().await {
+                    tracing::warn!(
+                        rubato.github.installation = live.installation.unwrap_or(0),
+                        rubato.tenant = %live.tenant,
+                        error = %format!("{e:#}"),
+                        "reading the installation's permissions failed"
+                    );
+                }
+            }
         }
 
         let mut view = github_poll::RepoView::default();
@@ -496,7 +530,14 @@ impl Poller {
             };
             match self
                 .poll_issue(
-                    app, &map, issue, busy, &listed, &mut view, issue_lane, &prefer,
+                    app,
+                    map_for(&maps, &issue.repo),
+                    issue,
+                    busy,
+                    &listed,
+                    &mut view,
+                    issue_lane,
+                    &prefer,
                 )
                 .await
             {
@@ -521,7 +562,7 @@ impl Poller {
         let discovered = self
             .discover(
                 app,
-                &map,
+                &maps,
                 &issues,
                 &listed,
                 &mut view,
@@ -547,9 +588,15 @@ impl Poller {
                 .into_values()
                 .map(|p| (p.repo, p.number))
                 .collect();
+            let union = app.union_repos().await;
+            let named: BTreeSet<&str> = union
+                .iter()
+                .map(String::as_str)
+                .filter(|r| app.github.tenant_of(r).is_some())
+                .collect();
             github_poll::list_repo_pulls_in(
                 app,
-                &map.map,
+                &named,
                 &mut view,
                 &owned,
                 lane == Lane::Full || pulls_only.is_some(),
@@ -762,7 +809,7 @@ impl Poller {
     async fn discover(
         &mut self,
         app: &App,
-        map: &LoadedMap,
+        maps: &[(String, std::sync::Arc<LoadedMap>)],
         tracked: &BTreeSet<IssueRef>,
         listed: &github_poll::Listed,
         view: &mut github_poll::RepoView,
@@ -778,6 +825,11 @@ impl Poller {
         let mut found = 0;
         let union = app.union_repos().await;
         for repo in union.iter().map(String::as_str) {
+            // Not covered by a live installation: not read (ADR 0087).
+            if app.github.tenant_of(repo).is_none() {
+                continue;
+            }
+            let map = map_for(maps, repo);
             // A delivery scope lists refs only where it names an untracked issue (ADR 0074).
             if only.is_some() && !untracked.iter().any(|i| i.repo == repo) {
                 continue;
@@ -819,6 +871,55 @@ impl Poller {
         }
         found
     }
+}
+
+/// The map an issue's plan path and branch rules come from: the first workspace, in id order,
+/// whose map names the repository, else the first map (design §5.3: no anchor map). Never
+/// called with no map.
+fn map_for<'a>(maps: &'a [(String, std::sync::Arc<LoadedMap>)], repo: &str) -> &'a LoadedMap {
+    maps.iter()
+        .find(|(_, m)| {
+            m.map
+                .repos_named()
+                .iter()
+                .any(|r| r.eq_ignore_ascii_case(repo))
+        })
+        .or_else(|| maps.first())
+        .map(|(_, m)| m.as_ref())
+        .expect("the pass returns early with no map")
+}
+
+/// Apply what pending deliveries say about installations (ADR 0087, design §5.4) and settle
+/// them, before the pass reads anything through those installations.
+async fn apply_installation_changes(app: &App) {
+    let changes = webhooks::installation_changes(app).await;
+    if changes.is_empty() {
+        return;
+    }
+    let (mut done, mut failed) = (Vec::new(), Vec::new());
+    for c in &changes {
+        let event = match c.change {
+            webhooks::Change::Suspended => admin::InstallationEvent::Suspended,
+            webhooks::Change::Unsuspended => admin::InstallationEvent::Unsuspended,
+            webhooks::Change::Deleted => admin::InstallationEvent::Deleted,
+            webhooks::Change::Repositories => admin::InstallationEvent::Repositories,
+        };
+        match admin::installation_changed(app, c.installation, event).await {
+            Ok(()) => done.push(c.delivery_id.clone()),
+            Err(e) => {
+                tracing::warn!(
+                    rubato.github.installation = c.installation,
+                    error = %format!("{e:#}"),
+                    "applying an installation change failed"
+                );
+                failed.push((
+                    c.delivery_id.clone(),
+                    format!("installation {}", c.installation),
+                ));
+            }
+        }
+    }
+    webhooks::settle(app, &done, &failed, 0).await;
 }
 
 /// The poll loop. Counts `rubato.poll.ticks` once per tick, so `ServerPollSilent` sees it stop.

@@ -10,7 +10,7 @@ use rubato_protocol::Role;
 
 /// The tenant every row from before tenants belongs to (Assumption A2). The operator may
 /// rename it; its id stays.
-pub const DEFAULT_TENANT: &str = "default";
+pub use crate::kernel::tenancy::DEFAULT_TENANT;
 
 /// How far back a login still counts as on the team: a session's whole life (ADR 0064).
 const RECENT_DAYS: i64 = 30;

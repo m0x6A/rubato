@@ -38,11 +38,13 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
     let fetched = async {
         let sha = app
             .github
+            .unscoped(&cfg.map_repo)
             .branch_sha(&cfg.map_repo, &cfg.map_ref)
             .await?
             .context("map ref not found")?;
         let yaml = app
             .github
+            .unscoped(&cfg.map_repo)
             .file(&cfg.map_repo, &cfg.map_path, &cfg.map_ref)
             .instrument(crate::kernel::github::part_read(
                 crate::kernel::github::READS_MAP,
@@ -132,11 +134,13 @@ pub async fn fetch_and_validate(app: &App, w: &WorkspaceEntry) -> Result<LoadedM
         None => {
             let sha = app
                 .github
+                .unscoped(&w.map_repo)
                 .branch_sha(&w.map_repo, &w.map_ref)
                 .await?
                 .context("map ref not found")?;
             let yaml = app
                 .github
+                .unscoped(&w.map_repo)
                 .file(&w.map_repo, &w.map_path, &w.map_ref)
                 .instrument(crate::kernel::github::part_read(
                     crate::kernel::github::READS_MAP,

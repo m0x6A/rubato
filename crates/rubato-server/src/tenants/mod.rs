@@ -11,9 +11,29 @@ mod store;
 
 pub use seed::{DEFAULT_TENANT, Seeded, start};
 pub use store::{
-    Outcome, Refused, Removed, add_member, attach_installation, create_tenant, installations_of,
-    members, note_login, remove_member, role_of, set_role, tenant_exists, tenants_of,
+    Outcome, Refused, Removed, Synced, add_member, attach_installation, attached, create_tenant,
+    detach_installation, installations_of, members, note_login, remove_member, role_of, set_role,
+    set_suspended, sync_repos, tenant_exists, tenants_of,
 };
+
+use crate::kernel::state::App;
+
+/// Give the GitHub registry the tenancy rows as they now are (design §5.1): at start, and after
+/// every change to an installation or its repositories. With one GitHub context there is
+/// nothing to route by.
+pub async fn load_routes(app: &App) -> anyhow::Result<()> {
+    if !app.github.routes_by_installation() {
+        return Ok(());
+    }
+    let routes = store::live_routes(&app.db).await?;
+    tracing::debug!(
+        installations = routes.installations.len(),
+        repos = routes.repos.len(),
+        "tenancy routes loaded"
+    );
+    app.github.set_routes(routes);
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests;

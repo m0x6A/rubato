@@ -6,14 +6,24 @@ use rubato_protocol::IssueRef;
 use serde_json::Value;
 
 /// The events Rubato subscribes to. Anything else is ignored and counted as `other`.
-pub const EVENTS: [&str; 6] = [
+pub const EVENTS: [&str; 8] = [
     "issues",
     "issue_comment",
     "pull_request",
     "check_suite",
     "check_run",
     "push",
+    "installation",
+    "installation_repositories",
 ];
+
+/// `installation` actions that change what Rubato reads (design §3.3, §5.4).
+const INSTALLATION_ACTIONS: [&str; 3] = ["suspend", "unsuspend", "deleted"];
+
+/// The events about an installation itself, not one of its repositories.
+pub fn is_installation_event(event: &str) -> bool {
+    matches!(event, "installation" | "installation_repositories")
+}
 
 /// `issues` actions that change what Rubato shows (title, state, the `Map:` line).
 const ISSUE_ACTIONS: [&str; 6] = [
@@ -43,6 +53,8 @@ pub struct Delivery {
     pub repo: Option<String>,
     pub issue_number: Option<u64>,
     pub branch: Option<String>,
+    /// The App installation the delivery came from (`installation.id`), ADR 0087.
+    pub installation: Option<u64>,
     /// `None`: accepted. `Some(reason)`: stored as ignored and answered 200.
     pub ignored: Option<&'static str>,
 }
@@ -73,8 +85,29 @@ pub fn read(event: &str, body: &Value, ctx: &Context<'_>) -> Delivery {
         repo: repo.clone(),
         issue_number: None,
         branch: None,
+        installation: body.pointer("/installation/id").and_then(Value::as_u64),
         ignored: None,
     };
+    // An installation's own events name no repository Rubato reads: what they change is which
+    // repositories it reads at all.
+    match event {
+        "installation" => {
+            if !action
+                .as_deref()
+                .is_some_and(|a| INSTALLATION_ACTIONS.contains(&a))
+            {
+                d.ignored = Some("action");
+            }
+            return d;
+        }
+        "installation_repositories" => {
+            if !matches!(action.as_deref(), Some("added" | "removed")) {
+                d.ignored = Some("action");
+            }
+            return d;
+        }
+        _ => {}
+    }
     let from_branch = |b: &Option<String>| b.as_deref().and_then(IssueRef::number_from_branch);
     match event {
         "issues" => {
@@ -357,6 +390,42 @@ mod tests {
             assert_eq!(d.ignored, *ignored, "{event} {body}");
         }
         println!("checked {} deliveries", cases.len());
+    }
+
+    /// ADR 0087: an installation's own events name no repository; their installation is read.
+    #[test]
+    fn installation_events_carry_their_installation() {
+        let ctx = Context {
+            read_repos: &ctx_read,
+            map_branch: &ctx_map,
+        };
+        let cases = [
+            ("installation", "suspend", None),
+            ("installation", "unsuspend", None),
+            ("installation", "deleted", None),
+            ("installation", "created", Some("action")),
+            ("installation", "new_permissions_accepted", Some("action")),
+            ("installation_repositories", "added", None),
+            ("installation_repositories", "removed", None),
+        ];
+        for (event, action, ignored) in cases {
+            let d = read(
+                event,
+                &json!({"action": action, "installation": {"id": 22}}),
+                &ctx,
+            );
+            assert_eq!(d.installation, Some(22), "{event} {action}");
+            assert_eq!(d.ignored, ignored, "{event} {action}");
+            assert!(is_installation_event(event));
+        }
+        let d = read(
+            "issues",
+            &json!({"action":"opened","issue":{"number":5},"repository":{"full_name":"m0x6A/rubato"},"installation":{"id":11}}),
+            &ctx,
+        );
+        assert_eq!((d.installation, d.ignored), (Some(11), None));
+        assert!(!is_installation_event("issues"));
+        println!("checked {} installation deliveries", cases.len() + 1);
     }
 
     #[test]

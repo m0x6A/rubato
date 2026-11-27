@@ -85,7 +85,12 @@ async fn clear_merged_ws(app: &App, w: &WorkspaceEntry) {
         return;
     }
     log_state("merged", "empty", &row, None);
-    if let Err(e) = app.github.delete_ref(&w.map_repo, &row.branch).await {
+    if let Err(e) = app
+        .github
+        .unscoped(&w.map_repo)
+        .delete_ref(&w.map_repo, &row.branch)
+        .await
+    {
         tracing::warn!(branch = %row.branch, error = %format!("{e:#}"), "the merged proposal's branch was not deleted");
     }
     app.notify_ws("draft", &w.id);
@@ -97,7 +102,12 @@ async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Res
     if row.state == ProposalState::Merged {
         return Ok(());
     }
-    let Some(pr) = app.github.pull_for_branch(repo, &row.branch).await? else {
+    let Some(pr) = app
+        .github
+        .unscoped(repo)
+        .pull_for_branch(repo, &row.branch)
+        .await?
+    else {
         return Ok(());
     };
     let from = state_name(row.state);
@@ -112,7 +122,12 @@ async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Res
         store::drop_proposal(&app.db, &w.id).await?;
         log_state(from, "drafting", row, Some(pr.number));
         count(app, "closed");
-        if let Err(e) = app.github.delete_ref(repo, &row.branch).await {
+        if let Err(e) = app
+            .github
+            .unscoped(repo)
+            .delete_ref(repo, &row.branch)
+            .await
+        {
             tracing::warn!(branch = %row.branch, error = %format!("{e:#}"), "the closed proposal's branch was not deleted");
         }
         app.notify_ws("draft", &w.id);

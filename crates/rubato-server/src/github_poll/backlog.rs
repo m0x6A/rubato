@@ -124,7 +124,16 @@ pub async fn list_open_issues_in(
         if only.is_some_and(|o| !o.contains(&repo.to_ascii_lowercase())) {
             continue;
         }
-        match app.github.open_issues(repo, BACKLOG_MAX_PER_REPO).await {
+        // No live installation covers it: not listed (ADR 0087); coverage reports it.
+        if app.github.tenant_of(repo).is_none() {
+            continue;
+        }
+        match app
+            .github
+            .unscoped(repo)
+            .open_issues(repo, BACKLOG_MAX_PER_REPO)
+            .await
+        {
             Ok(listing) => {
                 if !listing.truncated {
                     listed.fresh.insert(repo.clone());

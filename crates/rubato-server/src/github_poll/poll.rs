@@ -11,6 +11,8 @@ use super::store::{self, IssueMeta};
 use crate::kernel::github::{BranchHead, OpenPulls, PullInfo};
 use crate::kernel::state::App;
 use anyhow::{Result, anyhow};
+use opentelemetry::KeyValue;
+use rubato_protocol::otel::attr;
 use rubato_protocol::{
     ApprovalRecord, ApprovalSource, ChecksStatus, DecisionRecord, IssueRef, PullRequestState,
     ReviewRecord, trusted_author,
@@ -73,7 +75,12 @@ pub async fn read_meta(
             Standing::Active
         });
     }
-    let closed = match app.github.issue(&issue.repo, issue.number).await? {
+    let closed = match app
+        .github
+        .unscoped(&issue.repo)
+        .issue(&issue.repo, issue.number)
+        .await?
+    {
         Some(info) => {
             let closed = info.state == CLOSED;
             store::upsert_issue_meta(
@@ -137,6 +144,7 @@ impl RepoView {
         if !self.branches.contains_key(&issue.repo) {
             let listed = app
                 .github
+                .unscoped(&issue.repo)
                 .branches(&issue.repo, "issue/")
                 .await
                 .map_err(|e| format!("{e:#}"));
@@ -179,6 +187,7 @@ impl RepoView {
         if !self.branches.contains_key(repo) {
             let listed = app
                 .github
+                .unscoped(repo)
                 .branches(repo, "issue/")
                 .await
                 .map_err(|e| format!("{e:#}"));
@@ -213,6 +222,7 @@ impl RepoView {
         if !self.pulls.contains_key(repo) {
             let listing = app
                 .github
+                .unscoped(repo)
                 .open_pulls(repo)
                 .await
                 .map_err(|e| format!("{e:#}"));
@@ -248,7 +258,11 @@ pub async fn poll_pr_of_gone_branch(app: &App, issue: &IssueRef) -> Result<()> {
         return Ok(());
     }
     let branch = stored.branch.clone();
-    let pr = app.github.pull_for_branch(&issue.repo, &branch).await?;
+    let pr = app
+        .github
+        .unscoped(&issue.repo)
+        .pull_for_branch(&issue.repo, &branch)
+        .await?;
     store_pr(app, issue, &branch, pr).await
 }
 
@@ -276,7 +290,10 @@ pub async fn poll_pr(
             if !look_up {
                 return Ok(());
             }
-            app.github.pull_for_branch(&issue.repo, branch).await?
+            app.github
+                .unscoped(&issue.repo)
+                .pull_for_branch(&issue.repo, branch)
+                .await?
         }
     };
     store_pr(app, issue, branch, pr).await
@@ -287,7 +304,10 @@ async fn store_pr(app: &App, issue: &IssueRef, branch: &str, pr: Option<PullInfo
         let checks = if pr.merged_at.is_some() {
             ChecksStatus::Green
         } else {
-            app.github.checks(&issue.repo, &pr.head_sha).await?
+            app.github
+                .unscoped(&issue.repo)
+                .checks(&issue.repo, &pr.head_sha)
+                .await?
         };
         store::upsert_pr(
             &app.db,
@@ -328,7 +348,12 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
     let cutover = app.config.comment_approvals_until;
     let mut read = CommentsRead::default();
     let mut kept: Vec<u64> = Vec::new();
-    for c in app.github.issue_comments(&issue.repo, issue.number).await? {
+    for c in app
+        .github
+        .unscoped(&issue.repo)
+        .issue_comments(&issue.repo, issue.number)
+        .await?
+    {
         let review = ReviewRecord::parse_body(&c.body);
         let approval = ApprovalRecord::parse_body(&c.body);
         let decision = DecisionRecord::parse_body(&c.body);
@@ -467,17 +492,37 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
     Ok(read)
 }
 
+/// Each installation's own budget (design §5.3): every installation has its own, so the gauge
+/// carries `rubato.github.installation` (absent with one context) and `rubato.tenant`.
 pub async fn record_rate_limit(app: &App) {
-    match app.github.rate_limit().await {
-        Ok((remaining, limit)) => {
-            app.metrics.rate_limit_remaining.record(remaining, &[]);
-            app.metrics.rate_limit_limit.record(limit, &[]);
-            if limit > 0 && remaining * 10 < limit {
-                tracing::warn!(remaining, limit, "GitHub rate limit under 10%");
-            }
+    for live in app.github.live() {
+        let mut labels = vec![KeyValue::new(attr::TENANT, live.tenant.to_string())];
+        if let Some(id) = live.installation {
+            labels.push(KeyValue::new(attr::GITHUB_INSTALLATION, id as i64));
         }
-        // Not debug: a gauge that stops updating keeps its last value, and GitHubRateLimitLow
-        // would stay quiet on it (issue #208).
-        Err(e) => tracing::warn!(error = %format!("{e:#}"), "rate limit read failed"),
+        let installation = live.installation.unwrap_or(0);
+        match live.client.rate_limit().await {
+            Ok((remaining, limit)) => {
+                app.metrics.rate_limit_remaining.record(remaining, &labels);
+                app.metrics.rate_limit_limit.record(limit, &labels);
+                if limit > 0 && remaining * 10 < limit {
+                    tracing::warn!(
+                        remaining,
+                        limit,
+                        rubato.github.installation = installation,
+                        rubato.tenant = %live.tenant,
+                        "GitHub rate limit under 10%"
+                    );
+                }
+            }
+            // Not debug: a gauge that stops updating keeps its last value, and
+            // GitHubRateLimitLow would stay quiet on it (issue #208).
+            Err(e) => tracing::warn!(
+                rubato.github.installation = installation,
+                rubato.tenant = %live.tenant,
+                error = %format!("{e:#}"),
+                "rate limit read failed"
+            ),
+        }
     }
 }

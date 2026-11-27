@@ -154,6 +154,22 @@ pub async fn receive(
             "body is not JSON",
         );
     };
+    // ADR 0087: a delivery from an installation no tenant has attached changes nothing. With
+    // the App public, strangers install it; that is a count, not a page (design §5.4).
+    let installation = json
+        .pointer("/installation/id")
+        .and_then(serde_json::Value::as_u64);
+    if !app.github.admits_delivery(installation) {
+        tracing::info!(
+            delivery = %id,
+            event = %ev,
+            rubato.github.installation = installation.unwrap_or(0),
+            rubato.outcome = "unattached",
+            "webhook delivery"
+        );
+        count(&app, &ev, "unattached");
+        return answer(StatusCode::OK, "unattached");
+    }
     let read_repos = app.read_repos().await;
     let maps: Vec<(String, String)> = app
         .workspace_entries()

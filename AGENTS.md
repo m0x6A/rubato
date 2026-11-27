@@ -97,7 +97,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
 `/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth` reaches tenancy, ADR 0087); slices:
+(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth` reaches tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, ADR 0087); slices:
 
 ```text
 auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
@@ -132,7 +132,7 @@ web_link        websocket fan-out to browsers                   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
 workspace_settings  each workspace's settings: seeded once, read and changed at runtime, create and delete (ADR 0075)  workspace_settings
 tenants         who belongs to which tenant, its installations and repositories, the seed (ADR 0087)  tenants, tenant_installations, tenant_members, tenant_repos
-admin           people and tenants across slices: the admission adapter, the identity guard (ADR 0088)  (none)
+admin           people and tenants across slices: the admission adapter, the identity guard, an installation's life after it is attached (ADR 0087, 0088)  (none)
 ```
 <!-- /slices -->
 <!-- slices: rubato-companion -->

@@ -1,7 +1,9 @@
 use anyhow::Result;
 use rubato_server::kernel::config::Config;
+use rubato_server::kernel::config::GitHubApp;
 use rubato_server::kernel::github::{
-    FakeGitHub, GitHubApi, LocalGit, Octo, READ_TIMEOUT, check_app, read_dev_issues, read_dev_pulls,
+    Client, FakeGitHub, GitHubApi, GitHubApps, LocalGit, Octo, READ_TIMEOUT, check_app,
+    read_dev_issues, read_dev_pulls,
 };
 use rubato_server::kernel::state::AppState;
 use rubato_server::kernel::{db, telemetry};
@@ -38,7 +40,7 @@ async fn main() -> Result<()> {
             "RUBATO_GITHUB_API_URL or RUBATO_GITHUB_WEB_URL is set: not talking to github.com"
         );
     }
-    let github: Arc<dyn GitHubApi> = match (
+    let github: GitHubApps = match (
         &config.local_repos,
         &config.github_app,
         &config.github_token,
@@ -51,33 +53,43 @@ async fn main() -> Result<()> {
                 Some(path) => read_dev_pulls(path)?,
                 None => Default::default(),
             };
-            Arc::new(
+            GitHubApps::one(Arc::new(
                 LocalGit::from_spec(spec)?
                     .with_open_issues(dev_issues)
                     .with_pulls(dev_pulls),
-            )
+            ))
         }
         (None, Some(app), _) => {
-            // A wrong key, client id or installation ends the start here, with its name.
+            // A wrong key or client id ends the start here, with its name. Installations are
+            // the tenants' (ADR 0087): one client each, made on first use.
             if let Err(e) = check_app(app, config.github_client_id.as_deref(), api).await {
                 tracing::error!(error = %e, "github app check failed");
                 anyhow::bail!("github app check failed: {e}");
             }
             tracing::info!(
                 app_id = app.app_id,
-                installation_id = app.installation_id,
-                "acting as a GitHub App installation; sessions need a team record"
+                "acting as the GitHub App's installations, each through its tenant"
             );
-            Arc::new(Octo::for_installation(app, api)?)
+            let (app, base) = (app.clone(), api.map(str::to_owned));
+            GitHubApps::installations(
+                Arc::new(Octo::for_people(api)?),
+                Box::new(move |installation_id| {
+                    let one = GitHubApp {
+                        installation_id,
+                        ..app.clone()
+                    };
+                    Ok(Arc::new(Octo::for_installation(&one, base.as_deref())?) as Client)
+                }),
+            )
         }
         (None, None, Some(t)) => {
             tracing::warn!(
                 "no GitHub App configured: reading with RUBATO_GITHUB_TOKEN, and map changes cannot be proposed"
             );
-            Arc::new(match api {
+            GitHubApps::one(Arc::new(match api {
                 Some(base) => Octo::with_base_uri(t, base, READ_TIMEOUT)?,
                 None => Octo::new(t)?,
-            })
+            }))
         }
         (None, None, None) => {
             tracing::warn!(
@@ -85,16 +97,17 @@ async fn main() -> Result<()> {
             );
             let fake = FakeGitHub::new();
             fake.with(|g| g.open = dev_issues);
-            Arc::new(fake)
+            GitHubApps::one(Arc::new(fake) as Arc<dyn GitHubApi>)
         }
     };
     let bind = config.bind;
-    let state = AppState::new(pool, config, github);
+    let state = AppState::with_github(pool, config, github);
     // ADR 0075: seed workspace_settings once, then the database is the registry's source.
     workspace_settings::start(&state).await?;
     // ADR 0087, 0088: who a login is across tenants, and tenant `default` on the first start.
     state.set_admission(std::sync::Arc::new(rubato_server::admin::Admission));
     rubato_server::tenants::start(&state).await?;
+    rubato_server::tenants::load_routes(&state).await?;
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
     // The context graph's own file, when its flag is on (ADR 0084).

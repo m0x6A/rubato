@@ -192,6 +192,20 @@ pub async fn launch_not_started(
     Ok(r.rows_affected() > 0)
 }
 
+/// Drop every queued issue of these repositories inside the caller's transaction: the
+/// installation that covered them was detached (design §3.3). Returns how many rows.
+pub async fn drop_repos(conn: &mut SqliteConnection, repos: &[String]) -> Result<u64> {
+    let mut n = 0;
+    for repo in repos {
+        n += sqlx::query("DELETE FROM companion_queue WHERE repo = ? COLLATE NOCASE")
+            .bind(repo)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+    }
+    Ok(n)
+}
+
 /// Drop every queued issue on these companions inside the caller's transaction: their pairings
 /// were just revoked (Decision 15, ADR 0088), so nobody can start them. Returns how many rows.
 pub async fn drop_companions(conn: &mut SqliteConnection, companions: &[Uuid]) -> Result<u64> {

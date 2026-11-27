@@ -338,3 +338,90 @@ async fn an_operator_is_admitted_by_the_seed_even_without_a_recent_session() {
     let s = start(&app).await.unwrap();
     assert_eq!((s.members, s.admins, s.installation), (1, 1, None));
 }
+
+#[tokio::test]
+async fn a_listing_adds_tombstones_and_never_takes_another_tenants_repository() {
+    let (app, _t) = server(|_| {}).await;
+    let mut tx = app.db.begin().await.unwrap();
+    let now = Utc::now();
+    for (t, id) in [("acme", 11), ("bcorp", 22)] {
+        store::create_tenant(&mut tx, t, t, "op", now)
+            .await
+            .unwrap()
+            .unwrap();
+        store::attach_installation(&mut tx, t, id, "op", now)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let listed = |r: &[&str]| r.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let s = store::sync_repos(&mut tx, "acme", 11, &listed(&["acme/api", "acme/web"]), now)
+        .await
+        .unwrap();
+    assert_eq!(s.added, ["acme/api", "acme/web"]);
+    // bcorp's installation names acme's repository: it stays acme's.
+    let s = store::sync_repos(&mut tx, "bcorp", 22, &listed(&["bcorp/x", "ACME/api"]), now)
+        .await
+        .unwrap();
+    assert_eq!(
+        (s.added, s.conflicts),
+        (listed(&["bcorp/x"]), listed(&["ACME/api"]))
+    );
+    // acme's listing loses a repository: tombstoned, not deleted.
+    let s = store::sync_repos(&mut tx, "acme", 11, &listed(&["acme/api"]), now)
+        .await
+        .unwrap();
+    assert_eq!(s.removed, ["acme/web"]);
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tenant_repos WHERE repo = 'acme/web' AND detached_at IS NOT NULL",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+    tx.commit().await.unwrap();
+    let routes = store::live_routes(&app.db).await.unwrap();
+    let mut repos: Vec<(String, u64)> = routes.repos.into_iter().collect();
+    repos.sort();
+    assert_eq!(
+        repos,
+        [("acme/api".to_owned(), 11), ("bcorp/x".to_owned(), 22)]
+    );
+}
+
+#[tokio::test]
+async fn a_reinstall_into_the_same_tenant_brings_its_repositories_back_live() {
+    let (app, _t) = server(|_| {}).await;
+    let mut tx = app.db.begin().await.unwrap();
+    let now = Utc::now();
+    store::create_tenant(&mut tx, "acme", "Acme", "op", now)
+        .await
+        .unwrap()
+        .unwrap();
+    store::attach_installation(&mut tx, "acme", 11, "op", now)
+        .await
+        .unwrap()
+        .unwrap();
+    store::sync_repos(&mut tx, "acme", 11, &["acme/api".to_owned()], now)
+        .await
+        .unwrap();
+    assert_eq!(
+        store::detach_installation(&mut tx, 11, now).await.unwrap(),
+        ["acme/api"]
+    );
+    // Uninstalled and installed again: GitHub gives a new id.
+    store::attach_installation(&mut tx, "acme", 33, "op", now)
+        .await
+        .unwrap()
+        .unwrap();
+    let s = store::sync_repos(&mut tx, "acme", 33, &["acme/api".to_owned()], now)
+        .await
+        .unwrap();
+    assert_eq!(s.added, ["acme/api"]);
+    assert!(store::set_suspended(&mut tx, 33, Some(now)).await.unwrap());
+    tx.commit().await.unwrap();
+    let routes = store::live_routes(&app.db).await.unwrap();
+    assert_eq!(routes.repos.get("acme/api"), Some(&33));
+    assert!(routes.installations[&33].suspended);
+    assert!(!routes.installations.contains_key(&11), "detached");
+}

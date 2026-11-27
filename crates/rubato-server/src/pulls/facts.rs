@@ -182,7 +182,7 @@ fn fold(runs: &[CheckRun]) -> ChecksStatus {
 
 /// The installation's reads. `None` when GitHub has no such pull request.
 async fn fetch(app: &App, map: &LoadedMap, repo: &str, number: u64) -> Result<Option<Fetched>> {
-    let gh = &app.github;
+    let gh = app.github.unscoped(repo);
     let Some(pull) = gh.pull(repo, number).await? else {
         return Ok(None);
     };
@@ -258,7 +258,7 @@ async fn person(
             return None;
         }
     };
-    match app.github.repo_as(&token, repo).await {
+    match app.github.as_person().repo_as(&token, repo).await {
         Ok(a) => {
             cache.keep_person(login, repo, a.clone());
             Some(to_person(a))

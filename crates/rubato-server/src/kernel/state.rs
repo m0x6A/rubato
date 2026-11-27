@@ -2,7 +2,7 @@
 //! notify sender. In the kernel because four or more slices need it (design §9).
 
 use crate::kernel::config::Config;
-use crate::kernel::github::GitHubApi;
+use crate::kernel::github::{GitHubApi, GitHubApps};
 use crate::kernel::signer::Signer;
 use crate::kernel::speech::Speech;
 use crate::kernel::telemetry::Metrics;
@@ -90,7 +90,8 @@ impl Clock {
 pub struct AppState {
     pub db: SqlitePool,
     pub config: Arc<Config>,
-    pub github: Arc<dyn GitHubApi>,
+    /// One client per attached installation, routed by tenant (ADR 0087, design §5.1).
+    pub github: GitHubApps,
     /// Companions with a websocket open right now.
     pub companions: Mutex<HashMap<Uuid, CompanionConn>>,
     /// What each companion announced in its last Hello (ADR 0051), kept after it disconnects so
@@ -155,7 +156,12 @@ impl Slots {
 pub type App = Arc<AppState>;
 
 impl AppState {
+    /// A server with one GitHub context: a personal token, local repositories or the fake.
     pub fn new(db: SqlitePool, config: Config, github: Arc<dyn GitHubApi>) -> App {
+        Self::with_github(db, config, GitHubApps::one(github))
+    }
+
+    pub fn with_github(db: SqlitePool, config: Config, github: GitHubApps) -> App {
         let (web_tx, _) = broadcast::channel(256);
         let signer = Signer::new(config.session_secret.as_bytes());
         // Before the traffic task runs: a source the environment configures is configured for

@@ -367,6 +367,7 @@ async fn post_link(app: &App, d: &Due) -> bool {
     );
     let posted = app
         .github
+        .as_person()
         .comment_as(&token, &a.issue.repo, a.issue.number, &body)
         .instrument(span.clone())
         .await;

@@ -149,6 +149,7 @@ pub async fn approve(
     let text = body(&req.sha, &row.branch);
     let posted = async {
         app.github
+            .as_person()
             .comment_as(&token, &issue.repo, issue.number, &text)
             .await
     }

@@ -37,6 +37,7 @@ pub async fn fetch_and_store(
     let path = plan_path(map, issue, branch);
     match app
         .github
+        .unscoped(&issue.repo)
         .file(&issue.repo, &path, head_sha)
         .instrument(crate::kernel::github::part_read(
             crate::kernel::github::READS_PLAN,
@@ -109,6 +110,7 @@ pub async fn hash_on_branch(
     let path = plan_path(map, issue, branch);
     Ok(app
         .github
+        .unscoped(&issue.repo)
         .file(&issue.repo, &path, branch)
         .instrument(crate::kernel::github::part_read(
             crate::kernel::github::READS_PLAN,
