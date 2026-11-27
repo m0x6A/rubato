@@ -1,6 +1,6 @@
 # 0011. Authenticate the companion with an opaque pairing token from the device-code flow
 
-- **Status:** accepted
+- **Status:** accepted; superseded in part by 0086
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (drafted by agent, Claude Code v0 planning session)
 - **Seam:** companion-server
