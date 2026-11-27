@@ -117,7 +117,9 @@ local (a loopback `RUBATO_BIND` and `RUBATO_PUBLIC_URL`; ADR 0064).
 
 **The context graph (ADR 0084), off by default.** `RUBATO_CONTEXT_GRAPH=1` makes the server
 build a graph of every repository the maps name, at its default-branch head: files, decision
-records, feature scenarios and slices. It regenerates every `RUBATO_GRAPH_REGEN_SECS` (300–86400,
+records, feature scenarios and slices, and the symbols, imports and references of Rust,
+TypeScript and JavaScript sources (names and one signature line each, never a file's contents),
+beside each workspace's map and pins and the team's pinned issues, plans and open pull requests. It regenerates every `RUBATO_GRAPH_REGEN_SECS` (300–86400,
 default 900): one GitHub call per repository per tick, and a tarball only when the head moved.
 The graph lives in its own SQLite file beside the main database (`rubato-graph.db`;
 `RUBATO_GRAPH_DATABASE_URL` moves it), is never backed up, and is rebuilt if deleted. With the
