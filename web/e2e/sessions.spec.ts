@@ -30,7 +30,7 @@ async function connectCompanion(user: string): Promise<{ ws: WebSocket; companio
  * its session, with its age, through the companion's own launch.
  */
 test("a launched agent's line shows under its session in the companion lane", { tag: ["@companions.agent-line"] }, async ({ page }) => {
-  const pinned = await fetch(`${base}/api/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, target: { kind: "node", id: "web" } }) });
+  const pinned = await fetch(`${base}/api/t/default/w/default/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, target: { kind: "node", id: "web" } }) });
   expect(pinned.ok).toBe(true);
   const { ws, companion_id } = await connectCompanion("m0x6A");
   const launched = new Promise<{ id: string; branch: string; session_id: string }>((ok) =>
@@ -41,7 +41,7 @@ test("a launched agent's line shows under its session in the companion lane", { 
       }
     }),
   );
-  const r = await fetch(`${base}/api/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, slug: "agent-line" }) });
+  const r = await fetch(`${base}/api/t/default/w/default/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, slug: "agent-line" }) });
   expect(r.status, await r.clone().text()).toBe(200);
   const cmd = await launched;
   const now = () => new Date().toISOString();

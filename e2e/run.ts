@@ -226,7 +226,7 @@ async function main() {
     RUST_LOG: "info",
   });
   type Overview = { issues: { issue: { repo: string; number: number }; progress: { state: string; reason?: string }; sessions?: { status: string; source: string; spend_usd?: number }[]; plan?: unknown }[]; findings: { kind: string; seam?: string; issues?: { number: number }[] }[]; companions: { connected: boolean; user: string }[] };
-  const overview = () => api<Overview>("GET", "/api/overview");
+  const overview = () => api<Overview>("GET", "/api/t/default/w/default/overview");
   await waitFor("companion connected", 20_000, async () => (await overview()).companions.some((c) => c.connected && c.user === "m0x6A"));
   log("companion connected");
 
@@ -249,12 +249,12 @@ async function main() {
   };
   for (const i of issues) {
     seen.set(`${i.repo}#${i.number}`, []);
-    await api("POST", "/api/pins", { issue: { repo: i.repo, number: i.number }, target: i.target });
+    await api("POST", "/api/t/default/w/default/pins", { issue: { repo: i.repo, number: i.number }, target: i.target });
     // Planned is read here, between the pin and the launch: read only after all three launches,
     // a fast session was already Designing and the path started there (seen on CI 2026-11-19
     // twice and 2026-11-25).
     record(await overview());
-    const r = await api<{ command: { branch: string; session_id: string } }>("POST", "/api/launch", { issue: { repo: i.repo, number: i.number }, slug: i.slug });
+    const r = await api<{ command: { branch: string; session_id: string } }>("POST", "/api/t/default/w/default/launch", { issue: { repo: i.repo, number: i.number }, slug: i.slug });
     log(`launched ${i.repo}#${i.number} on ${r.command.branch} (pinned to ${i.target.kind} ${i.target.id})`);
   }
   // An issue is Designed as soon as its plan is pushed, which is before the session's last
@@ -471,7 +471,7 @@ async function main() {
   const traceId = randomBytes(16).toString("hex");
   const spanId = randomBytes(8).toString("hex");
   const startNanos = (BigInt(Date.now()) * 1_000_000n).toString();
-  const call = await fetch(`${url}/api/overview`, { headers: { traceparent: `00-${traceId}-${spanId}-01` } });
+  const call = await fetch(`${url}/api/t/default/w/default/overview`, { headers: { traceparent: `00-${traceId}-${spanId}-01` } });
   const endNanos = (BigInt(Date.now()) * 1_000_000n).toString();
   const relay = await fetch(`${url}/api/telemetry/traces`, {
     method: "POST",
@@ -486,13 +486,13 @@ async function main() {
                 {
                   traceId,
                   spanId,
-                  name: "GET /api/overview",
+                  name: "GET /api/t/{tenant}/w/{ws}/overview",
                   kind: 3,
                   startTimeUnixNano: startNanos,
                   endTimeUnixNano: endNanos,
                   attributes: [
                     { key: "http.request.method", value: { stringValue: "GET" } },
-                    { key: "url.path", value: { stringValue: "/api/overview" } },
+                    { key: "url.path", value: { stringValue: "/api/t/{tenant}/w/{ws}/overview" } },
                     { key: "http.response.status_code", value: { intValue: String(call.status) } },
                   ],
                   status: { code: 0 },
@@ -505,7 +505,7 @@ async function main() {
     }),
   });
   if (relay.status !== 202) checks.problem("web-trace-link", `the relay answered ${relay.status}, not 202`);
-  const webCalls = () => callPairs(otlp.spans, { service: "web", name: "GET /api/overview" }, { service: "rubato-server", name: "rubato.http.request" }).filter((p) => p.client.traceId === traceId);
+  const webCalls = () => callPairs(otlp.spans, { service: "web", name: "GET /api/t/{tenant}/w/{ws}/overview" }, { service: "rubato-server", name: "rubato.http.request" }).filter((p) => p.client.traceId === traceId);
   await waitFor("the web's relayed span with the server's request span as its child", 30_000, async () => webCalls().length > 0).catch((e) =>
     checks.problem("web-trace-link", `${String(e)}; decoded ${otlp.spans.filter((s) => s.service === "web").length} web span(s)`),
   );

@@ -105,17 +105,6 @@ const CLASSES: &[(&str, Class)] = &[
 /// Checked tables whose `tenant_id` has not landed yet (design §13): each pull request that
 /// scopes a table's queries adds its column and takes it off this list.
 const NOT_YET_SCOPED: &[&str] = &[
-    "map_layout",
-    "map_layout_grouped",
-    "map_cache",
-    "map_proposal",
-    "pins",
-    "map_line_pins",
-    "map_draft_ops",
-    "issue_creations",
-    "issue_suggestions",
-    "traffic_dismissals",
-    "workspace_settings",
     "open_issues",
     "backlog_repos",
     "uncovered_repos",
@@ -156,8 +145,8 @@ const DYNAMIC: &[(&str, usize, &str)] = &[
     ),
     (
         "kernel/workspaces.rs",
-        2,
-        "the orphan and id-reuse counts over SCOPED_TABLES, one table name per query",
+        4,
+        "the orphan and id-reuse counts over SCOPED_TABLES and WORKSPACE_ONLY_TABLES, one table name per query; each names tenant_id where its table has it",
     ),
     (
         "launch/store.rs",
@@ -178,6 +167,37 @@ const DYNAMIC: &[(&str, usize, &str)] = &[
         "tenants/store.rs",
         1,
         "the id-reuse count over the tenancy tables, one table name per query",
+    ),
+];
+
+/// Queries on a tenant-owned table that act for no tenant, by file and by how their SQL starts:
+/// the server's own bookkeeping (the registry, the poll's work list). Each says why. A query
+/// that no longer exists must leave the list.
+const GLOBAL: &[(&str, &str, &str)] = &[
+    (
+        "workspace_settings/store.rs",
+        "SELECT COUNT(*) FROM workspace_settings",
+        "the seed asks whether the table is empty at all, before any tenant has a workspace",
+    ),
+    (
+        "workspace_settings/store.rs",
+        "SELECT * FROM workspace_settings ORDER BY tenant_id",
+        "the registry of every tenant's workspaces, loaded whole at start and after a change; requests read the registry by WsKey",
+    ),
+    (
+        "pins/store.rs",
+        "SELECT DISTINCT tenant_id, workspace_id FROM pins",
+        "the poll's work list: an issue pinned in any tenant is read, through its own tenant's installation",
+    ),
+    (
+        "new_issue/store.rs",
+        "SELECT * FROM issue_creations WHERE state = 'opening'",
+        "the poll's work list of creations GitHub did not confirm; each row carries its tenant and is settled inside it",
+    ),
+    (
+        "github_poll/store.rs",
+        "DELETE FROM issue_suggestions WHERE repo = ?",
+        "a repository no map names any more loses its suggestions; a repository belongs to one tenant (ADR 0087), and only that tenant's workspaces hold suggestions for it",
     ),
 ];
 
@@ -596,6 +616,7 @@ fn every_query_on_a_tenant_owned_table_is_scoped() {
     let found = sources();
     let mut problems = Vec::new();
     let mut dynamic: BTreeMap<String, usize> = BTreeMap::new();
+    let mut global_used: std::collections::BTreeSet<usize> = Default::default();
     let (mut parsed, mut checked, mut pending) = (0, 0, 0);
     let mut tables_seen = BTreeSet::new();
     for f in &found {
@@ -631,12 +652,33 @@ fn every_query_on_a_tenant_owned_table_is_scoped() {
                     }
                 }
                 tables_seen.extend(tables);
-                problems.extend(p.into_iter().map(|p| format!("{}:{}: {p}", f.file, f.line)));
+                let flat = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+                match GLOBAL
+                    .iter()
+                    .position(|(file, start, _)| *file == f.file && flat.starts_with(start))
+                {
+                    Some(i) if !p.is_empty() => {
+                        global_used.insert(i);
+                    }
+                    Some(i) => problems.push(format!(
+                        "{}:{}: listed in scoping::GLOBAL but scoped now; take it off: {}",
+                        f.file, f.line, GLOBAL[i].1
+                    )),
+                    None => problems
+                        .extend(p.into_iter().map(|p| format!("{}:{}: {p}", f.file, f.line))),
+                }
             }
             Err(e) => problems.push(format!(
                 "{}:{}: does not parse ({e}): {sql}",
                 f.file, f.line
             )),
+        }
+    }
+    for (i, (file, start, _)) in GLOBAL.iter().enumerate() {
+        if !global_used.contains(&i) {
+            problems.push(format!(
+                "scoping::GLOBAL lists a query in {file} that is not there any more: {start}"
+            ));
         }
     }
     for (file, n) in &dynamic {
@@ -655,9 +697,10 @@ fn every_query_on_a_tenant_owned_table_is_scoped() {
         }
     }
     println!(
-        "rubato.scoping.check: {} queries, {parsed} parsed, {} run-time, {checked} on scoped tables, {pending} on tables not yet scoped ({} tables), {} tables named",
+        "rubato.scoping.check: {} queries, {parsed} parsed, {} run-time, {checked} on scoped tables, {} global by allowance, {pending} on tables not yet scoped ({} tables), {} tables named",
         found.len(),
         dynamic.values().sum::<usize>(),
+        global_used.len(),
         NOT_YET_SCOPED.len(),
         tables_seen.len()
     );

@@ -68,7 +68,7 @@ pub async fn pull_view(
 ) -> Result<Json<PullDetail>, Refused> {
     let fail = |status: StatusCode, why: &str| (status, Json(json!({ "reason": why })));
     let asked = format!("{}/{}", p.owner, p.repo);
-    let Some(map) = app.map_of(ws.as_str()).await else {
+    let Some(map) = app.map_of(ws.key()).await else {
         return Err(fail(StatusCode::SERVICE_UNAVAILABLE, "no_map"));
     };
     let failed = |e: anyhow::Error| {
@@ -81,7 +81,7 @@ pub async fn pull_view(
         Ok(None) => return Err(fail(StatusCode::NOT_FOUND, reason::UNKNOWN_REPO)),
         Err(e) => return Err(failed(e)),
     };
-    let facts = match gather(&app, ws.as_str(), &map, &repo, p.number, &login, false).await {
+    let facts = match gather(&app, ws.key(), &map, &repo, p.number, &login, false).await {
         Ok(Gathered::Found(f)) => f,
         Ok(Gathered::NotFound) => return Err(fail(StatusCode::NOT_FOUND, "no_pull")),
         Err(e) => return Err(failed(e)),

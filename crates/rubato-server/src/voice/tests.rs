@@ -116,7 +116,7 @@ async fn harness_with(voice: Option<VoiceConfig>, transcript: &str) -> H {
     let text = include_str!("../../../../docs/design/rubato-map.yml");
     let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -256,7 +256,13 @@ async fn say(h: &H, user: &str, id: Uuid, to: Option<&str>, audio: Vec<u8>) -> S
 }
 
 async fn hear(h: &H, id: Uuid) -> Result<(StatusCode, Vec<u8>), (StatusCode, String)> {
-    match speech(State(h.app.clone()), CurrentUser("carol".into()), Path(id)).await {
+    match speech(
+        State(h.app.clone()),
+        CurrentUser("carol".into()),
+        Path(id.into()),
+    )
+    .await
+    {
         Ok(res) => {
             let res = res.into_response();
             let status = res.status();
@@ -287,7 +293,7 @@ async fn turns(h: &H, launch: Uuid) -> Vec<(Uuid, String)> {
     session_messages::list(
         State(h.app.clone()),
         CurrentUser(OWNER.into()),
-        Path(launch),
+        Path(launch.into()),
     )
     .await
     .unwrap()

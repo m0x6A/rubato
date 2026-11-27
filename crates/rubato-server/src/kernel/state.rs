@@ -6,6 +6,7 @@ use crate::kernel::github::{GitHubApi, GitHubApps};
 use crate::kernel::signer::Signer;
 use crate::kernel::speech::Speech;
 use crate::kernel::telemetry::Metrics;
+use crate::kernel::tenancy::{TenantId, WsKey};
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
@@ -105,13 +106,13 @@ pub struct AppState {
     workspaces: tokio::sync::watch::Sender<crate::kernel::workspaces::Registry>,
     /// The loaded map of each workspace, by workspace id (ADR 0044). A workspace whose map has
     /// never loaded has no entry.
-    pub maps: RwLock<BTreeMap<String, Arc<LoadedMap>>>,
+    pub maps: RwLock<BTreeMap<WsKey, Arc<LoadedMap>>>,
     pub metrics: Metrics,
     pub signer: Signer,
     /// Each workspace's latest traffic report and source state, by workspace id (ADR 0075). A
     /// workspace with no entry has no source. The traffic slice writes it; the overview reads
     /// its own workspace's with `traffic_of`.
-    pub traffic: RwLock<BTreeMap<String, TrafficLatest>>,
+    pub traffic: RwLock<BTreeMap<WsKey, TrafficLatest>>,
     pub clock: Clock,
     /// Each companion's latest session snapshot, by the pairing's companion id: what
     /// `session_snapshots` holds, kept in memory for slices that may not name `companion_link`
@@ -166,14 +167,14 @@ impl AppState {
         let signer = Signer::new(config.session_secret.as_bytes());
         // Before the traffic task runs: a source the environment configures is configured for
         // every workspace held now, the state the seed will copy (ADR 0075, Decision 7).
-        let traffic: BTreeMap<String, TrafficLatest> = if config.traffic_configured() {
+        let traffic: BTreeMap<WsKey, TrafficLatest> = if config.traffic_configured() {
             config
                 .workspace_entries()
                 .0
                 .into_iter()
                 .map(|w| {
                     (
-                        w.id,
+                        w.key(),
                         TrafficLatest {
                             report: None,
                             source: SourceStatus::Configured {
@@ -249,6 +250,39 @@ impl AppState {
         (r.entries.clone(), r.source)
     }
 
+    /// Whether a tenant holds this workspace now.
+    pub fn holds_workspace(&self, key: &WsKey) -> bool {
+        self.workspaces
+            .borrow()
+            .entries
+            .iter()
+            .any(|w| w.id == key.ws && w.tenant == key.tenant)
+    }
+
+    /// One tenant's workspaces, in switcher order.
+    pub fn workspaces_of(
+        &self,
+        tenant: &TenantId,
+    ) -> Vec<crate::kernel::workspaces::WorkspaceEntry> {
+        self.workspaces
+            .borrow()
+            .entries
+            .iter()
+            .filter(|w| &w.tenant == tenant)
+            .cloned()
+            .collect()
+    }
+
+    /// One workspace's entry, if its tenant holds it.
+    pub fn workspace(&self, key: &WsKey) -> Option<crate::kernel::workspaces::WorkspaceEntry> {
+        self.workspaces
+            .borrow()
+            .entries
+            .iter()
+            .find(|w| w.id == key.ws && w.tenant == key.tenant)
+            .cloned()
+    }
+
     /// Replace the registry: the composition root at start, and slice `workspace_settings` on a
     /// change (ADR 0075). Every reader of `workspace_entries` sees it at once, and a task that
     /// subscribed is woken.
@@ -264,7 +298,7 @@ impl AppState {
     }
 
     /// One workspace's latest traffic report and source state; not configured when it has none.
-    pub async fn traffic_of(&self, ws: &str) -> TrafficLatest {
+    pub async fn traffic_of(&self, ws: &WsKey) -> TrafficLatest {
         self.traffic
             .read()
             .await
@@ -311,22 +345,15 @@ impl AppState {
 
     /// The loaded map of workspace `default`: what every route served before workspaces, and
     /// what unprefixed routes serve (ADR 0049).
-    pub async fn default_map(&self) -> Option<Arc<LoadedMap>> {
-        self.map_of(rubato_protocol::DEFAULT_WORKSPACE).await
-    }
-
     /// A shared pointer to the loaded map, not a copy (#171): a reload swaps the pointer, and a
     /// reader holding the old one keeps a consistent map.
-    pub async fn map_of(&self, ws: &str) -> Option<Arc<LoadedMap>> {
+    pub async fn map_of(&self, ws: &WsKey) -> Option<Arc<LoadedMap>> {
         self.maps.read().await.get(ws).cloned()
     }
 
-    pub async fn set_map(&self, ws: &str, map: LoadedMap) -> Arc<LoadedMap> {
+    pub async fn set_map(&self, ws: &WsKey, map: LoadedMap) -> Arc<LoadedMap> {
         let map = Arc::new(map);
-        self.maps
-            .write()
-            .await
-            .insert(ws.to_string(), Arc::clone(&map));
+        self.maps.write().await.insert(ws.clone(), Arc::clone(&map));
         map
     }
 
@@ -373,18 +400,19 @@ impl AppState {
 
     /// Tell every browser one workspace's map, layout or draft changed (ADR 0049): only clients
     /// of that workspace refetch. Changes that show in other workspaces too use `notify`.
-    pub fn notify_ws(&self, reason: &str, ws: &str) {
+    pub fn notify_ws(&self, reason: &str, ws: &WsKey) {
         let subscribers = self.web_tx.receiver_count();
         tracing::info!(
             reason,
-            rubato.workspace = ws,
+            rubato.tenant = %ws.tenant,
+            rubato.workspace = ws.ws(),
             rubato.subscribers = subscribers,
             "web fan-out"
         );
         let _ = self.web_tx.send(WebEvent::Changed {
             at: Utc::now(),
             reason: reason.to_owned(),
-            workspace: Some(ws.to_owned()),
+            workspace: Some(ws.ws().to_owned()),
         });
     }
 
@@ -526,18 +554,43 @@ mod tests {
         );
         let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
         let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
-        let set = app.set_map("default", loaded("v1")).await;
+        let set = app
+            .set_map(
+                &crate::kernel::tenancy::WsKey::of_default("default"),
+                loaded("v1"),
+            )
+            .await;
         let (a, b) = (
-            app.map_of("default").await.unwrap(),
-            app.default_map().await.unwrap(),
+            app.map_of(&crate::kernel::tenancy::WsKey::of_default("default"))
+                .await
+                .unwrap(),
+            app.map_of(&crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            ))
+            .await
+            .unwrap(),
         );
         assert!(
             Arc::ptr_eq(&a, &b) && Arc::ptr_eq(&a, &set),
             "a read copied the map"
         );
-        app.set_map("default", loaded("v2")).await;
+        app.set_map(
+            &crate::kernel::tenancy::WsKey::of_default("default"),
+            loaded("v2"),
+        )
+        .await;
         assert_eq!((a.version.as_str(), a.yaml.as_str()), ("v1", "# v1"));
-        assert_eq!(app.map_of("default").await.unwrap().version, "v2");
-        assert!(app.map_of("other").await.is_none());
+        assert_eq!(
+            app.map_of(&crate::kernel::tenancy::WsKey::of_default("default"))
+                .await
+                .unwrap()
+                .version,
+            "v2"
+        );
+        assert!(
+            app.map_of(&crate::kernel::tenancy::WsKey::of_default("other"))
+                .await
+                .is_none()
+        );
     }
 }

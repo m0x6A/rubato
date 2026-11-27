@@ -7,6 +7,7 @@ use super::cache::{Cache, Key, Outcome};
 use crate::auth::{self, TokenError};
 use crate::kernel::github::{PullFull, RepoAccess, ReviewInfo, summarize_check_runs};
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use crate::{github_poll, overview, plans};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -66,7 +67,7 @@ pub type ViewCache = Cache<Option<Fetched>>;
 /// the cache and replaces its entry.
 pub async fn gather(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     map: &LoadedMap,
     repo: &str,
     number: u64,
@@ -74,7 +75,7 @@ pub async fn gather(
     fresh: bool,
 ) -> Result<Gathered> {
     let cache = app.slots.get::<ViewCache>();
-    let key: Key = (ws.to_owned(), repo.to_owned(), number);
+    let key: Key = (ws.to_string(), repo.to_owned(), number);
     let (fetched, outcome) = cache
         .get(key, fresh, || fetch(app, map, repo, number))
         .await?;

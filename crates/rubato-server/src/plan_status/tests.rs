@@ -201,8 +201,11 @@ async fn h(caps: &[&str]) -> H {
     }
 }
 
-fn built(s: IssueSummary) -> Vec<(String, Vec<IssueSummary>)> {
-    vec![("default".to_owned(), vec![s])]
+fn built(s: IssueSummary) -> Vec<(crate::kernel::tenancy::WsKey, Vec<IssueSummary>)> {
+    vec![(
+        crate::kernel::tenancy::WsKey::of_default("default"),
+        vec![s],
+    )]
 }
 
 impl H {
@@ -274,7 +277,11 @@ async fn a_new_socket_gets_a_fresh_push_and_a_welcome_sends_from_the_cache() {
 #[tokio::test]
 async fn a_launch_without_a_summary_is_counted_and_a_disconnected_companion_skipped() {
     let mut h = h(&[capability::AGENT_MCP]).await;
-    on_tick(&h.app, &[("default".to_owned(), vec![])]).await;
+    on_tick(
+        &h.app,
+        &[(crate::kernel::tenancy::WsKey::of_default("default"), vec![])],
+    )
+    .await;
     assert!(h.pushed().is_empty());
     assert_eq!(h.sent("change", "no_summary"), 1);
     h.app.companions.lock().unwrap().remove(&C);
@@ -296,8 +303,14 @@ async fn an_issue_in_two_workspaces_is_read_from_the_launchs_own() {
     on_tick(
         &h.app,
         &[
-            ("other".to_owned(), vec![elsewhere]),
-            ("default".to_owned(), vec![here]),
+            (
+                crate::kernel::tenancy::WsKey::of_default("other"),
+                vec![elsewhere],
+            ),
+            (
+                crate::kernel::tenancy::WsKey::of_default("default"),
+                vec![here],
+            ),
         ],
     )
     .await;

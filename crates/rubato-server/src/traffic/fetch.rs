@@ -4,6 +4,7 @@
 
 use super::source::{Lookback, Source, SourceError};
 use crate::kernel::state::{App, TrafficLatest};
+use crate::kernel::tenancy::WsKey;
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::{attr, span};
@@ -47,7 +48,7 @@ impl Outcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Targets {
     All,
-    One(String),
+    One(WsKey),
 }
 
 /// The generation of the task that may write each workspace's traffic now (ADR 0075). The
@@ -57,7 +58,7 @@ pub enum Targets {
 pub struct Generations(Mutex<HashMap<String, u64>>);
 
 impl Generations {
-    /// A new generation for `ws`, superseding every earlier one.
+    /// A new generation for the task under `ws` (its [`key`]), superseding every earlier one.
     pub fn bump(&self, ws: &str) -> u64 {
         let mut g = self.0.lock().unwrap();
         let n = g.entry(ws.to_owned()).or_default();
@@ -80,7 +81,7 @@ impl Generations {
 pub struct Fetcher<S> {
     source: S,
     started: DateTime<Utc>,
-    told: BTreeMap<String, ObservedTraffic>,
+    told: BTreeMap<WsKey, ObservedTraffic>,
     timeout: Duration,
     targets: Targets,
     fetch_secs: u32,
@@ -136,13 +137,13 @@ impl<S: Source> Fetcher<S> {
     }
 
     /// The workspaces this fetcher may write now.
-    fn live_targets(&self, app: &App) -> Vec<String> {
-        let ids: Vec<String> = match &self.targets {
+    fn live_targets(&self, app: &App) -> Vec<WsKey> {
+        let ids: Vec<WsKey> = match &self.targets {
             Targets::All => app
                 .workspace_entries()
                 .0
                 .into_iter()
-                .map(|w| w.id)
+                .map(|w| w.key())
                 .collect(),
             Targets::One(ws) => vec![ws.clone()],
         };
@@ -207,7 +208,7 @@ impl<S: Source> Fetcher<S> {
                 Err(SourceError::Failed(e)) => {
                     span.record("error", e.as_str());
                     if !was_failing {
-                        tracing::warn!(error = %e, rubato.workspace = first.as_str(), "traffic source failing");
+                        tracing::warn!(error = %e, rubato.workspace = first.ws(), "traffic source failing");
                     }
                     set_error(&mut latest, Some(e));
                     Outcome::Failed
@@ -216,7 +217,7 @@ impl<S: Source> Fetcher<S> {
             if let Outcome::Rejected(reason) = outcome {
                 tracing::warn!(
                     rubato.reason = reason,
-                    rubato.workspace = first.as_str(),
+                    rubato.workspace = first.ws(),
                     "traffic report rejected"
                 );
             }
@@ -224,10 +225,7 @@ impl<S: Source> Fetcher<S> {
             if outcome != Outcome::Failed {
                 set_error(&mut latest, None);
                 if was_failing {
-                    tracing::info!(
-                        rubato.workspace = first.as_str(),
-                        "traffic source recovered"
-                    );
+                    tracing::info!(rubato.workspace = first.ws(), "traffic source recovered");
                 }
             }
             span.record(attr::OUTCOME, outcome.as_str());
@@ -240,10 +238,8 @@ impl<S: Source> Fetcher<S> {
             KeyValue::new(attr::OUTCOME, outcome.as_str()),
             KeyValue::new(attr::TRAFFIC_SOURCE, self.source.name()),
         ];
-        if let Targets::One(ws) = &self.targets
-            && ws != rubato_protocol::DEFAULT_WORKSPACE
-        {
-            attrs.push(KeyValue::new(attr::WORKSPACE, ws.clone()));
+        if let Targets::One(ws) = &self.targets {
+            attrs.extend(ws_attrs(ws));
         }
         app.metrics.traffic_fetches.add(1, &attrs);
         self.record(app, &targets, now).await;
@@ -318,7 +314,7 @@ impl<S: Source> Fetcher<S> {
     /// Gauges from the derivation each workspace's overview would make now, and
     /// `notify_ws("traffic", ws)` for each workspace whose summary, its report time aside, differs
     /// from the last one it was told about (#131; ADR 0049: a change of one map is scoped to it).
-    async fn record(&mut self, app: &App, targets: &[String], now: DateTime<Utc>) {
+    async fn record(&mut self, app: &App, targets: &[WsKey], now: DateTime<Utc>) {
         let mut changed = Vec::new();
         for ws in targets {
             let latest = app.traffic_of(ws).await;
@@ -338,7 +334,7 @@ impl<S: Source> Fetcher<S> {
             // workspace told on its own. A dismissal also notifies its workspace from the handler
             // (`dismiss.rs`); the next tick tells it once more, since `dismissed` is in the summary.
             let dismissed = super::dismiss::list(&app.db, ws).await.unwrap_or_else(|e| {
-                tracing::warn!(error = %e, rubato.workspace = ws.as_str(), "traffic dismissals unreadable");
+                tracing::warn!(error = %e, rubato.workspace = ws.ws(), "traffic dismissals unreadable");
                 Vec::new()
             });
             let (t, f) = derive_traffic(
@@ -402,20 +398,25 @@ pub fn with_lookback(
 }
 
 /// `rubato.workspace` for any workspace but `default`, whose series stay as they were before
-/// workspaces (ADR 0047).
-pub fn ws_attrs(ws: &str) -> Vec<KeyValue> {
-    if ws == rubato_protocol::DEFAULT_WORKSPACE {
-        vec![]
-    } else {
-        vec![KeyValue::new(attr::WORKSPACE, ws.to_owned())]
+/// workspaces (ADR 0047), and `rubato.tenant` for any tenant but `default`, whose series stay as
+/// they were before tenants (ADR 0087).
+pub fn ws_attrs(ws: &WsKey) -> Vec<KeyValue> {
+    let mut out = Vec::new();
+    let first_tenant = ws.tenant.as_str() == crate::kernel::tenancy::DEFAULT_TENANT;
+    if !first_tenant {
+        out.push(KeyValue::new(attr::TENANT, ws.tenant.to_string()));
     }
+    if !first_tenant || ws.ws() != rubato_protocol::DEFAULT_WORKSPACE {
+        out.push(KeyValue::new(attr::WORKSPACE, ws.ws().to_owned()));
+    }
+    out
 }
 
 /// The key a task's generation is kept under: the workspace for its own source, one shared key
 /// for the development file that feeds them all.
-pub fn key(targets: &Targets, ws: &str) -> String {
+pub fn key(targets: &Targets, ws: &WsKey) -> String {
     match targets {
         Targets::All => "*".into(),
-        Targets::One(_) => ws.to_owned(),
+        Targets::One(_) => ws.to_string(),
     }
 }

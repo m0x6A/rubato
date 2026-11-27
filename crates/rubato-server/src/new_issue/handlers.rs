@@ -82,7 +82,7 @@ pub async fn create(
         ));
     }
     let map = app
-        .map_of(ws.as_str())
+        .map_of(ws.key())
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".to_owned()))?;
     if let Err((_, msg)) = pins::check_target(&map.map, &map.version, &req.target) {
@@ -129,7 +129,7 @@ pub async fn create(
     // At most once per request id: a second submit answers with what the first got.
     if !store::begin(
         &app.db,
-        ws.as_str(),
+        ws.key(),
         &req.request_id,
         &req.repo,
         &req.target,
@@ -140,7 +140,7 @@ pub async fn create(
     .await
     .map_err(|e| (internal(SLICE, e), String::new()))?
     {
-        let c = store::get(&app.db, &req.request_id)
+        let c = store::get(&app.db, ws.key(), &req.request_id)
             .await
             .map_err(|e| (internal(SLICE, e), String::new()))?
             .ok_or((StatusCode::CONFLICT, "request id in use".to_owned()))?;
@@ -151,10 +151,10 @@ pub async fn create(
     match gh.create_issue(&req.repo, req.title.trim(), &body).await {
         Ok((number, url)) => {
             let issue = rubato_protocol::IssueRef::new(req.repo.clone(), number);
-            store::created(&app.db, &req.request_id, number, &url)
+            store::created(&app.db, ws.key(), &req.request_id, number, &url)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?;
-            pins::pin_created(&app, ws.as_str(), &issue, &req.target, &user)
+            pins::pin_created(&app, ws.key(), &issue, &req.target, &user)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?;
             count(&app, "created");
@@ -188,14 +188,14 @@ pub async fn create(
             );
             if refused {
                 // GitHub said no (403): nothing was created, so the row fails now.
-                store::failed(&app.db, &req.request_id, &format!("{e:#}"))
+                store::failed(&app.db, ws.key(), &req.request_id, &format!("{e:#}"))
                     .await
                     .map_err(|e| (internal(SLICE, e), String::new()))?;
                 count(&app, "failed");
                 app.reject(routes::ISSUES, reason::FAILED, &user);
             }
             // Otherwise it may exist: the row stays opening for the listing to find.
-            let c = store::get(&app.db, &req.request_id)
+            let c = store::get(&app.db, ws.key(), &req.request_id)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?
                 .ok_or((StatusCode::INTERNAL_SERVER_ERROR, String::new()))?;

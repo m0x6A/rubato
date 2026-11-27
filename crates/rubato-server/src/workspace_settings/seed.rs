@@ -94,6 +94,7 @@ async fn seed(app: &App) -> Result<usize> {
         store::insert(
             &mut tx,
             &Row {
+                tenant_id: w.tenant.as_str().to_owned(),
                 workspace_id: w.id.clone(),
                 position: i as i64,
                 revision: 1,
@@ -132,6 +133,7 @@ pub(super) fn entry_of(app: &App, r: &Row) -> Result<WorkspaceEntry> {
         None => BTreeMap::new(),
     };
     Ok(WorkspaceEntry {
+        tenant: crate::kernel::tenancy::TenantId::stored(r.tenant_id.clone()),
         id: r.workspace_id.clone(),
         name: r.name.clone(),
         map_repo: r.map_repo.clone(),

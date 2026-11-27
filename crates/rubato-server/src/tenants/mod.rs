@@ -6,9 +6,11 @@
 //! names nothing but `auth` and the kernel. Work that spans slices (the identity guard, removing
 //! a person) lives in `admin`, which may name them all.
 
+mod scope;
 mod seed;
 mod store;
 
+pub use scope::{check_tenant, scope_for};
 pub use seed::{DEFAULT_TENANT, Seeded, start};
 pub use store::{
     Outcome, Refused, Removed, Synced, add_member, attach_installation, attached, create_tenant,

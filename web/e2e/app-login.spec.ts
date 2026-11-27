@@ -2,12 +2,13 @@ import { expect, test, type Page } from "@playwright/test";
 
 // These run against the second server of `e2e/run.sh`: no dev user, configured as a GitHub App
 // (ADR 0022), with `e2e/github-standin.ts` in place of github.com and api.github.com. So the
-// browser walks the real login: redirect, consent page, code exchange, the installation lookup,
-// the session cookie, and every later request through the team gate.
+// browser walks the real login: redirect, consent page, code exchange, the invite gate (ADR 0088:
+// `run.sh` makes `member` a member of tenant `default`), the session cookie, and every later
+// request through the membership layer.
 const github = process.env["RUBATO_E2E_GITHUB_URL"] ?? "http://127.0.0.1:18092";
 
 /** From the login page through the stand-in's consent page, as `account`. */
-async function logInAs(page: Page, account: "member" | "outsider" | "broken") {
+async function logInAs(page: Page, account: "member" | "outsider") {
   await page.goto("/");
   await page.getByRole("link", { name: "Log in with GitHub" }).click();
   await expect(page.getByRole("heading", { name: "GitHub stand-in" })).toBeVisible();
@@ -17,7 +18,7 @@ async function logInAs(page: Page, account: "member" | "outsider" | "broken") {
 test("without a session the app shows the login page and the API answers 401", { tag: "@auth.login-page" }, async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("link", { name: "Log in with GitHub" })).toBeVisible();
-  for (const path of ["/api/me", "/api/overview", "/api/map"]) {
+  for (const path of ["/api/me", "/api/t/default/w/default/overview", "/api/t/default/w/default/map"]) {
     expect((await page.request.get(path)).status(), path).toBe(401);
   }
 });
@@ -51,7 +52,7 @@ test("a team member logs in through the App and sees what the installation lists
 test("a member creates an issue from a part, as the App, and it is pinned there (ADR 0025)", { tag: ["@new-issue.pinned-where-begun", "@new-issue.created-as-the-app"] }, async ({ page }) => {
   await logInAs(page, "member");
   // The server read the installation's permissions as the App on its first full pass.
-  await expect.poll(async () => (await (await page.request.get("/api/overview")).json()).can_create_issues, { timeout: 15_000 }).toBe(true);
+  await expect.poll(async () => (await (await page.request.get("/api/t/default/w/default/overview")).json()).can_create_issues, { timeout: 15_000 }).toBe(true);
   await page.reload();
   await page.getByTestId("node-rubato-server").click();
   await page.getByTestId("inspector").getByTestId("new-issue-here").click();
@@ -72,7 +73,7 @@ test("a member creates an issue from a part, as the App, and it is pinned there 
 
 test("a member merges a pull request as themselves through their token (ADR 0033)", { tag: ["@pulls.view", "@pulls.merge-as-yourself"] }, async ({ page }) => {
   await logInAs(page, "member");
-  await expect.poll(async () => JSON.stringify((await (await page.request.get("/api/overview")).json()).pulls ?? []), { timeout: 20_000 }).toContain('"number":920');
+  await expect.poll(async () => JSON.stringify((await (await page.request.get("/api/t/default/w/default/overview")).json()).pulls ?? []), { timeout: 20_000 }).toContain('"number":920');
   await page.reload();
   await page.getByTestId("tab-repos").click();
   const work = page.getByTestId("repo-work-m0x6A/rubato");
@@ -92,21 +93,13 @@ test("a member merges a pull request as themselves through their token (ADR 0033
   expect(merges).toEqual([{ login: "member", number: 920, sha: "a920a920a920a920a920a920a920a920a920a920", merge_method: "squash" }]);
 });
 
-test("an account with no access to the installation is refused and gets no session", { tag: "@auth.no-access-refused" }, async ({ page }) => {
+test("an account nobody invited is refused and gets no session", { tag: "@auth.no-access-refused" }, async ({ page }) => {
   const callback = await logInAs(page, "outsider");
   expect(callback.status()).toBe(403);
-  await expect(page.getByText("has no access to the repositories this Rubato is installed on")).toBeVisible();
-  expect((await page.request.get("/api/overview")).status()).toBe(401);
+  await expect(page.getByText("You have not been invited to a tenant on this Rubato")).toBeVisible();
+  expect((await page.request.get("/api/t/default/w/default/overview")).status()).toBe(401);
   await page.goto("/");
   await expect(page.getByRole("link", { name: "Log in with GitHub" })).toBeVisible();
-});
-
-test("a failed installation lookup is reported as a fault, not as no access", { tag: "@auth.lookup-fault" }, async ({ page }) => {
-  const callback = await logInAs(page, "broken");
-  expect(callback.status()).toBe(502);
-  await expect(page.getByText("Could not check your access with GitHub")).toBeVisible();
-  await expect(page.getByText("has no access")).toHaveCount(0);
-  expect((await page.request.get("/api/me")).status()).toBe(401);
 });
 
 test("when the session ends mid-work the next write leads back to login, and nothing was written", { tag: "@auth.session-ends-mid-work" }, async ({ page }) => {
@@ -117,7 +110,7 @@ test("when the session ends mid-work the next write leads back to login, and not
   // until the write has answered, so the write is what finds out.
   let release = () => {};
   const held = new Promise<void>((done) => (release = done));
-  await page.route(/\/api\/(overview|me)(\?|$)/, async (route) => {
+  await page.route(/\/api\/(t\/[^/]+\/w\/[^/]+\/overview|me)(\?|$)/, async (route) => {
     await held;
     await route.continue().catch(() => {});
   });
@@ -125,12 +118,12 @@ test("when the session ends mid-work the next write leads back to login, and not
   expect((await page.request.post("/auth/logout")).status()).toBe(204);
 
   const [refused] = await Promise.all([
-    page.waitForResponse((r) => r.url().endsWith("/api/pins") && r.request().method() === "POST"),
+    page.waitForResponse((r) => r.url().endsWith("/api/t/default/w/default/pins") && r.request().method() === "POST"),
     page.getByTestId("backlog-row-911").dragTo(page.getByTestId("node-rubato-server")),
   ]);
   expect(refused.status()).toBe(401);
   release();
-  await page.unroute(/\/api\/(overview|me)(\?|$)/);
+  await page.unroute(/\/api\/(t\/[^/]+\/w\/[^/]+\/overview|me)(\?|$)/);
   await expect(page.getByRole("link", { name: "Log in with GitHub" })).toBeVisible();
 
   // Logging in again brings the work back; the refused pin left the issue not pinned.

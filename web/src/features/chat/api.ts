@@ -1,15 +1,16 @@
 import { ApiError, failureText, request } from "../../shared/api.ts";
+import { inTenant } from "../../shared/workspace.ts";
 import type { LaunchLog } from "../../protocol.ts";
 import type { LaunchMessages, SessionMessageRequest, SessionMessageView } from "./types.ts";
 
-/** A team route: launches are not one workspace's, so the path is never `scoped()`. */
+/** A tenant route: launches are not one workspace's, so the path is `inTenant()`, never `scoped()`. */
 export function messagesPath(launchId: string): string {
-  return `/api/launches/${encodeURIComponent(launchId)}/messages`;
+  return inTenant(`/api/launches/${encodeURIComponent(launchId)}/messages`);
 }
 
 /** The launch's log, also a team route (ADR 0052): everyone who may log in reads it. */
 export function logPath(launchId: string): string {
-  return `/api/launches/${encodeURIComponent(launchId)}/log`;
+  return inTenant(`/api/launches/${encodeURIComponent(launchId)}/log`);
 }
 
 export const chatApi = {
@@ -23,7 +24,7 @@ export const chatApi = {
 
 /** A team route like the messages, owner only. */
 export function stopPath(launchId: string): string {
-  return `/api/launches/${encodeURIComponent(launchId)}/stop`;
+  return inTenant(`/api/launches/${encodeURIComponent(launchId)}/stop`);
 }
 
 /**

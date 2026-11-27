@@ -298,7 +298,10 @@ pub async fn tick(app: &App) -> Tick {
         wanted.insert(key);
     }
     // What the server itself holds: each workspace's map and pins, and the team's shared facts.
-    let maps: Vec<(String, std::sync::Arc<crate::kernel::state::LoadedMap>)> = app
+    let maps: Vec<(
+        crate::kernel::tenancy::WsKey,
+        std::sync::Arc<crate::kernel::state::LoadedMap>,
+    )> = app
         .maps
         .read()
         .await
@@ -306,9 +309,9 @@ pub async fn tick(app: &App) -> Tick {
         .map(|(ws, m)| (ws.clone(), m.clone()))
         .collect();
     for (ws, loaded) in &maps {
-        let key = source_key::workspace(ws);
+        let key = source_key::workspace(ws.ws());
         let built = match crate::pins::list(&app.db, ws).await {
-            Ok(pins) => Ok(workspace::build(ws, &loaded.map, &pins)),
+            Ok(pins) => Ok(workspace::build(ws.ws(), &loaded.map, &pins)),
             Err(e) => Err(("pins", e)),
         };
         note(
@@ -487,16 +490,19 @@ async fn derived(
 /// What the team source is built from, read through the other slices' roots.
 async fn team_input(
     app: &App,
-    maps: &[(String, std::sync::Arc<crate::kernel::state::LoadedMap>)],
+    maps: &[(
+        crate::kernel::tenancy::WsKey,
+        std::sync::Arc<crate::kernel::state::LoadedMap>,
+    )],
 ) -> Result<team::Input, Failed> {
     let mut repos: Vec<team::RepoFact> = Vec::new();
     for (ws, loaded) in maps {
         for name in loaded.map.repos_named() {
             match repos.iter_mut().find(|r| r.name.eq_ignore_ascii_case(name)) {
-                Some(r) => r.workspaces.push(ws.clone()),
+                Some(r) => r.workspaces.push(ws.ws().to_owned()),
                 None => repos.push(team::RepoFact {
                     name: name.to_owned(),
-                    workspaces: vec![ws.clone()],
+                    workspaces: vec![ws.ws().to_owned()],
                 }),
             }
         }

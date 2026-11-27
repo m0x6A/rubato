@@ -5,6 +5,7 @@
  */
 import type { RoomMessage, VoiceToken } from "../../protocol.ts";
 import { ApiError, request } from "../../shared/api.ts";
+import { inTenant } from "../../shared/workspace.ts";
 import type { RoomKey } from "./api.ts";
 
 /** `rubato_protocol::voice::limits`. */
@@ -17,14 +18,14 @@ export type JoinFailure = "signal" | "ice" | "permission" | "insecure" | "other"
 const roomQuery = (k: RoomKey) => ({ repo: k.repo, number: String(k.number), branch: k.branch });
 
 export const voiceApi = {
-  token: (k: RoomKey) => request<VoiceToken>("POST", "/api/room/voice/token", { repo: k.repo, number: k.number, branch: k.branch }),
+  token: (k: RoomKey) => request<VoiceToken>("POST", inTenant("/api/room/voice/token"), { repo: k.repo, number: k.number, branch: k.branch }),
   /** The posted message, 201, or the one this id posted before, 200. */
   async utterance(k: RoomKey, id: string, audio: Blob, to: string | null): Promise<RoomMessage> {
     const q = new URLSearchParams({ ...roomQuery(k), id });
     if (to) {
       q.set("to", to);
     }
-    const res = await fetch(`/api/room/voice/utterance?${q.toString()}`, {
+    const res = await fetch(`${inTenant("/api/room/voice/utterance")}?${q.toString()}`, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": audio.type || "audio/webm" },
@@ -37,8 +38,8 @@ export const voiceApi = {
   },
   /** Fire and forget: Rubato never sees LiveKit, so this is its only signal of a failed join. */
   joinFailed: (k: RoomKey, reason: JoinFailure) =>
-    request<unknown>("POST", "/api/room/voice/join-failed", { repo: k.repo, number: k.number, branch: k.branch, reason }).catch(() => undefined),
-  speechUrl: (messageId: string) => `/api/room/voice/speech/${encodeURIComponent(messageId)}`,
+    request<unknown>("POST", inTenant("/api/room/voice/join-failed"), { repo: k.repo, number: k.number, branch: k.branch, reason }).catch(() => undefined),
+  speechUrl: (messageId: string) => inTenant(`/api/room/voice/speech/${encodeURIComponent(messageId)}`),
 };
 
 /** The first recording format this browser takes: opus in webm, then ogg, then mp4 (Safari). */

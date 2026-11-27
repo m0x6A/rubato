@@ -1,6 +1,7 @@
 //! Tables `launches` and `cap_hits`. `issues_with_live_cap_hit` reads both.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{CapHit, CapKind, IssueRef, LaunchCommand, LaunchResult, LaunchRole};
@@ -11,13 +12,13 @@ use uuid::Uuid;
 /// `ws` is the workspace the launch was started from (ADR 0047).
 pub async fn store_launch(
     db: &SqlitePool,
-    ws: &str,
+    ws: &WsKey,
     companion_id: Uuid,
     cmd: &LaunchCommand,
 ) -> Result<()> {
     // `role` and `lead_launch_id` as columns too (ADR 0072): the fleet reads them by index.
     sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at, role, lead_launch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(ws).bind(cmd.id.to_string()).bind(companion_id.to_string()).bind(&cmd.user).bind(&cmd.issue.repo).bind(cmd.issue.number as i64).bind(serde_json::to_string(cmd)?).bind(ts(Utc::now()))
+        .bind(ws.ws()).bind(cmd.id.to_string()).bind(companion_id.to_string()).bind(&cmd.user).bind(&cmd.issue.repo).bind(cmd.issue.number as i64).bind(serde_json::to_string(cmd)?).bind(ts(Utc::now()))
         .bind((!cmd.role.is_worker()).then(|| cmd.role.name()))
         .bind(cmd.lead_launch_id.map(|l| l.to_string()))
         .execute(db).await?;
@@ -131,11 +132,11 @@ pub async fn launched_issues(db: &SqlitePool) -> Result<HashSet<IssueRef>> {
 }
 
 /// Issues with a started launch from workspace `ws` (ADR 0045: launched there, so it belongs).
-pub async fn launched_issues_in(db: &SqlitePool, ws: &str) -> Result<HashSet<IssueRef>> {
+pub async fn launched_issues_in(db: &SqlitePool, ws: &WsKey) -> Result<HashSet<IssueRef>> {
     let rows = sqlx::query(
         "SELECT repo, number FROM launches WHERE workspace_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
     )
-    .bind(ws)
+    .bind(ws.ws())
     .fetch_all(db)
     .await?;
     Ok(rows
@@ -151,11 +152,11 @@ pub async fn launch_count(db: &SqlitePool, issue: &IssueRef) -> Result<u32> {
 
 /// The map version each started launch of this workspace carried, compared with that
 /// workspace's map only (`MapVersionMismatch`).
-pub async fn launch_map_versions(db: &SqlitePool, ws: &str) -> Result<Vec<(IssueRef, String)>> {
+pub async fn launch_map_versions(db: &SqlitePool, ws: &WsKey) -> Result<Vec<(IssueRef, String)>> {
     let rows = sqlx::query(
         "SELECT repo, number, command FROM launches WHERE workspace_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
     )
-    .bind(ws)
+    .bind(ws.ws())
     .fetch_all(db)
     .await?;
     Ok(rows
@@ -313,7 +314,7 @@ pub async fn workers_of(db: &SqlitePool, lead: Uuid) -> Result<Vec<FleetLaunch>>
 pub async fn launches_of(
     db: &SqlitePool,
     user: &str,
-    ws: &str,
+    ws: &WsKey,
     since: DateTime<Utc>,
     limit: u32,
 ) -> Result<Vec<FleetLaunch>> {
@@ -321,7 +322,7 @@ pub async fn launches_of(
         "SELECT {ROW_COLUMNS} FROM launches WHERE user = ? AND workspace_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?"
     ))
     .bind(user)
-    .bind(ws)
+    .bind(ws.ws())
     .bind(ts(since))
     .bind(i64::from(limit))
     .fetch_all(db)

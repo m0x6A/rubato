@@ -68,7 +68,7 @@ async fn harness() -> H {
     let text = include_str!("../../../../docs/design/rubato-map.yml");
     let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -195,7 +195,9 @@ async fn mirror(h: &H, text: &str) {
 async fn approve_as(h: &H, user: &str, text: &str) -> rubato_protocol::DraftApproveResponse {
     approve_draft(
         State(h.app.clone()),
-        Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+        Ws(crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        )),
         CurrentUser(user.into()),
         Json(DraftApproveRequest {
             repo: "m0x6A/rubato".into(),
@@ -217,7 +219,7 @@ async fn chat(h: &H, text: &str) -> Uuid {
     session_messages::send(
         State(h.app.clone()),
         CurrentUser(OWNER.into()),
-        Path(h.launch),
+        Path(h.launch.into()),
         Json(SessionMessageRequest { text: text.into() }),
     )
     .await
@@ -316,7 +318,7 @@ async fn plan_approved_waits_for_a_companion_that_can_type_it_and_for_a_live_ses
     let queued = session_messages::list(
         State(h.app.clone()),
         CurrentUser(OWNER.into()),
-        Path(h.launch),
+        Path(h.launch.into()),
     )
     .await
     .unwrap()
@@ -746,7 +748,7 @@ async fn messages_of(h: &H, launch: Uuid) -> Vec<rubato_protocol::SessionMessage
     session_messages::list(
         State(h.app.clone()),
         CurrentUser(OWNER.into()),
-        Path(launch),
+        Path(launch.into()),
     )
     .await
     .unwrap()

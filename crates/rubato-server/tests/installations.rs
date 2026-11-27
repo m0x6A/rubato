@@ -120,7 +120,7 @@ async fn two() -> Two {
 impl Two {
     async fn pin(&self, repo: &str, number: i64) {
         sqlx::query(
-            "INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', ?, ?, 'node', 'rubato-server', 'm0x6A', ?)",
+            "INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'default', ?, ?, 'node', 'rubato-server', 'm0x6A', ?)",
         )
         .bind(repo)
         .bind(number)

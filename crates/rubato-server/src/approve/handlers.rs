@@ -69,7 +69,7 @@ pub async fn approve(
             json!({ "cutover": cutover }),
         ));
     }
-    let Some(map) = app.map_of(ws.as_str()).await else {
+    let Some(map) = app.map_of(ws.key()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     let issue = req.issue.clone();
@@ -203,7 +203,7 @@ pub(super) async fn fits_another(
 ) -> anyhow::Result<bool> {
     let (entries, _) = app.workspace_entries();
     for w in entries.iter().filter(|w| w.id != here) {
-        let Some(m) = app.map_of(&w.id).await else {
+        let Some(m) = app.map_of(&w.key()).await else {
             continue;
         };
         let holds = m
@@ -211,11 +211,11 @@ pub(super) async fn fits_another(
             .repos_named()
             .iter()
             .any(|r| r.eq_ignore_ascii_case(&issue.repo))
-            || crate::pins::list(&app.db, &w.id)
+            || crate::pins::list(&app.db, &w.key())
                 .await?
                 .iter()
                 .any(|p| &p.issue == issue)
-            || crate::launch::launched_issues_in(&app.db, &w.id)
+            || crate::launch::launched_issues_in(&app.db, &w.key())
                 .await?
                 .contains(issue);
         if holds && plan_fit(plan, parse_error, &m.map).is_some_and(|f| f.fits) {

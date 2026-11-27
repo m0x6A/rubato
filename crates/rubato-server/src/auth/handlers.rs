@@ -2,7 +2,6 @@
 
 use super::current_user::{COOKIE, cookie_value};
 use super::store;
-use super::team::{self, reason};
 use crate::kernel::state::App;
 use axum::Json;
 use axum::extract::{Query, State};
@@ -164,49 +163,24 @@ pub async fn callback(
         }
         Err(e) => return login_failed_here(e),
     }
-    // As a GitHub App: the person is on the team when their account can access the
-    // installation the server acts as (ADR 0022). A failed lookup is a fault of ours or of
-    // GitHub, not "no access", and answers differently.
-    let mut team_checked_at = None;
-    if let Some(app_cfg) = &app.config.github_app {
-        let answer = http
-            .get(format!(
-                "{}/user/installations?per_page=100",
-                app.config.github_api()
-            ))
-            .bearer_auth(token.access_token().secret())
-            .header(header::USER_AGENT, "rubato-server")
-            .header(header::ACCEPT, "application/vnd.github+json")
-            .send()
-            .await
-            .and_then(|r| r.error_for_status());
-        let answer: serde_json::Value = match answer {
-            Ok(r) => match r
-                .text()
-                .await
-                .map_err(|e| e.to_string())
-                .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
-            {
-                Ok(v) => v,
-                Err(e) => return installation_lookup_failed(&app, &user.login, &e),
-            },
-            Err(e) => return installation_lookup_failed(&app, &user.login, &e.to_string()),
-        };
-        if !team::member_of(&answer, app_cfg.installation_id) {
-            tracing::warn!(
-                login = %user.login,
-                installation_id = app_cfg.installation_id,
-                "login refused: no access to the installation"
-            );
-            app.reject(routes::CALLBACK, reason::NOT_ON_TEAM, &user.login);
-            return (
-                StatusCode::FORBIDDEN,
-                "Your GitHub account has no access to the repositories this Rubato is installed on.",
-            )
-                .into_response();
-        }
-        team_checked_at = Some(Utc::now());
+    // ADR 0088, superseding ADR 0022's gate: a session is made only for an operator or for a
+    // person invited to at least one tenant. The invite alone is the gate; GitHub is not asked
+    // what the account can access. Refused before anything of this login is kept.
+    let invited = match app.admission().tenants_of(&app, user.id).await {
+        Ok(tenants) => !tenants.is_empty(),
+        Err(e) => return login_failed_here(e),
+    };
+    if !invited && !app.config.is_operator(Some(user.id)) {
+        tracing::warn!(login = %user.login, github_id = user.id, "login refused: not invited to any tenant");
+        app.reject(
+            routes::CALLBACK,
+            rubato_protocol::tenant::reason::NOT_INVITED,
+            &user.login,
+        );
+        return (StatusCode::FORBIDDEN, NOT_INVITED).into_response();
     }
+    // Kept on the session for the seed's "who was here lately" (design §8); no gate reads it.
+    let team_checked_at = Some(Utc::now());
     if let Err(e) = store::upsert_user(
         &app.db,
         &user.login,
@@ -255,6 +229,10 @@ pub async fn callback(
     res
 }
 
+/// What the browser sees when nobody has invited the account (ADR 0088).
+pub const NOT_INVITED: &str =
+    "You have not been invited to a tenant on this Rubato. Ask one of its admins for an invite.";
+
 /// What the browser sees when GitHub did not complete the login (design 193 D8). The upstream
 /// text is logged, never echoed.
 pub const LOGIN_FAILED_UPSTREAM: &str = "GitHub did not complete the login. Try again.";
@@ -273,17 +251,6 @@ fn login_failed_upstream(app: &App, step: &'static str, error: &str) -> Response
 
 fn login_failed_here(e: impl std::fmt::Display) -> Response {
     (crate::kernel::http::internal("auth", e), LOGIN_FAILED_HERE).into_response()
-}
-
-/// The membership lookup itself failed: 502 with its own reason, never "no access".
-fn installation_lookup_failed(app: &App, login: &str, error: &str) -> Response {
-    tracing::error!(login, error, "installation lookup failed at login");
-    app.reject(routes::CALLBACK, reason::INSTALLATION_LOOKUP_FAILED, login);
-    (
-        StatusCode::BAD_GATEWAY,
-        "Could not check your access with GitHub. Try again; if it persists, the GitHub App settings need a look.",
-    )
-        .into_response()
 }
 
 pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
@@ -326,6 +293,24 @@ pub async fn me(State(app): State<App>, super::CurrentUser(login): super::Curren
             }),
         None => Vec::new(),
     };
+    // Local development (`RUBATO_DEV_USER`, loopback only): every dev login is an operator and
+    // an admin of tenant `default`, as `tenants::scope_for` grants it (design §12).
+    let dev = app.config.dev_user.is_some();
+    let mut tenants = tenants;
+    if dev
+        && !tenants
+            .iter()
+            .any(|t| t.id == crate::kernel::tenancy::DEFAULT_TENANT)
+    {
+        tenants.insert(
+            0,
+            rubato_protocol::TenantInfo {
+                id: crate::kernel::tenancy::DEFAULT_TENANT.to_owned(),
+                name: "Default".to_owned(),
+                role: rubato_protocol::Role::Admin,
+            },
+        );
+    }
     Json(Me {
         login,
         avatar_url: None,
@@ -333,6 +318,6 @@ pub async fn me(State(app): State<App>, super::CurrentUser(login): super::Curren
         cannot_act_reason: can.err().map(str::to_owned),
         voice: app.config.voice_availability(),
         tenants,
-        operator: app.config.is_operator(github_id),
+        operator: dev || app.config.is_operator(github_id),
     })
 }

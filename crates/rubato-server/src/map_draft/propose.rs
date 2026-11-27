@@ -11,6 +11,7 @@ use super::yaml;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
@@ -53,7 +54,7 @@ pub(super) fn log_state(from: &str, to: &str, row: &ProposalRow, pr: Option<u64>
     );
 }
 
-async fn loaded(app: &App, ws: &str) -> Result<std::sync::Arc<LoadedMap>, Refusal> {
+async fn loaded(app: &App, ws: &WsKey) -> Result<std::sync::Arc<LoadedMap>, Refusal> {
     app.map_of(ws)
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))
@@ -146,20 +147,20 @@ pub async fn propose(
     ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<ProposeResponse>, Refusal> {
-    let map = loaded(&app, ws.as_str()).await?;
+    let map = loaded(&app, ws.key()).await?;
     // The workspace's own map repo: a draft is proposed where its map lives (ADR 0047).
-    let entries = app.workspace_entries().0;
-    let Some(cfg) = entries.iter().find(|w| w.id == ws.as_str()) else {
+    let Some(cfg) = app.workspace(ws.key()) else {
         return Err((
             axum::http::StatusCode::NOT_FOUND,
             "unknown workspace".into(),
         ));
     };
+    let cfg = &cfg;
     let refuse = |why: &'static str, text: String| -> Refusal {
         app.reject(routes::DRAFT_PROPOSE, why, &user);
         (StatusCode::CONFLICT, text)
     };
-    let existing = store::proposal(&app.db, ws.as_str()).await.map_err(fault)?;
+    let existing = store::proposal(&app.db, ws.key()).await.map_err(fault)?;
     match existing.as_ref().map(|p| p.state) {
         // Asked twice: the answer is the proposal there is.
         Some(ProposalState::Proposed) => {
@@ -197,7 +198,7 @@ pub async fn propose(
             "The map is read from a local file, so there is no repository to propose to. Copy YAML gives the full proposed file.".into(),
         ));
     }
-    let (ops, preview) = store::ops(&app.db, ws.as_str(), &map.map)
+    let (ops, preview) = store::ops(&app.db, ws.key(), &map.map)
         .await
         .map_err(fault)?;
     if ops.is_empty() {
@@ -310,11 +311,11 @@ pub async fn propose(
             let branch = if ws.as_str() == rubato_protocol::DEFAULT_WORKSPACE {
                 format!("map/draft-{stamp}")
             } else {
-                format!("map/draft-{}-{stamp}", ws.as_str())
+                format!("map/draft-{}-{stamp}", ws.key())
             };
             match store::start_proposal(
                 &app.db,
-                ws.as_str(),
+                ws.key(),
                 &branch,
                 &head,
                 &hash(&map.yaml),
@@ -333,7 +334,7 @@ pub async fn propose(
             }
         }
     };
-    app.notify_ws("draft", ws.as_str());
+    app.notify_ws("draft", ws.key());
     let fail = |step: &'static str, e: anyhow::Error| {
         step_failed(
             &app,
@@ -407,7 +408,7 @@ pub async fn propose(
     };
     store::set_state(
         &app.db,
-        ws.as_str(),
+        ws.key(),
         ProposalState::Proposed,
         Utc::now(),
         Some((pr.0, &pr.1)),
@@ -416,9 +417,9 @@ pub async fn propose(
     .map_err(fault)?;
     log_state("opening", "proposed", &row, Some(pr.0));
     count(&app, "opened");
-    app.notify_ws("draft", ws.as_str());
+    app.notify_ws("draft", ws.key());
     // `ok_or_else`: building the error logs it, so it must only be built when it is one.
-    let proposal = store::proposal(&app.db, ws.as_str())
+    let proposal = store::proposal(&app.db, ws.key())
         .await
         .map_err(fault)?
         .ok_or_else(|| {
@@ -440,14 +441,14 @@ pub async fn withdraw(
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
     // The workspace's own map repo: a draft is proposed where its map lives (ADR 0047).
-    let entries = app.workspace_entries().0;
-    let Some(cfg) = entries.iter().find(|w| w.id == ws.as_str()) else {
+    let Some(cfg) = app.workspace(ws.key()) else {
         return Err((
             axum::http::StatusCode::NOT_FOUND,
             "unknown workspace".into(),
         ));
     };
-    let Some(row) = store::proposal(&app.db, ws.as_str()).await.map_err(fault)? else {
+    let cfg = &cfg;
+    let Some(row) = store::proposal(&app.db, ws.key()).await.map_err(fault)? else {
         app.reject(routes::DRAFT_WITHDRAW, reason::NO_PROPOSAL, &user);
         return Err((
             StatusCode::CONFLICT,
@@ -506,13 +507,13 @@ pub async fn withdraw(
     {
         tracing::warn!(branch = %row.branch, error = %format!("{e:#}"), "the proposal's branch was not deleted");
     }
-    store::drop_proposal(&app.db, ws.as_str())
+    store::drop_proposal(&app.db, ws.key())
         .await
         .map_err(fault)?;
     log_state(state_name(row.state), "drafting", &row, open);
     tracing::info!(rubato.user = %user, branch = %row.branch, "map proposal withdrawn");
     count(&app, "withdrawn");
-    app.notify_ws("draft", ws.as_str());
+    app.notify_ws("draft", ws.key());
     Ok(StatusCode::OK)
 }
 
@@ -530,8 +531,8 @@ pub async fn proposed_yaml(
     _user: CurrentUser,
     Query(q): Query<YamlQuery>,
 ) -> Result<Response, Refusal> {
-    let map = loaded(&app, ws.as_str()).await?;
-    let (_, preview) = store::ops(&app.db, ws.as_str(), &map.map)
+    let map = loaded(&app, ws.key()).await?;
+    let (_, preview) = store::ops(&app.db, ws.key(), &map.map)
         .await
         .map_err(fault)?;
     let text = yaml::render(if q.base { &map.map } else { &preview }).map_err(fault)?;
@@ -610,7 +611,7 @@ mod tests {
         Arc::get_mut(&mut app).unwrap().metrics = metrics;
         let map: SystemMap = serde_yaml_ng::from_str(MAP).unwrap();
         app.set_map(
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             LoadedMap {
                 map: map.clone(),
                 version: "head1".into(),
@@ -635,7 +636,7 @@ mod tests {
         };
         store::append(
             &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             &map,
             &op,
             "alice",
@@ -663,7 +664,9 @@ mod tests {
         let (events, _guard) = capture::start();
         let ok = propose(
             State(app.clone()),
-            crate::kernel::http::Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+            crate::kernel::http::Ws(crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            )),
             CurrentUser("m0x6A".into()),
         )
         .await;
@@ -712,7 +715,9 @@ mod tests {
         let (events, _guard) = capture::start();
         let (status, text) = propose(
             State(app.clone()),
-            crate::kernel::http::Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+            crate::kernel::http::Ws(crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            )),
             CurrentUser("m0x6A".into()),
         )
         .await
@@ -740,6 +745,7 @@ mod tests {
     async fn a_failed_step_logs_its_workspaces_map_repo() {
         let (app, _github, _reader, _tmp) = drafted().await;
         let shop = crate::kernel::workspaces::WorkspaceEntry {
+            tenant: crate::kernel::tenancy::TenantId::default_tenant(),
             id: "shop".into(),
             name: None,
             map_repo: "acme/shop-map".into(),

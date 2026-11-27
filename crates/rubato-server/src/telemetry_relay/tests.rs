@@ -140,6 +140,11 @@ fn route_templates_are_words_and_placeholders_only() {
         "/api/w/{ws}/pins",
         "/api/pulls/{owner}/{repo}/{number}",
         "/api/launches/{id}/messages",
+        // ADR 0089: the tenant forms, as the web templates them.
+        "/api/t/{tenant}/w/{ws}/pins",
+        "/api/t/{tenant}/queue",
+        "/api/t/{tenant}/w/{ws}/pulls/{owner}/{repo}/{number}",
+        "/api/t/{tenant}/w/{ws}/map/draft/ops/{id}",
     ] {
         assert!(is_route(ok), "{ok}");
     }

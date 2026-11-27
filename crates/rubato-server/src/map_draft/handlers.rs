@@ -4,6 +4,7 @@ use super::store::{self, Appended, Changed};
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use crate::pins;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -31,7 +32,7 @@ pub(super) type Refusal = (StatusCode, String);
 pub(super) const FROZEN: &str =
     "The draft is being proposed and takes no changes. Withdraw the proposal to edit it again.";
 
-pub(super) async fn loaded_map(app: &App, ws: &str) -> Result<Arc<LoadedMap>, Refusal> {
+pub(super) async fn loaded_map(app: &App, ws: &WsKey) -> Result<Arc<LoadedMap>, Refusal> {
     app.map_of(ws)
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))
@@ -47,7 +48,7 @@ pub async fn add_op(
     CurrentUser(user): CurrentUser,
     Json(req): Json<DraftOpRequest>,
 ) -> Result<StatusCode, Refusal> {
-    let map = loaded_map(&app, ws.as_str()).await?;
+    let map = loaded_map(&app, ws.key()).await?;
     // Removing what issues are pinned to would leave those pins pointing at nothing.
     let removed = match &req.op {
         MapOp::RemoveNode { id } => Some(MapRef::node(id.clone())),
@@ -55,7 +56,7 @@ pub async fn add_op(
         _ => None,
     };
     if let Some(target) = removed {
-        let pinned: Vec<String> = pins::list(&app.db, ws.as_str())
+        let pinned: Vec<String> = pins::list(&app.db, ws.key())
             .await
             .map_err(fault)?
             .into_iter()
@@ -76,7 +77,7 @@ pub async fn add_op(
     }
     let outcome = store::append(
         &app.db,
-        ws.as_str(),
+        ws.key(),
         &map.map,
         &req,
         &user,
@@ -91,7 +92,7 @@ pub async fn add_op(
     };
     match outcome {
         Appended::Yes(_) => {
-            app.notify_ws("draft", ws.as_str());
+            app.notify_ws("draft", ws.key());
             Ok(StatusCode::CREATED)
         }
         Appended::Duplicate => Ok(StatusCode::CREATED),
@@ -126,12 +127,12 @@ pub async fn remove_op(
     CurrentUser(user): CurrentUser,
     Path(SeqParam { seq }): Path<SeqParam>,
 ) -> Result<StatusCode, Refusal> {
-    match store::remove_op(&app.db, ws.as_str(), seq)
+    match store::remove_op(&app.db, ws.key(), seq)
         .await
         .map_err(fault)?
     {
         Changed::Yes(_) => {
-            app.notify_ws("draft", ws.as_str());
+            app.notify_ws("draft", ws.key());
             Ok(StatusCode::NO_CONTENT)
         }
         Changed::Nothing => Err((
@@ -150,14 +151,14 @@ pub async fn discard(
     ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
-    match store::discard(&app.db, ws.as_str(), Utc::now())
+    match store::discard(&app.db, ws.key(), Utc::now())
         .await
         .map_err(fault)?
     {
         Changed::Yes(n) => {
             // It empties the draft for the whole team, so it is said with who did it.
             tracing::info!(rubato.user = %user, operations = n, "map draft discarded");
-            app.notify_ws("draft", ws.as_str());
+            app.notify_ws("draft", ws.key());
             Ok(StatusCode::OK)
         }
         Changed::Nothing => Ok(StatusCode::OK),
@@ -173,10 +174,10 @@ pub async fn restore(
     ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Refusal> {
-    match store::restore(&app.db, ws.as_str()).await.map_err(fault)? {
+    match store::restore(&app.db, ws.key()).await.map_err(fault)? {
         Changed::Yes(n) => {
             tracing::info!(rubato.user = %user, operations = n, "map draft restored");
-            app.notify_ws("draft", ws.as_str());
+            app.notify_ws("draft", ws.key());
             Ok(StatusCode::OK)
         }
         Changed::Nothing | Changed::Frozen => {

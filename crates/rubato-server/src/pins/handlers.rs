@@ -21,7 +21,7 @@ pub async fn add_pin(
     Json(req): Json<PinRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let map = app
-        .map_of(ws.as_str())
+        .map_of(ws.key())
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     // The repo first: an issue of a repo no map names would be read with the App's token and
@@ -34,7 +34,7 @@ pub async fn add_pin(
     }
     store::add_pin(
         &app.db,
-        ws.as_str(),
+        ws.key(),
         &IssuePin {
             issue: req.issue,
             target: req.target,
@@ -54,7 +54,7 @@ pub async fn remove_pin(
     _user: CurrentUser,
     Json(req): Json<PinRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    let removed = store::remove_pin(&app.db, ws.as_str(), &req.issue, &req.target)
+    let removed = store::remove_pin(&app.db, ws.key(), &req.issue, &req.target)
         .await
         .map_err(|e| internal(SLICE, e))?;
     app.notify("pin");

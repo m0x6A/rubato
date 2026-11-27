@@ -117,7 +117,7 @@ async fn send(h: &H, user: &str, text: &str) -> Result<Uuid, (StatusCode, String
     handlers::send(
         State(h.app.clone()),
         CurrentUser(user.into()),
-        Path(h.launch),
+        Path(h.launch.into()),
         Json(SessionMessageRequest { text: text.into() }),
     )
     .await
@@ -352,7 +352,7 @@ async fn only_the_owner_sends_and_the_text_must_fit() {
     let other = handlers::send(
         State(h.app.clone()),
         CurrentUser(OWNER.into()),
-        Path(Uuid::new_v4()),
+        Path(Uuid::new_v4().into()),
         Json(SessionMessageRequest { text: "hi".into() }),
     )
     .await
@@ -369,7 +369,7 @@ async fn only_the_owner_sends_and_the_text_must_fit() {
     let Json(list) = handlers::list(
         State(h.app.clone()),
         CurrentUser("alice".into()),
-        Path(h.launch),
+        Path(h.launch.into()),
     )
     .await
     .unwrap();
@@ -440,7 +440,7 @@ async fn stop_as(h: &H, user: &str) -> Result<Uuid, (StatusCode, String)> {
     handlers::stop(
         State(h.app.clone()),
         CurrentUser(user.into()),
-        Path(h.launch),
+        Path(h.launch.into()),
     )
     .await
     .map(|Json(v)| v.id)

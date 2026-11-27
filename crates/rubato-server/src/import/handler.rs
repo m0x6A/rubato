@@ -70,7 +70,7 @@ pub async fn import(
             json!({}),
         ));
     }
-    let Some(map) = app.map_of(ws.as_str()).await else {
+    let Some(map) = app.map_of(ws.key()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     if plan_drafts::latest_drafts(&app)
@@ -191,7 +191,7 @@ pub async fn import(
     };
     let launched = launch::start(
         &app,
-        ws.as_str(),
+        ws.key(),
         &login,
         LaunchRequest {
             issue: issue.clone(),

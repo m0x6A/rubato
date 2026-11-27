@@ -247,10 +247,22 @@ pub async fn call_in(
     ))
 }
 
+/// The `{request_id}` of the answer route. Named, because the path also carries `{tenant}`.
+#[derive(serde::Deserialize)]
+pub struct RequestParam {
+    request_id: Uuid,
+}
+
+impl From<Uuid> for RequestParam {
+    fn from(request_id: Uuid) -> Self {
+        Self { request_id }
+    }
+}
+
 pub async fn answer(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
-    Path(request_id): Path<Uuid>,
+    Path(RequestParam { request_id }): Path<RequestParam>,
     Json(body): Json<RequestAnswerBody>,
 ) -> Result<Json<RoomRequest>, Refused> {
     let route = routes::ROOM_REQUEST;

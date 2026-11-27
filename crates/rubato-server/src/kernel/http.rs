@@ -2,42 +2,53 @@
 //! And the workspace a map-scoped request is for (ADR 0049): `Ws`, checked once per request.
 
 use crate::kernel::state::App;
+use crate::kernel::tenancy::{TenantScope, WsKey, unknown_tenant};
 use axum::extract::{FromRequestParts, RawPathParams, Request, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use rubato_protocol::DEFAULT_WORKSPACE;
 
-/// The workspace a map-scoped request is for: the `{ws}` of `/api/w/{ws}/…`, else `default`.
-/// Only a configured id gets here; `check_workspace` answers 404 for any other.
+/// The workspace a map-scoped request is for: the `{ws}` of `/api/t/{tenant}/w/{ws}/…` in the
+/// tenant the person acts in (ADR 0089). Only a workspace that tenant holds gets here;
+/// `check_workspace` answers 404 for any other.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ws(pub String);
+pub struct Ws(pub WsKey);
 
 impl Ws {
+    /// The workspace's id inside its tenant.
     pub fn as_str(&self) -> &str {
+        self.0.ws()
+    }
+
+    pub fn key(&self) -> &WsKey {
         &self.0
     }
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Ws {
-    type Rejection = std::convert::Infallible;
+    type Rejection = Response;
 
+    /// What `check_workspace` put on the request. A route mounted without that layer has none
+    /// and answers 404: never a default workspace.
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        Ok(parts
-            .extensions
-            .get::<Ws>()
-            .cloned()
-            .unwrap_or_else(|| Ws(DEFAULT_WORKSPACE.to_string())))
+        parts.extensions.get::<Ws>().cloned().ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                UNKNOWN_WORKSPACE,
+            )
+                .into_response()
+        })
     }
 }
 
 /// The body of the 404 answer for a workspace this server does not hold.
 pub const UNKNOWN_WORKSPACE: &str = r#"{"reason":"unknown_workspace"}"#;
 
-/// Layer on every `/api/w/{ws}/…` route: a configured `{ws}` becomes the request's `Ws`; any
-/// other is 404 `unknown_workspace`, counted on `rubato.web.rejected`. Never a fallback to
-/// `default`: a write must land where it was meant or nowhere.
+/// Layer on every `/api/t/{tenant}/w/{ws}/…` route, inside `tenants::check_tenant`: a `{ws}` the
+/// tenant holds becomes the request's `Ws`; any other is 404 `unknown_workspace`, counted on
+/// `rubato.web.rejected`. Never a fallback: a write must land where it was meant or nowhere.
 pub async fn check_workspace(
     State(app): State<App>,
     params: RawPathParams,
@@ -49,8 +60,11 @@ pub async fn check_workspace(
         .find(|(k, _)| *k == "ws")
         .map(|(_, v)| v.to_string())
         .unwrap_or_default();
-    let (entries, _) = app.workspace_entries();
-    if !entries.iter().any(|w| w.id == ws) {
+    let Some(scope) = req.extensions().get::<TenantScope>().cloned() else {
+        return unknown_tenant();
+    };
+    let key = scope.ws(ws);
+    if !app.holds_workspace(&key) {
         // The route template, not the path: the id in the URL is not a label.
         let route = req
             .extensions()
@@ -66,8 +80,8 @@ pub async fn check_workspace(
         )
             .into_response();
     }
-    tracing::Span::current().record(rubato_protocol::otel::attr::WORKSPACE, ws.as_str());
-    req.extensions_mut().insert(Ws(ws));
+    tracing::Span::current().record(rubato_protocol::otel::attr::WORKSPACE, key.ws());
+    req.extensions_mut().insert(Ws(key));
     next.run(req).await
 }
 
@@ -260,6 +274,7 @@ pub fn request_span<B>(app: &App, req: &axum::http::Request<B>) -> tracing::Span
         http.route = %route,
         http.response.status_code = tracing::field::Empty,
         otel.status_code = tracing::field::Empty,
+        rubato.tenant = tracing::field::Empty,
     );
     let remote = SpanContext::new(
         TraceId::from(tp.trace_id),

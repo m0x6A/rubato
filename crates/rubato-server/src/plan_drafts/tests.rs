@@ -145,10 +145,14 @@ async fn everyone_reads_a_draft_and_its_revisions() {
     intake::on_draft(&app, &bundle(&plan_text("one"), "d\n"), "m0x6A").await;
     intake::on_draft(&app, &bundle(&plan_text("two"), "d\n"), "m0x6A").await;
     let id = latest_drafts(&app).await.unwrap()[0].summary.draft_id;
-    let view = handlers::draft(State(app.clone()), CurrentUser("alice".into()), Path(id))
-        .await
-        .unwrap()
-        .0;
+    let view = handlers::draft(
+        State(app.clone()),
+        CurrentUser("alice".into()),
+        Path(id.into()),
+    )
+    .await
+    .unwrap()
+    .0;
     assert_eq!(
         view.revisions.iter().map(|r| r.rev).collect::<Vec<_>>(),
         [1, 2]
@@ -156,7 +160,7 @@ async fn everyone_reads_a_draft_and_its_revisions() {
     let r1 = handlers::revision(
         State(app.clone()),
         CurrentUser("alice".into()),
-        Path((id, 1)),
+        Path((id, 1).into()),
     )
     .await
     .unwrap()
@@ -165,14 +169,14 @@ async fn everyone_reads_a_draft_and_its_revisions() {
     let missing = handlers::revision(
         State(app.clone()),
         CurrentUser("alice".into()),
-        Path((id, 9)),
+        Path((id, 9).into()),
     )
     .await;
     assert_eq!(missing.err().map(|e| e.0), Some(StatusCode::NOT_FOUND));
     let unknown = handlers::draft(
         State(app.clone()),
         CurrentUser("alice".into()),
-        Path(Uuid::new_v4()),
+        Path(Uuid::new_v4().into()),
     )
     .await;
     assert_eq!(unknown.err().map(|e| e.0), Some(StatusCode::NOT_FOUND));

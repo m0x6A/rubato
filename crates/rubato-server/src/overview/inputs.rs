@@ -2,6 +2,7 @@
 
 use super::build::{OtherWorkspace, OverviewInputs, WorkspaceInputs};
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::{TenantId, WsKey};
 use crate::{
     approve, companion_link, github_poll, launch, layout, pins, plan_drafts, plans, queue,
     spend_history, traffic,
@@ -13,34 +14,43 @@ use std::sync::Arc;
 
 /// Every loaded map by workspace id, read under one guard: pointer copies, not map copies
 /// (#171). What one request or one tick reads from, so its workspaces agree with each other.
-pub struct Maps(BTreeMap<String, Arc<LoadedMap>>);
+pub struct Maps(BTreeMap<WsKey, Arc<LoadedMap>>);
 
 impl Maps {
     pub async fn read(app: &App) -> Self {
         Self(app.maps.read().await.clone())
     }
 
-    pub fn get(&self, ws: &str) -> Option<&Arc<LoadedMap>> {
+    pub fn get(&self, ws: &WsKey) -> Option<&Arc<LoadedMap>> {
         self.0.get(ws)
     }
 
-    /// Every loaded map by workspace id, in id order.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &Arc<LoadedMap>)> {
-        self.0.iter().map(|(k, v)| (k.as_str(), v))
+    /// Every loaded map by tenant and workspace, in that order.
+    pub fn iter(&self) -> impl Iterator<Item = (&WsKey, &Arc<LoadedMap>)> {
+        self.0.iter()
     }
 
-    /// Each loaded map by its workspace's name, in the order of `all` (config order).
-    pub fn named<'a>(&'a self, all: &'a [WorkspaceInfo]) -> Vec<(&'a str, &'a SystemMap)> {
+    /// Each loaded map of `tenant` by its workspace's name, in the order of `all` (that tenant's
+    /// workspaces, in switcher order).
+    pub fn named<'a>(
+        &'a self,
+        tenant: &TenantId,
+        all: &'a [WorkspaceInfo],
+    ) -> Vec<(&'a str, &'a SystemMap)> {
         all.iter()
-            .filter_map(|w| self.get(&w.id).map(|m| (w.name.as_str(), &m.map)))
+            .filter_map(|w| {
+                self.get(&WsKey::new(tenant.clone(), w.id.clone()))
+                    .map(|m| (w.name.as_str(), &m.map))
+            })
             .collect()
     }
 }
 
-/// `all` is the workspace list and `maps` the loaded maps, each read once by the caller.
+/// `all` is the workspace list of `ws`'s tenant and `maps` the loaded maps, each read once by
+/// the caller.
 pub async fn build_overview_inputs(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     all: &[WorkspaceInfo],
     maps: &Maps,
 ) -> Result<OverviewInputs> {
@@ -77,7 +87,7 @@ pub async fn build_overview_inputs(
 /// The other workspaces, with their maps, pins and launches. Empty with one workspace.
 async fn workspace_inputs(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     all: &[WorkspaceInfo],
     maps: &Maps,
 ) -> Result<WorkspaceInputs> {
@@ -89,18 +99,20 @@ async fn workspace_inputs(
         ..Default::default()
     };
     for w in all {
-        if w.id == ws {
+        if w.id == ws.ws() {
             out.here = Some((w.id.clone(), w.name.clone()));
             continue;
         }
+        // Another workspace of the same tenant: never one of another tenant (design §5.5).
+        let other = WsKey::new(ws.tenant.clone(), w.id.clone());
         out.others.push(OtherWorkspace {
-            map: maps.get(&w.id).cloned(),
-            pinned: pins::list(&app.db, &w.id)
+            map: maps.get(&other).cloned(),
+            pinned: pins::list(&app.db, &other)
                 .await?
                 .into_iter()
                 .map(|p| p.issue)
                 .collect(),
-            launched: launch::launched_issues_in(&app.db, &w.id).await?,
+            launched: launch::launched_issues_in(&app.db, &other).await?,
             id: w.id.clone(),
             name: w.name.clone(),
         });

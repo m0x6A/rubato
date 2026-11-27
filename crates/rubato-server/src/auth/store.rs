@@ -90,23 +90,18 @@ pub async fn has_fresh_team_record(
 pub struct WebSession {
     pub login: String,
     pub created_at: DateTime<Utc>,
-    /// When the login was seen on the team; None when the server is not an App (ADR 0022).
-    pub team_checked_at: Option<DateTime<Utc>>,
 }
 
 /// A session's login, when it was created, and its team record.
 pub async fn web_session(db: &SqlitePool, id: &str) -> Result<Option<WebSession>> {
     Ok(
-        sqlx::query("SELECT login, created_at, team_checked_at FROM web_sessions WHERE id = ?")
+        sqlx::query("SELECT login, created_at FROM web_sessions WHERE id = ?")
             .bind(id)
             .fetch_optional(db)
             .await?
             .map(|r| WebSession {
                 login: r.get::<String, _>("login"),
                 created_at: parse_ts(&r.get::<String, _>("created_at")),
-                team_checked_at: r
-                    .get::<Option<String>, _>("team_checked_at")
-                    .map(|t| parse_ts(&t)),
             }),
     )
 }

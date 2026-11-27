@@ -22,7 +22,7 @@ async fn serve() -> (String, App, tempfile::TempDir) {
     let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
     let map: SystemMap = serde_yaml_ng::from_str(MAP).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -38,6 +38,9 @@ async fn serve() -> (String, App, tempfile::TempDir) {
             &format!("{}/{{id}}", routes::TRAFFIC_DISMISSALS),
             delete(super::undismiss),
         )
+        .layer(axum::middleware::from_fn(
+            crate::kernel::tenancy::test_scope,
+        ))
         .with_state(app.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -82,14 +85,27 @@ async fn a_person_dismisses_once_and_undoes() {
     assert_eq!(again.json::<TrafficDismissal>().await.unwrap().id, d.id);
     assert_eq!(changed(&mut rx), 0);
     assert_eq!(
-        dismiss::list(&app.db, "default").await.unwrap(),
+        dismiss::list(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default("default")
+        )
+        .await
+        .unwrap(),
         vec![d.clone()]
     );
 
     let undo = http.delete(format!("{url}/{}", d.id)).send().await.unwrap();
     assert_eq!(undo.status(), 204);
     assert_eq!(changed(&mut rx), 1);
-    assert!(dismiss::list(&app.db, "default").await.unwrap().is_empty());
+    assert!(
+        dismiss::list(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default("default")
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
     let gone = http.delete(format!("{url}/{}", d.id)).send().await.unwrap();
     assert_eq!(gone.status(), 404);
 }
@@ -164,28 +180,57 @@ async fn only_what_the_map_can_name_is_dismissed() {
 async fn a_workspace_sees_only_its_own_and_has_a_limit() {
     let (_base, app, _tmp) = serve().await;
     let now = chrono::Utc::now();
-    let Added::New(d) = dismiss::add(&app.db, "default", &ghost(), "m0x6A", now)
-        .await
-        .unwrap()
-    else {
+    let Added::New(d) = dismiss::add(
+        &app.db,
+        &crate::kernel::tenancy::WsKey::of_default("default"),
+        &ghost(),
+        "m0x6A",
+        now,
+    )
+    .await
+    .unwrap() else {
         panic!("new");
     };
-    assert!(dismiss::list(&app.db, "other").await.unwrap().is_empty());
     assert!(
-        dismiss::remove(&app.db, "other", d.id)
+        dismiss::list(&app.db, &crate::kernel::tenancy::WsKey::of_default("other"))
             .await
             .unwrap()
-            .is_none()
+            .is_empty()
     );
-    assert_eq!(dismiss::list(&app.db, "default").await.unwrap().len(), 1);
+    assert!(
+        dismiss::remove(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default("other"),
+            d.id
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(
+        dismiss::list(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default("default")
+        )
+        .await
+        .unwrap()
+        .len(),
+        1
+    );
     for i in 1..MAX_DISMISSALS {
         let key = DiscrepancyKey::Ghost {
             service: ServiceId::new(Some("n"), &format!("s{i}")),
         };
         assert!(matches!(
-            dismiss::add(&app.db, "default", &key, "m0x6A", now)
-                .await
-                .unwrap(),
+            dismiss::add(
+                &app.db,
+                &crate::kernel::tenancy::WsKey::of_default("default"),
+                &key,
+                "m0x6A",
+                now
+            )
+            .await
+            .unwrap(),
             Added::New(_)
         ));
     }
@@ -193,16 +238,28 @@ async fn a_workspace_sees_only_its_own_and_has_a_limit() {
         seam: "web-server".into(),
     };
     assert!(matches!(
-        dismiss::add(&app.db, "default", &one_more, "m0x6A", now)
-            .await
-            .unwrap(),
+        dismiss::add(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default("default"),
+            &one_more,
+            "m0x6A",
+            now
+        )
+        .await
+        .unwrap(),
         Added::Full
     ));
     // Another workspace has its own room.
     assert!(matches!(
-        dismiss::add(&app.db, "other", &one_more, "m0x6A", now)
-            .await
-            .unwrap(),
+        dismiss::add(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default("other"),
+            &one_more,
+            "m0x6A",
+            now
+        )
+        .await
+        .unwrap(),
         Added::New(_)
     ));
     println!("checked {MAX_DISMISSALS} dismissals against the limit");

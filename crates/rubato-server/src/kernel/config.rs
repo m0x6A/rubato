@@ -835,6 +835,7 @@ impl Config {
         use crate::kernel::workspaces::{Source, WorkspaceEntry};
         if self.workspaces.is_empty() {
             let w = WorkspaceEntry {
+                tenant: crate::kernel::tenancy::TenantId::default_tenant(),
                 id: rubato_protocol::DEFAULT_WORKSPACE.to_string(),
                 name: None,
                 map_repo: self.map_repo.clone(),

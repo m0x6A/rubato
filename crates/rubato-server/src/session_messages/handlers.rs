@@ -30,13 +30,25 @@ pub mod reason {
     pub const CANNOT_STOP: &str = "companion_cannot_stop";
 }
 
+/// The `{launch_id}` of a tenant route. Named, because the path also carries `{tenant}` (ADR 0089).
+#[derive(serde::Deserialize)]
+pub struct LaunchParam {
+    launch_id: Uuid,
+}
+
+impl From<Uuid> for LaunchParam {
+    fn from(launch_id: Uuid) -> Self {
+        Self { launch_id }
+    }
+}
+
 /// `POST /api/launches/{launch_id}/stop` (ADR 0062, plan 122 §D14). Only the owner; never queued
 /// (409 when the companion is not live, so a stop never reaches a later session); pushed at once,
 /// past any message in flight; the companion skips only its idle check.
 pub async fn stop(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
-    Path(launch_id): Path<Uuid>,
+    Path(LaunchParam { launch_id }): Path<LaunchParam>,
 ) -> Result<Json<SessionMessageView>, Refused> {
     match stop_as(&app, &user, launch_id, None).await {
         Ok(v) => Ok(Json(v)),
@@ -139,7 +151,7 @@ fn refuse(app: &App, status: StatusCode, why: &str, user: &str) -> Refused {
 pub async fn list(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
-    Path(launch_id): Path<Uuid>,
+    Path(LaunchParam { launch_id }): Path<LaunchParam>,
 ) -> Result<Json<LaunchMessages>, Refused> {
     let Some(target) = launch::launch_target(&app.db, launch_id)
         .await
@@ -171,7 +183,7 @@ pub async fn list(
 pub async fn send(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
-    Path(launch_id): Path<Uuid>,
+    Path(LaunchParam { launch_id }): Path<LaunchParam>,
     Json(req): Json<SessionMessageRequest>,
 ) -> Result<Json<SessionMessageView>, Refused> {
     let Some(target) = launch::launch_target(&app.db, launch_id)

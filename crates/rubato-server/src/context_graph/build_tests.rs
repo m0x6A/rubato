@@ -56,7 +56,7 @@ fn map_naming(repos: &[&str]) -> SystemMap {
 
 async fn set_map(app: &App, repos: &[&str]) {
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map: map_naming(repos),
             version: "v".into(),
@@ -368,7 +368,9 @@ async fn a_server_whose_map_loads_after_the_first_tick_still_builds_soon() {
         .maps
         .write()
         .await
-        .remove(rubato_protocol::DEFAULT_WORKSPACE)
+        .remove(&crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        ))
         .unwrap();
     let (stop, shutdown) = tokio::sync::watch::channel(false);
     // An interval far longer than the test: only the no-map retry can build in time.
@@ -379,10 +381,10 @@ async fn a_server_whose_map_loads_after_the_first_tick_still_builds_soon() {
         0,
         "no map, nothing to ask for"
     );
-    app.maps
-        .write()
-        .await
-        .insert(rubato_protocol::DEFAULT_WORKSPACE.to_owned(), loaded);
+    app.maps.write().await.insert(
+        crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        loaded,
+    );
     until("the build after the map loaded", || {
         calls(&github, "tarball") == 1
     })

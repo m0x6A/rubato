@@ -107,7 +107,7 @@ async fn harness(cutover: Option<DateTime<Utc>>) -> H {
     let text = include_str!("../../../../docs/design/rubato-map.yml");
     let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -138,7 +138,9 @@ type Pressed = Result<(StatusCode, DraftApproveResponse), (StatusCode, Value)>;
 async fn press_on(h: &H, user: &str, branch: &str, sha: &str, rev: Option<u32>) -> Pressed {
     approve_draft(
         State(h.app.clone()),
-        Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+        Ws(crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        )),
         CurrentUser(user.into()),
         Json(DraftApproveRequest {
             repo: "m0x6A/rubato".into(),
@@ -465,7 +467,9 @@ async fn accept_plan_refuses_after_the_cutover_and_posts_nothing() {
     let accept = |h: &H| {
         approve(
             State(h.app.clone()),
-            Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+            Ws(crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            )),
             CurrentUser("teammate".into()),
             Json(ApproveRequest {
                 issue: IssueRef::new("m0x6A/rubato", 71),

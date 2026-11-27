@@ -4,6 +4,7 @@
 use super::suggest::Placement;
 use crate::kernel::db::{parse_ts, ts};
 use crate::kernel::github::OpenIssues;
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{
@@ -123,7 +124,7 @@ pub async fn issue_meta(db: &SqlitePool, issue: &IssueRef) -> Result<Option<Issu
 /// workspace's map and kept for `ws` (table `issue_suggestions`, ADR 0047).
 pub async fn replace_open_issues(
     db: &SqlitePool,
-    ws: &str,
+    ws: &WsKey,
     repo: &str,
     listing: &OpenIssues,
     placements: &HashMap<u64, Placement>,
@@ -134,11 +135,14 @@ pub async fn replace_open_issues(
         .bind(repo)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM issue_suggestions WHERE workspace_id = ? AND repo = ?")
-        .bind(ws)
-        .bind(repo)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "DELETE FROM issue_suggestions WHERE tenant_id = ? AND workspace_id = ? AND repo = ?",
+    )
+    .bind(ws.tenant.as_str())
+    .bind(ws.ws())
+    .bind(repo)
+    .execute(&mut *tx)
+    .await?;
     for i in &listing.issues {
         let p = placements.get(&i.number);
         let line = p
@@ -152,8 +156,9 @@ pub async fn replace_open_issues(
         sqlx::query("INSERT OR REPLACE INTO open_issues (repo, number, title, url, labels, updated_at, map_line, author, author_association) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(repo).bind(i.number as i64).bind(&i.title).bind(&i.url).bind(serde_json::to_string(&i.labels)?).bind(ts(i.updated_at)).bind(line).bind(&i.author).bind(&i.author_association).execute(&mut *tx).await?;
         if let Some(suggestion) = suggestion {
-            sqlx::query("INSERT OR REPLACE INTO issue_suggestions (workspace_id, repo, number, suggestion) VALUES (?, ?, ?, ?)")
-                .bind(ws).bind(repo).bind(i.number as i64).bind(suggestion).execute(&mut *tx).await?;
+            sqlx::query("INSERT OR REPLACE INTO issue_suggestions (tenant_id, workspace_id, repo, number, suggestion) VALUES (?, ?, ?, ?, ?)")
+                .bind(ws.tenant.as_str())
+        .bind(ws.ws()).bind(repo).bind(i.number as i64).bind(suggestion).execute(&mut *tx).await?;
         }
     }
     sqlx::query("INSERT INTO backlog_repos (repo, listed_at, truncated, error) VALUES (?, ?, ?, NULL) ON CONFLICT(repo) DO UPDATE SET listed_at = excluded.listed_at, truncated = excluded.truncated, error = NULL")
@@ -207,11 +212,12 @@ pub async fn forget_repo(db: &SqlitePool, repo: &str) -> Result<()> {
 }
 
 /// Every listed open issue, with `ws`'s suggestion, and every repo's listing state.
-pub async fn backlog(db: &SqlitePool, ws: &str) -> Result<(Vec<OpenIssue>, Vec<BacklogRepo>)> {
+pub async fn backlog(db: &SqlitePool, ws: &WsKey) -> Result<(Vec<OpenIssue>, Vec<BacklogRepo>)> {
     let issues = sqlx::query(
-        "SELECT o.repo, o.number, o.title, o.url, o.labels, o.updated_at, o.map_line, s.suggestion FROM open_issues o LEFT JOIN issue_suggestions s ON s.workspace_id = ? AND s.repo = o.repo AND s.number = o.number ORDER BY o.repo, o.number",
+        "SELECT o.repo, o.number, o.title, o.url, o.labels, o.updated_at, o.map_line, s.suggestion FROM open_issues o LEFT JOIN issue_suggestions s ON s.tenant_id = ? AND s.workspace_id = ? AND s.repo = o.repo AND s.number = o.number ORDER BY o.repo, o.number",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .fetch_all(db)
     .await?
     .iter()

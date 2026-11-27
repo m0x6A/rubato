@@ -44,15 +44,9 @@ impl FromRequestParts<App> for CurrentUser {
             return Err(StatusCode::UNAUTHORIZED);
         };
         let now = Utc::now();
-        // As a GitHub App, a session counts only with a fresh team record (ADR 0022). This
-        // runs on every route and on the websocket upgrade, so a session from before the
-        // gate, or of someone who lost access, is refused too: 401, and the web logs in again.
-        if app.config.github_app.is_some() && !team::record_is_fresh(session.team_checked_at, now) {
-            app.reject(parts.uri.path(), reason::TEAM_RECORD_STALE, &session.login);
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-        // In every mode a session ends with its cookie, after 30 days (ADR 0064); without the
-        // App this is the only limit on the server.
+        // Who the person is; what they may reach is their memberships, read on every tenant
+        // request (ADR 0088, superseding ADR 0022's team record). A session ends with its cookie,
+        // after 30 days (ADR 0064).
         if !team::session_is_current(session.created_at, now) {
             app.reject(parts.uri.path(), reason::SESSION_EXPIRED, &session.login);
             return Err(StatusCode::UNAUTHORIZED);

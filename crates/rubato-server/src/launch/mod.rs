@@ -7,6 +7,18 @@ mod prompt;
 mod store;
 
 pub use handler::{launch, start};
+
+/// The workspace a launch was started from, in its tenant. Until `launches` carries its tenant
+/// (plan 345, design §13) that is the tenant its repository is live in; `None` when no attached
+/// installation covers the repository any more, and then nothing acts for the launch.
+pub fn ws_key(
+    app: &crate::kernel::state::App,
+    t: &LaunchTarget,
+) -> Option<crate::kernel::tenancy::WsKey> {
+    app.github
+        .tenant_of(&t.issue.repo)
+        .map(|tenant| crate::kernel::tenancy::WsKey::new(tenant, t.workspace.clone()))
+}
 pub use prompt::{PROMPT_TEMPLATE, render_prompt, slugify};
 pub use store::{
     FleetLaunch, LaunchTarget, companion_launched, issues_with_live_cap_hit, launch_map_versions,

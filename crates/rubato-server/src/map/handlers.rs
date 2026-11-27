@@ -4,6 +4,7 @@ use super::load;
 use crate::auth::CurrentUser;
 use crate::kernel::http::Ws;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::{TenantId, TenantScope};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -15,7 +16,7 @@ pub async fn map(
     _user: CurrentUser,
 ) -> Result<Json<MapResponse>, StatusCode> {
     let m = app
-        .map_of(ws.as_str())
+        .map_of(ws.key())
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(Json(MapResponse {
@@ -30,16 +31,12 @@ pub async fn map_reload(
     ws: Ws,
     _user: CurrentUser,
 ) -> Result<Json<MapResponse>, StatusCode> {
-    let (entries, _) = app.workspace_entries();
-    let entry = entries
-        .iter()
-        .find(|w| w.id == ws.as_str())
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let m = load::reload_ws(&app, entry).await.map_err(|e| {
+    let entry = app.workspace(ws.key()).ok_or(StatusCode::NOT_FOUND)?;
+    let m = load::reload_ws(&app, &entry).await.map_err(|e| {
         tracing::error!(slice = "map", rubato.workspace = %ws.as_str(), error = %e, "map reload");
         StatusCode::BAD_GATEWAY
     })?;
-    app.notify_ws("map", ws.as_str());
+    app.notify_ws("map", ws.key());
     Ok(Json(MapResponse {
         map: m.map.clone(),
         version: m.version.clone(),
@@ -47,14 +44,14 @@ pub async fn map_reload(
     }))
 }
 
-/// Every configured workspace in switcher order, named by its entry or else by its map.
-pub async fn list(app: &App) -> Vec<WorkspaceInfo> {
-    let (entries, _) = app.workspace_entries();
+/// One tenant's workspaces in switcher order, each named by its entry or else by its map.
+pub async fn list(app: &App, tenant: &TenantId) -> Vec<WorkspaceInfo> {
+    let entries = app.workspaces_of(tenant);
     // One read guard for every workspace, and only the fields the list shows (#171).
     let maps = app.maps.read().await;
     let mut out = Vec::with_capacity(entries.len());
     for w in entries {
-        let loaded = maps.get(&w.id);
+        let loaded = maps.get(&w.key());
         out.push(WorkspaceInfo {
             name: w
                 .name
@@ -70,6 +67,6 @@ pub async fn list(app: &App) -> Vec<WorkspaceInfo> {
     out
 }
 
-pub async fn workspaces(State(app): State<App>, _user: CurrentUser) -> Json<Vec<WorkspaceInfo>> {
-    Json(list(&app).await)
+pub async fn workspaces(State(app): State<App>, scope: TenantScope) -> Json<Vec<WorkspaceInfo>> {
+    Json(list(&app, scope.tenant()).await)
 }

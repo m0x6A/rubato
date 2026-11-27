@@ -3761,7 +3761,7 @@
       "type": "object",
       "properties": {
         "id": {
-          "description": "`[a-z0-9-]{1,32}`: in URLs (`?w=`, `/api/w/{id}`), rows and the `rubato.workspace` attribute.",
+          "description": "`[a-z0-9-]{1,32}`: in URLs (`?w=`, `/api/t/{tenant}/w/{id}`), rows and the `rubato.workspace` attribute.",
           "type": "string"
         },
         "loaded_at": {

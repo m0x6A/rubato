@@ -19,7 +19,7 @@ import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/a
 import { hasIssueDrag } from "./shared/dnd.ts";
 import { openIssues } from "./shared/finished.ts";
 import { issueKey, relative } from "./shared/format.ts";
-import { concernsUs, setWorkspace } from "./shared/workspace.ts";
+import { concernsUs, learnTenants, setWorkspace } from "./shared/workspace.ts";
 import { liveMap } from "./shared/map.ts";
 import { PANEL_ACTION, type PanelSize, nextPanelSize, readPanelSize, storePanelSize, useSideBySide } from "./shared/panel.ts";
 
@@ -88,17 +88,31 @@ export function App() {
   useEffect(() => {
     // A 401 from any call, or from the probe after the websocket closes, leads here (design S24).
     const offNeedsLogin = onNeedsLogin(() => setNeedsLogin(true));
+    // Who the person is comes first: it says which tenants they are in, and every other call
+    // goes under one of them (ADR 0089).
     authApi
       .me()
       .then((m) => {
         setMe(m);
         resetNeedsLogin();
         setNeedsLogin(false);
+        return learnTenants(m.tenants?.map((t) => t.id));
       })
-      .catch(() => {
-        // A 401 is raised by `request`; any other failure shows through the overview's error.
+      .catch((e: unknown) => {
+        // A 401 is raised by `request`, and the login page follows: there is no tenant to ask
+        // for anything. Any other failure shows through the overview's error.
+        return e instanceof ApiError && e.status === 401 ? null : true;
+      })
+      .then((inATenant) => {
+        if (inATenant === null) {
+          return;
+        }
+        if (inATenant) {
+          void refresh();
+        } else {
+          setError("You are not in a tenant yet. Ask one of its admins for an invite.");
+        }
       });
-    void refresh();
     // A change for another workspace is not ours to refetch for (ADR 0049).
     const unsubscribe = subscribe((ev) => {
       if (concernsUs(ev)) {

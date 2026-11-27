@@ -262,12 +262,24 @@ pub async fn utterance(
     }
 }
 
+/// The `{message_id}` of the speech route. Named, because the path also carries `{tenant}`.
+#[derive(serde::Deserialize)]
+pub struct MessageParam {
+    message_id: Uuid,
+}
+
+impl From<Uuid> for MessageParam {
+    fn from(message_id: Uuid) -> Self {
+        Self { message_id }
+    }
+}
+
 /// `GET /api/room/voice/speech/{message_id}`: the speech of an agent's reply to a spoken turn.
 /// Replies to typed turns, and people's messages, are never sent to the provider.
 pub async fn speech(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
-    Path(message_id): Path<Uuid>,
+    Path(MessageParam { message_id }): Path<MessageParam>,
 ) -> Result<Response, Refused> {
     let route = routes::VOICE_SPEECH;
     voice_on(&app, route, &user)?;

@@ -79,7 +79,7 @@ async fn entries(h: &H) -> Vec<rubato_protocol::SessionLogEntry> {
     handlers::log(
         State(h.app.clone()),
         CurrentUser("alice".into()),
-        Path(h.launch),
+        Path(h.launch.into()),
     )
     .await
     .unwrap()

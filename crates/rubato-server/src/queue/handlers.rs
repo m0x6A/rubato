@@ -267,7 +267,7 @@ mod tests {
         )
         .unwrap();
         app.set_map(
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             crate::kernel::state::LoadedMap {
                 map,
                 version: "v".into(),

@@ -369,7 +369,7 @@ async fn serve() -> (App, tempfile::TempDir) {
 
 async fn load(app: &App, ws: &str) {
     app.set_map(
-        ws,
+        &crate::kernel::tenancy::WsKey::of_default(ws),
         LoadedMap {
             map: the_map(),
             version: "b35788b".into(),
@@ -386,8 +386,8 @@ async fn a_tick_builds_each_workspace_and_the_team_and_writes_them_only_when_the
     load(&app, "default").await;
     load(&app, "shop").await;
     sqlx::query(
-        "INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) \
-         VALUES ('default', 'm0x6A/rubato', 322, 'node', 'rubato-server', 'm0x6A', '2026-11-26T17:00:00Z')",
+        "INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) \
+         VALUES ('default', 'default', 'm0x6A/rubato', 322, 'node', 'rubato-server', 'm0x6A', '2026-11-26T17:00:00Z')",
     )
     .execute(&app.db)
     .await
@@ -443,7 +443,10 @@ async fn a_tick_builds_each_workspace_and_the_team_and_writes_them_only_when_the
     );
 
     // A workspace no longer held: its source goes; the other and the team's stay.
-    app.maps.write().await.remove("shop");
+    app.maps
+        .write()
+        .await
+        .remove(&crate::kernel::tenancy::WsKey::of_default("shop"));
     let fourth = tick(&app).await;
     assert_eq!(fourth.removed, std::slice::from_ref(&keys[1]));
     assert!(store.source(&keys[0]).await.unwrap().is_some());

@@ -59,7 +59,7 @@ pub async fn merge(
             Json(json!({ "reason": "internal" })),
         )
     };
-    let Some(map) = app.map_of(ws.as_str()).await else {
+    let Some(map) = app.map_of(ws.key()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     let Some(repo) = known_repo(&app, &map, &req.repo).await.map_err(internal)? else {
@@ -99,7 +99,7 @@ pub async fn merge(
         }
     };
     // Fresh: the cache is bypassed and replaced (design 82 §2).
-    let facts = match gather(&app, ws.as_str(), &map, &repo, req.number, &login, true).await {
+    let facts = match gather(&app, ws.key(), &map, &repo, req.number, &login, true).await {
         Ok(Gathered::Found(f)) => f,
         Ok(Gathered::NotFound) => {
             return Err(refuse(StatusCode::NOT_FOUND, "no_pull", json!({})));

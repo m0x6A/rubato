@@ -17,7 +17,7 @@ const now = () => new Date().toISOString();
 
 /** The real overview, with working sessions on every pinned issue and three companions. */
 async function atWork(page: Page): Promise<void> {
-  await page.route("**/api/overview", async (route) => {
+  await page.route("**/api/t/default/w/default/overview", async (route) => {
     const res = await route.fetch();
     const o = await res.json();
     const mine = { companion_id: "c-desk", hostname: "wsl-desk", user: "m0x6A", connected: true, created_at: now(), last_seen: now() };
@@ -42,7 +42,7 @@ async function atWork(page: Page): Promise<void> {
 }
 
 async function pin(page: Page, number: number, node: string): Promise<void> {
-  const r = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number }, target: { kind: "node", id: node } } });
+  const r = await page.request.post("/api/t/default/w/default/pins", { data: { issue: { repo: "m0x6A/rubato", number }, target: { kind: "node", id: node } } });
   expect([200, 201, 409]).toContain(r.status());
 }
 

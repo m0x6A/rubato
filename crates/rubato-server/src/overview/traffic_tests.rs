@@ -34,6 +34,9 @@ fn traffic_findings(o: &Overview) -> Vec<Finding> {
 fn overview_only(app: crate::kernel::state::App) -> axum::Router {
     axum::Router::new()
         .route(routes::OVERVIEW, axum::routing::get(super::overview))
+        .layer(axum::middleware::from_fn(
+            crate::kernel::tenancy::test_scope,
+        ))
         .with_state(app)
 }
 
@@ -79,7 +82,7 @@ async fn the_dev_file_feeds_the_overview_and_the_instruments() {
         n.service = Some(rubato_protocol::ServiceId::new(None, &n.id));
     }
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -263,9 +266,11 @@ async fn without_a_source_traffic_is_not_configured() {
     let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
     let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
     assert_eq!(
-        app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE)
-            .await
-            .source,
+        app.traffic_of(&crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE
+        ))
+        .await
+        .source,
         rubato_protocol::SourceStatus::NotConfigured
     );
     // The supervisor runs (ADR 0075: a source set at runtime starts without a restart), starts
@@ -319,7 +324,7 @@ async fn a_change_in_one_workspace_tells_only_its_browsers() {
     for (ws, yaml) in [(rubato_protocol::DEFAULT_WORKSPACE, MAP), ("shop", SHOP)] {
         let map: SystemMap = serde_yaml_ng::from_str(yaml).unwrap();
         app.set_map(
-            ws,
+            &crate::kernel::tenancy::WsKey::of_default(ws),
             LoadedMap {
                 map,
                 version: "v".into(),

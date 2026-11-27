@@ -13,10 +13,22 @@ use rubato_protocol::session_log::routes;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+/// The `{launch_id}` of a tenant route. Named, because the path also carries `{tenant}` (ADR 0089).
+#[derive(serde::Deserialize)]
+pub struct LaunchParam {
+    launch_id: Uuid,
+}
+
+impl From<Uuid> for LaunchParam {
+    fn from(launch_id: Uuid) -> Self {
+        Self { launch_id }
+    }
+}
+
 pub async fn log(
     State(app): State<App>,
     CurrentUser(user): CurrentUser,
-    Path(launch_id): Path<Uuid>,
+    Path(LaunchParam { launch_id }): Path<LaunchParam>,
 ) -> Result<Json<LaunchLog>, (StatusCode, Json<Value>)> {
     let internal = |e: anyhow::Error| {
         tracing::error!(slice = "session_log", error = %format!("{e:#}"), "session log failed");

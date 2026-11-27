@@ -666,7 +666,10 @@ async fn accept_report(
     if !live {
         return Ok(Accepted::No("not_live"));
     }
-    let map = app.map_of(&target.workspace).await;
+    let map = match launch::ws_key(app, &target) {
+        Some(ws) => app.map_of(&ws).await,
+        None => None,
+    };
     let known = |id: &str| {
         map.as_ref().is_some_and(|m| {
             m.map.nodes.iter().any(|n| n.id == id) || m.map.seams.iter().any(|s| s.id == id)
@@ -1288,7 +1291,7 @@ mod tests {
         )
         .unwrap();
         app.set_map(
-            "default",
+            &crate::kernel::tenancy::WsKey::of_default("default"),
             crate::kernel::state::LoadedMap {
                 map: serde_yaml_ng::from_str(&yaml).unwrap(),
                 version: "v".into(),

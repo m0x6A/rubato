@@ -3,11 +3,12 @@
 //! development file feeding every workspace. A changed source restarts only its workspace's
 //! task; the generation check keeps a cancelled task's report from landing after.
 
-use super::fetch::{Fetcher, Generations, Targets, key, ws_attrs};
+use super::fetch::{Fetcher, Generations, Targets, ws_attrs};
 use super::prometheus::{PrometheusConfig, PrometheusSource, SOURCE};
 use super::source::{ConfiguredSource, DevFileSource};
 use crate::kernel::config::TRAFFIC_FETCH_SECS;
 use crate::kernel::state::{App, TrafficLatest};
+use crate::kernel::tenancy::WsKey;
 use crate::kernel::workspaces::WorkspaceEntry;
 use chrono::Utc;
 use rubato_protocol::SourceStatus;
@@ -64,7 +65,7 @@ async fn reconcile(
 ) {
     let mut want: BTreeMap<String, (Want, Option<ConfiguredSource>, Targets)> = BTreeMap::new();
     // Written after the stops, so a stopped task cannot overwrite them.
-    let mut failing: Vec<(String, u32, String)> = Vec::new();
+    let mut failing: Vec<(WsKey, u32, String)> = Vec::new();
     if let Some(path) = &app.config.dev_traffic {
         // One task for the development file, feeding every workspace; stored sources ignored.
         if entries.iter().any(|w| w.settings.traffic.is_some()) {
@@ -74,7 +75,7 @@ async fn reconcile(
         }
         let fetch_secs = app.config.traffic_fetch_secs;
         want.insert(
-            key(&Targets::All, ""),
+            "*".to_owned(),
             (
                 Want {
                     revision: 0,
@@ -94,19 +95,19 @@ async fn reconcile(
             let source = match built {
                 Ok(s) => Some(s),
                 Err(e) => {
-                    failing.push((w.id.clone(), fetch_secs, e));
+                    failing.push((w.key(), fetch_secs, e));
                     None
                 }
             };
             want.insert(
-                w.id.clone(),
+                w.key().to_string(),
                 (
                     Want {
                         revision: w.settings.revision,
                         fetch_secs,
                     },
                     source,
-                    Targets::One(w.id.clone()),
+                    Targets::One(w.key()),
                 ),
             );
         }
@@ -127,7 +128,7 @@ async fn reconcile(
     }
     // A source set up wrong is failing, shown as unknown, never as quiet.
     for (ws, fetch_secs, e) in failing {
-        tracing::error!(error = %e, rubato.workspace = ws.as_str(), "traffic source failing");
+        tracing::error!(error = %e, rubato.tenant = %ws.tenant, rubato.workspace = ws.ws(), "traffic source failing");
         app.traffic.write().await.insert(
             ws.clone(),
             TrafficLatest {
@@ -141,13 +142,19 @@ async fn reconcile(
         app.notify_ws("traffic", &ws);
     }
     // A workspace whose source is gone: not configured, and the gauge says so.
-    let configured: Vec<String> = match want.contains_key("*") {
-        true => entries.iter().map(|w| w.id.clone()).collect(),
-        false => want.keys().cloned().collect(),
+    let configured: Vec<WsKey> = match want.contains_key("*") {
+        true => entries.iter().map(|w| w.key()).collect(),
+        false => want
+            .values()
+            .filter_map(|(_, _, t)| match t {
+                Targets::One(ws) => Some(ws.clone()),
+                Targets::All => None,
+            })
+            .collect(),
     };
     {
         let mut all = app.traffic.write().await;
-        let gone: Vec<String> = all
+        let gone: Vec<WsKey> = all
             .keys()
             .filter(|ws| !configured.contains(ws))
             .cloned()
@@ -158,9 +165,10 @@ async fn reconcile(
         }
     }
     for w in entries {
-        app.metrics
-            .traffic_configured
-            .record(u64::from(configured.contains(&w.id)), &ws_attrs(&w.id));
+        app.metrics.traffic_configured.record(
+            u64::from(configured.contains(&w.key())),
+            &ws_attrs(&w.key()),
+        );
     }
     // Start what is wanted and not running.
     for (k, (w, source, targets)) in want {
@@ -175,7 +183,12 @@ async fn reconcile(
             .with_timeout(Duration::from_secs(u64::from(
                 w.fetch_secs.saturating_sub(1).max(1),
             )))
-            .feeding(targets, w.fetch_secs, Some((gens.clone(), generation)));
+            .feeding(
+                targets.clone(),
+                w.fetch_secs,
+                Some((gens.clone(), generation)),
+            );
+        let started_for = targets;
         let secs = u64::from(w.fetch_secs);
         let task_app = app.clone();
         let handle = tokio::spawn(async move {
@@ -193,8 +206,8 @@ async fn reconcile(
             generation,
             "traffic task started"
         );
-        if k != "*" {
-            app.notify_ws("traffic", &k);
+        if let Targets::One(ws) = &started_for {
+            app.notify_ws("traffic", ws);
         }
         running.insert(k, (w, handle));
     }

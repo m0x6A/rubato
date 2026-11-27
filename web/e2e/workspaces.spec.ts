@@ -41,14 +41,14 @@ test("a link to a workspace the server does not hold falls back to default and s
 
 test("a part moved in shop stays where it was in default", { tag: "@workspaces.layout-per-workspace" }, async ({ page, request }) => {
   const base = process.env["RUBATO_E2E_URL"] ?? "http://127.0.0.1:18090";
-  const put = await request.put(`${base}/api/w/shop/layout`, { headers: { "x-rubato-dev-user": "m0x6A" }, data: { positions: { storefront: { x: 40, y: 40 } } } });
+  const put = await request.put(`${base}/api/t/default/w/shop/layout`, { headers: { "x-rubato-dev-user": "m0x6A" }, data: { positions: { storefront: { x: 40, y: 40 } } } });
   expect(put.status()).toBe(204);
-  const shopOv = await (await request.get(`${base}/api/w/shop/overview`, { headers: { "x-rubato-dev-user": "m0x6A" } })).json();
-  const defOv = await (await request.get(`${base}/api/overview`, { headers: { "x-rubato-dev-user": "m0x6A" } })).json();
+  const shopOv = await (await request.get(`${base}/api/t/default/w/shop/overview`, { headers: { "x-rubato-dev-user": "m0x6A" } })).json();
+  const defOv = await (await request.get(`${base}/api/t/default/w/default/overview`, { headers: { "x-rubato-dev-user": "m0x6A" } })).json();
   expect(shopOv.layout.positions.storefront).toEqual({ x: 40, y: 40 });
   expect(defOv.layout.positions.storefront).toBeUndefined();
   // Clean up: other tests and the screenshots expect shop's layout to be automatic.
-  await request.delete(`${base}/api/w/shop/layout`, { headers: { "x-rubato-dev-user": "m0x6A" } });
+  await request.delete(`${base}/api/t/default/w/shop/layout`, { headers: { "x-rubato-dev-user": "m0x6A" } });
   await page.goto("/?w=shop");
   await expect(page.getByTestId("node-storefront")).toBeVisible();
 });

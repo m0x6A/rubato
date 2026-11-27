@@ -5,6 +5,7 @@
 
 use super::store::{self, Claim};
 use crate::kernel::state::App;
+use crate::kernel::tenancy::WsKey;
 use crate::{launch, plan_drafts, session_log, session_messages};
 use chrono::{Duration, Utc};
 use opentelemetry::KeyValue;
@@ -211,11 +212,18 @@ async fn act_inner(
             "only a lead launch has the fleet tools",
         ));
     }
+    // The lead's workspace, in the tenant its repository is live in (ADR 0087).
+    let Some(lead_ws) = launch::ws_key(app, &lead) else {
+        return Ok(Answer::refused(
+            reason::IDENTITY,
+            "the lead's repository is in no tenant any more",
+        ));
+    };
     // Step 5: the owner is the pairing's user.
     let owner = user;
     match &req.action {
         FleetAction::List => Ok(Answer {
-            fleet: Some(list(app, owner, &lead.workspace).await?),
+            fleet: Some(list(app, owner, &lead_ws).await?),
             ..Answer::ok()
         }),
         FleetAction::Message { launch_id, text } => {
@@ -304,7 +312,7 @@ async fn act_inner(
             );
             let r = launch::start(
                 app,
-                &lead.workspace,
+                &lead_ws,
                 owner,
                 LaunchRequest {
                     issue: issue.clone(),
@@ -408,7 +416,7 @@ pub async fn live_workers(app: &App, lead: Uuid) -> anyhow::Result<usize> {
 
 /// `fleet_list`: the owner's launches in `ws` live or started in the last 24 hours, newest first,
 /// at most 50. Other people's launches are never in it.
-async fn list(app: &App, owner: &str, ws: &str) -> anyhow::Result<Vec<FleetEntry>> {
+async fn list(app: &App, owner: &str, ws: &WsKey) -> anyhow::Result<Vec<FleetEntry>> {
     let live = sessions_by_launch(app);
     let since = Utc::now() - Duration::hours(limits::LIST_HOURS);
     let mut rows = launch::launches_of(&app.db, owner, ws, since, limits::LIST_MAX).await?;

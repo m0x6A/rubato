@@ -7,6 +7,7 @@ use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::WsKey;
 use crate::{github_poll, pairing, pins, plan_drafts, plans};
 use axum::Json;
 use axum::extract::State;
@@ -59,7 +60,7 @@ pub async fn launch(
     CurrentUser(user): CurrentUser,
     Json(req): Json<LaunchRequest>,
 ) -> Result<Json<LaunchResponse>, (StatusCode, String)> {
-    start(&app, ws.as_str(), &user, req, None, None)
+    start(&app, ws.key(), &user, req, None, None)
         .await
         .map(Json)
 }
@@ -68,7 +69,7 @@ pub async fn launch(
 /// rendered prompt (Import's rewrite, ADR 0058).
 pub async fn start(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     user: &str,
     req: LaunchRequest,
     note: Option<&str>,
@@ -223,13 +224,7 @@ pub async fn start(
         + 1;
     // The request, then the plan's front matter, then the workspace's defaults, then the
     // built-in ones (ADR 0075): never a server-wide setting.
-    let defaults = app
-        .workspace_entries()
-        .0
-        .into_iter()
-        .find(|w| w.id == ws)
-        .map(|w| w.settings)
-        .unwrap_or_default();
+    let defaults = app.workspace(ws).map(|w| w.settings).unwrap_or_default();
     let spend_cap = req
         .spend_cap_usd
         .or(plan.as_ref().and_then(|p| p.spend_cap_usd))

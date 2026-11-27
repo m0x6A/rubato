@@ -2,6 +2,7 @@
 //! from the legacy `RUBATO_MAP_*` variables as the one workspace `default`. Every refusal is
 //! decided here, at start, with the reason.
 
+use crate::kernel::tenancy::{TenantId, WsKey};
 use anyhow::{Result, bail};
 use rubato_protocol::{DEFAULT_WORKSPACE, is_workspace_id};
 use serde::Deserialize;
@@ -11,6 +12,11 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceEntry {
+    /// The tenant that holds it (ADR 0087). A workspaces file and the legacy variables know no
+    /// tenant: their entries are tenant `default`'s.
+    #[serde(skip, default = "TenantId::default_tenant")]
+    pub tenant: TenantId,
+    /// Unique inside its tenant (ADR 0089).
     pub id: String,
     /// What people call it; else the map's own `name`.
     #[serde(default)]
@@ -70,6 +76,12 @@ impl std::fmt::Debug for TrafficSetting {
     }
 }
 
+impl WorkspaceEntry {
+    pub fn key(&self) -> WsKey {
+        WsKey::new(self.tenant.clone(), self.id.clone())
+    }
+}
+
 /// The workspaces a server holds right now, in switcher order, and where the list came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Registry {
@@ -126,26 +138,28 @@ pub fn from_file(text: &str, file: &Path, legacy_set: &[&str]) -> Result<Vec<Wor
             w.map_file = Some(base.join(f));
         }
     }
-    check(&out)?;
+    check_file(&out)?;
     Ok(out)
 }
 
-/// The refusals of ADR 0044, in the order a person fixes them.
+/// The refusals of ADR 0044, in the order a person fixes them. An id and a map are unique
+/// inside one tenant (ADR 0089): two tenants may each hold a workspace `main`.
 pub fn check(entries: &[WorkspaceEntry]) -> Result<()> {
-    if entries.is_empty() {
-        bail!("the workspaces file lists no workspace");
-    }
     for w in entries {
         if !is_workspace_id(&w.id) {
             bail!("workspace id {:?} is not [a-z0-9-]{{1,32}}", w.id);
         }
     }
     for (i, w) in entries.iter().enumerate() {
-        if entries[..i].iter().any(|o| o.id == w.id) {
+        if entries[..i]
+            .iter()
+            .any(|o| o.id == w.id && o.tenant == w.tenant)
+        {
             bail!("workspace id {} is listed twice", w.id);
         }
         if let Some(o) = entries[..i].iter().find(|o| {
-            o.map_repo.eq_ignore_ascii_case(&w.map_repo)
+            o.tenant == w.tenant
+                && o.map_repo.eq_ignore_ascii_case(&w.map_repo)
                 && o.map_path == w.map_path
                 && o.map_ref == w.map_ref
         }) {
@@ -159,17 +173,29 @@ pub fn check(entries: &[WorkspaceEntry]) -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+/// A workspaces file, or the legacy variables: tenant `default`'s list as it was before tenants.
+/// It keeps its workspace `default`, which holds every row from before workspaces (ADR 0044). No
+/// other tenant needs one (plan 345, Decision 12).
+pub fn check_file(entries: &[WorkspaceEntry]) -> Result<()> {
+    if entries.is_empty() {
+        bail!("the workspaces file lists no workspace");
+    }
+    check(entries)?;
     if !entries.iter().any(|w| w.id == DEFAULT_WORKSPACE) {
         bail!(
-            "the workspaces file has no entry with id {DEFAULT_WORKSPACE}; it keeps every row from before workspaces and serves unprefixed routes"
+            "the workspaces file has no entry with id {DEFAULT_WORKSPACE}; it keeps every row from before workspaces"
         );
     }
     Ok(())
 }
 
-/// Tables that hold a workspace id (ADR 0047), for the orphan count.
+/// Tables that hold a tenant's workspace id (ADR 0047, ADR 0089), for the orphan count.
 pub const SCOPED_TABLES: [&str; 10] = [
     "map_layout",
+    "map_layout_grouped",
     "traffic_dismissals",
     "map_cache",
     "map_proposal",
@@ -177,23 +203,46 @@ pub const SCOPED_TABLES: [&str; 10] = [
     "map_line_pins",
     "map_draft_ops",
     "issue_creations",
-    "launches",
     "issue_suggestions",
 ];
+
+/// Tables that hold a workspace id and no tenant yet: `launches` gains its `tenant_id` with the
+/// launch tables (plan 345, design §13). Until then a workspace id held by a launch of any
+/// tenant counts, which can only refuse more.
+pub const WORKSPACE_ONLY_TABLES: [&str; 1] = ["launches"];
 
 /// At start: log which workspaces this server holds (`workspace config`), record how many, and
 /// count rows whose workspace is no longer configured. Those rows are kept, never deleted, and
 /// logged so a removed or renamed entry is noticed.
 pub async fn report(app: &crate::kernel::state::App) -> Result<u64> {
     let (entries, source) = app.workspace_entries();
+    let keys: Vec<String> = entries.iter().map(|w| w.key().to_string()).collect();
     let ids: Vec<&str> = entries.iter().map(|w| w.id.as_str()).collect();
-    tracing::info!(workspaces = ?ids, source = source.as_str(), "workspace config");
+    tracing::info!(workspaces = ?keys, source = source.as_str(), "workspace config");
     app.metrics
         .workspaces_configured
         .record(entries.len() as u64, &[]);
     let placeholders = vec!["?"; ids.len()].join(", ");
     let mut orphans = 0u64;
     for t in SCOPED_TABLES {
+        // Over every tenant on purpose: this is the server's own count at start, for no tenant.
+        let sql = format!(
+            "SELECT tenant_id, workspace_id, COUNT(*) AS n FROM {t} WHERE (tenant_id || '/' || workspace_id) NOT IN ({placeholders}) GROUP BY tenant_id, workspace_id"
+        );
+        let mut q = sqlx::query(&sql);
+        for key in &keys {
+            q = q.bind(key);
+        }
+        for r in q.fetch_all(&app.db).await? {
+            use sqlx::Row;
+            let n = r.get::<i64, _>("n") as u64;
+            let tenant: String = r.get("tenant_id");
+            let ws: String = r.get("workspace_id");
+            tracing::warn!(table = t, rubato.tenant = %tenant, rubato.workspace = %ws, rows = n, "orphan workspace rows");
+            orphans += n;
+        }
+    }
+    for t in WORKSPACE_ONLY_TABLES {
         let sql = format!(
             "SELECT workspace_id, COUNT(*) AS n FROM {t} WHERE workspace_id NOT IN ({placeholders}) GROUP BY workspace_id"
         );
@@ -215,11 +264,23 @@ pub async fn report(app: &crate::kernel::state::App) -> Result<u64> {
 
 /// The first table that still holds a row of workspace `id` (ADR 0075): a deleted workspace's
 /// rows are kept, so its id cannot be created again while one remains.
-pub async fn id_has_rows(db: &sqlx::SqlitePool, id: &str) -> Result<Option<&'static str>> {
+pub async fn id_has_rows(db: &sqlx::SqlitePool, id: &WsKey) -> Result<Option<&'static str>> {
     for t in SCOPED_TABLES {
+        let sql =
+            format!("SELECT EXISTS(SELECT 1 FROM {t} WHERE tenant_id = ? AND workspace_id = ?)");
+        if sqlx::query_scalar::<_, bool>(&sql)
+            .bind(id.tenant.as_str())
+            .bind(id.ws())
+            .fetch_one(db)
+            .await?
+        {
+            return Ok(Some(t));
+        }
+    }
+    for t in WORKSPACE_ONLY_TABLES {
         let sql = format!("SELECT EXISTS(SELECT 1 FROM {t} WHERE workspace_id = ?)");
         if sqlx::query_scalar::<_, bool>(&sql)
-            .bind(id)
+            .bind(id.ws())
             .fetch_one(db)
             .await?
         {

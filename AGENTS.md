@@ -95,12 +95,12 @@ capability.
 Each deployable's block appears here with the PR that slices it:
 
 <!-- slices: rubato-server -->
-`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
-`/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth` reaches tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, ADR 0087); slices:
+`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router: tenant routes under `/api/t/{tenant}` and map-scoped ones under
+`/api/t/{tenant}/w/{ws}`, ADR 0089; 404 for unknown `/api`, `/ws`, `/auth` paths, the paths of before tenants among them), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
+(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per tenant's workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth` reaches tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, `WsKey`, `TenantScope` and `AdminScope`, ADR 0087, 0088, 0089); slices:
 
 ```text
-auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
+auth            GitHub login (invited people and operators only, ADR 0088), CurrentUser, tokens  users, web_sessions, user_tokens
 pairing         device-code pairing, the caller's pairings      pairing_codes, pairings
 companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
 pins            pin an issue to a node or seam, Map: lines      pins, map_line_pins
@@ -131,7 +131,7 @@ overview        derived progress, findings, gauges              (none)
 web_link        websocket fan-out to browsers                   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
 workspace_settings  each workspace's settings: seeded once, read and changed at runtime, create and delete (ADR 0075)  workspace_settings
-tenants         who belongs to which tenant, its installations and repositories, the seed (ADR 0087)  tenants, tenant_installations, tenant_members, tenant_repos
+tenants         who belongs to which tenant, its installations and repositories, the seed, the membership layer that grants a `TenantScope` (ADR 0087, 0088)  tenants, tenant_installations, tenant_members, tenant_repos
 admin           people and tenants across slices: the admission adapter, the identity guard, an installation's life after it is attached (ADR 0087, 0088)  (none)
 ```
 <!-- /slices -->
@@ -159,8 +159,8 @@ graph          this machine's copy of the context graph: fetch, check, apply; th
 <!-- /slices -->
 <!-- slices: web -->
 `web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, the panel's size, selection, handlers);
-`shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
-`scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
+`shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's tenant and workspace,
+`inTenant()` for tenant paths and `scoped()` for map-scoped ones, ADR 0089; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
 its retired parts, for every reader that draws or offers ids, ADR 0077; `traffic.ts` `nothingObserved`, a fresh report with nothing in it; `trace.ts` the web's own client spans and their post to the relay, ADR 0082; `finished.ts` the issues the
 default views show and the Done views show, read from the server's `finished`; `panel.ts` the
@@ -186,8 +186,8 @@ plans       the plans board: proposed and open, Done on request, a plan read in 
 repos       connected repos, what each provides, their open pull requests and issues, loose sessions, how fresh each context graph source is  (none)
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
 room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
-workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
-settings    Configure workspace: name, map ref, traffic source from the adapter's field list and how it is doing, launch defaults, create, delete  GET, PUT /api/settings; GET /api/traffic/sources; POST /api/workspaces; DELETE /api/w/{ws}
+workspaces  which application the map shows, the switcher       (none; map calls go under /api/t/{tenant}/w/{ws})
+settings    Configure workspace: name, map ref, traffic source from the adapter's field list and how it is doing, launch defaults, create, delete  GET, PUT /api/settings; GET /api/traffic/sources; POST /api/workspaces; DELETE /api/t/{tenant}/w/{ws}
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->
@@ -221,9 +221,9 @@ telemetry_relay  the web span relay's limits (ADR 0082); TELEMETRY_TRACES
 traffic    TrafficReport (with SeenEdge, ADR 0083), ObservedTraffic (with LastSeen), SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
 web_link   WebEvent; WEB_WS
-workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
+workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, scoped (tenant, workspace, route)
 workspace_settings  WorkspaceSettings, TrafficSourceSettings, SecretState, SourceFields, SourceField, WorkspaceSettingsUpdate, TrafficSourceUpdate, SecretUpdate, NewWorkspace, SettingsRefusal, reasons; SETTINGS, WORKSPACE, TRAFFIC_SOURCES
-tenant     TenantInfo, Role, MemberView, InviteRequest, RoleChange, AccountType, InstallationState, AdminInstallation, NewTenant, AdminTenant, is_tenant_id, reasons; MEMBERS, MEMBER, ADMIN_* (ADR 0087, 0088)
+tenant     TenantInfo, Role, MemberView, InviteRequest, RoleChange, AccountType, InstallationState, AdminInstallation, NewTenant, AdminTenant, is_tenant_id, reasons; TENANT_PREFIX, in_tenant, MEMBERS, MEMBER, ADMIN_* (ADR 0087, 0088, 0089)
 ```
 
 The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).

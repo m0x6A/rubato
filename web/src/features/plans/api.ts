@@ -1,6 +1,6 @@
 import type { ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, DraftRevision, DraftView, ImportRequest, ImportResponse } from "../../protocol.ts";
 import { ApiError, failureText, request } from "../../shared/api.ts";
-import { scoped } from "../../shared/workspace.ts";
+import { inTenant, scoped } from "../../shared/workspace.ts";
 
 /** Why an approval was refused, from the server's JSON answer (ADR 0030). */
 export function refusalReason(e: unknown): string | null {
@@ -29,10 +29,10 @@ export const REFUSAL_TEXT: Record<string, string> = {
   approve_in_rubato: "Plans are approved in Rubato on this server: approve the draft instead.",
 };
 
-/** A plan draft and its revisions (ADR 0053): team routes, never `scoped()`. */
+/** A plan draft and its revisions (ADR 0053): tenant routes, `inTenant()`, never `scoped()`. */
 export const planDraftsApi = {
-  draft: (draftId: string) => request<DraftView>("GET", `/api/drafts/${encodeURIComponent(draftId)}`),
-  revision: (draftId: string, rev: number) => request<DraftRevision>("GET", `/api/drafts/${encodeURIComponent(draftId)}/revisions/${rev}`),
+  draft: (draftId: string) => request<DraftView>("GET", inTenant(`/api/drafts/${encodeURIComponent(draftId)}`)),
+  revision: (draftId: string, rev: number) => request<DraftRevision>("GET", inTenant(`/api/drafts/${encodeURIComponent(draftId)}/revisions/${rev}`)),
   /** Approve one revision as yourself (ADR 0054). Map-scoped: the fit check reads the workspace. */
   approve: (req: DraftApproveRequest) => request<DraftApproveResponse>("POST", scoped("/api/plans/drafts/approve"), req),
   /** Import a plan written outside Rubato (ADR 0058). Map-scoped: the fit check reads the workspace. */

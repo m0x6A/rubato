@@ -8,7 +8,7 @@ use crate::kernel::state::App;
 use crate::{
     approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
     pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages,
-    telemetry_relay, traffic, voice, web_link, webhooks, workspace_settings,
+    telemetry_relay, tenants, traffic, voice, web_link, webhooks, workspace_settings,
 };
 use axum::Router;
 use axum::http::{Method, StatusCode, Uri};
@@ -27,6 +27,7 @@ use rubato_protocol::plan_draft::routes as plan_draft_routes;
 use rubato_protocol::progress::routes as overview_routes;
 use rubato_protocol::pulls::routes as pull_routes;
 use rubato_protocol::queue::routes as queue_routes;
+use rubato_protocol::tenant::routes as tenant_routes;
 use rubato_protocol::traffic::routes as traffic_routes;
 use rubato_protocol::web_link::routes as web_routes;
 use rubato_protocol::workspace::routes as workspace_routes;
@@ -37,9 +38,10 @@ use tower_http::trace::TraceLayer;
 /// The body of the 404 answer for an unknown API path.
 pub const UNKNOWN_API_PATH: &str = r#"{"error":"unknown api path"}"#;
 
-/// The map-scoped routes (ADR 0049), at the paths `at` gives: as they are for `default`, and
-/// under `/api/w/{ws}` for any configured workspace.
-fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
+/// The map-scoped routes (ADR 0049, ADR 0089): each under `/api/t/{tenant}/w/{ws}`, for a
+/// workspace the tenant holds. Nothing is served unprefixed or under `/api/w/{ws}` any more.
+fn map_scoped() -> Router<App> {
+    let at = |p: &str| workspace_routes::scoped("{tenant}", "{ws}", p);
     Router::new()
         .route(&at(overview_routes::OVERVIEW), get(overview::overview))
         .route(&at(map_routes::MAP), get(map::map))
@@ -90,11 +92,80 @@ fn map_scoped(at: impl Fn(&str) -> String) -> Router<App> {
         )
 }
 
+/// The tenant routes that name no workspace (ADR 0089): each under `/api/t/{tenant}`.
+fn tenant_scoped() -> Router<App> {
+    let at = |p: &str| tenant_routes::in_tenant("{tenant}", p);
+    Router::new()
+        .route(
+            &at(workspace_routes::WORKSPACES),
+            get(map::workspaces).post(workspace_settings::create),
+        )
+        .route(
+            &at(settings_routes::TRAFFIC_SOURCES),
+            get(workspace_settings::sources),
+        )
+        .route(
+            &at(queue_routes::QUEUE),
+            post(queue::add).put(queue::reorder).delete(queue::remove),
+        )
+        .route(
+            &at(rubato_protocol::session_message::routes::LAUNCH_MESSAGES),
+            get(session_messages::list).post(session_messages::send),
+        )
+        .route(
+            &at(rubato_protocol::session_message::routes::LAUNCH_STOP),
+            post(session_messages::stop),
+        )
+        .route(
+            &at(rubato_protocol::session_log::routes::LAUNCH_LOG),
+            get(session_log::log),
+        )
+        .route(
+            &at(rubato_protocol::plan_draft::routes::DRAFT),
+            get(plan_drafts::draft),
+        )
+        .route(
+            &at(rubato_protocol::plan_draft::routes::DRAFT_REVISION),
+            get(plan_drafts::revision),
+        )
+        .route(&at(rubato_protocol::room::routes::ROOM), get(rooms::room))
+        .route(
+            &at(rubato_protocol::room::routes::ROOM_AGENTS),
+            post(rooms::call_in).delete(rooms::dismiss),
+        )
+        .route(
+            &at(rubato_protocol::room::routes::ROOM_REQUEST),
+            post(rooms::answer),
+        )
+        .route(
+            &at(rubato_protocol::room::routes::ROOM_MESSAGES),
+            post(rooms::post),
+        )
+        // ADR 0073: a plan room's voice channel. Every route answers 404 `voice_off` while
+        // `RUBATO_VOICE` is off; the handlers cap their own bodies.
+        .route(
+            &at(rubato_protocol::voice::routes::VOICE_TOKEN),
+            post(voice::voice_token),
+        )
+        .route(
+            &at(rubato_protocol::voice::routes::VOICE_UTTERANCE),
+            post(voice::utterance),
+        )
+        .route(
+            &at(rubato_protocol::voice::routes::VOICE_SPEECH),
+            get(voice::speech),
+        )
+        .route(
+            &at(rubato_protocol::voice::routes::VOICE_JOIN_FAILED),
+            post(voice::join_failed),
+        )
+}
+
 pub fn router(app: App) -> Router {
     let dist = app.config.web_dist.clone();
     let index = dist.join("index.html");
-    let scoped = map_scoped(|p| workspace_routes::scoped("{ws}", p))
-        // ADR 0075: a workspace is deleted by its own id, never unprefixed.
+    let scoped = map_scoped()
+        // ADR 0075: a workspace is deleted by its own id.
         .route(
             settings_routes::WORKSPACE,
             delete(workspace_settings::delete),
@@ -103,84 +174,27 @@ pub fn router(app: App) -> Router {
             app.clone(),
             crate::kernel::http::check_workspace,
         ));
+    // Every tenant route (ADR 0089): the membership layer runs first, then the workspace's.
+    let tenant = tenant_scoped()
+        .merge(scoped)
+        .route_layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            tenants::check_tenant,
+        ));
     let api = Router::new()
         .route("/api/health", get(health))
         .route(auth_routes::ME, get(auth::me))
-        .route(
-            workspace_routes::WORKSPACES,
-            get(map::workspaces).post(workspace_settings::create),
-        )
-        .route(
-            settings_routes::TRAFFIC_SOURCES,
-            get(workspace_settings::sources),
-        )
-        .merge(map_scoped(str::to_string))
-        .merge(scoped)
-        .route(
-            queue_routes::QUEUE,
-            post(queue::add).put(queue::reorder).delete(queue::remove),
-        )
+        .merge(tenant)
         .route(pr::PAIRINGS, get(pairing::list))
         .route(
             &format!("{}/{{companion_id}}", pr::PAIRINGS),
             delete(pairing::revoke),
         )
         .route(pr::PAIR_APPROVE, post(pairing::approve))
-        .route(
-            rubato_protocol::session_message::routes::LAUNCH_MESSAGES,
-            get(session_messages::list).post(session_messages::send),
-        )
-        .route(
-            rubato_protocol::session_message::routes::LAUNCH_STOP,
-            post(session_messages::stop),
-        )
-        .route(
-            rubato_protocol::session_log::routes::LAUNCH_LOG,
-            get(session_log::log),
-        )
-        .route(
-            rubato_protocol::plan_draft::routes::DRAFT,
-            get(plan_drafts::draft),
-        )
-        .route(rubato_protocol::room::routes::ROOM, get(rooms::room))
-        .route(
-            rubato_protocol::room::routes::ROOM_AGENTS,
-            post(rooms::call_in).delete(rooms::dismiss),
-        )
-        .route(
-            rubato_protocol::room::routes::ROOM_REQUEST,
-            post(rooms::answer),
-        )
-        .route(
-            rubato_protocol::room::routes::ROOM_MESSAGES,
-            post(rooms::post),
-        )
-        // ADR 0073: a plan room's voice channel. Every route answers 404 `voice_off` while
-        // `RUBATO_VOICE` is off; the handlers cap their own bodies.
-        .route(
-            rubato_protocol::voice::routes::VOICE_TOKEN,
-            post(voice::voice_token),
-        )
-        .route(
-            rubato_protocol::voice::routes::VOICE_UTTERANCE,
-            post(voice::utterance),
-        )
-        .route(
-            rubato_protocol::voice::routes::VOICE_SPEECH,
-            get(voice::speech),
-        )
-        .route(
-            rubato_protocol::voice::routes::VOICE_JOIN_FAILED,
-            post(voice::join_failed),
-        )
-        .route(
-            rubato_protocol::plan_draft::routes::DRAFT_REVISION,
-            get(plan_drafts::revision),
-        )
         .route(pr::PAIR_START, post(pairing::start))
         .route(pr::PAIR_POLL, post(pairing::poll))
         .route(pr::COMPANION_WS, get(companion_link::upgrade))
-        // One context graph source for a companion, by its pairing token (ADR 0086). Team-scoped.
+        // One context graph source for a companion, by its pairing token (ADR 0086).
         .route(
             rubato_protocol::graph::routes::GRAPH_SNAPSHOT,
             get(crate::context_graph::snapshot),
@@ -200,7 +214,7 @@ pub fn router(app: App) -> Router {
         .route("/api/{*rest}", any(unknown_api_path))
         .route("/ws/{*rest}", any(unknown_api_path))
         .route("/auth/{*rest}", any(unknown_api_path))
-        // Every write and websocket upgrade, map-scoped ones included (ADR 0066).
+        // Every write and websocket upgrade, tenant routes included (ADR 0066).
         .route_layer(axum::middleware::from_fn_with_state(
             app.clone(),
             crate::kernel::http::same_origin,
@@ -247,6 +261,72 @@ pub fn router(app: App) -> Router {
         .with_state(app)
 }
 
+/// For this crate's tests that were written before tenants (ADR 0089), and for nothing else:
+/// [`router`], with a request to a path of before the cut sent on to the same route in tenant
+/// `default` (and workspace `default` when the path named none). The binary never calls it, so a
+/// real server answers 404 for those paths; `tests/tenant_paths.rs` checks that against
+/// [`router`] itself.
+#[doc(hidden)]
+pub fn router_before_tenants(app: App) -> Router {
+    async fn moved(mut req: axum::extract::Request) -> axum::extract::Request {
+        if let Some(path) = path_in_default_tenant(req.uri().path()) {
+            let query = req
+                .uri()
+                .query()
+                .map(|q| format!("?{q}"))
+                .unwrap_or_default();
+            if let Ok(uri) = format!("{path}{query}").parse::<Uri>() {
+                *req.uri_mut() = uri;
+            }
+        }
+        req
+    }
+    // The layer runs before the outer router hands the request to its fallback, which is the
+    // real router: it routes on the path as rewritten.
+    Router::new()
+        .fallback_service(router(app))
+        .layer(axum::middleware::map_request(moved))
+}
+
+/// Where a path of before ADR 0089 lives now, in tenant `default`; `None` for a path that did
+/// not move (a person or server route, or one already under `/api/t`).
+#[doc(hidden)]
+pub fn path_in_default_tenant(path: &str) -> Option<String> {
+    const PERSON: [&str; 7] = [
+        "/api/me",
+        "/api/health",
+        "/api/pair",
+        "/api/graph",
+        "/api/telemetry",
+        "/api/admin",
+        "/api/t/",
+    ];
+    const TENANT: [&str; 6] = [
+        "/api/workspaces",
+        "/api/traffic/sources",
+        "/api/queue",
+        "/api/launches/",
+        "/api/drafts/",
+        "/api/room",
+    ];
+    let t = crate::kernel::tenancy::DEFAULT_TENANT;
+    let rest = path.strip_prefix("/api/")?;
+    if PERSON.iter().any(|p| path.starts_with(p)) {
+        return None;
+    }
+    if let Some(scoped) = rest.strip_prefix("w/") {
+        return Some(format!("/api/t/{t}/w/{scoped}"));
+    }
+    if TENANT.iter().any(|p| path.starts_with(p)) {
+        return Some(tenant_routes::in_tenant(t, path));
+    }
+    Some(workspace_routes::scoped(
+        t,
+        rubato_protocol::DEFAULT_WORKSPACE,
+        path,
+    ))
+}
+
 async fn health() -> &'static str {
     "ok"
 }
@@ -282,7 +362,11 @@ mod tests {
             .await
             .unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, router(app)).await.unwrap() });
+        tokio::spawn(async move {
+            axum::serve(listener, router_before_tenants(app))
+                .await
+                .unwrap()
+        });
         (format!("http://{addr}"), tmp)
     }
 
@@ -478,7 +562,7 @@ mod tests {
             // The adapters' field lists are team-wide, though under `/api/traffic`.
             .filter(|(_, p)| p != settings_routes::TRAFFIC_SOURCES)
             .filter(|(_, p)| MAP_SCOPED.iter().any(|m| p.starts_with(m)))
-            .map(|(m, p)| (m.clone(), workspace_routes::scoped("default", p)))
+            .map(|(m, p)| (m.clone(), workspace_routes::scoped("default", "default", p)))
             .collect();
         assert!(scoped.len() >= 20, "{scoped:?}");
         routes.extend(scoped);
@@ -522,7 +606,7 @@ mod tests {
         let map: SystemMap =
             serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
         app.set_map(
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             crate::kernel::state::LoadedMap {
                 map,
                 version: "v".into(),
@@ -536,7 +620,11 @@ mod tests {
             .unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let served = app.clone();
-        tokio::spawn(async move { axum::serve(listener, router(served)).await.unwrap() });
+        tokio::spawn(async move {
+            axum::serve(listener, router_before_tenants(served))
+                .await
+                .unwrap()
+        });
         let http = reqwest::Client::new();
         let (events, _guard) = capture::start();
         let count = |reason: &str| {
@@ -876,7 +964,8 @@ mod tests {
         assert_eq!(r.status(), 429);
         assert_eq!(count("pending_cap"), Some((1, pr::PAIR_START.to_owned())));
 
-        // As a GitHub App with no dev user: a session without a team record is refused, counted.
+        // ADR 0088: a session whose person is in no tenant reaches no tenant route. The answer
+        // is the one for a tenant that does not exist, counted by the route's template.
         let tmp2 = tempfile::tempdir().unwrap();
         let url2 = format!("sqlite://{}/t.db?mode=rwc", tmp2.path().display());
         let pool2 = crate::kernel::db::connect(&url2).await.unwrap();
@@ -901,16 +990,28 @@ mod tests {
         let base2 = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, router(gated)).await.unwrap() });
         let r = http
-            .get(format!("{base2}{}", overview_routes::OVERVIEW))
+            .get(format!(
+                "{base2}{}",
+                workspace_routes::scoped("default", "default", overview_routes::OVERVIEW)
+            ))
             .header("cookie", cookie)
             .send()
             .await
             .unwrap();
-        assert_eq!(r.status(), 401);
+        assert_eq!(r.status(), 404);
+        assert_eq!(
+            r.text().await.unwrap(),
+            r#"{"reason":"unknown_tenant"}"#,
+            "the same answer as for a tenant that does not exist"
+        );
         let stale = reader2.points(metric::WEB_REJECTED);
         assert_eq!(stale.len(), 1, "{stale:?}");
-        assert_eq!(stale[0].attrs[attr::DROP_REASON], "team_record_stale");
-        assert_eq!(stale[0].attrs[attr::ROUTE], overview_routes::OVERVIEW);
+        assert_eq!(stale[0].attrs[attr::DROP_REASON], "unknown_tenant");
+        assert_eq!(
+            stale[0].attrs[attr::ROUTE],
+            workspace_routes::scoped("{tenant}", "{ws}", overview_routes::OVERVIEW),
+            "the route's template: a tenant id is never a label"
+        );
         println!("checked 11 refusal reasons");
     }
 
@@ -1046,7 +1147,7 @@ mod tests {
         let map: rubato_protocol::SystemMap =
             serde_yaml_ng::from_str(include_str!("../../../docs/design/rubato-map.yml")).unwrap();
         app.set_map(
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             crate::kernel::state::LoadedMap {
                 map,
                 version: "v".into(),
@@ -1060,7 +1161,11 @@ mod tests {
             .unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let served = app.clone();
-        tokio::spawn(async move { axum::serve(listener, router(served)).await.unwrap() });
+        tokio::spawn(async move {
+            axum::serve(listener, router_before_tenants(served))
+                .await
+                .unwrap()
+        });
         (base, app, reader, tmp)
     }
 
@@ -1511,20 +1616,14 @@ mod tests {
             .filter(|p| p.attrs.get(attr::DROP_REASON).map(String::as_str) == Some("cross_origin"))
             .collect();
         assert_eq!(points.iter().map(|p| p.value).sum::<u64>(), 5, "{points:?}");
+        assert!(points.iter().any(|p| p.attrs[attr::ROUTE]
+            == tenant_routes::in_tenant("{tenant}", workspace_routes::WORKSPACES)));
+        assert!(points.iter().any(|p| p.attrs[attr::ROUTE]
+            == workspace_routes::scoped("{tenant}", "{ws}", map_routes::MAP_RELOAD)));
         assert!(
             points
                 .iter()
-                .any(|p| p.attrs[attr::ROUTE] == workspace_routes::WORKSPACES)
-        );
-        assert!(
-            points
-                .iter()
-                .any(|p| p.attrs[attr::ROUTE] == map_routes::MAP_RELOAD)
-        );
-        assert!(
-            points
-                .iter()
-                .any(|p| p.attrs[attr::ROUTE] == "/api/w/{ws}/map/draft/discard")
+                .any(|p| p.attrs[attr::ROUTE] == "/api/t/{tenant}/w/{ws}/map/draft/discard")
         );
         println!(
             "checked {} refused and {} allowed writes",

@@ -30,7 +30,7 @@ test("plans from voice-note issues show where they fit", { tag: ["@plans.found-b
 // Issue #265: the Plans tab is a board. Its columns sit side by side once the panel is wide, a
 // plan opens in the tab (the map still paints it), and the finished plan of #930 is only under Done.
 test("the plans board: columns in a wide panel, a plan read in place, finished plans on request", { tag: ["@plans.board", "@plans.done-view"] }, async ({ page, baseURL }) => {
-  await page.request.post(`${baseURL}/api/pins`, { data: { issue: { repo: "m0x6A/rubato", number: 930 }, target: { kind: "node", id: "plan-check" } } });
+  await page.request.post(`${baseURL}/api/t/default/w/default/pins`, { data: { issue: { repo: "m0x6A/rubato", number: 930 }, target: { kind: "node", id: "plan-check" } } });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await page.getByTestId("tab-plans").click();
@@ -110,7 +110,7 @@ test("Accept plan reads Accepting… while it posts, and the row keeps the sente
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route("**/api/plans/approve", async (route) => {
+  await page.route("**/api/t/default/w/default/plans/approve", async (route) => {
     await held;
     accepted = true;
     await route.fulfill({ json: { state: "posted", body: "Approved: plan" } });

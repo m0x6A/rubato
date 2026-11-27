@@ -74,9 +74,14 @@ async fn launch_row(
         role,
         lead_launch_id: lead,
     };
-    crate::launch::store_launch(&app.db, "default", companion, &cmd)
-        .await
-        .unwrap();
+    crate::launch::store_launch(
+        &app.db,
+        &crate::kernel::tenancy::WsKey::of_default("default"),
+        companion,
+        &cmd,
+    )
+    .await
+    .unwrap();
     id
 }
 
@@ -94,7 +99,7 @@ async fn harness_with(orchestrator: bool, fleet_max: u32) -> H {
     let text = include_str!("../../../../docs/design/rubato-map.yml");
     let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -421,7 +426,7 @@ async fn a_launch_stays_on_the_owners_companions_and_off_other_peoples_issues() 
 #[tokio::test]
 async fn a_pinned_issue_launches_a_worker_that_names_its_lead() {
     let mut h = harness().await;
-    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', ?, 300, 'node', 'rubato-server', 'alice', ?)")
+    sqlx::query("INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'default', ?, 300, 'node', 'rubato-server', 'alice', ?)")
         .bind(REPO)
         .bind(ts(t0()))
         .execute(&h.app.db)
@@ -515,7 +520,14 @@ async fn with_the_flag_off_nothing_happens() {
     refused(&r, reason::ORCHESTRATOR_OFF);
     assert_eq!(messages_of(&h, h.a1).await, 0);
     assert_eq!(store::count(&h.app.db).await, 0, "not even a claim");
-    assert!(leads(&h.app, "default").await.is_empty());
+    assert!(
+        leads(
+            &h.app,
+            &crate::kernel::tenancy::WsKey::of_default("default")
+        )
+        .await
+        .is_empty()
+    );
     // A companion that did not announce `fleet` is sent nothing at all.
     let h = harness().await;
     h.app
@@ -582,7 +594,11 @@ async fn a_lead_hears_when_its_workers_end_block_or_go_idle() {
             w(h.a1, SessionStatus::Working),
         ],
     );
-    let l = leads(&h.app, "default").await;
+    let l = leads(
+        &h.app,
+        &crate::kernel::tenancy::WsKey::of_default("default"),
+    )
+    .await;
     assert_eq!(l.len(), 1);
     assert_eq!(l[0].launch_id, h.lead);
     assert_eq!(l[0].workers, vec![h.a1]);
@@ -598,7 +614,7 @@ async fn a_lead_hears_when_its_workers_end_block_or_go_idle() {
 }
 
 async fn pin(h: &H, n: u64) {
-    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', ?, ?, 'node', 'rubato-server', 'alice', ?)")
+    sqlx::query("INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'default', ?, ?, 'node', 'rubato-server', 'alice', ?)")
         .bind(REPO)
         .bind(n as i64)
         .bind(ts(t0()))
@@ -628,7 +644,7 @@ async fn a_lead_launch_needs_both_flags() {
     pin(&off, 400).await;
     let e = crate::launch::start(
         &off.app,
-        "default",
+        &crate::kernel::tenancy::WsKey::of_default("default"),
         "alice",
         lead_request(400, off.ca),
         None,
@@ -645,7 +661,7 @@ async fn a_lead_launch_needs_both_flags() {
         .set_capabilities(h.ca, vec![capability::SESSION_INPUT.to_owned()]);
     let e = crate::launch::start(
         &h.app,
-        "default",
+        &crate::kernel::tenancy::WsKey::of_default("default"),
         "alice",
         lead_request(400, h.ca),
         None,
@@ -664,7 +680,7 @@ async fn a_lead_launch_needs_both_flags() {
     );
     let e = crate::launch::start(
         &h.app,
-        "default",
+        &crate::kernel::tenancy::WsKey::of_default("default"),
         "alice",
         lead_request(400, h.ca),
         None,
@@ -676,7 +692,7 @@ async fn a_lead_launch_needs_both_flags() {
     // Both flags on: a lead with the lead prompt.
     let ok = crate::launch::start(
         &h.app,
-        "default",
+        &crate::kernel::tenancy::WsKey::of_default("default"),
         "alice",
         lead_request(400, h.ca),
         None,

@@ -28,14 +28,14 @@ pub async fn record_gauges(app: &App) {
 }
 
 async fn record_gauges_ws(app: &App, w: &WorkspaceEntry) {
-    match store::live_count(&app.db, &w.id).await {
+    match store::live_count(&app.db, &w.key()).await {
         Ok(n) => app
             .metrics
             .map_draft_ops
             .record(n, &[KeyValue::new(attr::WORKSPACE, w.id.clone())]),
         Err(e) => tracing::error!(error = %e, "reading the draft size failed"),
     }
-    let now = match store::proposal(&app.db, &w.id).await {
+    let now = match store::proposal(&app.db, &w.key()).await {
         Ok(p) => p,
         Err(e) => {
             tracing::error!(error = %e, "reading the proposal failed");
@@ -68,7 +68,7 @@ pub async fn clear_merged(app: &App) {
 }
 
 async fn clear_merged_ws(app: &App, w: &WorkspaceEntry) {
-    let row = match store::proposal(&app.db, &w.id).await {
+    let row = match store::proposal(&app.db, &w.key()).await {
         Ok(Some(row)) if row.state == ProposalState::Merged => row,
         Ok(_) => return,
         Err(e) => {
@@ -76,11 +76,11 @@ async fn clear_merged_ws(app: &App, w: &WorkspaceEntry) {
             return;
         }
     };
-    let loaded_at: Option<DateTime<Utc>> = app.map_of(&w.id).await.as_ref().map(|m| m.loaded_at);
+    let loaded_at: Option<DateTime<Utc>> = app.map_of(&w.key()).await.as_ref().map(|m| m.loaded_at);
     if !loaded_at.is_some_and(|at| at > row.state_since) {
         return;
     }
-    if let Err(e) = store::clear_merged(&app.db, &w.id, row.last_seq).await {
+    if let Err(e) = store::clear_merged(&app.db, &w.key(), row.last_seq).await {
         tracing::error!(error = %e, "clearing the merged draft failed");
         return;
     }
@@ -93,7 +93,7 @@ async fn clear_merged_ws(app: &App, w: &WorkspaceEntry) {
     {
         tracing::warn!(branch = %row.branch, error = %format!("{e:#}"), "the merged proposal's branch was not deleted");
     }
-    app.notify_ws("draft", &w.id);
+    app.notify_ws("draft", &w.key());
 }
 
 async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Result<()> {
@@ -113,13 +113,13 @@ async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Res
     let from = state_name(row.state);
     let known = Some((pr.number, pr.url.as_str()));
     if pr.merged_at.is_some() {
-        store::set_state(&app.db, &w.id, ProposalState::Merged, now, known).await?;
+        store::set_state(&app.db, &w.key(), ProposalState::Merged, now, known).await?;
         log_state(from, "merged", row, Some(pr.number));
         count(app, "merged");
-        app.notify_ws("draft", &w.id);
+        app.notify_ws("draft", &w.key());
     } else if !pr.open {
         // Closed without merging: the draft is editable again, every operation kept.
-        store::drop_proposal(&app.db, &w.id).await?;
+        store::drop_proposal(&app.db, &w.key()).await?;
         log_state(from, "drafting", row, Some(pr.number));
         count(app, "closed");
         if let Err(e) = app
@@ -130,13 +130,13 @@ async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Res
         {
             tracing::warn!(branch = %row.branch, error = %format!("{e:#}"), "the closed proposal's branch was not deleted");
         }
-        app.notify_ws("draft", &w.id);
+        app.notify_ws("draft", &w.key());
     } else if row.state == ProposalState::Opening {
         // The pull request exists though the row never learned it: a call that timed out.
-        store::set_state(&app.db, &w.id, ProposalState::Proposed, now, known).await?;
+        store::set_state(&app.db, &w.key(), ProposalState::Proposed, now, known).await?;
         log_state(from, "proposed", row, Some(pr.number));
         count(app, "opened");
-        app.notify_ws("draft", &w.id);
+        app.notify_ws("draft", &w.key());
     }
     Ok(())
 }
@@ -154,7 +154,7 @@ pub async fn check_proposal(app: &App) -> bool {
 }
 
 async fn check_proposal_ws(app: &App, w: &WorkspaceEntry) -> bool {
-    match store::proposal(&app.db, &w.id).await {
+    match store::proposal(&app.db, &w.key()).await {
         Ok(Some(row)) => {
             if let Err(e) = follow(app, w, &row).await {
                 tracing::warn!(error = %format!("{e:#}"), "following the map proposal failed");
@@ -167,7 +167,7 @@ async fn check_proposal_ws(app: &App, w: &WorkspaceEntry) -> bool {
         }
     }
     matches!(
-        store::proposal(&app.db, &w.id).await,
+        store::proposal(&app.db, &w.key()).await,
         Ok(Some(row)) if row.state == ProposalState::Merged
     )
 }
@@ -217,7 +217,7 @@ mod tests {
         let started = Utc::now() - chrono::Duration::minutes(20);
         store::start_proposal(
             &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             "map/draft-1",
             "base",
             "hash",
@@ -236,7 +236,7 @@ mod tests {
         // Proposed: opening goes quiet at once, and proposed may be as old as a review takes.
         store::set_state(
             &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             ProposalState::Proposed,
             Utc::now(),
             Some((7, "u")),
@@ -249,9 +249,12 @@ mod tests {
         assert_eq!(since("merged").unwrap().0, 0);
 
         // Gone: all three back to 0.
-        store::drop_proposal(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
-            .await
-            .unwrap();
+        store::drop_proposal(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        )
+        .await
+        .unwrap();
         record_gauges(&app).await;
         assert!(
             ["opening", "proposed", "merged"]

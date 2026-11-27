@@ -42,11 +42,11 @@ async function post(page: Page, text: string) {
  */
 test("two people talk in a plan's room, and a teammate asks the owner to call their agent in", { tag: ["@room.team-talks", "@room.ask-owner-to-call-agent", "@room.owner-calls-agent-in", "@live.changes-reach-every-browser"] }, async ({ page, browser }) => {
   // The issue is pinned; the poll reads its plan on issue/916-room, so it has a room.
-  const pinned = await fetch(`${base}/api/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, target: { kind: "node", id: "skill-rubato" } }) });
+  const pinned = await fetch(`${base}/api/t/default/w/default/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, target: { kind: "node", id: "skill-rubato" } }) });
   expect(pinned.ok).toBe(true);
   await expect
     .poll(async () => {
-      const o = (await (await fetch(`${base}/api/overview`)).json()) as { issues: { issue: { number: number }; plan?: { git_ref?: string } }[] };
+      const o = (await (await fetch(`${base}/api/t/default/w/default/overview`)).json()) as { issues: { issue: { number: number }; plan?: { git_ref?: string } }[] };
       return o.issues.find((i) => i.issue.number === 916)?.plan?.git_ref;
     }, { timeout: 30_000 })
     .toBe(BRANCH);
@@ -72,7 +72,7 @@ test("two people talk in a plan's room, and a teammate asks the owner to call th
       }
     }),
   );
-  const r = await fetch(`${base}/api/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, slug: "room" }) });
+  const r = await fetch(`${base}/api/t/default/w/default/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: ISSUE, slug: "room" }) });
   expect(r.status, await r.clone().text()).toBe(200);
   const cmd = await launched;
   expect(cmd.branch).toBe(BRANCH);

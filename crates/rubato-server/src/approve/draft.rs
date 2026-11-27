@@ -123,7 +123,7 @@ pub async fn approve_draft(
             json!({}),
         ));
     }
-    let Some(map) = app.map_of(ws.as_str()).await else {
+    let Some(map) = app.map_of(ws.key()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     let issue = IssueRef::new(req.repo.clone(), req.number);

@@ -6,6 +6,7 @@ use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::WsKey;
 use crate::map_draft;
 use axum::Json;
 use axum::extract::State;
@@ -24,7 +25,7 @@ pub mod reason {
     pub const BAD_POSITION: &str = "bad_position";
 }
 
-fn written(app: &App, ws: &str, which: &str) {
+fn written(app: &App, ws: &WsKey, which: &str) {
     app.metrics.layout_writes.add(
         1,
         &[KeyValue::new(attr::LAYOUT_ARRANGEMENT, which.to_owned())],
@@ -52,7 +53,7 @@ struct Known {
     repos: BTreeSet<String>,
 }
 
-async fn known(app: &App, ws: &str) -> Result<Option<Known>, StatusCode> {
+async fn known(app: &App, ws: &WsKey) -> Result<Option<Known>, StatusCode> {
     let Some(map) = app.map_of(ws).await else {
         return Ok(None);
     };
@@ -91,7 +92,7 @@ pub async fn put_layout(
     CurrentUser(user): CurrentUser,
     Json(moved): Json<MapLayout>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let k = known(&app, ws.as_str())
+    let k = known(&app, ws.key())
         .await
         .map_err(|s| (s, String::new()))?
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
@@ -125,7 +126,7 @@ pub async fn put_layout(
         parts: &parts,
         repos: &repos,
     };
-    store::put(&app.db, ws.as_str(), &moved, &known, &user, Utc::now())
+    store::put(&app.db, ws.key(), &moved, &known, &user, Utc::now())
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?;
     for which in arrangements(&moved) {
@@ -137,7 +138,7 @@ pub async fn put_layout(
             boxes = moved.boxes.len(),
             "layout written"
         );
-        written(&app, ws.as_str(), which);
+        written(&app, ws.key(), which);
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -147,8 +148,8 @@ pub async fn clear_layout(
     ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<MapLayout>, StatusCode> {
-    let k = known(&app, ws.as_str()).await?;
-    let removed = store::clear(&app.db, ws.as_str())
+    let k = known(&app, ws.key()).await?;
+    let removed = store::clear(&app.db, ws.key())
         .await
         .map_err(|e| internal(SLICE, e))?;
     let removed = current(removed, k.as_ref());
@@ -159,7 +160,7 @@ pub async fn clear_layout(
         parts = removed.positions.len(),
         "layout cleared"
     );
-    written(&app, ws.as_str(), arrangement::FLAT);
+    written(&app, ws.key(), arrangement::FLAT);
     Ok(Json(removed))
 }
 
@@ -169,8 +170,8 @@ pub async fn clear_grouped_layout(
     ws: crate::kernel::http::Ws,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<MapLayout>, StatusCode> {
-    let k = known(&app, ws.as_str()).await?;
-    let removed = store::clear_grouped(&app.db, ws.as_str())
+    let k = known(&app, ws.key()).await?;
+    let removed = store::clear_grouped(&app.db, ws.key())
         .await
         .map_err(|e| internal(SLICE, e))?;
     let removed = current(removed, k.as_ref());
@@ -181,6 +182,6 @@ pub async fn clear_grouped_layout(
         boxes = removed.boxes.len(),
         "layout cleared"
     );
-    written(&app, ws.as_str(), arrangement::GROUPED);
+    written(&app, ws.key(), arrangement::GROUPED);
     Ok(Json(removed))
 }

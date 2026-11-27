@@ -35,7 +35,7 @@ async fn serve() -> Served {
     let map: rubato_protocol::SystemMap =
         serde_yaml_ng::from_str(include_str!("../../../../docs/design/rubato-map.yml")).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         crate::kernel::state::LoadedMap {
             map,
             version: "v".into(),

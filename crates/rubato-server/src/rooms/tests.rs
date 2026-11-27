@@ -55,8 +55,11 @@ async fn harness() -> H {
         loaded_at: Utc::now(),
         yaml: text.into(),
     };
-    app.set_map(rubato_protocol::DEFAULT_WORKSPACE, map.clone())
-        .await;
+    app.set_map(
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        map.clone(),
+    )
+    .await;
     H {
         app,
         reader,
@@ -478,7 +481,7 @@ mod call_in_tests {
         answer(
             State(h.app.clone()),
             CurrentUser(user.into()),
-            Path(id),
+            Path(id.into()),
             Json(RequestAnswerBody { answer: a }),
         )
         .await
@@ -530,7 +533,7 @@ mod call_in_tests {
         let views = session_messages::list(
             State(h.app.clone()),
             CurrentUser(OWNER.into()),
-            Path(launch),
+            Path(launch.into()),
         )
         .await
         .unwrap()

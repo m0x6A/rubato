@@ -93,10 +93,10 @@ done
 curl -sf http://127.0.0.1:18090/api/health > /dev/null || { echo "server did not start"; cat "$TMP/server.log"; exit 1; }
 # The first poll tick loads the map and lists the open issues.
 for _ in $(seq 1 50); do
-  curl -sf http://127.0.0.1:18090/api/overview 2>/dev/null | grep -q '"number":902' && break
+  curl -sf http://127.0.0.1:18090/api/t/default/w/default/overview 2>/dev/null | grep -q '"number":902' && break
   sleep 0.2
 done
-curl -sf http://127.0.0.1:18090/api/overview | grep -q '"number":902' || { echo "the backlog was not listed"; cat "$TMP/server.log"; exit 1; }
+curl -sf http://127.0.0.1:18090/api/t/default/w/default/overview | grep -q '"number":902' || { echo "the backlog was not listed"; cat "$TMP/server.log"; exit 1; }
 
 # Server 2: as a GitHub App, against the stand-in.
 command -v openssl > /dev/null || { echo "openssl is needed to make the App key" >&2; exit 2; }
@@ -123,6 +123,11 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 curl -sf http://127.0.0.1:18091/api/health > /dev/null || { echo "the App server did not start"; cat "$TMP/app-server.log" "$TMP/github.log"; exit 1; }
+# ADR 0088: only invited people log in. The seed made tenant `default` with installation 34; the
+# stand-in's `member` (GitHub user 1001) is invited here, straight into the table, until the
+# members page of plan 345 can do it through the API. `outsider` (1002) is invited nowhere.
+command -v sqlite3 > /dev/null || { echo "sqlite3 is needed to invite the e2e member" >&2; exit 2; }
+sqlite3 "$TMP/app.db" "INSERT INTO tenant_members (tenant_id, github_id, login, role, invited_by, invited_at) VALUES ('default', 1001, 'member', 'admin', 'e2e', '2026-01-01T00:00:00+00:00');"
 # Its first poll tick lists the open issues as the installation.
 for _ in $(seq 1 50); do
   curl -s http://127.0.0.1:18092/_standin/calls | grep -q '/repos/m0x6A/rubato/issues' && break

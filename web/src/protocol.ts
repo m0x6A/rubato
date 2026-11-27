@@ -2978,7 +2978,7 @@ to: string
  */
 export interface WorkspaceInfo {
 /**
- * `[a-z0-9-]{1,32}`: in URLs (`?w=`, `/api/w/{id}`), rows and the `rubato.workspace` attribute.
+ * `[a-z0-9-]{1,32}`: in URLs (`?w=`, `/api/t/{tenant}/w/{id}`), rows and the `rubato.workspace` attribute.
  */
 id: string
 loaded_at?: (string | null)

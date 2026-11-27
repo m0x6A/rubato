@@ -188,6 +188,15 @@ pub mod reason {
 /// `/api/admin`.
 pub mod routes {
     pub const TENANT_PREFIX: &str = "/api/t";
+
+    /// A tenant route for one tenant (ADR 0089): `/api/queue` in `acme` is `/api/t/acme/queue`.
+    /// A path outside `/api/` is returned unchanged.
+    pub fn in_tenant(tenant: &str, route: &str) -> String {
+        match route.strip_prefix("/api/") {
+            Some(rest) => format!("{TENANT_PREFIX}/{tenant}/{rest}"),
+            None => route.to_string(),
+        }
+    }
     /// `GET` lists, `POST` invites.
     pub const MEMBERS: &str = "/api/t/{tenant}/members";
     /// `PUT` changes a role, `DELETE` removes.
@@ -207,6 +216,16 @@ pub mod routes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tenant_and_workspace_paths() {
+        assert_eq!(routes::in_tenant("acme", "/api/queue"), "/api/t/acme/queue");
+        assert_eq!(routes::in_tenant("acme", "/ws/web"), "/ws/web");
+        assert_eq!(
+            crate::workspace::routes::scoped("acme", "shop", "/api/overview"),
+            "/api/t/acme/w/shop/overview"
+        );
+    }
 
     #[test]
     fn tenant_ids_use_the_workspace_alphabet() {

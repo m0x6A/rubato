@@ -3,6 +3,7 @@
 
 use super::store;
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use crate::kernel::workspaces::WorkspaceEntry;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -61,11 +62,11 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
         Ok((version, yaml)) => (version, yaml, None),
         Err(e) => {
             app.metrics.map_load_failures.add(1, &ws_attr(w));
-            if let Some(m) = app.map_of(&w.id).await {
+            if let Some(m) = app.map_of(&w.key()).await {
                 tracing::warn!(error = %e, "map fetch failed; keeping cached version {}", m.version);
                 return Ok(m);
             }
-            if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.id).await? {
+            if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.key()).await? {
                 tracing::warn!(error = %e, %loaded_at, "map fetch failed; using the database copy {version}");
                 (version, yaml, Some((loaded_at, e)))
             } else {
@@ -88,9 +89,9 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
     };
     still_current(app, w)?;
     if stored_at.is_none() {
-        store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
+        store::store_map(&app.db, &w.key(), &version, &loaded.yaml, loaded.loaded_at).await?;
     }
-    let loaded = app.set_map(&w.id, loaded).await;
+    let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
         &[
@@ -165,13 +166,13 @@ pub async fn apply(app: &App, w: &WorkspaceEntry, loaded: LoadedMap) -> Result<A
     still_current(app, w)?;
     store::store_map(
         &app.db,
-        &w.id,
+        &w.key(),
         &loaded.version,
         &loaded.yaml,
         loaded.loaded_at,
     )
     .await?;
-    let loaded = app.set_map(&w.id, loaded).await;
+    let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
         &[
@@ -186,7 +187,7 @@ pub async fn apply(app: &App, w: &WorkspaceEntry, loaded: LoadedMap) -> Result<A
 
 /// A deleted workspace's map leaves memory (ADR 0075). Its cached row is kept, like every row
 /// of a deleted workspace.
-pub async fn forget(app: &App, ws: &str) {
+pub async fn forget(app: &App, ws: &WsKey) {
     app.maps.write().await.remove(ws);
 }
 
@@ -223,8 +224,8 @@ async fn load_from_file(
         yaml,
     };
     still_current(app, w)?;
-    store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
-    let loaded = app.set_map(&w.id, loaded).await;
+    store::store_map(&app.db, &w.key(), &version, &loaded.yaml, loaded.loaded_at).await?;
+    let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
         &[
@@ -267,10 +268,10 @@ fn parse(app: &App, w: &WorkspaceEntry, yaml: &str, count: bool) -> Result<Syste
 pub async fn warm(app: &App) -> Result<()> {
     let (entries, _) = app.workspace_entries();
     for w in &entries {
-        if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.id).await? {
+        if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.key()).await? {
             let map: SystemMap = serde_yaml_ng::from_str(&yaml)?;
             app.set_map(
-                &w.id,
+                &w.key(),
                 LoadedMap {
                     map,
                     version,
@@ -355,7 +356,12 @@ mod tests {
         let e = reload(&a).await.unwrap_err();
         assert!(format!("{e:#}").contains("\"web-server\""), "{e:#}");
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
-        let kept = a.default_map().await.unwrap();
+        let kept = a
+            .map_of(&crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            ))
+            .await
+            .unwrap();
         assert_eq!(kept.version, good.version);
         assert_eq!(kept.map.name, "flows-fixture");
     }
@@ -389,7 +395,12 @@ mod tests {
         assert!(e.contains("scenario \"off-flow\" step 1"), "{e}");
         assert!(e.contains("name one with carries"), "{e}");
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
-        let kept = a.default_map().await.unwrap();
+        let kept = a
+            .map_of(&crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            ))
+            .await
+            .unwrap();
         assert_eq!(kept.map.name, "scenarios-fixture");
     }
 
@@ -535,7 +546,7 @@ mod tests {
         let stored_at = Utc::now() - chrono::Duration::hours(3);
         store::store_map(
             &a.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             "sha-old",
             MAP,
             stored_at,
@@ -552,10 +563,13 @@ mod tests {
         assert_eq!(only(&reader, metric::MAP_LOADED_AT).value, at);
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
         // The stored row keeps its time.
-        let (_, _, row_at) = store::load_map(&a.db, rubato_protocol::DEFAULT_WORKSPACE)
-            .await
-            .unwrap()
-            .unwrap();
+        let (_, _, row_at) = store::load_map(
+            &a.db,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(row_at.timestamp(), stored_at.timestamp());
     }
 
@@ -575,7 +589,7 @@ mod tests {
             let (a, reader) = failing_github_over(&tmp.path().join(format!("{n}.db"))).await;
             store::store_map(
                 &a.db,
-                rubato_protocol::DEFAULT_WORKSPACE,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 "sha-bad",
                 yaml,
                 Utc::now(),
@@ -591,7 +605,13 @@ mod tests {
             assert!(e.contains("the database copy sha-bad is unusable"), "{e}");
             assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1, "{yaml}");
             assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
-            assert!(a.default_map().await.is_none());
+            assert!(
+                a.map_of(&crate::kernel::tenancy::WsKey::of_default(
+                    rubato_protocol::DEFAULT_WORKSPACE
+                ))
+                .await
+                .is_none()
+            );
         }
     }
 
@@ -633,12 +653,21 @@ mod tests {
             assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, n as u64 + 1);
             assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
             assert!(
-                store::load_map(&a.db, rubato_protocol::DEFAULT_WORKSPACE)
-                    .await
-                    .unwrap()
-                    .is_none()
+                store::load_map(
+                    &a.db,
+                    &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE)
+                )
+                .await
+                .unwrap()
+                .is_none()
             );
-            assert!(a.default_map().await.is_none());
+            assert!(
+                a.map_of(&crate::kernel::tenancy::WsKey::of_default(
+                    rubato_protocol::DEFAULT_WORKSPACE
+                ))
+                .await
+                .is_none()
+            );
         }
     }
 
@@ -664,9 +693,17 @@ mod tests {
         });
         let e = reload_ws(&a, &old).await.unwrap_err().to_string();
         assert!(e.contains("changed meanwhile"), "{e}");
-        assert!(a.map_of("default").await.is_none(), "not applied");
         assert!(
-            store::load_map(&a.db, "default").await.unwrap().is_none(),
+            a.map_of(&crate::kernel::tenancy::WsKey::of_default("default"))
+                .await
+                .is_none(),
+            "not applied"
+        );
+        assert!(
+            store::load_map(&a.db, &crate::kernel::tenancy::WsKey::of_default("default"))
+                .await
+                .unwrap()
+                .is_none(),
             "not cached"
         );
         assert!(

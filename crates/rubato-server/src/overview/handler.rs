@@ -20,13 +20,13 @@ pub async fn overview(
     _user: CurrentUser,
 ) -> Result<Json<Overview>, StatusCode> {
     let map = app
-        .map_of(ws.as_str())
+        .map_of(ws.key())
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     // The workspace list and every loaded map, read once for this request (#171).
-    let all = crate::map::list_workspaces(&app).await;
+    let all = crate::map::list_workspaces(&app, ws.key().tenant()).await;
     let maps = Maps::read(&app).await;
-    let mut inputs = build_overview_inputs(&app, ws.as_str(), &all, &maps)
+    let mut inputs = build_overview_inputs(&app, ws.key(), &all, &maps)
         .await
         .map_err(|e| internal(SLICE, e))?;
     let companions: Vec<_> = pairing::list_pairings(&app.db, None)
@@ -45,7 +45,7 @@ pub async fn overview(
                 .any(|c| c.companion_id == q.companion_id && c.revoked_at.is_none())
         })
         .collect();
-    let draft = map_draft::snapshot(&app.db, ws.as_str(), &map.map)
+    let draft = map_draft::snapshot(&app.db, ws.key(), &map.map)
         .await
         .map_err(|e| internal(SLICE, e))?;
     // A part that exists only in the draft may have a position too (ADR 0016). Read before the
@@ -72,7 +72,10 @@ pub async fn overview(
         .map(|w| w.name.as_str())
         .unwrap_or_default();
     let mut findings = built.findings;
-    findings.extend(build::cross_workspace_findings(here, &maps.named(&all)));
+    findings.extend(build::cross_workspace_findings(
+        here,
+        &maps.named(ws.key().tenant(), &all),
+    ));
     Ok(Json(Overview {
         map: MapResponse {
             map: map.map.clone(),
@@ -103,7 +106,7 @@ pub async fn overview(
             .map_err(|e| internal(SLICE, e))?,
         // A person's lead agents and their workers, only with the flag on (ADR 0072).
         orchestrator: app.config.orchestrator,
-        leads: crate::fleet::leads(&app, ws.as_str()).await,
+        leads: crate::fleet::leads(&app, ws.key()).await,
         // Each context graph source and how fresh it is; absent while the flag is off (ADR 0084).
         graph: crate::context_graph::overview(&app).await,
         generated_at: Utc::now(),

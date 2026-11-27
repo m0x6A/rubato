@@ -39,7 +39,7 @@ export function staleTraffic(o: Overview): Overview {
  * Any other error still is.
  */
 export async function routeOverview(page: Page, edit: (o: Overview) => Overview): Promise<void> {
-  await page.route("**/api/overview", async (route) => {
+  await page.route("**/api/t/default/w/default/overview", async (route) => {
     try {
       const res = await route.fetch();
       await route.fulfill({ response: res, json: edit((await res.json()) as Overview) });

@@ -11,6 +11,7 @@
 //! `github_poll` and `plans` name no other slice.
 
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use crate::{
     admin, agent_reports, approve, auth, companion_link, github_poll, launch, map, map_draft,
     new_issue, overview, pairing, pins, plan_status, plans, pulls, queue, rooms, session_messages,
@@ -371,7 +372,7 @@ impl Poller {
         // repo), then, as an installation only, which repos it covers.
         // Every loaded workspace map, in id order: the listing is over their union (ADR 0048).
         // Pointer copies under one guard, then borrowed: no map is copied (#171).
-        let maps: Vec<(String, std::sync::Arc<LoadedMap>)> = app
+        let maps: Vec<(WsKey, std::sync::Arc<LoadedMap>)> = app
             .maps
             .read()
             .await
@@ -398,8 +399,8 @@ impl Poller {
                 );
             }
         }
-        let systems: Vec<(&str, &rubato_protocol::SystemMap)> =
-            maps.iter().map(|(k, v)| (k.as_str(), &v.map)).collect();
+        let systems: Vec<(&WsKey, &rubato_protocol::SystemMap)> =
+            maps.iter().map(|(k, v)| (k, &v.map)).collect();
         // With targets, only the repos they name, unless this is a full lane (every 300 s, so
         // the backlog and `Map:` lines keep their pace, design 208 D7).
         let list_only: Option<BTreeSet<String>> = match targets {
@@ -440,6 +441,9 @@ impl Poller {
                 .map_lines()
                 .iter()
                 .filter(|l| &l.workspace == ws)
+                // A `Map: … in <ws>` line speaks to a workspace of its own repository's tenant
+                // only (design §5.2).
+                .filter(|l| app.github.tenant_of(&l.issue.repo).as_ref() == Some(ws.tenant()))
                 .map(|l| pins::Line {
                     issue: l.issue.clone(),
                     target: l.target.clone(),
@@ -809,7 +813,7 @@ impl Poller {
     async fn discover(
         &mut self,
         app: &App,
-        maps: &[(String, std::sync::Arc<LoadedMap>)],
+        maps: &[(WsKey, std::sync::Arc<LoadedMap>)],
         tracked: &BTreeSet<IssueRef>,
         listed: &github_poll::Listed,
         view: &mut github_poll::RepoView,
@@ -876,7 +880,7 @@ impl Poller {
 /// The map an issue's plan path and branch rules come from: the first workspace, in id order,
 /// whose map names the repository, else the first map (design §5.3: no anchor map). Never
 /// called with no map.
-fn map_for<'a>(maps: &'a [(String, std::sync::Arc<LoadedMap>)], repo: &str) -> &'a LoadedMap {
+fn map_for<'a>(maps: &'a [(WsKey, std::sync::Arc<LoadedMap>)], repo: &str) -> &'a LoadedMap {
     maps.iter()
         .find(|(_, m)| {
             m.map

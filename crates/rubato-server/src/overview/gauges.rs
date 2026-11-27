@@ -4,6 +4,7 @@
 use super::build;
 use super::inputs::{Maps, build_overview_inputs};
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use chrono::Utc;
 use opentelemetry::KeyValue;
@@ -25,25 +26,37 @@ pub async fn refresh_gauges(app: &App) -> Result<()> {
 /// that built, and the first error of one that did not (plan 226 §4). One failing workspace no
 /// longer stops the others; the composition root hands the issues to `plan_status`.
 pub struct Refreshed {
-    pub built: Vec<(String, Vec<rubato_protocol::IssueSummary>)>,
+    pub built: Vec<(WsKey, Vec<rubato_protocol::IssueSummary>)>,
     pub error: Option<anyhow::Error>,
 }
 
 /// [`refresh_gauges`], keeping what it built.
 pub async fn refresh(app: &App) -> Refreshed {
     // The workspace list and the maps once per tick, not once per workspace (#171).
-    let all = crate::map::list_workspaces(app).await;
     let maps = Maps::read(app).await;
-    let named = maps.named(&all);
+    // Each tenant's own workspace list: findings and collisions compare workspaces of one
+    // tenant, never across tenants (design §5.5).
+    let mut lists: std::collections::BTreeMap<
+        crate::kernel::tenancy::TenantId,
+        Vec<WorkspaceInfo>,
+    > = Default::default();
+    for (ws, _) in maps.iter() {
+        if !lists.contains_key(ws.tenant()) {
+            let all = crate::map::list_workspaces(app, ws.tenant()).await;
+            lists.insert(ws.tenant().clone(), all);
+        }
+    }
     let mut out = Refreshed {
         built: Vec::new(),
         error: None,
     };
     for (ws, map) in maps.iter() {
-        match refresh_one(app, ws, map, &all, &maps).await {
-            Ok(issues) => out.built.push((ws.to_owned(), issues)),
+        let all = &lists[ws.tenant()];
+        let named = maps.named(ws.tenant(), all);
+        match refresh_one(app, ws, map, all, &maps).await {
+            Ok(issues) => out.built.push((ws.clone(), issues)),
             Err(e) => {
-                tracing::warn!(rubato.workspace = ws, error = %format!("{e:#}"), "overview not built");
+                tracing::warn!(rubato.tenant = %ws.tenant, rubato.workspace = ws.ws(), error = %format!("{e:#}"), "overview not built");
                 if out.error.is_none() {
                     out.error = Some(e);
                 }
@@ -51,7 +64,7 @@ pub async fn refresh(app: &App) -> Refreshed {
         }
         let name = all
             .iter()
-            .find(|w| w.id == ws)
+            .find(|w| w.id == ws.ws())
             .map(|w| w.name.as_str())
             .unwrap_or_default();
         let collisions = build::cross_workspace_findings(name, &named)
@@ -60,7 +73,7 @@ pub async fn refresh(app: &App) -> Refreshed {
             .count();
         app.metrics.workspace_id_collisions.record(
             collisions as u64,
-            &[KeyValue::new(attr::WORKSPACE, ws.to_owned())],
+            &[KeyValue::new(attr::WORKSPACE, ws.ws().to_owned())],
         );
     }
     app.metrics
@@ -82,12 +95,12 @@ fn shared_repos<'a>(maps: impl Iterator<Item = &'a LoadedMap>) -> usize {
 
 async fn refresh_one(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     map: &LoadedMap,
     all: &[WorkspaceInfo],
     maps: &Maps,
 ) -> Result<Vec<rubato_protocol::IssueSummary>> {
-    let w = || KeyValue::new(attr::WORKSPACE, ws.to_owned());
+    let w = || KeyValue::new(attr::WORKSPACE, ws.ws().to_owned());
     let built = build_overview_inputs(app, ws, all, maps).await?;
     let built = build::build(built, Some(map), &app.config.limits, Utc::now());
     let (by_state, by_seam) = build::counts(&built);
@@ -233,8 +246,11 @@ mod tests {
             loaded_at: Utc::now(),
             yaml: text.into(),
         };
-        app.set_map(rubato_protocol::DEFAULT_WORKSPACE, map.clone())
-            .await;
+        app.set_map(
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+            map.clone(),
+        )
+        .await;
 
         let i71 = IssueRef::new("m0x6A/rubato", 71);
         let (v1, v2) = (plan_text(71, "one"), plan_text(71, "two"));
@@ -261,7 +277,9 @@ mod tests {
         plan_drafts::on_draft(&app, &bundle(&r1), "m0x6A").await;
         let pressed = approve::approve_draft(
             State(app.clone()),
-            Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+            Ws(crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            )),
             CurrentUser("teammate".into()),
             Json(DraftApproveRequest {
                 repo: "m0x6A/rubato".into(),
