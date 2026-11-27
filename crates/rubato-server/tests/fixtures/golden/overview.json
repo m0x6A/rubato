@@ -481,7 +481,7 @@
       ],
       "seams": [
         {
-          "carries": "CompanionMessage / ServerMessage envelopes, JSON over one outbound websocket",
+          "carries": "CompanionMessage / ServerMessage envelopes, JSON over one outbound websocket; behind the context graph flag, one GET over the server URL for a graph snapshot, with the pairing token (ADR 0086)",
           "description": "Each companion reports what its sessions are doing, and receives launch commands and messages for its own user's sessions only. The companion always dials out.",
           "flows": [
             {
@@ -494,6 +494,18 @@
               "carries": "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071); FleetResult to a lead's request (ADR 0072)",
               "from": "rubato-server",
               "kind": "data",
+              "to": "rubato-companion"
+            },
+            {
+              "carries": "behind the context graph flag, a graph source's snapshot, fetched by the companion over the server URL with its pairing token, while its owner has a fresh team record (ADR 0086)",
+              "from": "rubato-server",
+              "kind": "data",
+              "to": "rubato-companion"
+            },
+            {
+              "carries": "behind the context graph flag, GraphSources: each source's head, content hash and counts, after Welcome and on change (ADR 0086)",
+              "from": "rubato-server",
+              "kind": "control",
               "to": "rubato-companion"
             },
             {
@@ -522,7 +534,7 @@
           "to": "rubato-server"
         },
         {
-          "carries": "OAuth login, REST (issues, comments, PRs, checks, contents), Projects v2 GraphQL later",
+          "carries": "OAuth login, REST (issues, comments, PRs, checks, contents, a repository tarball), Projects v2 GraphQL later",
           "description": "The server reads what GitHub already knows about an issue and, as a GitHub App, proposes map changes as pull requests.",
           "flows": [
             {
@@ -557,6 +569,12 @@
             },
             {
               "carries": "App webhook deliveries, signed with X-Hub-Signature-256: which issue, pull request, check or branch changed",
+              "from": "github",
+              "kind": "data",
+              "to": "rubato-server"
+            },
+            {
+              "carries": "behind the context graph flag, the default-branch head and a tarball at that head, of each repository the maps name (ADR 0084)",
               "from": "github",
               "kind": "data",
               "to": "rubato-server"
@@ -602,7 +620,7 @@
           "to": "claude-code"
         },
         {
-          "carries": "MCP over loopback HTTP (POST /mcp on the hook receiver, the hook token from a 0600 mcp.json, X-Rubato-Launch): get_assignment, report_status, plan_status; for a person's lead launch behind the orchestrator flag, fleet_list, fleet_launch, fleet_message, fleet_stop with its X-Rubato-Lead secret (ADR 0072)",
+          "carries": "MCP over loopback HTTP (POST /mcp on the hook receiver, the hook token from a 0600 mcp.json, X-Rubato-Launch): get_assignment, report_status, plan_status; for a person's lead launch behind the orchestrator flag, fleet_list, fleet_launch, fleet_message, fleet_stop with its X-Rubato-Lead secret (ADR 0072); behind the context graph flag, the read-only graph_status, graph_search, graph_node, graph_related and graph_context, also on POST /mcp/read with no launch id for a session started by hand, through rubato-companion mcp over stdio (ADR 0086)",
           "description": "A session Rubato launched asks its own companion what it is assigned to and where its plan stands, and says what it is doing. What it says is a signal with a last-seen time, never a progress state; hooks stay the evidence (ADR 0071).",
           "flows": [
             {
@@ -622,10 +640,22 @@
               "from": "rubato-companion",
               "kind": "data",
               "to": "claude-code"
+            },
+            {
+              "carries": "behind the context graph flag, graph_status, graph_search, graph_node, graph_related and graph_context calls; from a session started by hand, through rubato-companion mcp with no launch id (ADR 0086)",
+              "from": "claude-code",
+              "kind": "control",
+              "to": "rubato-companion"
+            },
+            {
+              "carries": "behind the context graph flag, answers from the companion's copy of the context graph, each with its source's head and age (ADR 0086)",
+              "from": "rubato-companion",
+              "kind": "data",
+              "to": "claude-code"
             }
           ],
           "from": "rubato-companion",
-          "guard": "agent_mcp tests: identity from the launch id only, a call naming another issue refused and counted, no tool name or description that writes an approval; Gherkin calls each tool against a launched session",
+          "guard": "agent_mcp tests: identity from the launch id only, a call naming another issue refused and counted, no tool name or description that writes an approval; Gherkin calls each tool against a launched session; every graph tool called with the outbox and the copy unchanged, and /mcp/read lists read-only tools only",
           "id": "companion-mcp",
           "owner": "rubato-companion",
           "to": "claude-code"
@@ -755,7 +785,7 @@
           "description": "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map.",
           "flows": [
             {
-              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073); behind the orchestrator flag, each lead and its workers, and who sent a message for a lead; how each companion's Claude is billed (ADR 0072, ADR 0076)",
+              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073); behind the orchestrator flag, each lead and its workers, and who sent a message for a lead; how each companion's Claude is billed (ADR 0072, ADR 0076); behind the context graph flag, each graph source with its head, age and counts (ADR 0084)",
               "from": "rubato-server",
               "kind": "data",
               "to": "web"
