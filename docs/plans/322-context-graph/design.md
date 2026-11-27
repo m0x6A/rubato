@@ -264,14 +264,15 @@ CREATE TABLE sources (
   truncated INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE nodes (
-  source TEXT NOT NULL, id TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL,
-  repo TEXT, path TEXT, line INTEGER, end_line INTEGER, summary TEXT, detail TEXT
-);
-CREATE INDEX nodes_by_source ON nodes (source);
+  source TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
+  repo TEXT, path TEXT, line INTEGER, end_line INTEGER, summary TEXT, detail TEXT NOT NULL,
+  PRIMARY KEY (source, id)        -- an id comes from one source; a generator's mistake shows
+);                                -- as two rows, not as a build that can never be stored
+CREATE INDEX nodes_by_id ON nodes (id);
 CREATE INDEX nodes_by_path ON nodes (repo, path);
 CREATE TABLE edges (
   source TEXT NOT NULL, from_id TEXT NOT NULL, kind TEXT NOT NULL, to_id TEXT NOT NULL,
-  detail TEXT
+  detail TEXT NOT NULL            -- canonical JSON, `{}` when empty
 );
 CREATE INDEX edges_by_source ON edges (source);
 CREATE INDEX edges_out ON edges (from_id, kind);

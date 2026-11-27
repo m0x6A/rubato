@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 rubato-protocol = { path = "../rubato-protocol" }
+rubato-graph = { path = "../rubato-graph" }
 anyhow = "1"
 thiserror.workspace = true
 serde.workspace = true

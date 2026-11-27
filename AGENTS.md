@@ -52,6 +52,7 @@ No inbound access to developer machines. Ever. The companion pairs with a login 
 Cargo.toml                 # workspace
 crates/
   rubato-protocol/         # shared types: HookEvent, SessionState, LaunchCommand, Plan, MapNode. Write this first.
+  rubato-graph/            # library: the context graph's SQLite store, snapshots and queries (ADR 0084); holds no slice, used by both binaries
   rubato-companion/        # binary; features/ holds its Gherkin contract
   rubato-server/           # binary; axum, sqlx (SQLite), oauth2, octocrab; embeds web/dist
 web/                       # TypeScript, React, React Flow (or Cytoscape), ELK layout
@@ -122,6 +123,7 @@ rooms           a plan's room: messages, seam notices, agents called in, turns  
 voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
 telemetry_relay  the web's own spans, rewritten and forwarded over OTLP (ADR 0082)   (none; token buckets in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
+context_graph   the context graph's sources, each replaced whole, and their status (ADR 0084)   (none in the main database; its own file rubato-graph.db: sources, nodes, edges, nodes_fts)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 agent_reports   what each launched agent last said it is doing  agent_reports
 plan_status     plan status pushed to each launched session      (none)

@@ -13,6 +13,7 @@ pub mod agent_reports;
 pub mod approve;
 pub mod auth;
 pub mod companion_link;
+pub mod context_graph;
 pub mod fleet;
 pub mod github_poll;
 pub mod import;
