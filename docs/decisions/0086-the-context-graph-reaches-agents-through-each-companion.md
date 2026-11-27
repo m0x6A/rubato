@@ -1,8 +1,8 @@
 # 0086. The context graph reaches agents through each companion: a synced copy, read-only tools, and a stdio bridge for sessions started by hand
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-26
-- **Decided by:** agent (Claude Code, claude-fable-5-2, issue #322) — proposed; that agents read the graph through each person's companion, from a copy the server sends, is Mattias Jonsson's choice, 2026-11-26. That every such companion receives every source is his answer to plan question Q1, 2026-11-27.
+- **Decided by:** Mattias Jonsson (m0x6A), accepted in the Claude Code session 2026-11-27 ("Approve all"); drafted by agent (Claude Code, claude-fable-5-2, issue #322); that agents read the graph through each person's companion, from a copy the server sends, is Mattias Jonsson's choice, 2026-11-26. That every such companion receives every source is his answer to plan question Q1, 2026-11-27.
 - **Seam:** companion-server, companion-mcp
 - **Issue:** m0x6A/rubato#322
 

@@ -1,8 +1,8 @@
 # 0085. Parse source for the context graph with tree-sitter, for Rust, TypeScript and JavaScript first
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-26
-- **Decided by:** agent (Claude Code, claude-fable-5-2, issue #322) — proposed; that the graph holds a code graph is Mattias Jonsson's choice, 2026-11-26
+- **Decided by:** Mattias Jonsson (m0x6A), accepted in the Claude Code session 2026-11-27 ("Approve all"); drafted by agent (Claude Code, claude-fable-5-2, issue #322); that the graph holds a code graph is Mattias Jonsson's choice, 2026-11-26
 - **Seam:** none (dependency)
 - **Issue:** m0x6A/rubato#322
 

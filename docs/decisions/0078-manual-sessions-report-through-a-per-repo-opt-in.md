@@ -1,6 +1,6 @@
 # 0078. A session started by hand reports state only through a per-repo opt-in
 
-- **Status:** accepted
+- **Status:** accepted; superseded in part by 0086
 - **Date:** 2026-11-15
 - **Decided by:** Mattias Jonsson (m0x6A), approved in the Claude Code session 2026-11-16; drafted by agent
 - **Seam:** companion-claude-code

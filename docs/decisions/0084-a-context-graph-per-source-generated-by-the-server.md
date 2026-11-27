@@ -1,8 +1,8 @@
 # 0084. Generate a context graph per source on the server, on a timer, and keep it in its own SQLite file
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-26
-- **Decided by:** agent (Claude Code, claude-fable-5-2, issue #322) — proposed; what the graph holds, which repositories it covers and the 15-minute default are Mattias Jonsson's choices, 2026-11-26
+- **Decided by:** Mattias Jonsson (m0x6A), accepted in the Claude Code session 2026-11-27 ("Approve all"); drafted by agent (Claude Code, claude-fable-5-2, issue #322); what the graph holds, which repositories it covers and the 15-minute default are Mattias Jonsson's choices, 2026-11-26
 - **Seam:** server-github, web-server
 - **Issue:** m0x6A/rubato#322
 

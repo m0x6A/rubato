@@ -1,6 +1,6 @@
 # 0004. A user starts sessions only in their own tmux; no inbound access to developer machines
 
-- **Status:** accepted; superseded in part by 0062, 0071 and 0072
+- **Status:** accepted; superseded in part by 0062, 0071, 0072 and 0086
 - **Date:** 2026-11-08
 - **Decided by:** Mattias Jonsson (recorded in AGENTS.md)
 - **Seam:** companion-server
