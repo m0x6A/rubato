@@ -549,13 +549,23 @@ async fn team_input(
     })
 }
 
-/// The timer: a tick at start, then one every `every`, until shutdown. It never ends on an
-/// error; a failing source is a recorded failure, not a dead task.
+/// How soon the timer looks again while no map has loaded: at start the maps may still be on
+/// their way, and a server that waited a whole interval for them would show no graph for it.
+const NO_MAP_RETRY: Duration = Duration::from_secs(5);
+
+/// The timer: a tick at start, then one every `every`, until shutdown. While no map is loaded
+/// it looks again after a few seconds. It never ends on an error; a failing source is a
+/// recorded failure, not a dead task.
 pub async fn run(app: App, every: Duration, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     loop {
         tick(&app).await;
+        let wait = if app.maps.read().await.is_empty() {
+            every.min(NO_MAP_RETRY)
+        } else {
+            every
+        };
         tokio::select! {
-            _ = tokio::time::sleep(every) => {}
+            _ = tokio::time::sleep(wait) => {}
             _ = shutdown.changed() => return,
         }
     }

@@ -76,6 +76,21 @@ test("connected repos list the map's repo", { tag: "@repos.lists-map-repo" }, as
   await expect(row).toContainText("yes");
 });
 
+// Issue #333 (ADR 0084): the e2e server runs with RUBATO_CONTEXT_GRAPH=1 and builds the graph of
+// the seeded repository at start, from a real `git archive`. The Repos tab says where that graph
+// stands: the head it was built at, when a tick last found it current, and its size.
+test("the Repos tab says how fresh each repository's context graph is", { tag: "@repos.context-graph-age" }, async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("tab-repos").click();
+  const line = page.getByTestId("graph-m0x6A/rubato");
+  // The first build runs right after start; the page is told when it lands.
+  await expect(line).toHaveAttribute("data-state", "current", { timeout: 60_000 });
+  await expect(line).toHaveText(/^context graph: [0-9a-f]{7} · checked \d+[smh] ago · [\d,]+ nodes$/);
+  // The workspace's map and pins, and the team's shared facts, each once above the repositories.
+  await expect(page.getByTestId("graph-workspace/default")).toContainText(/map [0-9a-f]{7} · checked/);
+  await expect(page.getByTestId("graph-team")).toContainText(/checked \d+[smh] ago/);
+});
+
 // Issue #283: Accept plan says what it did, on the row. The dev server keeps no tokens and has no
 // GitHub to post to, so the page is told it may act, the post is answered here after a moment,
 // and the overview then counts the approval, as it does once the comment is on the issue.

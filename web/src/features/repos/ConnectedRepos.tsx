@@ -1,4 +1,5 @@
-import type { ConnectedRepo, IssueRef, MapRef, Overview } from "../../protocol.ts";
+import type { ConnectedRepo, GraphOverview, GraphSourceStatus, IssueRef, MapRef, Overview } from "../../protocol.ts";
+import { graphLine, graphOf } from "./graph.ts";
 import { RepoWork } from "./RepoWork.tsx";
 import { type RepoFeatures, repoFeatures } from "./provides.ts";
 
@@ -11,7 +12,7 @@ export function rackScale(repos: ConnectedRepo[]): Max {
 }
 
 /** One repo as a rack unit (issue #81, design §6): two lights (in the map, covered by the App) and four bars. */
-export function RackUnit({ repo: r, max, provides }: { repo: ConnectedRepo; max: Max; provides?: RepoFeatures | undefined }) {
+export function RackUnit({ repo: r, max, provides, graph, regenSecs, now }: { repo: ConnectedRepo; max: Max; provides?: RepoFeatures | undefined; graph?: GraphSourceStatus | undefined; regenSecs?: number | undefined; now?: number | undefined }) {
   const bars: [keyof Max, number, string][] = [
     ["open_issues", r.open_issues, "open issues"],
     ["plans", r.plans, r.plans === 1 ? "plan" : "plans"],
@@ -36,7 +37,36 @@ export function RackUnit({ repo: r, max, provides }: { repo: ConnectedRepo; max:
         ))}
       </div>
       {r.unattributed > 0 && <span className="badge approval-stale">{r.unattributed} not tied to an issue</span>}
+      {graph && <GraphLine name={r.repo} source={graph} regenSecs={regenSecs ?? 900} now={now} />}
       {provides && <Provides repo={r.repo} f={provides} />}
+    </div>
+  );
+}
+
+/** How one context graph source stands (ADR 0084): its head, when a tick last found it current,
+ * its size; or that it is failing, stale or not built yet. Said in words, not only in colour. */
+export function GraphLine({ name, source, regenSecs, now, label = "context graph" }: { name: string; source: GraphSourceStatus; regenSecs: number; now?: number | undefined; label?: string }) {
+  const line = graphLine(source, regenSecs, now);
+  return (
+    <p className={`graph-line ${line.state}`} data-testid={`graph-${name}`} data-state={line.state}>
+      {label}: {line.text}
+    </p>
+  );
+}
+
+/** The sources that belong to no one repository: this workspace's map and pins, and the team's
+ * shared facts. Shown once, above the repositories. Nothing with the flag off. */
+export function SharedGraphLines({ graph, workspace, now }: { graph: GraphOverview | null | undefined; workspace: string; now?: number | undefined }) {
+  const sources = graph?.sources ?? [];
+  const ws = sources.find((s) => s.source === `workspace/${workspace}`);
+  const team = sources.find((s) => s.source === "team");
+  if (!graph || (!ws && !team)) {
+    return null;
+  }
+  return (
+    <div className="graph-shared" data-testid="graph-shared">
+      {ws && <GraphLine name={ws.source} source={ws} regenSecs={graph.regen_secs} now={now} label="context graph, this workspace's map and pins" />}
+      {team && <GraphLine name="team" source={team} regenSecs={graph.regen_secs} now={now} label="context graph, the team's issues, plans and pull requests" />}
     </div>
   );
 }
@@ -99,10 +129,11 @@ export function ConnectedRepos({ overview, onOpenIssue, onPin }: { overview: Ove
   return (
     <section data-testid="connected-repos">
       <h3>Connected repos</h3>
+      <SharedGraphLines graph={overview.graph} workspace={overview.workspace ?? "default"} />
       <ul className="plain racks">
         {repos.map((r) => (
           <li key={r.repo}>
-            <RackUnit repo={r} max={max} provides={repoFeatures(overview.map.map, r.repo)} />
+            <RackUnit repo={r} max={max} provides={repoFeatures(overview.map.map, r.repo)} graph={graphOf(overview.graph, r.repo)} regenSecs={overview.graph?.regen_secs} />
             {r.in_map && <RepoWork overview={overview} repo={r.repo} onOpenIssue={onOpenIssue} onPin={onPin} />}
           </li>
         ))}

@@ -359,6 +359,41 @@ async fn the_timer_ticks_at_start_and_then_once_an_interval() {
         .unwrap();
 }
 
+/// At start the maps may not have loaded yet. The timer must not then wait a whole interval:
+/// found by the e2e, where the first tick ran before the map and nothing was built.
+#[tokio::test]
+async fn a_server_whose_map_loads_after_the_first_tick_still_builds_soon() {
+    let (app, github, _tmp) = serve().await;
+    let loaded = app
+        .maps
+        .write()
+        .await
+        .remove(rubato_protocol::DEFAULT_WORKSPACE)
+        .unwrap();
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    // An interval far longer than the test: only the no-map retry can build in time.
+    let task = tokio::spawn(run(app.clone(), Duration::from_secs(3600), shutdown));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        calls(&github, "default_head"),
+        0,
+        "no map, nothing to ask for"
+    );
+    app.maps
+        .write()
+        .await
+        .insert(rubato_protocol::DEFAULT_WORKSPACE.to_owned(), loaded);
+    until("the build after the map loaded", || {
+        calls(&github, "tarball") == 1
+    })
+    .await;
+    stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 #[test]
 fn a_tarball_is_read_file_by_file_without_its_top_directory() {
     let mut files = fixture_files();

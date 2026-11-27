@@ -181,7 +181,7 @@ drafts      edit the map as one shared draft, propose it         POST /api/map/d
 findings    what the map and the plans disagree about            (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 plans       the plans board: proposed and open, Done on request, a plan read in place; fit, Accept plan, drafts, plan text as Markdown (ADR 0079)    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
-repos       connected repos, what each provides, their open pull requests and issues, loose sessions  (none)
+repos       connected repos, what each provides, their open pull requests and issues, loose sessions, how fresh each context graph source is  (none)
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
 room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
 workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
