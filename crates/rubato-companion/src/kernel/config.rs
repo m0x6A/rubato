@@ -100,6 +100,9 @@ pub struct CompanionConfig {
     /// A person's lead agent may run here (ADR 0072): the companion announces `fleet` and serves
     /// the fleet tools to a lead launch. Off by default.
     pub orchestrator: bool,
+    /// Keep a copy of the team's context graph and answer the graph tools from it (ADR 0086).
+    /// On by default; `false` keeps the graph off this machine.
+    pub context_graph: bool,
 }
 
 /// Why `run` refuses to start in a container (ADR 0076): the image has no tmux, so only
@@ -150,6 +153,7 @@ impl Default for CompanionConfig {
             headless_quiet_max_secs: 15 * 60,
             fork_timeout_secs: 600,
             orchestrator: false,
+            context_graph: true,
         }
     }
 }

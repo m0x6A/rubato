@@ -38,6 +38,10 @@ pub struct TestServer {
     pub limits: Arc<std::sync::Mutex<Limits>>,
     /// What the Welcome announces; a scenario may take one away before the daemon starts.
     pub capabilities: Arc<std::sync::Mutex<Vec<String>>>,
+    /// Context graph snapshot bodies the server serves, by source key (ADR 0086).
+    pub snapshots: Arc<std::sync::Mutex<HashMap<String, Vec<u8>>>>,
+    /// Every snapshot request: the source asked for and whether it carried the pairing token.
+    pub snapshot_asks: Arc<std::sync::Mutex<Vec<(String, bool)>>>,
 }
 
 impl TestServer {
@@ -76,6 +80,8 @@ impl TestServer {
                 rubato_protocol::capability::HANDOFF_REPORTS.into(),
                 rubato_protocol::capability::ROOM_REPLIES.into(),
             ])),
+            snapshots: Default::default(),
+            snapshot_asks: Default::default(),
         };
         let st = srv.clone();
         let app = Router::new()
@@ -123,6 +129,20 @@ impl TestServer {
                     })
                 }
             }))
+            .route(rubato_protocol::graph::routes::GRAPH_SNAPSHOT, get(
+                |AxState(st): AxState<TestServer>, headers: HeaderMap, axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>| async move {
+                    let source = q.get("source").cloned().unwrap_or_default();
+                    let ok = headers.get("authorization").and_then(|v| v.to_str().ok()) == Some(&format!("Bearer {}", st.token));
+                    st.snapshot_asks.lock().unwrap().push((source.clone(), ok));
+                    if !ok {
+                        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    match st.snapshots.lock().unwrap().get(&source) {
+                        Some(body) => body.clone().into_response(),
+                        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+                    }
+                },
+            ))
             .with_state(st);
         use axum::response::IntoResponse;
         let listener = tokio::net::TcpListener::bind((ip, 0)).await.unwrap();
@@ -191,6 +211,8 @@ pub struct RubatoWorld {
     pub join: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
     pub run_error: Option<String>,
     pub last_launch: Option<LaunchCommand>,
+    /// What the test server announces as its context graph sources (ADR 0086).
+    pub graph_announce: Vec<rubato_protocol::graph::GraphSourceInfo>,
     /// A lead's fleet request was checked against its launch (features/fleet.feature).
     pub fleet_request_checked: bool,
     pub last_status: Option<u16>,
@@ -294,6 +316,7 @@ impl RubatoWorld {
             join: None,
             run_error: None,
             last_launch: None,
+            graph_announce: Vec::new(),
             fleet_request_checked: false,
             last_status: None,
             status_out: None,

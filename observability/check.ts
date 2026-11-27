@@ -38,8 +38,9 @@ const REQUIRED = [
   "SpeechProviderFailing",
   // Issue #134 (ADR 0072).
   "FleetCrossOwner",
-  // Issue #322 (ADR 0084).
+  // Issue #322 (ADR 0084, ADR 0086).
   "ContextGraphStale",
+  "ContextGraphCopyBehind",
 ];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
@@ -63,6 +64,8 @@ const INTERACTIVE_MAP: [string, string][] = [
   // Issue #322 (ADR 0084): the row "Context graph" the O-row of seam server-github names.
   ["Context graph source age", "rubato_graph_source_age"],
   ["Context graph builds by outcome", "rubato_graph_builds_total"],
+  ["Context graph snapshots served and synced", "rubato_graph_syncs_total"],
+  ["Context graph snapshots served and synced", "rubato_graph_copy_behind"],
   ["Quiet seams and undeclared edges", "rubato_traffic_seams_quiet"],
   ["Quiet seams and undeclared edges", "rubato_traffic_undeclared_edges"],
   ["Quiet seams and undeclared edges", "rubato_traffic_unmapped_services"],

@@ -2340,6 +2340,51 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "id": 124,
+      "title": "Context graph snapshots served and synced",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 180
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "How the context graph reaches each developer machine (ADR 0086). Per hour: snapshots the server served, by outcome (ok; unauthorized for an unknown or revoked pairing; stale for an owner without a fresh team record; error), and sources each companion applied or kept, by reason (http: the server was not reached or refused; hash_mismatch: the body did not hash to its header; superseded: the server built a newer one meanwhile, harmless; apply; team_record_stale: the owner must log in to Rubato). The line per companion is the seconds its copy has been behind the announced list, 0 while in step; alert ContextGraphCopyBehind fires past three regeneration intervals. A companion with kept sources and a rising line is the one to look at: its log says 'context graph copy not applied' with rubato.graph.source and rubato.reason. Every companion behind at once with the server's own sources current means the snapshot route, not the builds.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_graph_snapshots_total[1h]))",
+          "legendFormat": "served {{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_outcome, rubato_reason) (increase(rubato_graph_syncs_total[1h]))",
+          "legendFormat": "synced {{rubato_outcome}} {{rubato_reason}}"
+        },
+        {
+          "refId": "C",
+          "expr": "max by (rubato_companion_id) (rubato_graph_copy_behind)",
+          "legendFormat": "behind (s) {{rubato_companion_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ]
 }

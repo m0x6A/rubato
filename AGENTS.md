@@ -152,6 +152,7 @@ stale          heartbeat, stale sessions                                        
 session_input  SessionMessage: own user, launched here, idle, typed once; stop    session input task (essential)
 plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
 agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_status; a lead's fleet tools  report drain (essential), not-initialized watch (best-effort)
+graph          this machine's copy of the context graph: fetch, check, apply; the file graph.sqlite (ADR 0086)  graph sync (best-effort)
 ```
 <!-- /slices -->
 <!-- slices: web -->
@@ -309,6 +310,7 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A lead agent's request refused for touching another person's agent, or for a forged identity (`FleetCrossOwner`, ADR 0072).
 - A GitHub App webhook that has stopped delivering while the catch-up poll finds changes, or a delivery not applied for 5 minutes (`GitHubWebhooksSilent`, `GitHubWebhooksStuck`, ADR 0074).
 - A context graph source that no tick has found current for three regeneration intervals, while its flag is on (`ContextGraphStale`, ADR 0084).
+- A companion whose copy of the context graph has been behind the announced list for three intervals (`ContextGraphCopyBehind`, ADR 0086).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

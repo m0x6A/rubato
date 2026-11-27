@@ -224,6 +224,20 @@ async fn run(
         cfg.workspace.companion.orchestrator,
         claude_auth,
     ));
+    // This machine's copy of the context graph (ADR 0086), unless local.yml keeps it off.
+    let graph = cfg.workspace.companion.context_graph.then(|| {
+        crate::graph::Graph::new(
+            &cfg.state_dir,
+            crate::graph::http(
+                cfg.state.server_url.clone(),
+                cfg.state.pairing_token.clone(),
+                cfg.state.allow_plain_http,
+            ),
+        )
+    });
+    if graph.is_some() {
+        capabilities.push(capability::CONTEXT_GRAPH.to_owned());
+    }
     let client = Client::new(
         cfg.state.server_url.clone(),
         Identity {
@@ -269,6 +283,14 @@ async fn run(
         Kind::Essential,
         crate::agent_mcp::drain(agent_mcp.clone(), shutdown.clone()),
     );
+    // Best effort: a copy that cannot be refreshed still answers, with its age.
+    if let Some(graph) = graph.clone() {
+        tasks.spawn(
+            "graph_sync",
+            Kind::BestEffort,
+            crate::graph::run(graph, cfg.state.companion_id, shutdown.clone()),
+        );
+    }
     tasks.spawn(
         "agent_mcp_watch",
         Kind::BestEffort,
@@ -445,6 +467,7 @@ async fn run(
         spend: spend_tx,
         headless,
         agent_mcp: Some(agent_mcp),
+        graph,
     };
     let supervised = supervise(tasks, shutdown.clone());
     tokio::pin!(supervised);
@@ -520,6 +543,8 @@ struct Dispatch {
     headless: Option<sessions::Headless>,
     /// Where a `PlanStatus` goes (ADR 0071). `None` in tests that exercise other arms.
     agent_mcp: Option<Arc<crate::agent_mcp::AgentMcp>>,
+    /// Where a `GraphSources` goes (ADR 0086). `None` when local.yml keeps the graph off.
+    graph: Option<crate::graph::Graph>,
 }
 
 impl Dispatch {
@@ -546,6 +571,9 @@ impl Dispatch {
                 }
                 Some(msg) = in_rx.recv() => match msg {
                     ServerMessage::Welcome { limits, capabilities, .. } => {
+                        if let Some(g) = &self.graph {
+                            g.on_welcome(capabilities.iter().any(|c| c == capability::CONTEXT_GRAPH));
+                        }
                         server_link::on_welcome(limits, capabilities, &self.limits, &self.server_capabilities);
                     }
                     // Queued, not awaited: hooks keep flowing while it runs.
@@ -562,6 +590,12 @@ impl Dispatch {
                             a.on_plan_status(*s);
                         }
                     }
+                    // What the copy should hold; the sync task fetches what differs (ADR 0086).
+                    ServerMessage::GraphSources(sources) => {
+                        if let Some(g) = &self.graph {
+                            g.on_sources(sources);
+                        }
+                    }
                     // A lead's fleet tool call waits for this (ADR 0072).
                     ServerMessage::FleetResult(r) => {
                         if let Some(a) = &self.agent_mcp {
@@ -574,6 +608,10 @@ impl Dispatch {
                         if let Some(h) = &self.headless {
                             let n = h.stop_all(crate::kernel::claude::KillReason::Revoke);
                             tracing::warn!(stopped = n, "pairing revoked: headless turns stopped");
+                        }
+                        // And nothing of the team's stays on this machine (ADR 0086).
+                        if let Some(g) = &self.graph {
+                            g.forget().await;
                         }
                     }
                     _ => {}
@@ -870,6 +908,7 @@ mod tests {
             spend: spend_tx,
             headless: None,
             agent_mcp: None,
+            graph: None,
         };
         let looped =
             tokio::spawn(

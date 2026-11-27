@@ -174,6 +174,22 @@ impl Store {
         Ok(Store { pool })
     }
 
+    /// Open the file at a path, creating it when missing: for a companion's copy, whose
+    /// state directory may hold characters a URL would not.
+    pub async fn open_path(path: &std::path::Path) -> Result<Store> {
+        let opts = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(Duration::from_secs(10));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(opts)
+            .await?;
+        schema::ensure(&pool).await?;
+        Ok(Store { pool })
+    }
+
     /// Open an existing file for reading only. `None` when there is no file yet, or when it is
     /// of another schema version: both mean "no copy to answer from".
     pub async fn open_read_only(path: &std::path::Path) -> Result<Option<Store>> {
@@ -243,6 +259,28 @@ impl Store {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// The same graph stands at another head: a companion whose copy has the announced hash
+    /// records where the source is now, without fetching anything.
+    pub async fn set_head(
+        &self,
+        source: &str,
+        head_sha: Option<&str>,
+        map_version: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("UPDATE sources SET head_sha = ?, map_version = ? WHERE source = ?")
+            .bind(head_sha)
+            .bind(map_version)
+            .bind(source)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Close every connection, so the file can be removed.
+    pub async fn close(self) {
+        self.pool.close().await;
     }
 
     /// A build of `source` failed. Its previous rows stay; the error shows next to them.
