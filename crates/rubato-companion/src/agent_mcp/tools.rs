@@ -13,7 +13,7 @@ pub struct Tool {
     pub description: &'static str,
     /// `annotations.readOnlyHint`.
     pub read_only: bool,
-    schema: fn() -> Value,
+    pub(super) schema: fn() -> Value,
 }
 
 fn issue_arg() -> Value {
@@ -56,10 +56,17 @@ pub const TOOLS: &[Tool] = &[
     },
 ];
 
-/// `tools/list`'s result: the three tools, and the fleet tools for a lead (ADR 0072).
-pub(super) fn list(lead: bool) -> Value {
+/// `tools/list`'s result: the three tools, the graph tools when this machine keeps a copy
+/// (ADR 0086), and the fleet tools for a lead (ADR 0072).
+pub(super) fn list(lead: bool, graph: bool) -> Value {
+    let graph_tools: &[Tool] = if graph {
+        super::graph_tools::GRAPH_TOOLS
+    } else {
+        &[]
+    };
     let mut tools: Vec<Value> = TOOLS
         .iter()
+        .chain(graph_tools)
         .map(|t| {
             json!({
                 "name": t.name,
@@ -76,13 +83,13 @@ pub(super) fn list(lead: bool) -> Value {
 }
 
 /// What a call came to, for the span and `rubato.mcp.calls`.
-pub(super) struct Called {
+pub(crate) struct Called {
     pub result: Value,
     pub outcome: &'static str,
     pub reason: &'static str,
 }
 
-fn text(v: &Value, is_error: bool) -> Value {
+pub(super) fn text(v: &Value, is_error: bool) -> Value {
     json!({"content": [{"type": "text", "text": v.to_string()}], "isError": is_error})
 }
 
@@ -199,13 +206,17 @@ mod tests {
 
     #[test]
     fn no_tool_that_writes_sounds_like_an_approval() {
-        // The three of ADR 0071 and the four fleet tools of ADR 0072.
+        // The three of ADR 0071, the four fleet tools of ADR 0072, the five graph tools of
+        // ADR 0086.
         let mut rows = as_rows(TOOLS);
         rows.extend(crate::agent_mcp::FLEET_TOOLS.iter().copied());
+        rows.extend(as_rows(crate::agent_mcp::GRAPH_TOOLS));
         let problems = approval_problems(&rows);
         println!("checked {} tools", rows.len());
         assert!(problems.is_empty(), "{problems:?}");
-        assert_eq!(rows.len(), 3 + 4);
+        assert_eq!(rows.len(), 3 + 4 + 5);
+        // Every graph tool is read-only: none of them can sound like an approval, or be one.
+        assert!(crate::agent_mcp::GRAPH_TOOLS.iter().all(|t| t.read_only));
     }
 
     #[test]

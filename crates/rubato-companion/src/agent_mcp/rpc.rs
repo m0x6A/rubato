@@ -85,6 +85,7 @@ fn tool_label(method: &str, params: &Value) -> &'static str {
                 .iter()
                 .map(|t| t.name)
                 .chain(super::fleet::FLEET_TOOLS.iter().map(|(n, _, _)| *n))
+                .chain(super::graph_tools::GRAPH_TOOLS.iter().map(|t| t.name))
                 .find(|n| *n == name)
                 .unwrap_or("unknown")
         }
@@ -136,6 +137,7 @@ pub(super) async fn post(
     let span = tracing::info_span!(
         span::MCP_CALL,
         rubato.mcp.tool = tool,
+        rubato.mcp.client = "launched",
         rubato.launch_id = tracing::field::Empty,
         rubato.issue = tracing::field::Empty,
         rubato.outcome = tracing::field::Empty,
@@ -180,7 +182,7 @@ pub(super) async fn post(
             "ping" => (result(&id, json!({})), "ok", ""),
             "tools/list" => {
                 let lead = super::fleet::lead_ok(&st, &view, &headers).is_ok();
-                (result(&id, tools::list(lead)), "ok", "")
+                (result(&id, tools::list(lead, st.graph().is_some())), "ok", "")
             }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
@@ -188,6 +190,17 @@ pub(super) async fn post(
                 if super::fleet::is_fleet_tool(name) {
                     let c = super::fleet::call(&st, &view, name, &args, &headers).await;
                     span.record("rubato.outcome", c.outcome);
+                    count(&st, tool, c.outcome, c.reason);
+                    return result(&id, c.result);
+                }
+                // Before the own-issue check: a graph tool may be asked about any issue, with
+                // `about_issue`, and `issue` keeps its one meaning (ADR 0086).
+                if super::graph_tools::is_graph_tool(name) {
+                    let c = super::graph_tools::call(&st, Some(&view.issue.repo), name, &args).await;
+                    span.record("rubato.outcome", c.outcome);
+                    if !c.reason.is_empty() {
+                        span.record("rubato.reason", c.reason);
+                    }
                     count(&st, tool, c.outcome, c.reason);
                     return result(&id, c.result);
                 }

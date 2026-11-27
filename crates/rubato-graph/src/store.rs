@@ -278,8 +278,12 @@ impl Store {
         Ok(())
     }
 
-    /// Close every connection, so the file can be removed.
+    /// Close every connection, so the file can be removed. A writer first folds its
+    /// write-ahead log into the file, so a reader that opens it later has nothing to settle.
     pub async fn close(self) {
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&self.pool)
+            .await;
         self.pool.close().await;
     }
 

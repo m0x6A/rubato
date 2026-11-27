@@ -265,6 +265,9 @@ async fn run(
         cfg.state_dir.clone(),
     )
     .await;
+    if let Some(graph) = &graph {
+        agent_mcp.set_graph(graph.clone());
+    }
     let (mcp_open, mcp_guarded) = crate::agent_mcp::routers(agent_mcp.clone());
 
     let mut tasks = Tasks::default();

@@ -632,3 +632,168 @@ async fn a_large_source_is_replaced_whole_while_readers_read() {
         started.elapsed()
     );
 }
+
+mod context {
+    use crate::fixture::{self, REPO};
+    use crate::{About, Context, Store};
+    use rubato_protocol::graph::{GraphNode, id};
+
+    async fn copy() -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        (
+            fixture::copy_at(&dir.path().join("graph.sqlite")).await,
+            dir,
+        )
+    }
+
+    fn names(nodes: &[GraphNode]) -> Vec<&str> {
+        nodes.iter().map(|n| n.name.as_str()).collect()
+    }
+
+    #[tokio::test]
+    async fn a_path_says_which_part_owns_it_and_what_is_around_that_part() {
+        let (store, _dir) = copy().await;
+        let path = "crates/rubato-server/src/pins/store.rs";
+        let c: Context = store
+            .context(About::Path { repo: REPO, path }, 25)
+            .await
+            .unwrap();
+        assert_eq!(c.subject.as_ref().unwrap().id, id::file(REPO, path));
+        // The part whose path is the longest prefix: resolved when asked, never stored.
+        assert_eq!(names(&c.parts), ["rubato-server"]);
+        let seam = &c.seams[0];
+        assert_eq!((seam.seam.name.as_str(), c.seams.len()), ("web-server", 1));
+        assert_eq!(seam.joins, ["rubato-server", "web"]);
+        assert_eq!(seam.flows.len(), 1);
+        assert_eq!(seam.flows[0].detail["carries"], "Overview");
+        // The decision that governs that seam, by a map id with no workspace in it.
+        assert_eq!(
+            names(&c.adrs),
+            ["0016. Keep one shared map layout on the server"]
+        );
+        // The capability its folders name.
+        assert_eq!(names(&c.scenarios), ["@pins.pin-to-a-node"]);
+        assert_eq!(c.slices.len(), 1);
+        assert_eq!(c.slices[0].id, id::slice(REPO, "rubato-server", "pins"));
+        // The work on that part.
+        assert_eq!(names(&c.issues), ["m0x6A/rubato#322"]);
+        assert_eq!(names(&c.plans), ["Plan m0x6A/rubato#322"]);
+        assert_eq!(names(&c.pulls), ["m0x6A/rubato#323"]);
+        // The file itself.
+        assert_eq!(names(&c.symbols), ["add_pin"]);
+        assert_eq!(names(&c.imports), ["sqlx"]);
+        assert_eq!(names(&c.imported_by), ["mod.rs"]);
+        assert!(!c.truncated);
+        assert_eq!(
+            store.sources_of(&c.node_ids()).await.unwrap(),
+            ["repo/m0x6A/rubato", "team", "workspace/default"]
+        );
+
+        // A directory, and a file the graph does not hold: the part still answers.
+        let dir = store
+            .context(
+                About::Path {
+                    repo: REPO,
+                    path: "web/src/features/pins/",
+                },
+                25,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (dir.subject.is_none(), names(&dir.parts)),
+            (true, vec!["web"])
+        );
+        assert_eq!(dir.slices[0].id, id::slice(REPO, "web", "pins"));
+        // No part's path is a prefix: no part, and nothing made up.
+        let outside = store
+            .context(
+                About::Path {
+                    repo: REPO,
+                    path: "docs/QUICKSTART.md",
+                },
+                25,
+            )
+            .await
+            .unwrap();
+        assert!(outside.parts.is_empty() && outside.seams.is_empty() && outside.adrs.is_empty());
+        // `web-ui/x` is not under `web`.
+        let near = store
+            .context(
+                About::Path {
+                    repo: REPO,
+                    path: "web-ui/x.ts",
+                },
+                25,
+            )
+            .await
+            .unwrap();
+        assert!(near.parts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_map_id_and_an_issue_say_what_is_on_them() {
+        let (store, _dir) = copy().await;
+        // A seam's id: who it joins, what crosses it, what governs it, what is pinned to it.
+        let seam = store
+            .context(About::Part("companion-mcp"), 25)
+            .await
+            .unwrap();
+        assert!(seam.parts.is_empty());
+        assert_eq!(seam.seams[0].joins, ["claude-code", "rubato-companion"]);
+        assert_eq!(seam.seams[0].flows.len(), 1);
+        assert_eq!(seam.adrs.len(), 1);
+        assert!(seam.adrs[0].name.starts_with("0071."));
+        assert_eq!(names(&seam.issues), ["m0x6A/rubato#331"]);
+        assert_eq!(
+            seam.issues[0].summary, None,
+            "a title from outside the team is not there"
+        );
+
+        // A part's id, by name or by node id: the same answer.
+        let by_name = store
+            .context(About::Part("rubato-server"), 25)
+            .await
+            .unwrap();
+        let by_id = store
+            .context(About::Part("part:default/rubato-server"), 25)
+            .await
+            .unwrap();
+        assert_eq!(by_name, by_id);
+        assert_eq!(names(&by_name.plans), ["Plan m0x6A/rubato#322"]);
+        assert!(
+            store
+                .context(About::Part("no-such-part"), 25)
+                .await
+                .unwrap()
+                .parts
+                .is_empty()
+        );
+
+        // An issue: where it is pinned, its plan, its pull request.
+        let issue = store
+            .context(
+                About::Issue {
+                    repo: REPO,
+                    number: 322,
+                },
+                25,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            issue.subject.as_ref().unwrap().summary.as_deref(),
+            Some("Expose a repository context graph")
+        );
+        assert_eq!(names(&issue.parts), ["rubato-server"]);
+        assert_eq!(names(&issue.plans), ["Plan m0x6A/rubato#322"]);
+        assert_eq!(names(&issue.pulls), ["m0x6A/rubato#323"]);
+
+        // A limit of one cuts, and says so.
+        let cut = store
+            .context(About::Part("rubato-server"), 0)
+            .await
+            .unwrap();
+        assert!(cut.truncated && cut.adrs.is_empty());
+    }
+}

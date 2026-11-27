@@ -7,12 +7,14 @@
 //! The wire types are `rubato_protocol::graph`. This crate holds no slice and names neither
 //! binary.
 
+#[doc(hidden)]
+pub mod fixture;
 mod query;
 mod schema;
 mod snapshot;
 mod store;
 
-pub use query::{Direction, Related};
+pub use query::{About, Context, Direction, Related, SeamContext};
 pub use schema::USER_VERSION;
 pub use snapshot::{Snapshot, content_hash, edge_line, node_line};
 pub use store::{Build, Replaced, SourceRow, Store};
