@@ -20,7 +20,7 @@ serde_json.workspace = true
 serde_yaml_ng = "0.10"
 uuid.workspace = true
 chrono = { version = "0.4", features = ["serde", "clock"], default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "fs", "io-util", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "fs", "io-util", "io-std", "sync", "time", "signal"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", features = ["sink"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }

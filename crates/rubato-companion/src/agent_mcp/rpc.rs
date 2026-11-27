@@ -28,7 +28,7 @@ pub const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26
 /// JSON-RPC error for a request whose launch the companion does not know.
 pub const NO_LAUNCH: i64 = -32001;
 
-fn count(st: &AgentMcp, tool: &str, outcome: &str, reason: &str) {
+pub(super) fn count(st: &AgentMcp, tool: &str, outcome: &str, reason: &str) {
     st.metrics.mcp_calls.add(
         1,
         &[
@@ -47,7 +47,7 @@ fn count(st: &AgentMcp, tool: &str, outcome: &str, reason: &str) {
 }
 
 /// A loopback origin, or none: a browser page elsewhere must not reach `/mcp` (DNS rebinding).
-fn origin_ok(headers: &HeaderMap) -> bool {
+pub(super) fn origin_ok(headers: &HeaderMap) -> bool {
     let Some(o) = headers.get(header::ORIGIN) else {
         return true;
     };
@@ -65,11 +65,11 @@ fn json_response(v: Value) -> Response {
     ([(header::CONTENT_TYPE, "application/json")], v.to_string()).into_response()
 }
 
-fn result(id: &Value, r: Value) -> Response {
+pub(super) fn result(id: &Value, r: Value) -> Response {
     json_response(json!({"jsonrpc": "2.0", "id": id, "result": r}))
 }
 
-fn error(id: &Value, code: i64, message: &str) -> Response {
+pub(super) fn error(id: &Value, code: i64, message: &str) -> Response {
     json_response(json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}))
 }
 

@@ -11,12 +11,12 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 /// The JSON a tool result's text item holds.
-fn body(result: &Value) -> Value {
+pub(super) fn body(result: &Value) -> Value {
     serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
 }
 
 /// A world whose companion holds the fixture graph as its copy. Nothing is ever fetched.
-async fn with_copy() -> (World, tempfile::TempDir) {
+pub(super) async fn with_copy() -> (World, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     fixture::copy_at(&dir.path().join(crate::graph::COPY_FILE))
         .await
