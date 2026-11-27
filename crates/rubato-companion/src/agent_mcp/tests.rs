@@ -38,12 +38,12 @@ fn command(n: u128) -> LaunchCommand {
     }
 }
 
-struct World {
-    st: Arc<AgentMcp>,
+pub(super) struct World {
+    pub(super) st: Arc<AgentMcp>,
     reader: metric_reader::Reader,
     base: String,
     token: String,
-    out: mpsc::UnboundedReceiver<CompanionMessage>,
+    pub(super) out: mpsc::UnboundedReceiver<CompanionMessage>,
     hooks: mpsc::UnboundedReceiver<rubato_protocol::HookEvent>,
     caps: Arc<std::sync::Mutex<Vec<String>>>,
     link: tokio_watch::Sender<bool>,
@@ -51,7 +51,7 @@ struct World {
 
 /// A registry with launch 7 started (and launch 8 still pending when `pending`), the receiver
 /// serving this slice's routers.
-async fn world(now: DateTime<Utc>, pending: bool) -> World {
+pub(super) async fn world(now: DateTime<Utc>, pending: bool) -> World {
     let mut reg = Registry::new(Uuid::from_u128(42), "m0x6A");
     let cmd = command(7);
     reg.begin_launch(&cmd, now);
@@ -98,7 +98,7 @@ async fn world(now: DateTime<Utc>, pending: bool) -> World {
 }
 
 impl World {
-    async fn rpc(&self, launch: Option<u128>, msg: Value) -> reqwest::Response {
+    pub(super) async fn rpc(&self, launch: Option<u128>, msg: Value) -> reqwest::Response {
         let mut req = reqwest::Client::new()
             .post(format!("{}/mcp", self.base))
             .bearer_auth(&self.token)
@@ -109,7 +109,7 @@ impl World {
         req.send().await.unwrap()
     }
 
-    async fn call(&self, launch: u128, tool: &str, args: Value) -> Value {
+    pub(super) async fn call(&self, launch: u128, tool: &str, args: Value) -> Value {
         let res = self
             .rpc(Some(launch), json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}}))
             .await;
@@ -117,7 +117,7 @@ impl World {
         res.json::<Value>().await.unwrap()["result"].clone()
     }
 
-    fn calls(&self, tool: &str, outcome: &str, reason: &str) -> u64 {
+    pub(super) fn calls(&self, tool: &str, outcome: &str, reason: &str) -> u64 {
         self.reader
             .points(metric::MCP_CALLS)
             .iter()

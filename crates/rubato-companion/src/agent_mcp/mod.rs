@@ -13,6 +13,7 @@
 
 mod cache;
 mod fleet;
+mod graph_tools;
 mod report;
 mod rpc;
 mod tools;
@@ -21,9 +22,12 @@ mod watch;
 #[cfg(test)]
 mod fleet_tests;
 #[cfg(test)]
+mod graph_tests;
+#[cfg(test)]
 mod tests;
 
 pub use fleet::{FLEET_TOOLS, leads_path, new_lead_secret};
+pub use graph_tools::GRAPH_TOOLS;
 pub use tools::{TOOLS, Tool};
 
 use crate::kernel::telemetry::Metrics;
@@ -59,6 +63,8 @@ pub struct AgentMcp {
     /// Where `leads.json` holds the lead secrets.
     state_dir: std::path::PathBuf,
     fleet_waiters: fleet::Waiters,
+    /// This machine's copy of the context graph (ADR 0086); unset when local.yml keeps it off.
+    graph: std::sync::OnceLock<crate::graph::Graph>,
 }
 
 impl AgentMcp {
@@ -91,6 +97,7 @@ impl AgentMcp {
             orchestrator,
             state_dir,
             fleet_waiters: fleet::Waiters::default(),
+            graph: std::sync::OnceLock::new(),
         })
     }
 
