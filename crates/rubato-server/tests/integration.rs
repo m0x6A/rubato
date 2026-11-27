@@ -7745,3 +7745,321 @@ async fn defaults_come_from_the_workspace() {
     assert_eq!(c.spend_cap_usd, 2.0, "the request wins");
     println!("checked 3 launches");
 }
+
+// ----- the context graph reaches companions (#329, ADR 0086) -------------------------------
+
+mod context_graph_copy {
+    use super::*;
+    use rubato_graph::Build;
+    use rubato_protocol::graph::{GraphNode, id, kind, routes as graph_routes, source_key};
+    use rubato_server::context_graph;
+    use rubato_server::kernel::config::{ContextGraphConfig, GitHubApp};
+
+    const REPO: &str = "m0x6A/rubato";
+
+    /// A server with the graph on. `as_app` makes it a GitHub App, so a team record is needed.
+    async fn server(as_app: bool) -> Harness {
+        let h = harness_with(|c| {
+            let dir = std::env::temp_dir().join(format!("rubato-graph-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            c.context_graph = Some(ContextGraphConfig {
+                regen_secs: 900,
+                database_url: format!("sqlite://{}/graph.db?mode=rwc", dir.display()),
+            });
+            if as_app {
+                c.github_app = Some(GitHubApp {
+                    app_id: 1,
+                    private_key: String::new(),
+                    installation_id: 2,
+                });
+            }
+        })
+        .await;
+        context_graph::start(&h.app).await.unwrap();
+        let store = context_graph::store(&h.app).unwrap();
+        let key = source_key::repo(REPO);
+        let build = Build {
+            source: key.clone(),
+            kind: kind::source::REPO.into(),
+            head_sha: Some("b35788b".into()),
+            map_version: None,
+            generator: context_graph::GENERATOR,
+            generated_at: chrono::Utc::now(),
+            truncated: false,
+            nodes: vec![GraphNode {
+                id: id::file(REPO, "src/lib.rs"),
+                kind: kind::node::FILE.into(),
+                name: "lib.rs".into(),
+                repo: Some(REPO.into()),
+                path: Some("src/lib.rs".into()),
+                line: None,
+                end_line: None,
+                summary: None,
+                detail: Default::default(),
+            }],
+            edges: vec![],
+        };
+        let g = store.begin_build(&key, &build.kind).await.unwrap();
+        store
+            .replace_source(Some(g), build, chrono::Utc::now())
+            .await
+            .unwrap();
+        // A source that was never built is not announced and cannot be served.
+        store
+            .begin_build(source_key::TEAM, kind::source::TEAM)
+            .await
+            .unwrap();
+        h
+    }
+
+    /// `login`'s access to the App's installation was last checked `days` ago.
+    async fn team_record(h: &Harness, login: &str, days: i64) {
+        let at = chrono::Utc::now() - chrono::Duration::days(days);
+        sqlx::query(
+            "INSERT INTO web_sessions (id, login, created_at, team_checked_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(login)
+        .bind(at.to_rfc3339())
+        .bind(at.to_rfc3339())
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    }
+
+    async fn snapshot(h: &Harness, token: Option<&str>, source: &str) -> reqwest::Response {
+        let mut req = h.http.get(format!(
+            "{}{}?source={source}",
+            h.url,
+            graph_routes::GRAPH_SNAPSHOT
+        ));
+        if let Some(t) = token {
+            req = req.bearer_auth(t);
+        }
+        req.send().await.unwrap()
+    }
+
+    async fn reason(r: reqwest::Response) -> String {
+        r.json::<serde_json::Value>().await.unwrap()["reason"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn a_pairing_reads_the_graph_only_while_its_owner_is_on_the_team() {
+        let h = server(true).await;
+        let (companion_id, token) = h.pair("m0x6A").await;
+        let key = source_key::repo(REPO);
+
+        // No team record at all: a pairing alone does not open the graph.
+        let r = snapshot(&h, Some(&token), &key).await;
+        assert_eq!(r.status(), 403);
+        assert_eq!(reason(r).await, "team_record_stale");
+
+        // Checked eight days ago: over the seven of ADR 0022.
+        team_record(&h, "m0x6A", 8).await;
+        assert_eq!(snapshot(&h, Some(&token), &key).await.status(), 403);
+
+        // Checked today, whatever the case GitHub gave the login in: the snapshot, whole.
+        team_record(&h, "M0X6a", 0).await;
+        let r = snapshot(&h, Some(&token), &key).await;
+        assert_eq!(r.status(), 200);
+        assert_eq!(r.headers()["content-type"], "application/gzip");
+        let body = r.bytes().await.unwrap();
+        let snap = rubato_graph::Snapshot::parse(&body, 1 << 20).expect("it hashes to its header");
+        assert_eq!(snap.header.head_sha.as_deref(), Some("b35788b"));
+        assert_eq!(snap.nodes[0].id, id::file(REPO, "src/lib.rs"));
+
+        // Someone else's fresh record is not this owner's.
+        let (_, alice) = h.pair("alice").await;
+        assert_eq!(snapshot(&h, Some(&alice), &key).await.status(), 403);
+
+        // Not a source, and one never built: 404, each with its reason.
+        let r = snapshot(&h, Some(&token), "repo/m0x6A/none").await;
+        assert_eq!(
+            (r.status().as_u16(), reason(r).await.as_str()),
+            (404, "unknown_source")
+        );
+        assert_eq!(
+            snapshot(&h, Some(&token), source_key::TEAM).await.status(),
+            404
+        );
+        assert_eq!(snapshot(&h, Some(&token), "").await.status(), 404);
+
+        // Revoked: 401, at once, fresh record or not.
+        let r = h
+            .http
+            .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
+            .header("x-rubato-dev-user", "m0x6A")
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "{}", r.status());
+        assert_eq!(snapshot(&h, Some(&token), &key).await.status(), 401);
+        // No token, and a token that is none: 401.
+        assert_eq!(snapshot(&h, None, &key).await.status(), 401);
+        assert_eq!(snapshot(&h, Some("nope"), &key).await.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn the_pairing_token_opens_the_snapshot_route_and_nothing_else() {
+        let h = server(false).await;
+        let (_, token) = h.pair("m0x6A").await;
+        // Without the App the server is local, and there is no team to check against.
+        assert_eq!(
+            snapshot(&h, Some(&token), &source_key::repo(REPO))
+                .await
+                .status(),
+            200
+        );
+        // The real token is not a web session: no web route takes it.
+        let overview = |auth: Option<String>| {
+            let mut req =
+                reqwest::Client::new().get(format!("{}{}", h.url, overview_routes::OVERVIEW));
+            if let Some(a) = auth {
+                req = req.header("authorization", a);
+            }
+            req.send()
+        };
+        // (The harness runs as a dev user, who needs no credential; what matters is that a
+        // bearer adds nothing a route would read. The companion socket still takes it.)
+        assert!(
+            overview(Some(format!("Bearer {token}")))
+                .await
+                .unwrap()
+                .status()
+                .is_success()
+        );
+        h.connect(&token).await;
+        // And a web session's cookie is not a pairing: the snapshot route wants the token.
+        let r = h
+            .http
+            .get(format!(
+                "{}{}?source={}",
+                h.url,
+                graph_routes::GRAPH_SNAPSHOT,
+                source_key::repo(REPO)
+            ))
+            .header("cookie", "rubato_session=anything")
+            .header("x-rubato-dev-user", "m0x6A")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401, "a logged-in person is not a companion");
+    }
+
+    #[tokio::test]
+    async fn with_the_flag_off_the_route_says_so() {
+        let h = harness().await;
+        let (_, token) = h.pair("m0x6A").await;
+        let r = snapshot(&h, Some(&token), &source_key::repo(REPO)).await;
+        assert_eq!(
+            (r.status().as_u16(), reason(r).await.as_str()),
+            (404, "context_graph_off")
+        );
+    }
+
+    fn hello(companion_id: Uuid, capabilities: &[&str]) -> CompanionEnvelope {
+        CompanionEnvelope {
+            seq: 1,
+            sent_at: chrono::Utc::now(),
+            traceparent: None,
+            message: CompanionMessage::Hello {
+                companion_id,
+                user: "m0x6A".into(),
+                companion_version: "t".into(),
+                protocol_version: 1,
+                last_seen_server_seq: 0,
+                capabilities: capabilities.iter().map(|c| (*c).to_owned()).collect(),
+                client: Default::default(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn a_companion_that_keeps_a_copy_is_told_what_to_hold_when_its_owner_may_read() {
+        let h = server(true).await;
+        let (companion_id, token) = h.pair("m0x6A").await;
+        let mut ws = h.connect(&token).await;
+        let welcome = send(&mut ws, &hello(companion_id, &["context_graph"])).await;
+        let ServerMessage::Welcome { capabilities, .. } = welcome else {
+            panic!("expected a Welcome, got {welcome:?}");
+        };
+        assert!(
+            capabilities.iter().any(|c| c == "context_graph"),
+            "{capabilities:?}"
+        );
+
+        // The owner has no fresh team record: nothing is announced.
+        assert!(!context_graph::announce_to(&h.app, companion_id).await);
+        team_record(&h, "m0x6A", 0).await;
+        assert!(context_graph::announce_to(&h.app, companion_id).await);
+        let Some(Ok(Message::Text(t))) = ws.next().await else {
+            panic!("no message")
+        };
+        let env: ServerEnvelope = serde_json::from_str(&t).unwrap();
+        let ServerMessage::GraphSources(list) = env.message else {
+            panic!("expected GraphSources, got {:?}", env.message);
+        };
+        // The built source, with what a companion compares; the unbuilt one is not in it.
+        assert_eq!(list.sources.len(), 1);
+        assert_eq!(list.sources[0].source, source_key::repo(REPO));
+        assert_eq!(list.sources[0].head_sha.as_deref(), Some("b35788b"));
+        assert!(list.sources[0].content_hash.starts_with("sha256:"));
+        assert_eq!(list.check(), Ok(()));
+        assert_eq!(context_graph::announce_all(&h.app).await, 1);
+
+        // A companion that keeps no copy is told nothing, whoever owns it.
+        let (other, other_token) = h.pair("m0x6A").await;
+        let mut ws2 = h.connect(&other_token).await;
+        send(&mut ws2, &hello(other, &[])).await;
+        assert!(!context_graph::announce_to(&h.app, other).await);
+    }
+
+    #[tokio::test]
+    async fn a_server_with_the_flag_off_does_not_offer_the_graph() {
+        let h = harness().await;
+        let (companion_id, token) = h.pair("m0x6A").await;
+        let mut ws = h.connect(&token).await;
+        let ServerMessage::Welcome { capabilities, .. } =
+            send(&mut ws, &hello(companion_id, &["context_graph"])).await
+        else {
+            panic!("expected a Welcome");
+        };
+        assert!(!capabilities.iter().any(|c| c == "context_graph"));
+        assert!(!context_graph::announce_to(&h.app, companion_id).await);
+    }
+}
+
+/// A full announce is small: the capped list fits a websocket message many times over, so
+/// launches and session messages never wait behind it (ADR 0086). The bytes of a snapshot
+/// never ride the socket at all.
+#[test]
+fn a_full_list_of_graph_sources_is_a_small_message() {
+    use rubato_protocol::graph::{GraphSourceInfo, GraphSources};
+    let list = |n: usize| GraphSources {
+        sources: (0..n)
+            .map(|i| GraphSourceInfo {
+                source: format!("repo/{}/{}", "o".repeat(39), format!("{i:03}").repeat(33)),
+                kind: "repo".into(),
+                head_sha: Some("b".repeat(40)),
+                map_version: None,
+                content_hash: format!("sha256:{}", "a".repeat(64)),
+                generated_at: chrono::Utc::now(),
+                nodes: 250_000,
+                edges: 1_000_000,
+                truncated: true,
+            })
+            .collect(),
+    };
+    let full = list(rubato_protocol::limits::GRAPH_SOURCES_MAX);
+    assert_eq!(full.check(), Ok(()));
+    let bytes = serde_json::to_string(&ServerMessage::GraphSources(full))
+        .unwrap()
+        .len();
+    println!("a list of 64 sources with the longest names GitHub allows is {bytes} bytes");
+    assert!(bytes < 32 * 1024, "{bytes}");
+    // The fixture that makes the cap fail on purpose.
+    assert_eq!(list(65).check(), Err(65));
+}

@@ -150,6 +150,8 @@ async function main() {
     RUBATO_MAP_FILE: `${T}/map/system-map.yml`,
     RUBATO_LOCAL_REPOS: `acme/auth=${auth.bare},acme/pantry=${pantry.bare}`,
     RUBATO_GITHUB_POLL_SECS: "5",
+    // The context graph of the two repositories, built from `git archive` (ADR 0084).
+    RUBATO_CONTEXT_GRAPH: "1",
     RUBATO_WEB_DIST: `${ROOT}/web/dist`,
     OTEL_EXPORTER_OTLP_ENDPOINT: otlpUrl,
     OTEL_METRIC_EXPORT_INTERVAL: "2000",
@@ -325,6 +327,54 @@ async function main() {
       checks.problem("hooks", `${f}: Stop hook did not run`);
     }
   }
+  // The context graph, end to end (ADR 0084, ADR 0086): the server built a source per
+  // repository, announced them to the companion, the companion fetched each with its pairing
+  // token and holds them in its state directory, and a session started by hand reads the copy
+  // through the stdio bridge.
+  {
+    const want = ["repo/acme/auth", "repo/acme/pantry", "workspace/default", "team"];
+    const status = () => execFileSync(BIN.companion, ["status", "--workspace", `${T}/workspace.yml`, "--state-dir", `${T}/state`], { env: { ...process.env, HOME: `${T}/home` }, encoding: "utf8" });
+    await waitFor("the companion's copy of the context graph", 60_000, async () => want.every((s) => status().includes(`  ${s}`))).catch(() => undefined);
+    const said = status();
+    checks.reach("graph-copy", want.length);
+    for (const source of want) {
+      if (!said.includes(`  ${source}`)) {
+        checks.problem("graph-copy", `rubato-companion status names no copy of ${source}:\n${said}`);
+      }
+    }
+    // By hand: MCP over stdio, no launch id, no token in any config.
+    const ask = [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "graph_status", arguments: {} } },
+    ];
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: `${T}/home` };
+    delete env["RUBATO_LAUNCH_ID"];
+    delete env["RUBATO_FORK_TURN"];
+    const out = execFileSync(BIN.companion, ["mcp", "--state-dir", `${T}/state`], { input: ask.map((m) => JSON.stringify(m)).join("\n") + "\n", env, encoding: "utf8", cwd: T });
+    const answers = out.trim().split("\n").map((l) => JSON.parse(l) as { id: number; result?: { tools?: { annotations?: { readOnlyHint?: boolean } }[]; content?: { text: string }[] } });
+    const tools = answers.find((a) => a.id === 2)?.result?.tools ?? [];
+    checks.reach("graph-copy", 1);
+    if (tools.length !== 5 || tools.some((t) => t.annotations?.readOnlyHint !== true)) {
+      checks.problem("graph-copy", `the bridge lists ${tools.length} tools, not five read-only ones`);
+    }
+    const text = answers.find((a) => a.id === 3)?.result?.content?.[0]?.text ?? "{}";
+    const copy = JSON.parse(text) as { sources?: { source: string; behind: boolean | null; head_sha?: string }[] };
+    checks.reach("graph-copy", 1);
+    for (const source of want) {
+      const s = copy.sources?.find((x) => x.source === source);
+      if (!s) {
+        checks.problem("graph-copy", `graph_status through the bridge names no ${source}: ${text}`);
+      } else if (s.behind !== false) {
+        checks.problem("graph-copy", `${source} is not known to be current (behind: ${String(s.behind)})`);
+      } else if (source.startsWith("repo/") && !/^[0-9a-f]{40}$/.test(s.head_sha ?? "")) {
+        checks.problem("graph-copy", `${source} names no head: ${JSON.stringify(s)}`);
+      }
+    }
+    log(`context graph: the copy holds ${copy.sources?.length ?? 0} sources; the bridge lists ${tools.length} tools`);
+  }
+
   // The plans that came back pass the plan check against the team map.
   const plans = globSync(`${T}/repos/*-worktrees/**/docs/plans/*.md`);
   checks.reach("plans", plans.length);

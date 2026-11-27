@@ -2,7 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-11-26
-- **Decided by:** agent (Claude Code, claude-fable-5-2, issue #322) — proposed; that agents read the graph through each person's companion, from a copy the server sends, is Mattias Jonsson's choice, 2026-11-26. Which sources a companion receives is plan question Q1, open for a person.
+- **Decided by:** agent (Claude Code, claude-fable-5-2, issue #322) — proposed; that agents read the graph through each person's companion, from a copy the server sends, is Mattias Jonsson's choice, 2026-11-26. That every such companion receives every source is his answer to plan question Q1, 2026-11-27.
 - **Seam:** companion-server, companion-mcp
 - **Issue:** m0x6A/rubato#322
 
@@ -112,7 +112,7 @@ its own; the graph answers on a laptop with no network, and says how old it is.
 Harder, and to watch:
 
 - **Every paired companion whose owner has a fresh team record receives every source** (plan
-  Q1). File and symbol names of every repository the maps name reach every such machine,
+  Q1, decided). File and symbol names of every repository the maps name reach every such machine,
   whichever repositories that person works in. A team that needs per-repository access needs a
   later ADR.
 - **The owner of a headless companion logs in to Rubato at least once a week**, or its copy

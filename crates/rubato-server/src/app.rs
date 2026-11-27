@@ -180,6 +180,11 @@ pub fn router(app: App) -> Router {
         .route(pr::PAIR_START, post(pairing::start))
         .route(pr::PAIR_POLL, post(pairing::poll))
         .route(pr::COMPANION_WS, get(companion_link::upgrade))
+        // One context graph source for a companion, by its pairing token (ADR 0086). Team-scoped.
+        .route(
+            rubato_protocol::graph::routes::GRAPH_SNAPSHOT,
+            get(crate::context_graph::snapshot),
+        )
         .route(web_routes::WEB_WS, get(web_link::upgrade))
         .route(auth_routes::LOGIN, get(auth::login))
         .route(auth_routes::CALLBACK, get(auth::callback))
@@ -424,6 +429,10 @@ mod tests {
             (Method::POST, pr::PAIR_APPROVE.into()),
             (Method::POST, pr::PAIR_START.into()),
             (Method::POST, pr::PAIR_POLL.into()),
+            (
+                Method::GET,
+                rubato_protocol::graph::routes::GRAPH_SNAPSHOT.into(),
+            ),
             (Method::GET, pr::COMPANION_WS.into()),
             (Method::GET, web_routes::WEB_WS.into()),
             (Method::GET, auth_routes::LOGIN.into()),
