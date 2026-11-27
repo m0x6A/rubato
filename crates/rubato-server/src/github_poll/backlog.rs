@@ -591,6 +591,17 @@ mod workspace_tests {
         let maps = vec![("default", &default), ("shop", &shop)];
         let listed = list_open_issues(&app, &maps).await;
 
+        // Who wrote each issue is kept with it (migration 0031): the context graph keeps a
+        // title only from the team.
+        let authors = crate::github_poll::open_issue_authors(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(authors.len(), 4);
+        assert_eq!(
+            authors[&rubato_protocol::IssueRef::new("acme/auth", 1)],
+            ("m0x6A".to_owned(), "MEMBER".to_owned())
+        );
+
         let mut calls = 0;
         github.with(|g| {
             calls = g

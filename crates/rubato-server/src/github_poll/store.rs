@@ -149,8 +149,8 @@ pub async fn replace_open_issues(
             .and_then(|p| p.suggestion.as_ref())
             .map(serde_json::to_string)
             .transpose()?;
-        sqlx::query("INSERT OR REPLACE INTO open_issues (repo, number, title, url, labels, updated_at, map_line) VALUES (?, ?, ?, ?, ?, ?, ?)")
-            .bind(repo).bind(i.number as i64).bind(&i.title).bind(&i.url).bind(serde_json::to_string(&i.labels)?).bind(ts(i.updated_at)).bind(line).execute(&mut *tx).await?;
+        sqlx::query("INSERT OR REPLACE INTO open_issues (repo, number, title, url, labels, updated_at, map_line, author, author_association) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(repo).bind(i.number as i64).bind(&i.title).bind(&i.url).bind(serde_json::to_string(&i.labels)?).bind(ts(i.updated_at)).bind(line).bind(&i.author).bind(&i.author_association).execute(&mut *tx).await?;
         if let Some(suggestion) = suggestion {
             sqlx::query("INSERT OR REPLACE INTO issue_suggestions (workspace_id, repo, number, suggestion) VALUES (?, ?, ?, ?)")
                 .bind(ws).bind(repo).bind(i.number as i64).bind(suggestion).execute(&mut *tx).await?;
@@ -160,6 +160,24 @@ pub async fn replace_open_issues(
         .bind(repo).bind(ts(now)).bind(listing.truncated).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// Who wrote each open issue: its author's login and GitHub's association, as the last listing
+/// said. An issue that is closed, or was never listed, is not here.
+pub async fn open_issue_authors(db: &SqlitePool) -> Result<HashMap<IssueRef, (String, String)>> {
+    Ok(
+        sqlx::query("SELECT repo, number, author, author_association FROM open_issues")
+            .fetch_all(db)
+            .await?
+            .iter()
+            .map(|r| {
+                (
+                    IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64),
+                    (r.get("author"), r.get("author_association")),
+                )
+            })
+            .collect(),
+    )
 }
 
 /// A listing failed: keep the rows and the last good time, record why.
