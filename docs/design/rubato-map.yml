@@ -29,7 +29,7 @@ nodes:
     service: { namespace: rubato, name: rubato-server }
     repo: m0x6A/rubato
     path: crates/rubato-server
-    description: One per team. Map, pins, plans, progress derivation, decisions, GitHub OAuth, websocket fan-out, embeds web.
+    description: One per server, holding one or more tenants, each its own installations, workspaces and members (ADR 0087). Map, pins, plans, progress derivation, decisions, GitHub OAuth, websocket fan-out, embeds web.
 
   - id: web
     kind: context
@@ -104,7 +104,7 @@ seams:
     flows:
       - { kind: data, from: rubato-companion, to: rubato-server, carries: "SessionState snapshots, HookEvent (trimmed; the prompt and last reply of launched sessions), Heartbeat, StaleSession, LaunchResult, CapHit, SessionMessageResult, plan draft bundles, RoomReply, capabilities, AgentReport (what a launched agent says it is doing, ADR 0071), FleetRequest from a person's own lead launch behind the orchestrator flag (ADR 0072); each envelope may carry the W3C trace context of its send (ADR 0081)" }
       - { kind: data, from: rubato-server, to: rubato-companion, carries: "PlanStatus of each session the paired user launched, for its MCP answers (ADR 0071); FleetResult to a lead's request (ADR 0072)" }
-      - { kind: data, from: rubato-server, to: rubato-companion, carries: "behind the context graph flag, a graph source's snapshot, fetched by the companion over the server URL with its pairing token, while its owner has a fresh team record (ADR 0086)" }
+      - { kind: data, from: rubato-server, to: rubato-companion, carries: "behind the context graph flag, a graph source's snapshot, fetched by the companion over the server URL with its pairing token, for a tenant its owner is a member of (ADR 0086, ADR 0087)" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "behind the context graph flag, GraphSources: each source's head, content hash and counts, after Welcome and on change (ADR 0086)" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "LaunchCommand, for the paired user only; a lead, or a worker its lead asked for, behind the orchestrator flag (ADR 0072)" }
       - { kind: control, from: rubato-server, to: rubato-companion, carries: "Welcome with limits, server capabilities and the last sequence seen; acks" }
@@ -119,11 +119,11 @@ seams:
     description: "The server reads what GitHub already knows about an issue and, as a GitHub App, proposes map changes as pull requests."
     flows:
       - { kind: data, from: github, to: rubato-server, carries: "open issues, issue state, Decision: comments, pull requests, check runs, plan files and the map from branches" }
-      - { kind: data, from: github, to: rubato-server, carries: "who a login is, and whether the account can access the App installation" }
+      - { kind: data, from: github, to: rubato-server, carries: "who a login is (user id and login); as the App, its installations; per attached installation, the repositories it covers (ADR 0087)" }
       - { kind: data, from: github, to: rubato-server, carries: "a pull request's detail when someone opens it: body, reviews, check runs, changed files, mergeable; the person's permission and allowed merge methods" }
       - { kind: control, from: rubato-server, to: github, carries: "OAuth login redirect; a branch, a commit and a pull request for a map draft; as the person, an Approved: comment (until the cutover), one link comment per approved plan commit as its approver, and a pull request merge at the head they saw" }
       - { kind: data, from: github, to: rubato-server, carries: "the last commit to a plan file, for Import" }
-      - { kind: data, from: github, to: rubato-server, carries: "App webhook deliveries, signed with X-Hub-Signature-256: which issue, pull request, check or branch changed" }
+      - { kind: data, from: github, to: rubato-server, carries: "App webhook deliveries, signed with X-Hub-Signature-256, of an attached installation (ADR 0087): installation and repository changes; which issue, pull request, check or branch changed" }
       - { kind: data, from: github, to: rubato-server, carries: "behind the context graph flag, the default-branch head and a tarball at that head, of each repository the maps name (ADR 0084)" }
 
   - id: companion-tmux-ide
@@ -231,10 +231,10 @@ seams:
     guard: generated web/src/protocol.ts diffed in CI
     description: "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map."
     flows:
-      - { kind: data, from: rubato-server, to: web, carries: "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073); behind the orchestrator flag, each lead and its workers, and who sent a message for a lead; how each companion's Claude is billed (ADR 0072, ADR 0076); behind the context graph flag, each graph source with its head, age and counts (ADR 0084)" }
-      - { kind: control, from: rubato-server, to: web, carries: "WebEvent Changed over /ws/web: fetch the overview again; Updated: fetch one draft, log or room" }
+      - { kind: data, from: rubato-server, to: web, carries: "Your tenants and roles (/api/me); Overview of one tenant (ADR 0087): map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073); behind the orchestrator flag, each lead and its workers, and who sent a message for a lead; how each companion's Claude is billed (ADR 0072, ADR 0076); behind the context graph flag, each graph source with its head, age and counts (ADR 0084)" }
+      - { kind: control, from: rubato-server, to: web, carries: "WebEvent over /ws/web?t={tenant}, only the tenant's (ADR 0089); Changed: fetch the overview again; Updated: fetch one draft, log or room" }
       - { kind: data, from: web, to: rubato-server, carries: "PinRequest, MapLayout, PairApproveRequest, map draft operations; chat and room messages; behind the voice flag, a push-to-talk utterance for a room (ADR 0073)" }
-      - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion, or your own lead agent behind the orchestrator flag (ADR 0072); propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan" }
+      - { kind: control, from: web, to: rubato-server, carries: "LaunchRequest: start a session on your own companion, or your own lead agent behind the orchestrator flag (ADR 0072); propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan; as a tenant admin, invite a login, change a role, remove a member; as an operator, create a tenant, attach or detach an installation, name its first admin (ADR 0088)" }
 
   - id: web-livekit
     from: web
