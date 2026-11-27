@@ -109,6 +109,12 @@ pub mod attr {
     pub const MCP_TOOL: &str = "rubato.mcp.tool";
     /// Edges a traffic lookback saw (ADR 0083), on the `traffic lookback` log line.
     pub const TRAFFIC_SEEN: &str = "rubato.traffic.seen";
+    /// The context graph source a build, a snapshot or a sync is of (ADR 0084): a source key
+    /// such as `repo/<owner>/<name>`, `workspace/<id>` or `team`.
+    pub const GRAPH_SOURCE: &str = "rubato.graph.source";
+    /// Who called a graph tool (ADR 0086): `launched` (on `/mcp`) or `manual` (a session
+    /// started by hand, on `/mcp/read`).
+    pub const MCP_CLIENT: &str = "rubato.mcp.client";
 }
 
 /// Metric instrument names.
@@ -324,6 +330,29 @@ pub mod metric {
     pub const HTTP_TRACEPARENT: &str = "rubato.http.traceparent";
     /// Server: traffic lookbacks (ADR 0083), by `rubato.outcome`: `ok`, `failed`, `timeout`.
     pub const TRAFFIC_LOOKBACK: &str = "rubato.traffic.lookback";
+    /// Server: context graph builds (ADR 0084), by `rubato.graph.source`, `rubato.outcome`
+    /// (`built`, `unchanged`, `failed`, `busy`) and `rubato.reason`.
+    pub const GRAPH_BUILDS: &str = "rubato.graph.builds";
+    /// Server: seconds since a tick last found a source current, per `rubato.graph.source`.
+    /// Read from the stored time when collected, so a stopped task makes it rise. Alert
+    /// `ContextGraphStale`.
+    pub const GRAPH_SOURCE_AGE: &str = "rubato.graph.source_age";
+    /// Server: the regeneration interval in seconds, for the alert's threshold.
+    pub const GRAPH_REGEN_INTERVAL: &str = "rubato.graph.regen_interval";
+    /// Server: nodes, and edges, per source.
+    pub const GRAPH_NODES: &str = "rubato.graph.nodes";
+    pub const GRAPH_EDGES: &str = "rubato.graph.edges";
+    /// Server: builds a cap cut, by `rubato.graph.source` and `rubato.reason` (which cap).
+    pub const GRAPH_TRUNCATED: &str = "rubato.graph.truncated";
+    /// Server: snapshot requests (ADR 0086), by `rubato.outcome` (`ok`, `unauthorized`,
+    /// `stale`, `error`).
+    pub const GRAPH_SNAPSHOTS: &str = "rubato.graph.snapshots";
+    /// Companion: sources fetched and applied, by `rubato.outcome` and `rubato.reason`
+    /// (`http`, `hash_mismatch`, `apply`, `team_record_stale`).
+    pub const GRAPH_SYNCS: &str = "rubato.graph.syncs";
+    /// Companion: seconds its copy has been behind the announced list. Alert
+    /// `ContextGraphCopyBehind`.
+    pub const GRAPH_COPY_BEHIND: &str = "rubato.graph.copy_behind";
 }
 
 /// Span names.
@@ -384,6 +413,14 @@ pub mod span {
     /// Server: one stored change to a workspace's settings (ADR 0075), with `rubato.workspace`,
     /// `rubato.user` and `rubato.workspace.changed_keys`. Key names only, never a value.
     pub const WORKSPACE_CONFIG_CHANGED: &str = "rubato.workspace.config_changed";
+    /// Server: one build of one context graph source (ADR 0084), with `rubato.graph.source`,
+    /// `rubato.outcome` and `rubato.reason`.
+    pub const GRAPH_BUILD: &str = "rubato.graph.build";
+    /// Server: one snapshot served to a companion (ADR 0086), with `rubato.companion_id`,
+    /// `rubato.graph.source` and `rubato.outcome`.
+    pub const GRAPH_SNAPSHOT_SERVE: &str = "rubato.graph.snapshot.serve";
+    /// Companion: one source fetched and applied to its copy.
+    pub const GRAPH_SYNC: &str = "rubato.graph.sync";
 }
 
 /// Event (log record) names.
@@ -543,6 +580,8 @@ pub fn all_names() -> Vec<&'static str> {
         attr::CLAUDE_AUTH,
         attr::MCP_TOOL,
         attr::TRAFFIC_SEEN,
+        attr::GRAPH_SOURCE,
+        attr::MCP_CLIENT,
         metric::COMPANION_HEARTBEAT,
         metric::HOOK_FORWARDED,
         metric::HOOK_PAYLOAD_TRIMMED,
@@ -604,6 +643,15 @@ pub fn all_names() -> Vec<&'static str> {
         metric::MCP_REPORTS,
         metric::MCP_NOT_INITIALIZED,
         metric::PLAN_STATUS_SENT,
+        metric::GRAPH_BUILDS,
+        metric::GRAPH_SOURCE_AGE,
+        metric::GRAPH_REGEN_INTERVAL,
+        metric::GRAPH_NODES,
+        metric::GRAPH_EDGES,
+        metric::GRAPH_TRUNCATED,
+        metric::GRAPH_SNAPSHOTS,
+        metric::GRAPH_SYNCS,
+        metric::GRAPH_COPY_BEHIND,
         metric::TELEMETRY_RELAY,
         metric::TELEMETRY_RELAY_DROPPED,
         metric::HTTP_TRACEPARENT,
@@ -658,6 +706,9 @@ pub fn all_names() -> Vec<&'static str> {
         span::FLEET_REQUEST,
         span::MCP_CALL,
         span::WORKSPACE_CONFIG_CHANGED,
+        span::GRAPH_BUILD,
+        span::GRAPH_SNAPSHOT_SERVE,
+        span::GRAPH_SYNC,
         event::SESSION_STALE,
         event::CAP_HIT,
         event::PLAN_CHECK,

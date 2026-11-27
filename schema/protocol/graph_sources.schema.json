@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GraphSources",
+  "description": "`ServerMessage::GraphSources`: every source the companion may hold, the whole list each time\n(ADR 0086). The companion fetches what differs from its copy and deletes what the list no\nlonger names. Sent only to a companion that announced `capability::CONTEXT_GRAPH` and whose\nowner may read the graph.",
+  "type": "object",
+  "properties": {
+    "sources": {
+      "description": "At most `limits::GRAPH_SOURCES_MAX`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GraphSourceInfo"
+      },
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "sources"
+  ],
+  "$defs": {
+    "GraphSourceInfo": {
+      "description": "One source as the server announces it to a companion.",
+      "type": "object",
+      "properties": {
+        "content_hash": {
+          "description": "`sha256:<hex>` over the snapshot's lines after the header. The same graph always has the\nsame hash, so an unchanged source is never fetched twice.",
+          "type": "string"
+        },
+        "edges": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "head_sha": {
+          "description": "The default-branch head a repo source was built at.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "One of [`kind::source`].",
+          "type": "string"
+        },
+        "map_version": {
+          "description": "The map version a workspace source was built from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nodes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "source": {
+          "description": "See [`source_key`].",
+          "type": "string"
+        },
+        "truncated": {
+          "description": "A cap cut this source (`limits::GRAPH_*`). Not a failure; every answer from it says so.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "kind",
+        "content_hash",
+        "generated_at",
+        "nodes",
+        "edges"
+      ]
+    }
+  }
+}

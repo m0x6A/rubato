@@ -1,0 +1,36 @@
+{
+  "seq": 7,
+  "sent_at": "2026-11-26T17:00:05Z",
+  "message": {
+    "type": "graph_sources",
+    "sources": [
+      {
+        "source": "repo/m0x6A/rubato",
+        "kind": "repo",
+        "head_sha": "b35788b0c1d2e3f405162738495a6b7c8d9e0f1a",
+        "content_hash": "sha256:3b1f0e2c4a4b8e9f1d7a6c5e4b3a215d3b1f0e2c4a4b8e9f1d7a6c5e4b3a2100",
+        "generated_at": "2026-11-26T17:00:04Z",
+        "nodes": 5120,
+        "edges": 21877
+      },
+      {
+        "source": "workspace/default",
+        "kind": "workspace",
+        "map_version": "b35788b",
+        "content_hash": "sha256:9f1d7a6c5e4b3a215d3b1f0e2c4a4b8e9f1d7a6c5e4b3a215d3b1f0e2c4a4b00",
+        "generated_at": "2026-11-26T16:45:02Z",
+        "nodes": 29,
+        "edges": 61
+      },
+      {
+        "source": "team",
+        "kind": "team",
+        "content_hash": "sha256:7a6c5e4b3a215d3b1f0e2c4a4b8e9f1d7a6c5e4b3a215d3b1f0e2c4a4b8e9f00",
+        "generated_at": "2026-11-26T16:30:01Z",
+        "nodes": 14,
+        "edges": 22,
+        "truncated": true
+      }
+    ]
+  }
+}

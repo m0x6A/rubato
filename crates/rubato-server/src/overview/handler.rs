@@ -104,6 +104,8 @@ pub async fn overview(
         // A person's lead agents and their workers, only with the flag on (ADR 0072).
         orchestrator: app.config.orchestrator,
         leads: crate::fleet::leads(&app, ws.as_str()).await,
+        // The context graph's status arrives with its slice (#325); absent until then.
+        graph: None,
         generated_at: Utc::now(),
     }))
 }

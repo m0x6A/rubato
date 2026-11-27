@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GraphSnapshotLine",
+  "description": "Every line of a snapshot body after the header: the nodes in id order, then the edges in\n(`from`, `kind`, `to`, `detail`) order.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "node": {
+          "$ref": "#/$defs/GraphNode"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "node"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "edge": {
+          "$ref": "#/$defs/GraphEdge"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "edge"
+      ]
+    }
+  ],
+  "$defs": {
+    "GraphEdge": {
+      "description": "One relation. `to` may be a node of another source, or a `map:<id>` reference; an edge whose\ntarget is not in a copy yet is kept and resolves when it is.",
+      "type": "object",
+      "properties": {
+        "detail": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "One of [`kind::edge`], or a later kind this reader keeps without knowing it.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "kind",
+        "to"
+      ]
+    },
+    "GraphNode": {
+      "description": "One thing the graph knows about. No file contents: for code a name, a path, a line range and\none signature line; for a decision document its capped Decision section (ADR 0084).",
+      "type": "object",
+      "properties": {
+        "detail": {
+          "description": "What else this kind carries. Never a progress state and never a session.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "end_line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "id": {
+          "description": "See [`id`]. Unique across every source.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "One of [`kind::node`], or a later kind this reader keeps without knowing it.",
+          "type": "string"
+        },
+        "line": {
+          "description": "First line, 1-based.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Path inside that repository.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "description": "`owner/name`, where the node belongs to one repository.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "description": "One line a search may match and show: a signature, a title, a description.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "name"
+      ]
+    }
+  }
+}

@@ -50,6 +50,9 @@ pub mod capability {
     /// Companion: its orchestrator flag is on and it serves the fleet tools to a lead launch.
     /// Server: `RUBATO_ORCHESTRATOR=1`; it takes `FleetRequest` and sends `FleetResult` (ADR 0072).
     pub const FLEET: &str = "fleet";
+    /// Companion: it keeps a copy of the context graph and takes `ServerMessage::GraphSources`.
+    /// Server: its context graph flag is on and it serves snapshots (ADR 0084, ADR 0086).
+    pub const CONTEXT_GRAPH: &str = "context_graph";
     /// Prefix of how the companion's Claude Code is authenticated, `claude_auth:api_key`: the kind
     /// only, never a value (ADR 0076).
     pub const CLAUDE_AUTH_PREFIX: &str = "claude_auth:";
@@ -128,6 +131,9 @@ pub enum ServerMessage {
     PlanStatus(Box<PlanStatus>),
     /// The answer to one `FleetRequest` (ADR 0072). Sent only to a companion that announced `fleet`.
     FleetResult(Box<crate::fleet::FleetResult>),
+    /// Every context graph source the companion may hold (ADR 0086). Sent only to a companion
+    /// that announced `context_graph` and whose owner may read the graph.
+    GraphSources(crate::graph::GraphSources),
     Ack {
         seq: u64,
     },

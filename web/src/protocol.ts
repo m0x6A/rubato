@@ -293,6 +293,15 @@ export type LaunchRole = ("worker" | "lead")
  */
 export type FleetOutcome = (("ok" | "refused") | "in_progress" | "unknown")
 /**
+ * Every line of a snapshot body after the header: the nodes in id order, then the edges in
+ * (`from`, `kind`, `to`, `detail`) order.
+ */
+export type GraphSnapshotLine = ({
+node: GraphNode
+} | {
+edge: GraphEdge
+})
+/**
  * Hook event names we forward. Unknown names arrive as `Unknown` and are kept, not dropped.
  */
 export type HookEventKind = ("SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "Notification" | "Stop" | "StopFailure" | "SessionEnd" | "Unknown")
@@ -519,7 +528,7 @@ limits: Limits
 protocol_version: number
 server_version: string
 type: "welcome"
-} | LaunchCommand1 | SessionMessage | PlanStatus1 | FleetResult1 | {
+} | LaunchCommand1 | SessionMessage | PlanStatus1 | FleetResult1 | GraphSources1 | {
 seq: number
 type: "ack"
 } | {
@@ -649,6 +658,9 @@ DraftView?: DraftView
 Finding?: Finding
 FleetRequest?: FleetRequest1
 FleetResult?: FleetResult
+GraphSnapshotHeader?: GraphSnapshotHeader
+GraphSnapshotLine?: GraphSnapshotLine
+GraphSources?: GraphSources
 Heartbeat?: Heartbeat1
 HookEvent?: HookEvent1
 ImportRequest?: ImportRequest
@@ -1231,6 +1243,131 @@ started_by: string
  * `None` is *unknown*: the session is not in its companion's snapshot.
  */
 state?: (SessionStatus | null)
+}
+/**
+ * The first line of a snapshot body (`routes::GRAPH_SNAPSHOT`).
+ */
+export interface GraphSnapshotHeader {
+/**
+ * Over the lines after this one, as [`GraphSourceInfo::content_hash`].
+ */
+content_hash: string
+edges: number
+/**
+ * [`SNAPSHOT_FORMAT`].
+ */
+format: number
+generated_at: string
+/**
+ * The extraction's version; a bump rebuilds every source once.
+ */
+generator: number
+head_sha?: (string | null)
+kind: string
+map_version?: (string | null)
+nodes: number
+source: string
+truncated?: boolean
+}
+/**
+ * One thing the graph knows about. No file contents: for code a name, a path, a line range and
+ * one signature line; for a decision document its capped Decision section (ADR 0084).
+ */
+export interface GraphNode {
+/**
+ * What else this kind carries. Never a progress state and never a session.
+ */
+detail?: {
+[k: string]: unknown | undefined
+}
+end_line?: (number | null)
+/**
+ * See [`id`]. Unique across every source.
+ */
+id: string
+/**
+ * One of [`kind::node`], or a later kind this reader keeps without knowing it.
+ */
+kind: string
+/**
+ * First line, 1-based.
+ */
+line?: (number | null)
+name: string
+/**
+ * Path inside that repository.
+ */
+path?: (string | null)
+/**
+ * `owner/name`, where the node belongs to one repository.
+ */
+repo?: (string | null)
+/**
+ * One line a search may match and show: a signature, a title, a description.
+ */
+summary?: (string | null)
+}
+/**
+ * One relation. `to` may be a node of another source, or a `map:<id>` reference; an edge whose
+ * target is not in a copy yet is kept and resolves when it is.
+ */
+export interface GraphEdge {
+detail?: {
+[k: string]: unknown | undefined
+}
+from: string
+/**
+ * One of [`kind::edge`], or a later kind this reader keeps without knowing it.
+ */
+kind: string
+to: string
+}
+/**
+ * `ServerMessage::GraphSources`: every source the companion may hold, the whole list each time
+ * (ADR 0086). The companion fetches what differs from its copy and deletes what the list no
+ * longer names. Sent only to a companion that announced `capability::CONTEXT_GRAPH` and whose
+ * owner may read the graph.
+ */
+export interface GraphSources {
+/**
+ * At most `limits::GRAPH_SOURCES_MAX`.
+ * 
+ * @maxItems 64
+ */
+sources: GraphSourceInfo[]
+}
+/**
+ * One source as the server announces it to a companion.
+ */
+export interface GraphSourceInfo {
+/**
+ * `sha256:<hex>` over the snapshot's lines after the header. The same graph always has the
+ * same hash, so an unchanged source is never fetched twice.
+ */
+content_hash: string
+edges: number
+generated_at: string
+/**
+ * The default-branch head a repo source was built at.
+ */
+head_sha?: (string | null)
+/**
+ * One of [`kind::source`].
+ */
+kind: string
+/**
+ * The map version a workspace source was built from.
+ */
+map_version?: (string | null)
+nodes: number
+/**
+ * See [`source_key`].
+ */
+source: string
+/**
+ * A cap cut this source (`limits::GRAPH_*`). Not a failure; every answer from it says so.
+ */
+truncated?: boolean
 }
 /**
  * The companion's liveness signal.
@@ -2230,6 +2367,11 @@ companions: PairingInfo[]
 draft?: MapDraft
 findings: Finding[]
 generated_at: string
+/**
+ * The context graph's sources and how fresh each is (ADR 0084). Absent while the server's
+ * flag is off and from an older server. Never an input to progress.
+ */
+graph?: (GraphOverview | null)
 issues: IssueSummary[]
 layout?: MapLayout1
 /**
@@ -2402,6 +2544,41 @@ pr_url?: (string | null)
 proposed_by: string
 state: ProposalState
 state_since: string
+}
+/**
+ * `Overview.graph`: absent while the server's context graph flag is off.
+ */
+export interface GraphOverview {
+/**
+ * The regeneration interval, so the web can say when a source is stale.
+ */
+regen_secs: number
+sources?: GraphSourceStatus[]
+}
+/**
+ * One source as the Overview shows it: what [`GraphSourceInfo`] says, with the build's own
+ * times, and nothing built yet as a state of its own.
+ */
+export interface GraphSourceStatus {
+/**
+ * When a tick last found the stored rows current. Its age is what "stale" is judged from.
+ */
+checked_at?: (string | null)
+edges?: number
+/**
+ * The newest build's error, when the newest build failed. The rows are the last good ones.
+ */
+error?: (string | null)
+/**
+ * Absent until the first build.
+ */
+generated_at?: (string | null)
+head_sha?: (string | null)
+kind: string
+map_version?: (string | null)
+nodes?: number
+source: string
+truncated?: boolean
 }
 /**
  * Positions by part id, for the flat map (ADR 0016) and for the By repo grouping (ADR 0068).
@@ -3165,6 +3342,20 @@ outcome: FleetOutcome
  */
 reason?: (string | null)
 request_id: string
+}
+/**
+ * `ServerMessage::GraphSources`: every source the companion may hold, the whole list each time
+ * (ADR 0086). The companion fetches what differs from its copy and deletes what the list no
+ * longer names. Sent only to a companion that announced `capability::CONTEXT_GRAPH` and whose
+ * owner may read the graph.
+ */
+export interface GraphSources1 {
+/**
+ * At most `limits::GRAPH_SOURCES_MAX`.
+ * 
+ * @maxItems 64
+ */
+sources: GraphSourceInfo[]
 }
 /**
  * Web → server: send this text to the launch's session.

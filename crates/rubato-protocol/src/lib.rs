@@ -9,6 +9,7 @@ pub mod approve;
 pub mod auth;
 pub mod fleet;
 pub mod github;
+pub mod graph;
 pub mod handoff;
 pub mod hook;
 pub mod ids;
@@ -53,6 +54,10 @@ pub use github::{
     ApprovalBody, ApprovalRecord, ApprovalSource, ApprovalState, ApprovalVersion, ChecksStatus,
     DecisionBody, DecisionRecord, PullRequestState, ReviewBody, ReviewRecord, comment_counts,
     trusted_author,
+};
+pub use graph::{
+    GraphEdge, GraphNode, GraphOverview, GraphSnapshotHeader, GraphSnapshotLine, GraphSourceInfo,
+    GraphSourceStatus, GraphSources, SnapshotQuery,
 };
 pub use handoff::{
     HandoffLine, HandoffOutcome, HandoffReport, PlanningMode, SKILL_HANDOFF_VERSION,
