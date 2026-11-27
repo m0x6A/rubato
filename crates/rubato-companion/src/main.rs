@@ -36,6 +36,10 @@ enum Cmd {
     Run,
     /// Show pairing and hook endpoint state.
     Status,
+    /// Serve the team's context graph to a Claude Code session you started by hand, as an MCP
+    /// server over stdio (ADR 0086). Read-only, from this machine's copy. Add it once with
+    /// `claude mcp add --scope user rubato-graph -- rubato-companion mcp`.
+    Mcp,
     /// Render the hooks for a session started by hand (ADR 0078): to stdout, or merged into a
     /// repo's or worktree's `.claude/settings.local.json` with --into, keeping its other settings.
     RenderHooks {
@@ -128,6 +132,12 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        // Stdout is the protocol: nothing else may be written to it, so no telemetry starts.
+        Cmd::Mcp => {
+            rubato_companion::agent_mcp::bridge::Bridge::from_env(&state_dir)
+                .run()
+                .await
+        }
         Cmd::Status => {
             match State::load(&state_dir)? {
                 Some(s) => println!(
@@ -140,6 +150,9 @@ async fn main() -> Result<()> {
             for line in rubato_companion::graph::report(&state_dir).await {
                 println!("{line}");
             }
+            println!(
+                "  a session you start by hand reads it once you run: claude mcp add --scope user rubato-graph -- rubato-companion mcp"
+            );
             // The port and the header file's path, never the endpoint file: it holds the token
             // (ADR 0063).
             let Some(ep) = HookEndpoint::load(&state_dir) else {

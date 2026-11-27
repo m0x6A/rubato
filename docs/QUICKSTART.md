@@ -124,8 +124,11 @@ default 900): one GitHub call per repository per tick, and a tarball only when t
 The graph lives in its own SQLite file beside the main database (`rubato-graph.db`;
 `RUBATO_GRAPH_DATABASE_URL` moves it), is never backed up, and is rebuilt if deleted. With the
 flag on the server needs the GitHub App unless it is local, and refuses to start beside
-`RUBATO_OPEN_LOGIN` (ADR 0086). Nothing reads the graph yet: companions and the MCP tools arrive
-with issues #329 to #332.
+`RUBATO_OPEN_LOGIN` (ADR 0086). Each paired companion keeps a copy and serves five read-only
+`graph_*` tools from it to the sessions it launches. A session you start by hand gets the same
+tools once you run, once per machine, `claude mcp add --scope user rubato-graph -- rubato-companion mcp`;
+`rubato-companion status` says what the copy holds. (The server's side of the copy, issue #329,
+is not built yet, so no copy arrives from a real server until it is.)
 
 Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
 setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`

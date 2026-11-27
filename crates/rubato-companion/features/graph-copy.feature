@@ -30,3 +30,15 @@ Feature: A companion keeps a copy of the team's context graph
     When the server announces its context graph sources
     Then the snapshot of "repo/acme/pantry" was asked for
     And the companion's copy holds no source
+
+  Scenario: A session started by hand reads the copy through the stdio bridge
+    Given a test server that approves pairing for user "m0x6A"
+    And a paired companion for user "m0x6A"
+    And the test server also announces "context_graph"
+    And the test server holds the context graph source "repo/acme/pantry" at head "abc1234" with the file "src/stock.rs"
+    And the companion daemon is running and connected
+    When the server announces its context graph sources
+    Then the companion's copy holds "repo/acme/pantry" at head "abc1234" with the file "src/stock.rs"
+    And a process speaking MCP over stdio to the companion's bridge lists 5 read-only tools
+    And asked through the bridge, graph_status names "repo/acme/pantry" at head "abc1234"
+    And in a session Rubato launched the bridge lists no tools

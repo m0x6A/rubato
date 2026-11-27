@@ -152,11 +152,16 @@ async fn then_no_hooks(w: &mut RubatoWorld) {
         "{log}"
     );
     assert!(!log.contains("hooks.json"), "{log}");
+    // Nothing of the launch. The one Rubato variable a fork carries is the marker its owner's
+    // `rubato-companion mcp` bridge stands down on, so a fork gets no Rubato MCP (ADR 0086).
     assert!(
-        !log.lines()
-            .any(|l| l.starts_with("RUBATO_") || l.starts_with("TMUX=")),
+        !log.lines().any(|l| {
+            (l.starts_with("RUBATO_") && !l.starts_with("RUBATO_FORK_TURN=1"))
+                || l.starts_with("TMUX=")
+        }),
         "{log}"
     );
+    assert!(log.lines().any(|l| l == "RUBATO_FORK_TURN=1"), "{log}");
     assert!(
         log.contains("alice: @m0x6A-agent why b?"),
         "the turn on stdin: {log}"

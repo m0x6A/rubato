@@ -152,3 +152,97 @@ async fn then_copy_empty(w: &mut RubatoWorld) {
         );
     }
 }
+
+/// Run `rubato-companion mcp` as Claude Code would: messages on stdin, one a line, answers on
+/// stdout. `launched` sets `RUBATO_LAUNCH_ID`, as a session Rubato started has it.
+fn bridge(
+    w: &RubatoWorld,
+    launched: bool,
+    messages: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_rubato-companion"));
+    cmd.arg("--state-dir")
+        .arg(&w.state_dir)
+        .arg("mcp")
+        .current_dir(&w.root)
+        .env_remove("RUBATO_LAUNCH_ID")
+        .env_remove("RUBATO_FORK_TURN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if launched {
+        cmd.env("RUBATO_LAUNCH_ID", "9b2e4d1a-3c5f-4e6a-9b7c-8d9e0f1a2b3c");
+    }
+    let mut child = cmd.spawn().unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for m in messages {
+            writeln!(stdin, "{m}").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "the bridge failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Stdout is the protocol: every line of it is one JSON-RPC message.
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("not a message: {l:?}: {e}")))
+        .collect()
+}
+
+fn handshake() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}}),
+        serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    ]
+}
+
+#[then(
+    expr = "a process speaking MCP over stdio to the companion's bridge lists {int} read-only tools"
+)]
+async fn then_bridge_lists(w: &mut RubatoWorld, n: usize) {
+    let answers = bridge(w, false, &handshake());
+    // Two answers for three messages: the notification has none.
+    assert_eq!(answers.len(), 2, "{answers:?}");
+    assert_eq!(answers[0]["result"]["serverInfo"]["name"], "rubato-graph");
+    let tools = answers[1]["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), n, "{tools:?}");
+    assert!(
+        tools
+            .iter()
+            .all(|t| t["annotations"]["readOnlyHint"] == true)
+    );
+}
+
+#[then(expr = "asked through the bridge, graph_status names {string} at head {string}")]
+async fn then_bridge_status(w: &mut RubatoWorld, source: String, head: String) {
+    let mut messages = handshake();
+    messages.push(serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "graph_status", "arguments": {}}}));
+    let answers = bridge(w, false, &messages);
+    let result = &answers.last().unwrap()["result"];
+    assert_eq!(result["isError"], false, "{result}");
+    let status: serde_json::Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    let named = status["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["source"] == source.as_str())
+        .unwrap_or_else(|| panic!("{source} is not in {status}"));
+    assert_eq!(named["head_sha"], head.as_str());
+    // The server announced exactly this one, so the copy is known to be current.
+    assert_eq!(named["behind"], false);
+}
+
+#[then("in a session Rubato launched the bridge lists no tools")]
+async fn then_bridge_stands_down(w: &mut RubatoWorld) {
+    let answers = bridge(w, true, &handshake());
+    assert_eq!(answers[1]["result"]["tools"], serde_json::json!([]));
+}

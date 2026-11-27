@@ -151,7 +151,7 @@ spend          transcript cost, spend cap, CapHit                               
 stale          heartbeat, stale sessions                                          heartbeat, sweep (essential)
 session_input  SessionMessage: own user, launched here, idle, typed once; stop    session input task (essential)
 plan_mirror    plan bundle of a launched session at settle points                 plan mirror task (essential)
-agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_status; a lead's fleet tools  report drain (essential), not-initialized watch (best-effort)
+agent_mcp      MCP for launched sessions: get_assignment, report_status, plan_status; a lead's fleet tools; the read-only graph tools, also on /mcp/read and over stdio (`rubato-companion mcp`) for sessions started by hand (ADR 0086)  report drain (essential), not-initialized watch (best-effort)
 graph          this machine's copy of the context graph: fetch, check, apply; the file graph.sqlite (ADR 0086)  graph sync (best-effort)
 ```
 <!-- /slices -->

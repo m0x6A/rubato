@@ -383,6 +383,9 @@ fn parse_etime(s: &str) -> Option<u64> {
 /// The fork's own settings: no hooks at all.
 pub const NO_HOOKS: &str = r#"{"disableAllHooks":true}"#;
 
+/// Set on every fork turn; kept in the kernel so the fork and the bridge agree on its name.
+pub const FORK_TURN_ENV: &str = "RUBATO_FORK_TURN";
+
 /// What `launch.sh` exports for a launched session; a fork carries none of it.
 pub const LAUNCH_ENV: &[&str] = &[
     "RUBATO_LAUNCH_ID",
@@ -482,7 +485,9 @@ impl Claude {
             program: "sh".into(),
             args,
             cwd: worktree.to_path_buf(),
-            env: vec![],
+            // A fork gets no Rubato MCP (ADR 0071): a developer's `rubato-companion mcp`
+            // bridge lists no tools when it sees this (ADR 0086).
+            env: vec![(FORK_TURN_ENV.to_owned(), "1".to_owned())],
             env_remove: LAUNCH_ENV.iter().map(|v| (*v).to_owned()).collect(),
             stdin: Some(prompt.to_owned()),
             max_total: self.timeout,
@@ -760,7 +765,10 @@ not json at all
         let (_t, _p, end) = spawn(r).unwrap();
         end.await.unwrap();
         let text = std::fs::read_to_string(&log).unwrap();
-        assert!(!text.lines().any(|l| l.starts_with("RUBATO_")), "{text}");
+        // Of Rubato's variables a fork carries one: the marker its owner's `rubato-companion mcp`
+        // bridge stands down on (ADR 0086). Nothing of the launch.
+        let ours: Vec<&str> = text.lines().filter(|l| l.starts_with("RUBATO_")).collect();
+        assert_eq!(ours, ["RUBATO_FORK_TURN=1"], "{text}");
         assert!(!text.contains("--fork-session"), "{text}");
     }
     /// Plan 220 §5, an N-guard (true today, kept true): a room's fork turn gets no MCP server and

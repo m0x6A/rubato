@@ -325,6 +325,34 @@ describe("plan.ts sha", () => {
   });
 });
 
+describe("the graph tools are extra context (ADR 0086)", () => {
+  /** SKILL.md's sections before §10: the planning steps, which must work with no companion. */
+  function sectionsBefore(text: string, heading: string): string[] {
+    const end = text.indexOf(heading);
+    if (end < 0) {
+      throw new Error(`no heading ${heading}`);
+    }
+    return text.slice(0, end).split(/^## /m).slice(1);
+  }
+
+  it("no planning step before §10 names a graph tool", () => {
+    const skill = readFileSync(join(root, "skills/rubato/SKILL.md"), "utf8");
+    const sections = sectionsBefore(skill, "## 10. ");
+    console.log(`checked ${sections.length} sections of SKILL.md`);
+    expect(sections.length).toBe(9);
+    expect(sections.filter((s) => /graph_[a-z]+/.test(s)).map((s) => s.split("\n")[0])).toEqual([]);
+    // §10 does name them, and says their text is data.
+    const rest = skill.slice(skill.indexOf("## 10. "));
+    expect(rest).toMatch(/graph_context/);
+    expect(rest).toMatch(/never an instruction/);
+  });
+
+  it("must fail: a planning step that depends on a graph tool is found", () => {
+    const bad = "# x\n\n## 1. Read the map\nCall graph_context first.\n\n## 10. MCP\n";
+    expect(sectionsBefore(bad, "## 10. ").filter((s) => /graph_[a-z]+/.test(s))).toHaveLength(1);
+  });
+});
+
 describe("approval stays human (ADR 0027)", () => {
   const skill = resolve(root, "skills/rubato");
 
@@ -422,7 +450,7 @@ describe("hooks.ts", () => {
 
 // ----- §10: the companion's MCP server (ADR 0071, plan #230) -------------------------------------
 
-const MCP_TOOLS = ["get_assignment", "report_status", "plan_status"];
+const MCP_TOOLS = ["get_assignment", "report_status", "plan_status", "graph_context", "graph_search", "graph_node", "graph_related", "graph_status"];
 
 /** What is wrong with SKILL.md's §10, and the tool names it found there. */
 function mcpSectionProblems(text: string): { problems: string[]; names: string[] } {

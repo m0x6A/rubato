@@ -41,8 +41,8 @@ fn command(n: u128) -> LaunchCommand {
 pub(super) struct World {
     pub(super) st: Arc<AgentMcp>,
     reader: metric_reader::Reader,
-    base: String,
-    token: String,
+    pub(super) base: String,
+    pub(super) token: String,
     pub(super) out: mpsc::UnboundedReceiver<CompanionMessage>,
     hooks: mpsc::UnboundedReceiver<rubato_protocol::HookEvent>,
     caps: Arc<std::sync::Mutex<Vec<String>>>,

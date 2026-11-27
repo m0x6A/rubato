@@ -11,9 +11,11 @@
 //! Names `sessions` (the registry, `assignment_of`) and `hooks` (`LaunchHeader`). Named only by
 //! the composition root, which mounts the routers on the receiver and spawns the two tasks.
 
+pub mod bridge;
 mod cache;
 mod fleet;
 mod graph_tools;
+mod read;
 mod report;
 mod rpc;
 mod tools;
@@ -23,6 +25,8 @@ mod watch;
 mod fleet_tests;
 #[cfg(test)]
 mod graph_tests;
+#[cfg(test)]
+mod read_tests;
 #[cfg(test)]
 mod tests;
 
@@ -120,6 +124,8 @@ pub fn routers(state: Arc<AgentMcp>) -> (Router, Router) {
         .with_state(state.clone());
     let guarded = Router::new()
         .route("/mcp", post(rpc::post).get(rpc::not_allowed))
+        // The read-only graph tools for a session started by hand: no launch id (ADR 0086).
+        .route("/mcp/read", post(read::post).get(rpc::not_allowed))
         .with_state(state);
     (open, guarded)
 }
