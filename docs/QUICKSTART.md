@@ -115,6 +115,16 @@ bare repositories, with `RUBATO_DEV_ISSUES=<file.json>` giving them open issues;
 `x-rubato-dev-user` header names any other. The server refuses to start with it unless it is
 local (a loopback `RUBATO_BIND` and `RUBATO_PUBLIC_URL`; ADR 0064).
 
+**The context graph (ADR 0084), off by default.** `RUBATO_CONTEXT_GRAPH=1` makes the server
+build a graph of every repository the maps name, at its default-branch head: files, decision
+records, feature scenarios and slices. It regenerates every `RUBATO_GRAPH_REGEN_SECS` (300–86400,
+default 900): one GitHub call per repository per tick, and a tarball only when the head moved.
+The graph lives in its own SQLite file beside the main database (`rubato-graph.db`;
+`RUBATO_GRAPH_DATABASE_URL` moves it), is never backed up, and is rebuilt if deleted. With the
+flag on the server needs the GitHub App unless it is local, and refuses to start beside
+`RUBATO_OPEN_LOGIN` (ADR 0086). Nothing reads the graph yet: companions and the MCP tools arrive
+with issues #329 to #332.
+
 Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
 setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`
 (15–300, default 60). The `RUBATO_TRAFFIC_PROMETHEUS_*` and `RUBATO_DEFAULT_*` variables below

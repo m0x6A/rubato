@@ -2231,6 +2231,115 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 121,
+      "type": "row",
+      "title": "Context graph",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 173
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 122,
+      "title": "Context graph source age",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 0,
+        "y": 174
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Seconds since a tick last found each context graph source current (ADR 0084): one value per source, a repository (repo/<owner>/<name>), a workspace or team. The first question at 3 am: is the graph agents read still following the repositories? A healthy source stays under the regeneration interval (RUBATO_GRAPH_REGEN_SECS, default 900 s); alert ContextGraphStale fires past three intervals. The gauge is read from the stored time when it is collected, so it keeps rising when a build keeps failing and when the timer itself has stopped. No value at all means the flag RUBATO_CONTEXT_GRAPH is off, which is not a fault. If it climbs, look for the log line 'context graph build failed' (with rubato.graph.source and rubato.reason: head, tarball, extract, store), the span rubato.graph.build, and the GitHub calls repo_head and tarball on the panel GitHub calls by endpoint.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (rubato_graph_source) (rubato_graph_source_age)",
+          "legendFormat": "{{rubato_graph_source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1800
+              },
+              {
+                "color": "red",
+                "value": 2700
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 123,
+      "title": "Context graph builds by outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 14,
+        "x": 10,
+        "y": 174
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Context graph builds per hour by source and outcome (ADR 0084): unchanged (the head and the generator are the stored ones: one GitHub call, no tarball), built (new rows), failed (the previous rows are kept; rubato_reason says where: head, tarball, extract, store) and lost (a newer build or a removal overtook it). One build per repository per regeneration interval. Mostly unchanged is the healthy picture; failed on every tick for one source is what ContextGraphStale will report. Builds a cap cut are counted on rubato_graph_truncated_total with the cap as rubato_reason.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_graph_source, rubato_outcome, rubato_reason) (increase(rubato_graph_builds_total[1h]))",
+          "legendFormat": "{{rubato_graph_source}} {{rubato_outcome}} {{rubato_reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_graph_source, rubato_reason) (increase(rubato_graph_truncated_total[1h]))",
+          "legendFormat": "{{rubato_graph_source}} cut: {{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 use super::{
     BranchHead, Comment, GitHubApi, IssueInfo, OpenIssueInfo, OpenIssues, OpenPulls, PullFull,
-    PullInfo, RepoAccess, ReviewInfo,
+    PullInfo, RepoAccess, ReviewInfo, Tarball,
 };
 use anyhow::Result;
 use anyhow::anyhow;
@@ -20,6 +20,14 @@ pub struct FakeInner {
     /// (repo, path, sha) → the login of the last commit to that file (ADR 0058).
     pub commit_authors: HashMap<(String, String, String), String>,
     pub branches: HashMap<String, Vec<(String, String)>>,
+    /// repo → its default branch's head sha, for the context graph (ADR 0084).
+    pub heads: HashMap<String, String>,
+    /// (repo, sha) → that commit's tarball, gzip.
+    pub tarballs: HashMap<(String, String), Vec<u8>>,
+    /// Downloading any tarball fails with this text.
+    pub tarball_error: Option<String>,
+    /// Every tarball answers as larger than the caller's cap.
+    pub tarball_too_large: bool,
     pub issues: HashMap<(String, u64), IssueInfo>,
     pub comments: HashMap<(String, u64), Vec<Comment>>,
     pub pulls: HashMap<(String, String), PullInfo>,
@@ -155,6 +163,28 @@ impl GitHubApi for FakeGitHub {
         Ok(g.commit_authors
             .get(&(repo.to_owned(), path.to_owned(), sha.to_owned()))
             .cloned())
+    }
+
+    async fn default_head(&self, repo: &str) -> Result<Option<String>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("default_head", repo.to_owned()));
+        if g.exhausted {
+            return Err(anyhow!("API rate limit exceeded"));
+        }
+        Ok(g.heads.get(repo).cloned())
+    }
+
+    async fn tarball(&self, repo: &str, sha: &str, max_bytes: u64) -> Result<Tarball> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("tarball", format!("{repo} {sha}")));
+        if let Some(e) = &g.tarball_error {
+            return Err(anyhow!("{e}"));
+        }
+        match g.tarballs.get(&(repo.to_owned(), sha.to_owned())) {
+            Some(gz) if g.tarball_too_large || gz.len() as u64 > max_bytes => Ok(Tarball::TooLarge),
+            Some(gz) => Ok(Tarball::Gz(gz.clone())),
+            None => Err(anyhow!("no tarball of {repo} at {sha}")),
+        }
     }
 
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>> {

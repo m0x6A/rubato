@@ -37,8 +37,9 @@ The last two are written only when their content hash changed.
 
 **Timer.** Every `RUBATO_GRAPH_REGEN_SECS`, default 900, clamped to 300–86400. A tick costs one
 GitHub call per repository when nothing changed, and one tarball per change of head. The
-`GitHubApi` port gains `default_head` and `tarball`; the tarball is streamed, with its own
-deadline and no retry inside a tick. Repository builds run one at a time across the server.
+`GitHubApi` port gains `default_head` and `tarball`; the compressed tarball is read under its
+cap and decompressed as a stream, with its own deadline and no retry inside a tick. Repository
+builds run one at a time across the server.
 
 **Store.** A separate SQLite file, `rubato-graph.db` (`RUBATO_GRAPH_DATABASE_URL`), with tables
 `sources`, `nodes`, `edges` and an FTS5 index, owned by the slice. It is derived data and is
@@ -70,7 +71,8 @@ loaded.
 `truncated` and counted; it is not a failure.
 
 **Dependencies.** `rubato-server` gains `tar` and `flate2` (both MIT OR Apache-2.0), pinned as
-its other dependencies are, to read the tarball and to write snapshots (ADR 0086). The parser is
+its other dependencies are, to read the tarball and to write snapshots (ADR 0086), and names
+`http-body-util` (MIT), which octocrab already brings, to read the download in frames. The parser is
 ADR 0085's.
 
 **The Overview** carries each source's head, generated-at, checked-at, counts, `truncated` and
@@ -101,7 +103,8 @@ Easier: one picture for every agent, at a known head, with its age; a question s
 else touches this seam" has an answer outside the web.
 
 Harder: the server now downloads and parses whole repositories, so it needs CPU and memory in
-bursts; one build at a time, streamed, in `spawn_blocking`, keeps the burst to one repository.
+bursts; one build at a time, decompressed as a stream in `spawn_blocking`, keeps the burst to
+one repository's compressed archive.
 Symbol and file names of every map repository are in one more file on the server's disk. A
 source can be stale, and that must never be silent: rule `ContextGraphStale` fires when no tick
 has found a source current for three intervals, with a firing test.

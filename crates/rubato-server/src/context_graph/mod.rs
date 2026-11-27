@@ -9,8 +9,15 @@
 //! overview carries no `graph`. The graph is never an input to progress, pins, plans or
 //! approvals.
 //!
-//! This is the store and each source's status (#325). The builds arrive with #326 to #328, the
-//! snapshot route with #329.
+//! Built so far: the store and each source's status (#325), and repository sources on a timer
+//! with their files and decision documents (#326). The workspace and team sources arrive with
+//! #327, symbols with #328, the snapshot route with #329.
+
+mod build;
+mod extract;
+mod metrics;
+
+pub use build::{GENERATOR, Outcome, Tick, run, tick};
 
 use crate::kernel::state::App;
 use anyhow::{Context, Result};
@@ -81,5 +88,7 @@ fn status(r: &SourceRow) -> GraphSourceStatus {
     }
 }
 
+#[cfg(test)]
+mod build_tests;
 #[cfg(test)]
 mod tests;

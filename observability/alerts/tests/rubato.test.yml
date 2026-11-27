@@ -300,6 +300,53 @@ tests:
         alertname: TrafficReportStale
         exp_alerts: []
 
+  # #322 (ADR 0084): with a 900 s interval a source 1000 s old is late by one tick, not stale;
+  # at 3000 s, past three intervals, it fires for that source alone. The other source stays
+  # current and silent.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_graph_regen_interval'
+        values: "900x10"
+      - series: 'rubato_graph_source_age{rubato_graph_source="repo/m0x6A/rubato"}'
+        values: "1000x5 3000x5"
+      - series: 'rubato_graph_source_age{rubato_graph_source="team"}'
+        values: "60x10"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ContextGraphStale
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: ContextGraphStale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-github
+              owner: rubato-server
+              rubato_graph_source: repo/m0x6A/rubato
+            exp_annotations:
+              summary: "The context graph source repo/m0x6A/rubato was last current 3000s ago: agents read an old graph"
+              panel: Context graph source age
+  # A longer interval moves the bar with it: 3000 s is within three intervals of 1800 s.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_graph_regen_interval'
+        values: "1800x10"
+      - series: 'rubato_graph_source_age{rubato_graph_source="repo/m0x6A/rubato"}'
+        values: "3000x10"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ContextGraphStale
+        exp_alerts: []
+  # The flag off: no gauge of the graph at all, and the rule stays silent.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_poll_ticks_total'
+        values: "0+1x10"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ContextGraphStale
+        exp_alerts: []
+
   # #122: the oldest message waiting for an idle session grows a minute a minute; past 600 s
   # for 5 minutes it fires. A queue that drains stays quiet.
   - interval: 1m

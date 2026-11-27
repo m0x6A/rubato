@@ -38,6 +38,8 @@ const REQUIRED = [
   "SpeechProviderFailing",
   // Issue #134 (ADR 0072).
   "FleetCrossOwner",
+  // Issue #322 (ADR 0084).
+  "ContextGraphStale",
 ];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
@@ -58,6 +60,9 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Issues created", "rubato_issues_opening"],
   // Issue #104 (ADR 0039): the row "Map versus territory" the O-row of seam web-server names.
   ["Traffic report age", "rubato_traffic_report_age"],
+  // Issue #322 (ADR 0084): the row "Context graph" the O-row of seam server-github names.
+  ["Context graph source age", "rubato_graph_source_age"],
+  ["Context graph builds by outcome", "rubato_graph_builds_total"],
   ["Quiet seams and undeclared edges", "rubato_traffic_seams_quiet"],
   ["Quiet seams and undeclared edges", "rubato_traffic_undeclared_edges"],
   ["Quiet seams and undeclared edges", "rubato_traffic_unmapped_services"],

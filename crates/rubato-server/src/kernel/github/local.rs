@@ -217,6 +217,35 @@ impl GitHubApi for LocalGit {
             .filter(|s| !s.is_empty()))
     }
 
+    async fn default_head(&self, repo: &str) -> Result<Option<String>> {
+        Ok(self
+            .git(repo, &["rev-parse", "--verify", "--quiet", "HEAD"])
+            .await?
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty()))
+    }
+
+    async fn tarball(&self, repo: &str, sha: &str, max_bytes: u64) -> Result<super::Tarball> {
+        // The same shape GitHub serves: gzip, one top-level directory.
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(self.path(repo)?)
+            .args(["archive", "--format=tar.gz", "--prefix=local/", sha])
+            .output()
+            .await
+            .context("running git archive")?;
+        anyhow::ensure!(
+            out.status.success(),
+            "git archive of {repo} at {sha}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        Ok(if out.stdout.len() as u64 > max_bytes {
+            super::Tarball::TooLarge
+        } else {
+            super::Tarball::Gz(out.stdout)
+        })
+    }
+
     async fn branch_sha(&self, repo: &str, branch: &str) -> Result<Option<String>> {
         Ok(self
             .git(
