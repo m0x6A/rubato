@@ -83,6 +83,7 @@ RUBATO_BIND=127.0.0.1:18090 RUBATO_PUBLIC_URL=http://127.0.0.1:18090 RUBATO_DEV_
   RUBATO_DEV_ISSUES="$PWD/e2e/fixtures/issues.json" \
   RUBATO_DEV_PULLS="$PWD/e2e/fixtures/pulls.json" \
   RUBATO_WEB_DIST="$PWD/dist" RUBATO_GITHUB_POLL_SECS=5 RUST_LOG=info \
+  RUBATO_CONTEXT_GRAPH=1 \
   "$BIN" > "$TMP/server.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 50); do

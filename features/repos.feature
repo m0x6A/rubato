@@ -11,3 +11,10 @@ Feature: Connected repositories
     When a person opens Repos
     Then each repository says how many parts it provides
     And opening it lists them
+
+  @repos.context-graph-age
+  Scenario: The Repos tab says how fresh each repository's context graph is
+    Given the server builds the context graph
+    When a person opens Repos
+    Then the map's repository says the head its graph was built at, when it was last found current and its size
+    And the workspace's map and the team's facts say the same of theirs
