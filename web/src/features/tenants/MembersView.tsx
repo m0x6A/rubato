@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Confirm } from "../../shared/Confirm.tsx";
 import type { MemberView, Role, TenantInfo, WebEvent } from "../../protocol.ts";
 import { onWebEvent } from "../live/index.ts";
 import { membersApi, refusalText } from "./api.ts";
@@ -25,7 +26,6 @@ export function MembersView({ tenant, me, onClose, onNotice }: Props) {
   const [role, setRole] = useState<Role>("member");
   const [busy, setBusy] = useState(false);
   /** The member whose removal waits for a second press. */
-  const [removing, setRemoving] = useState<number | null>(null);
 
   const load = useCallback(() => {
     membersApi
@@ -59,7 +59,6 @@ export function MembersView({ tenant, me, onClose, onNotice }: Props) {
       setError(refusalText(e));
     } finally {
       setBusy(false);
-      setRemoving(null);
     }
   };
 
@@ -110,21 +109,17 @@ export function MembersView({ tenant, me, onClose, onNotice }: Props) {
               ) : (
                 <span className="kind mono">{m.role}</span>
               )}
-              {admin &&
-                (removing === m.github_id ? (
-                  <span className="settings-actions">
-                    <button type="button" disabled={busy} data-testid={`confirm-remove-${m.login}`} onClick={() => void run(() => membersApi.remove(m.github_id).then(() => `${m.login} was removed from ${tenant.name}`))}>
-                      Remove {m.login}
-                    </button>
-                    <button type="button" onClick={() => setRemoving(null)}>
-                      Keep
-                    </button>
-                  </span>
-                ) : (
-                  <button type="button" disabled={busy} aria-label={`Remove ${m.login}`} onClick={() => setRemoving(m.github_id)}>
-                    Remove…
-                  </button>
-                ))}
+              {admin && (
+                <Confirm
+                  ask="Remove…"
+                  askLabel={`Remove ${m.login}`}
+                  confirm={`Remove ${m.login}`}
+                  confirmTestId={`confirm-remove-${m.login}`}
+                  keep="Keep"
+                  disabled={busy}
+                  onConfirm={() => void run(() => membersApi.remove(m.github_id).then(() => `${m.login} was removed from ${tenant.name}`))}
+                />
+              )}
             </li>
           ))}
         </ul>

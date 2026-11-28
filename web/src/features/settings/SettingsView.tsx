@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Confirm } from "../../shared/Confirm.tsx";
 import type { ObservedTraffic, Overview, SecretUpdate, SourceField, SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
 import { relative } from "../../shared/format.ts";
 import { nothingObserved } from "../../shared/traffic.ts";
@@ -91,7 +92,6 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
   /** A stale edit: the settings as someone else left them, offered in place of this edit. */
   const [theirs, setTheirs] = useState<WorkspaceSettings | null>(null);
   const [creating, setCreating] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const show = useCallback((s: WorkspaceSettings) => {
     setSettings(s);
@@ -115,7 +115,6 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
     setDraft(null);
     setMessage(null);
     setSaved(false);
-    setConfirmDelete(false);
     void load();
   }, [workspace, load]);
 
@@ -240,7 +239,6 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
       onClose();
     } catch (err) {
       setMessage(refusalText(err));
-      setConfirmDelete(false);
     } finally {
       setBusy(false);
     }
@@ -400,28 +398,29 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
           </button>
         </p>
       )}
-      {workspace !== DEFAULT_WORKSPACE &&
-        (confirmDelete ? (
-          <div className="settings-delete" data-testid="settings-delete-confirm">
-            <p className="warn">
-              Delete workspace {settings.name ?? workspace}? It leaves the switcher for everyone. Its pins, layout and drafts are kept, and the id <span className="mono">{workspace}</span> cannot be used again.
-            </p>
-            <p className="settings-actions">
-              <button type="button" disabled={busy} onClick={() => void remove()}>
-                Delete {workspace}
-              </button>
-              <button type="button" onClick={() => setConfirmDelete(false)}>
-                Keep it
-              </button>
-            </p>
-          </div>
-        ) : (
-          <p>
-            <button type="button" onClick={() => setConfirmDelete(true)} data-testid="settings-delete">
-              Delete this workspace…
-            </button>
-          </p>
-        ))}
+      {workspace !== DEFAULT_WORKSPACE && (
+        <div className="settings-delete-row">
+          <Confirm
+            key={workspace}
+            ask="Delete this workspace…"
+            askTestId="settings-delete"
+            confirm={`Delete ${workspace}`}
+            keep="Keep it"
+            disabled={busy}
+            onConfirm={() => void remove()}
+            explain={
+              <p className="warn">
+                Delete workspace {settings.name ?? workspace}? It leaves the switcher for everyone. Its pins, layout and drafts are kept, and the id <span className="mono">{workspace}</span> cannot be used again.
+              </p>
+            }
+            wrap={(question) => (
+              <div className="settings-delete" data-testid="settings-delete-confirm">
+                {question}
+              </div>
+            )}
+          />
+        </div>
+      )}
     </section>
   );
 }
