@@ -43,3 +43,26 @@ export async function openSection(page: Page, section: "overview" | "plan" | "ro
   await page.getByTestId("issue-detail").getByTestId(section === "pr" ? "open-pull-view" : `section-${section}`).click();
   await expect(page.locator(`[data-testid="issue-detail"] [data-section="${section}"]`)).toBeVisible();
 }
+
+/** The map's View menu: how the map is laid out, and the two ways to change it. */
+async function openViewMenu(page: Page) {
+  await page.getByTestId("view-menu").getByRole("button").first().click();
+}
+
+/** Turn By repo on or off, through the View menu. */
+export async function toggleByRepo(page: Page) {
+  await openViewMenu(page);
+  await page.getByTestId("view-by-repo").click();
+}
+
+/** Auto-arrange the layout that is showing, for everyone, through the View menu. */
+export async function autoArrange(page: Page) {
+  await openViewMenu(page);
+  await page.getByTestId("view-auto-arrange").click();
+}
+
+/** Open map versus territory from the Traffic lens's line: what was observed and the map does not explain. */
+export async function openTerritory(page: Page) {
+  await page.getByTestId("to-settle").click();
+  await expect(page.getByTestId("territory")).toBeVisible();
+}

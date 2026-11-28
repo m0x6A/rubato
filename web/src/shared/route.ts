@@ -26,6 +26,8 @@ export type View =
   | { view: "issues"; list: IssueList }
   /** The inspector of the part or seam selected on the map. */
   | { view: "map" }
+  /** What the observed system and the map disagree about, to settle one by one. */
+  | { view: "territory" }
   /** `from`: the board the issue was opened from, which is then its way up. */
   | { view: "issue"; issue: IssueRef; section: IssueSection; from: PlanList | null }
   | { view: "new-issue"; at: MapRef | null }
@@ -165,6 +167,9 @@ export function parseRoute(hash: string): Route {
       return pull && d === undefined ? { view: "pull", repo: pull.repo, number: pull.number, sel } : notFound;
     }
     case "map":
+      if (a === "territory" && b === undefined) {
+        return { view: "territory", sel };
+      }
       // The inspector is of something: with nothing selected there is nothing to show.
       return only && sel ? { view: "map", sel } : notFound;
     case "companions":
@@ -209,6 +214,9 @@ export function formatRoute(route: Route): string {
       break;
     case "pair":
       path = "/companions/pair";
+      break;
+    case "territory":
+      path = "/map/territory";
       break;
     case "pull":
       path = `/pulls/${route.repo}/${route.number}`;
@@ -258,6 +266,7 @@ export function parentOf(route: Route): Route | null {
     case "new-issue":
       return route.sel ? { view: "map", sel: route.sel } : HOME;
     case "findings":
+    case "territory":
     case "not-found":
       return { view: "issues", list: "open", sel: route.sel };
     case "map":

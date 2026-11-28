@@ -16,11 +16,12 @@ import { type DraftMarkLike, type Graph, type GraphEdge, type GraphNode, NODE_HE
 import { PartCard } from "./PartCard.tsx";
 import { SeamChip } from "./SeamChip.tsx";
 import { FlowParticles, type ParticleMode, particleBudget, particleMode } from "./particles.tsx";
-import { type PartTraffic, partTrafficOf, quietClass, quietState, seamChip, TerritoryMark, TrafficChevrons, TrafficVitals, chevronCount, chevronsOn, chipTraffic, compactRate, health, liveTier, partRates, perMinute, trafficLegend, trafficVitals, unknownSentence } from "./traffic.tsx";
+import { type PartTraffic, partTrafficOf, quietClass, quietState, seamChip, TerritoryMark, TrafficChevrons, TrafficLine, chevronCount, chevronsOn, chipTraffic, compactRate, health, liveTier, partRates, perMinute, trafficLegend, trafficVitals, unknownSentence } from "./traffic.tsx";
 import { windowText } from "../findings/index.ts";
 import type { GhostPart, UndeclaredEdge } from "../../protocol.ts";
 import { endId, endText, ghostBand, ghostId, ghostsToDraw, isGhostId, serviceText } from "./territory.ts";
 import { useReducedMotion } from "../../shared/motion.ts";
+import { Menu } from "../../shared/Menu.tsx";
 
 type MapNodeData = { node: GraphNode; selected: boolean; onPin: OnPin | undefined; dim: boolean; draft: DraftMarkLike | undefined; editing: boolean; traffic: PartTraffic | undefined };
 type MapFlowNode = Node<MapNodeData, "map">;
@@ -266,7 +267,10 @@ interface Props {
   /** The canvas was double-clicked in edit mode, at this canvas position. */
   onAddPartAt?: ((at: XY) => void) | undefined;
   /** Shown under the Traffic lens's legend: what to do about each discrepancy (issue #140). */
-  trafficActions?: ReactNode | undefined;
+  /** What the observed system and the map disagree about: how many things, and the way to them. */
+  toSettle?: { count: number; onOpen: () => void } | undefined;
+  /** Show the Traffic lens: a view that is about what was observed asks for it. */
+  wantTraffic?: boolean | undefined;
   /** Opens Configure workspace: offered where the map says something is set there. */
   onConfigure?: (() => void) | undefined;
 }
@@ -276,7 +280,7 @@ const SAVE_AFTER_MS = 250;
 /** How long Play shows each step; one trip of the pulse is `PULSE_MS` in particles.tsx. */
 const STEP_MS = 2400;
 
-function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt, trafficActions, onConfigure }: Props) {
+function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAutoArrange, plan, draftMarks, editing = false, onToggleEdit, onConnectParts, onAddPartAt, toSettle, wantTraffic = false, onConfigure }: Props) {
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }> | null>(null);
   const { fitView, screenToFlowPosition, getNode, getViewport, setCenter } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -448,6 +452,12 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   // on Structure. Observed traffic is the first thing to see when there is any.
   const [pickedLens, setLens] = useState<Exclude<Lens, "plan"> | null>(null);
   const trafficFresh = graph.traffic?.state === "fresh";
+  // A view about what was observed (map versus territory) shows the Traffic lens.
+  useEffect(() => {
+    if (wantTraffic) {
+      setLens("traffic");
+    }
+  }, [wantTraffic]);
   const chosenLens: Exclude<Lens, "plan"> = pickedLens ?? (trafficFresh ? "traffic" : "structure");
   const planView = useMemo(() => (plan ? planLens(plan.plan, graph.edges) : null), [plan, graph]);
   // While a plan is shown, the switch waits: the arrows are the plan's.
@@ -910,7 +920,11 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
   }, []);
 
   // The lens switch, the scenario player, the legend and the map actions sit in a band above the
-  // canvas, never over it: no part is hidden under them.
+  // canvas, never over it: no part is hidden under them. One row unless a lens needs more
+  // (issue #357): the scenario player, or the one line of what traffic was observed.
+  const nothingSaved = grouping ? Object.keys(stored?.grouped ?? {}).length + Object.keys(stored?.boxes ?? {}).length === 0 : Object.keys(stored?.positions ?? {}).length === 0;
+  // The key to what the arrows mean is one press away; what a lens cannot show, and why, is never folded.
+  const keyInSight = lens === "plan" || (lens === "traffic" && unknownSentence(traffic) !== null);
   const band = (
     <div className="map-band" data-testid="map-band">
       <div className="map-band-row">
@@ -939,30 +953,66 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           )}
         </div>
         <div className="map-actions">
-          <button type="button" className={grouping ? "map-action active" : "map-action"} aria-pressed={byRepo} onClick={() => setByRepo((on) => !on)} disabled={editing} title={editing ? "Leave edit mode to group the map by repo" : "Box each repo's parts together: what each repo provides to the whole"}>
-            By repo
-          </button>
+          {/* How the map is laid out, said on the button; the two ways to change it are behind it. */}
+          <span className="view-menu" data-testid="view-menu">
+            <Menu
+              button={
+                <>
+                  {grouping ? "By repo" : "View"} <span aria-hidden="true">▾</span>
+                </>
+              }
+              buttonLabel={grouping ? "View: by repo" : "View"}
+              menuLabel="How the map is laid out"
+            >
+              {(close) => (
+                <>
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={byRepo}
+                    aria-disabled={editing || undefined}
+                    tabIndex={-1}
+                    data-testid="view-by-repo"
+                    title={editing ? "Leave edit mode to group the map by repo" : "Box each repo's parts together; seams between two boxes fold into one line"}
+                    onClick={() => {
+                      if (!editing) {
+                        close();
+                        setByRepo((on) => !on);
+                      }
+                    }}
+                  >
+                    <span>By repo</span>
+                    <span className="muted">{byRepo ? "on" : ""}</span>
+                  </button>
+                  {onAutoArrange && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-disabled={nothingSaved || undefined}
+                      tabIndex={-1}
+                      data-testid="view-auto-arrange"
+                      title={grouping ? "Remove every saved position of the By repo arrangement, for the whole team, and lay it out automatically. The flat map stays as it is." : "Remove every saved position, for the whole team, and lay the map out automatically"}
+                      onClick={() => {
+                        if (!nothingSaved) {
+                          close();
+                          onAutoArrange(grouping ? "grouped" : "flat");
+                        }
+                      }}
+                    >
+                      <span>Auto-arrange</span>
+                      <span className="muted">{nothingSaved ? "nothing saved" : "for everyone"}</span>
+                    </button>
+                  )}
+                </>
+              )}
+            </Menu>
+          </span>
+          {onToggleEdit && (
+            <button type="button" className={editing ? "map-action active" : "map-action"} aria-pressed={editing} onClick={onToggleEdit} title="Change the map as one shared draft: add, change and remove parts and seams, then propose it as a pull request">
+              Edit map
+            </button>
+          )}
         </div>
-        {(onAutoArrange || onToggleEdit) && (
-          <div className="map-actions">
-            {onToggleEdit && (
-              <button type="button" className={editing ? "map-action active" : "map-action"} aria-pressed={editing} onClick={onToggleEdit} title="Change the map as one shared draft: add, change and remove parts and seams, then propose the draft as a pull request">
-                Edit map
-              </button>
-            )}
-            {onAutoArrange && (
-              <button
-                type="button"
-                className="map-action"
-                onClick={() => onAutoArrange(grouping ? "grouped" : "flat")}
-                disabled={grouping ? Object.keys(stored?.grouped ?? {}).length + Object.keys(stored?.boxes ?? {}).length === 0 : Object.keys(stored?.positions ?? {}).length === 0}
-                title={grouping ? "Remove every saved position of the By repo arrangement, for the whole team, and lay it out automatically. The flat map stays as it is." : "Remove every saved position, for the whole team, and lay the map out automatically"}
-              >
-                Auto-arrange
-              </button>
-            )}
-          </div>
-        )}
       </div>
       {lens === "scenario" && scenario && (
         <div
@@ -1045,9 +1095,9 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           <strong>Editing the shared draft.</strong> Double-click the canvas to add a part, drag from the dot on a part&apos;s right edge to another part to draw a seam, or select a part or seam to change it in the panel. Nothing reaches the map until the draft is proposed and merged.
         </p>
       )}
-      {lens === "traffic" && trafficFresh && graph.traffic && <TrafficVitals traffic={graph.traffic} quietSeams={vitalsAt?.quietSeams ?? 0} seams={graph.edges.length} />}
+      {lens === "traffic" && trafficFresh && graph.traffic && <TrafficLine traffic={graph.traffic} quietSeams={vitalsAt?.quietSeams ?? 0} toSettle={toSettle} />}
       {lens !== "scenario" && (
-        <div className="legend" data-testid="legend">
+        <Legend folded={!keyInSight}>
           {lens === "plan" && plan && planView && (
             <>
               <strong>The plan of {issueKey(plan.issue)}.</strong> Its parts are painted, the rest steps back
@@ -1083,9 +1133,8 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
               <i className="key-mark control" aria-hidden="true" /> Control runs along a dashed arrow as rings: one side tells the other to act. A faint seam declares no control flow.
             </>
           )}
-        </div>
+        </Legend>
       )}
-      {lens === "traffic" && trafficActions}
     </div>
   );
 
@@ -1140,6 +1189,23 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
         )}
       </div>
     </div>
+  );
+}
+
+/** What the arrows mean. Folded behind "Key" once a person knows; in sight when it says why a lens shows nothing. */
+function Legend({ folded, children }: { folded: boolean; children: ReactNode }) {
+  if (!folded) {
+    return (
+      <div className="legend" data-testid="legend">
+        {children}
+      </div>
+    );
+  }
+  return (
+    <details className="legend map-key" data-testid="legend">
+      <summary>Key</summary>
+      <div>{children}</div>
+    </details>
   );
 }
 

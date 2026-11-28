@@ -11,7 +11,7 @@ Feature: The system map
 
   @map.by-repo
   Scenario: By repo groups the parts by the repository behind them
-    When a person turns on By repo
+    When a person turns on By repo in the map's View menu
     Then each repository's parts are drawn inside one box
     And external parts stay outside every box
 
@@ -115,7 +115,8 @@ Feature: The system map
   Scenario: A fresh traffic report is the first thing the map shows
     Given a fresh traffic report for the workspace
     When a person opens the map
-    Then it shows the Traffic lens, headed by the calls a minute, the error share and what the map does not explain
+    Then it shows the Traffic lens, headed by one line: the calls a minute, the error share, when it was observed and how much the map does not explain
+    And the map-versus-territory view carries every number of the report
     And each seam that carried calls is a pipe, heavier for more calls and coloured by its error share
     And each part says its calls a minute in and out
     When the report is not fresh
@@ -144,13 +145,13 @@ Feature: The system map
     When a person picks the Traffic lens
     Then the unknown services show as ghosts in their own band
     And the declared parts stay where they were
-    And the map-versus-territory list counts each discrepancy
+    And a line above the map says how many things there are to settle, and leads to the map-versus-territory view, which lists each
 
   @map.empty-report-says-so
   Scenario: A traffic report with nothing in it is not read as the map matching
     Given a traffic source that answers with no calls between services
     When a person picks the Traffic lens
-    Then the map-versus-territory list says nothing was observed
+    Then the map-versus-territory view says nothing was observed
     And it does not say the observed system matches the map
 
   @map.dismiss-discrepancy

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
-import { NOT_PINNED, expectMapVersion, openSection, showNotPinned } from "./shell.ts";
+import { NOT_PINNED, autoArrange, expectMapVersion, openSection, openTerritory, showNotPinned, toggleByRepo } from "./shell.ts";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
 import { freshTraffic, ghostTraffic, quietTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
@@ -47,7 +47,7 @@ test("By repo boxes each repo's parts, and the Repos tab says what each repo pro
   const owned = nodes.filter((n) => n.repo);
   await page.goto("/");
   await expect(page.getByTestId(`node-${owned[0]!.id}`)).toBeVisible();
-  await page.getByRole("button", { name: "By repo" }).click();
+  await toggleByRepo(page);
   const box = page.getByTestId("repo-box-m0x6A/rubato");
   await expect(box).toBeVisible();
   // Every part with a repo is drawn inside its box; the externals outside it.
@@ -57,7 +57,7 @@ test("By repo boxes each repo's parts, and the Repos tab says what each repo pro
     const inside = p.x >= b.x && p.y >= b.y && p.x + p.width <= b.x + b.width + 1 && p.y + p.height <= b.y + b.height + 1;
     expect(inside, n.id).toBe(Boolean(n.repo));
   }
-  await page.getByRole("button", { name: "By repo" }).click();
+  await toggleByRepo(page);
   await expect(box).toHaveCount(0);
 
   // What a repo provides is in the repo's own view, open to read (issue #357).
@@ -242,7 +242,7 @@ test("a dragged part is in the same place in a second browser and after reload",
   await expect.poll(() => canvasPosition(other, "web")).toEqual(nudged);
 
   // Auto-arrange removes every saved position for everyone; Undo brings them back.
-  await page.getByRole("button", { name: "Auto-arrange" }).click();
+  await autoArrange(page);
   await expect(page.getByRole("status")).toContainText("Auto-arranged for everyone: 1 saved position removed");
   await expect.poll(() => canvasPosition(other, "web")).toEqual(before);
   await page.getByRole("button", { name: "Undo" }).click();
@@ -251,7 +251,7 @@ test("a dragged part is in the same place in a second browser and after reload",
   await expect.poll(() => canvasPosition(page, "web")).toEqual(nudged);
 
   // Leave the shared layout as it was found, for the tests that follow.
-  await page.getByRole("button", { name: "Auto-arrange" }).click();
+  await autoArrange(page);
   await expect.poll(() => canvasPosition(page, "web")).toEqual(before);
   await other.context().close();
 });
@@ -593,10 +593,13 @@ test("a ghost taken into the draft becomes a part with its service, and its call
   await expect(page.getByTestId("ghost-shop/checkout")).toBeVisible();
   // The declared parts stay where they were: the ghosts sit in their own band.
   expect(await placed()).toBe(before);
+  // Above the map, one line says how many things there are to settle; the list is a view of its own.
+  await expect(page.getByTestId("to-settle")).toHaveText("6 to settle with the map");
+  await expect(page.getByTestId("discrepancies")).toHaveCount(0);
+  await openTerritory(page);
+  await expect(page).toHaveURL(/#\/map\/territory$/);
   const list = page.getByTestId("discrepancies");
-  // Closed by default, so the map keeps its room; the count says there is something to see.
-  await expect(list.locator(":scope > summary")).toContainText("Map versus territory (6)");
-  await list.locator(":scope > summary").click();
+  await expect(list.getByTestId("discrepancies-count")).toContainText("Map versus territory (6)");
   await expect(list).toContainText("shop/checkout is running but not on the map");
   // Its call waits for its part.
   const edgeRow = list.getByTestId("discrepancy-edge").filter({ hasText: "shop/checkout calls rubato-server" });
@@ -618,9 +621,7 @@ test("a ghost taken into the draft becomes a part with its service, and its call
   // Now the call can follow, from the drafted part to the server.
   await page.getByRole("button", { name: "Edit map" }).click();
   await page.getByRole("radio", { name: "Traffic" }).click();
-  if (!(await list.evaluate((el) => (el as HTMLDetailsElement).open))) {
-    await list.locator(":scope > summary").click();
-  }
+  await openTerritory(page);
   await expect(list.getByTestId("discrepancy-ghost").filter({ hasText: "shop/checkout" })).toContainText("in the draft as checkout");
   await edgeRow.getByRole("button", { name: "Add as a seamâ€¦" }).click();
   const addSeam = panel.getByRole("form", { name: "Add seam" });
@@ -643,26 +644,35 @@ test("a fresh traffic report opens the map on the Traffic lens, headed by its nu
   await page.goto("/");
   await expect(page.getByRole("radio", { name: "Traffic" })).toHaveAttribute("aria-checked", "true");
   // freshTraffic: 1770 calls in 1 h on two seams and one undeclared edge, 12 of them failed.
-  const vitals = page.getByTestId("traffic-vitals");
-  await expect(vitals).toContainText("live calls30/min");
-  await expect(vitals).toContainText("errors0.7%");
-  await expect(vitals).toContainText("seams carrying calls2/");
-  await expect(vitals).toContainText("quiet seams1");
-  await expect(vitals).toContainText("not on the map1");
+  // Above the map, one line: the rate, the errors, when it was observed, and what is left to settle.
+  const line = page.getByTestId("traffic-line");
+  await expect(line).toContainText("30/min");
+  await expect(line).toContainText("0.7% errors");
+  await expect(line).toContainText("observed");
+  await expect(page.getByTestId("map-band").getByTestId("traffic-vitals")).toHaveCount(0);
   // web-server carries 20/min one way and server-github 5/min: both in the middle tier.
   await expect(page.locator(".react-flow__edge.live")).toHaveCount(2);
   await expect(page.locator(".react-flow__edge.live.live-2")).toHaveCount(2);
   await expect(page.getByTestId("part-traffic-rubato-server")).toContainText("in 20");
   // No lookback in this report: a part with no calls says nothing and does not step back (ADR 0083).
   await expect(page.getByTestId("node-plan-check")).not.toHaveClass(/unobserved/);
-  console.log("traffic-first: lens, 5 vitals, 2 live seams, 1 part rate, 1 quiet part checked");
+  // The seven numbers head the map versus territory view; opening it keeps the Traffic lens.
+  await openTerritory(page);
+  const vitals = page.getByTestId("traffic-vitals");
+  await expect(vitals).toContainText("live calls30/min");
+  await expect(vitals).toContainText("errors0.7%");
+  await expect(vitals).toContainText("seams carrying calls2/");
+  await expect(vitals).toContainText("quiet seams1");
+  await expect(vitals).toContainText("not on the map1");
+  await expect(page.getByRole("radio", { name: "Traffic" })).toHaveAttribute("aria-checked", "true");
+  console.log("traffic-first: lens, the line, 5 vitals, 2 live seams, 1 part rate, 1 quiet part checked");
 });
 
 test("a stale traffic report opens the map on Structure", { tag: "@map.traffic-first" }, async ({ page }) => {
   await routeOverview(page, staleTraffic);
   await page.goto("/");
   await expect(page.getByRole("radio", { name: "Structure" })).toHaveAttribute("aria-checked", "true");
-  await expect(page.getByTestId("traffic-vitals")).toHaveCount(0);
+  await expect(page.getByTestId("traffic-line")).toHaveCount(0);
 });
 
 test("a quiet part says when it was last seen, and a part nothing can observe is hatched, not faded", { tag: "@map.traffic-three-states" }, async ({ page }) => {
@@ -679,6 +689,7 @@ test("a quiet part says when it was last seen, and a part nothing can observe is
     await expect(page.getByTestId(`node-${id}`)).not.toHaveClass(/unobserved/);
     await expect(page.getByTestId(`part-quiet-${id}`)).toHaveText("not instrumented");
   }
+  await openTerritory(page);
   await expect(page.getByTestId("traffic-vitals")).toContainText("not instrumented2");
   console.log("three states: 1 last seen, 1 not seen, 2 not instrumented checked");
 });
@@ -724,7 +735,7 @@ const PAD = { left: 24, top: 48 };
 
 async function byRepo(page: Page): Promise<void> {
   await expect(page.getByTestId("node-web")).toBeVisible();
-  await page.getByRole("button", { name: "By repo" }).click();
+  await toggleByRepo(page);
   await expect(page.getByTestId(BOX)).toBeVisible();
 }
 
@@ -826,7 +837,7 @@ test("By repo: a part dragged inside its box stays there for everyone and after 
   await expect.poll(() => inBox(page, "web")).toEqual(after);
 
   // By repo off: every part is where the flat map has it, untouched by the grouping.
-  await page.getByRole("button", { name: "By repo" }).click();
+  await toggleByRepo(page);
   await expect(page.getByTestId(BOX)).toHaveCount(0);
   await expect.poll(() => flatPositions(page)).toEqual(flat);
   const stored = await (await page.request.get(`${base}/api/t/default/w/default/overview`, { headers: DEV })).json();
@@ -871,7 +882,7 @@ test("By repo: a part dragged past its box's edge stays inside; a box moves with
   await expect.poll(() => inBox(page, "web").then((p) => p.x)).toBe(PAD.left);
 
   // Auto-arrange in By repo clears only the grouping, for everyone; Undo brings it back.
-  await page.getByRole("button", { name: "Auto-arrange" }).click();
+  await autoArrange(page);
   await expect(page.getByRole("status")).toContainText("By repo auto-arranged for everyone: 2 saved positions removed");
   await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato")).not.toEqual(moved);
   await page.getByRole("button", { name: "Undo" }).click();
@@ -883,7 +894,7 @@ test("By repo: a part dragged past its box's edge stays inside; a box moves with
 test("By repo in a workspace with two repos: a part or a box dropped on the other box goes back", { tag: "@map.by-repo-stays-in-box" }, async ({ page }) => {
   await page.goto("/?w=shop");
   await expect(page.getByTestId("node-storefront")).toBeVisible();
-  await page.getByRole("button", { name: "By repo" }).click();
+  await toggleByRepo(page);
   const ledger = page.getByTestId("repo-box-acme/ledger");
   await expect(ledger).toBeVisible();
   const start = await canvasPosition(page, "storefront");
@@ -954,7 +965,9 @@ test("By repo: issues drop on a part and on a seam inside a box, New issue hereâ
 
   await page.getByRole("button", { name: "Edit map" }).click();
   await expect(page.getByTestId(BOX)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "By repo" })).toBeDisabled();
+  await page.getByTestId("view-menu").getByRole("button").first().click();
+  await expect(page.getByTestId("view-by-repo")).toHaveAttribute("aria-disabled", "true");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Edit map" }).click();
   await expect(page.getByTestId(BOX)).toBeVisible();
 
@@ -974,9 +987,9 @@ test("an empty traffic report says nothing was observed, not that the map matche
   await page.goto("/");
   await expect(page.getByTestId("node-web")).toBeVisible();
   await page.getByRole("radio", { name: "Traffic" }).click();
+  await openTerritory(page);
   const list = page.getByTestId("discrepancies");
-  await expect(list.locator(":scope > summary")).toContainText("Map versus territory (nothing observed)");
-  await list.locator(":scope > summary").click();
+  await expect(list.getByTestId("discrepancies-count")).toContainText("Map versus territory (nothing observed)");
   await expect(list.getByTestId("nothing-observed")).toContainText("answered with no calls between services in the last 1 h");
   await expect(list).not.toContainText("matches the map");
 });

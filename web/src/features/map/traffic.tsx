@@ -305,6 +305,34 @@ export function TrafficVitals({ traffic, quietSeams, seams, now = Date.now() }: 
   );
 }
 
+/**
+ * The Traffic lens's headline as one line above the map (issue #357): the rate, the error share,
+ * when it was observed, and how many things the map does not explain, with the way to them. The
+ * seven numbers of `TrafficVitals` are in the map versus territory view.
+ */
+export function TrafficLine({ traffic, quietSeams, toSettle, now = Date.now() }: { traffic: ObservedTraffic; quietSeams: number; toSettle?: { count: number; onOpen: () => void } | undefined; now?: number }) {
+  const v = trafficVitals(traffic, quietSeams);
+  const pct = v.calls > 0 ? (v.errors * 100) / v.calls : 0;
+  return (
+    <p className={`traffic-line ${v.health}`} data-testid="traffic-line" role="group" aria-label="Observed traffic">
+      <span>
+        <i className="live-dot" aria-hidden="true" /> <strong>{compactRate(v.perMin)}</strong>/min
+      </span>
+      <span>
+        <strong>{pct > 0 && pct < 0.1 ? "<0.1" : Math.round(pct * 10) / 10}%</strong> errors
+      </span>
+      <span className="muted">
+        observed {traffic.observed_at ? relative(traffic.observed_at, now) : "now"} over {windowText(traffic.window_secs ?? 3600)}
+      </span>
+      {toSettle && (
+        <button type="button" className={toSettle.count > 0 ? "link warn" : "link"} data-testid="to-settle" onClick={toSettle.onOpen}>
+          {toSettle.count > 0 ? `${toSettle.count} to settle with the map` : "map versus territory"}
+        </button>
+      )}
+    </p>
+  );
+}
+
 /** Why the Traffic lens shows nothing, or null when the report is fresh (design §5.5). */
 export function unknownSentence(t: Pick<ObservedTraffic, "state" | "observed_at" | "error">, now = Date.now()): string | null {
   switch (t.state) {

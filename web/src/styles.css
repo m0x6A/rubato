@@ -926,3 +926,20 @@ body:has(.login) { background-color: var(--canvas); background-image: radial-gra
 .issue-section > p, .issue-section > ul { margin: 0; }
 /* In the header's column the rail is as wide as the header and as high as itself. */
 .issue-head .stage-rail { flex: none; width: 100%; margin: 4px 0 2px; }
+
+/* The map band (issue #357): one row; the layout's two actions behind View, the key to the arrows
+   behind Key, the observed traffic as one line. */
+.view-menu > .pin-menu > button { padding: 4px 10px; min-height: 28px; font-size: 13px; }
+.pin-menu-list [role="menuitemcheckbox"][aria-checked="true"] { font-weight: 600; }
+.map-key > summary { cursor: pointer; color: var(--muted); font-size: 12px; width: fit-content; }
+.map-key[open] > summary { margin-bottom: 4px; }
+.traffic-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; padding: 2px 8px; font-size: 12.5px; }
+.traffic-line strong { font-family: var(--font-mono); }
+.traffic-line .link.warn { color: var(--warn-ink); }
+.traffic-line button { margin-left: auto; }
+.territory-view { display: flex; flex-direction: column; gap: 12px; }
+.territory-view h2 { margin: 0; font-size: 15px; }
+.territory-view p { margin: 0; }
+/* In its own view the list has the room: no cap on its height, no band's border. */
+.territory-view .discrepancies { max-height: none; border-top: 0; padding: 0; background: none; }
+.territory-view .discrepancies h2 { color: var(--warn-ink); }

@@ -339,19 +339,31 @@ describe("traffic stands out: pipes, vitals and part rates", () => {
 
   it("the headline counts the parts nothing can observe", async () => {
     const o = withTraffic({ not_instrumented: [{ kind: "node", id: "livekit" }, { kind: "node", id: "speech-provider" }, { kind: "seam", id: "web-livekit" }] });
-    const v = render(<MapView graph={buildGraph(o)} selected={null} onSelect={() => {}} />);
-    expect(await v.findByTestId("traffic-vitals")).toHaveTextContent("not instrumented2");
+    // The seven numbers are the head of the map versus territory view (issue #357).
+    const v = render(<TrafficVitals traffic={o.traffic as ObservedTraffic} quietSeams={0} seams={buildGraph(o).edges.length} />);
+    expect(v.getByTestId("traffic-vitals")).toHaveTextContent("not instrumented2");
     v.unmount();
   });
 
   it("the map opens on Traffic while a report is fresh, and on Structure when it is not", async () => {
     const fresh = render(<MapView graph={buildGraph(withTraffic())} selected={null} onSelect={() => {}} />);
     expect(fresh.getByRole("radio", { name: "Traffic" })).toHaveAttribute("aria-checked", "true");
-    expect(await fresh.findByTestId("traffic-vitals")).toBeInTheDocument();
+    // Above the map the observed traffic is one line: the rate, the errors, when, and the way to what the map does not explain.
+    const line = await fresh.findByTestId("traffic-line");
+    expect(line).toHaveTextContent(/\/min/);
+    expect(line).toHaveTextContent(/% errors/);
+    expect(line).toHaveTextContent(/observed .* over 1 h/);
+    expect(fresh.queryByTestId("traffic-vitals")).toBeNull();
     fresh.unmount();
+    const opened: number[] = [];
+    const settle = render(<MapView graph={buildGraph(withTraffic())} selected={null} onSelect={() => {}} toSettle={{ count: 3, onOpen: () => opened.push(1) }} />);
+    fireEvent.click(await settle.findByTestId("to-settle"));
+    expect(settle.getByTestId("to-settle")).toHaveTextContent("3 to settle with the map");
+    expect(opened).toEqual([1]);
+    settle.unmount();
     const stale = render(<MapView graph={buildGraph(withTraffic({ state: "stale" }))} selected={null} onSelect={() => {}} />);
     expect(stale.getByRole("radio", { name: "Structure" })).toHaveAttribute("aria-checked", "true");
-    expect(stale.queryByTestId("traffic-vitals")).toBeNull();
+    expect(stale.queryByTestId("traffic-line")).toBeNull();
     stale.unmount();
   });
 });

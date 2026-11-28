@@ -146,7 +146,7 @@ describe("an empty report is not agreement (issue #285)", () => {
     const v = show(fresh({ seams: [], undeclared: [] }));
     expect(screen.getByTestId("nothing-observed")).toHaveTextContent("The traffic source answered with no calls between services in the last 1 h. Nothing was compared with the map.");
     expect(v.container.textContent).not.toContain("matches the map");
-    expect(v.container.querySelector("summary")).toHaveTextContent("Map versus territory (nothing observed)");
+    expect(screen.getByTestId("discrepancies-count")).toHaveTextContent("Map versus territory (nothing observed)");
   });
 
   it("anything observed and no discrepancy: the observed system matches the map", () => {
@@ -160,7 +160,7 @@ describe("an empty report is not agreement (issue #285)", () => {
       // Must fail on purpose if every empty list reads as "nothing observed".
       expect(v.container.textContent).toContain("The observed system matches the map.");
       expect(screen.queryByTestId("nothing-observed")).toBeNull();
-      expect(v.container.querySelector("summary")).toHaveTextContent("Map versus territory (0)");
+      expect(screen.getByTestId("discrepancies-count")).toHaveTextContent("Map versus territory (0)");
       v.unmount();
     }
     console.log(`checked 1 empty report and ${cases.length} reports with something in them`);

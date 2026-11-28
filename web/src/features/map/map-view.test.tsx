@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { autoArrangeItem, offered } from "../../../test/map.ts";
 import { describe, expect, it } from "vitest";
 import { liveNodes, overview, realMap } from "../../../test/fixtures.ts";
 import { buildGraph } from "./graph.ts";
@@ -20,7 +21,7 @@ describe("MapView", () => {
     expect(new Set(byElk.values()).size).toBe(byElk.size);
     // Without a way to save a move, parts do not drag, and there is no Auto-arrange.
     expect(auto.container.querySelector(".react-flow__node.draggable")).toBeNull();
-    expect(auto.queryByRole("button", { name: "Auto-arrange" })).toBeNull();
+    expect(autoArrangeItem(auto)).toBeNull();
     auto.unmount();
 
     // One stored position: that part sits there, every other part stays where ELK put it.
@@ -32,12 +33,16 @@ describe("MapView", () => {
       }
     }
     expect(stored.container.querySelectorAll(".react-flow__node.draggable").length).toBe(byElk.size);
-    expect(stored.getByRole("button", { name: "Auto-arrange" })).toBeEnabled();
+    expect(offered(autoArrangeItem(stored))).toBe(true);
   });
 
   it("Auto-arrange is disabled when nothing is stored", async () => {
     const view = render(<MapView graph={buildGraph(overview())} selected={null} onSelect={() => {}} layout={{ positions: {} }} onMove={async () => {}} onAutoArrange={() => {}} />);
-    expect(await view.findByRole("button", { name: "Auto-arrange" }, { timeout: 5000 })).toBeDisabled();
+    await view.findByTestId("node-rubato-server", undefined, { timeout: 5000 });
+    const item = autoArrangeItem(view);
+    expect(item).not.toBeNull();
+    expect(offered(item)).toBe(false);
+    expect(item).toHaveTextContent("nothing saved");
   });
 
   it("plays a scenario step by step, with a caption a screen reader hears (ADR 0024)", async () => {

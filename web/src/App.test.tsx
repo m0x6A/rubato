@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issue, minutesAgo, openIssue, overview } from "../test/fixtures.ts";
+import { autoArrangeItem, offered } from "../test/map.ts";
 import { App } from "./App.tsx";
 import type { IssueSummary, MapRef } from "./protocol.ts";
 import { resetNeedsLogin } from "./shared/api.ts";
@@ -370,11 +371,11 @@ describe("the shared layout from the shell (S7)", () => {
     render(<App />);
     await waitFor(() => expect(where("web")).toBe("translate(1234px,567px)"), { timeout: 5000 });
 
-    fireEvent.click(screen.getByRole("button", { name: "Auto-arrange" }));
+    fireEvent.click(autoArrangeItem(screen) as HTMLElement);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Auto-arranged for everyone: 2 saved positions removed"));
     expect(layoutStore).toEqual({});
     await waitFor(() => expect(where("web")).not.toBe("translate(1234px,567px)"));
-    expect(screen.getByRole("button", { name: "Auto-arrange" })).toBeDisabled();
+    expect(offered(autoArrangeItem(screen))).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The saved positions are back"));
@@ -388,7 +389,8 @@ describe("the shared layout from the shell (S7)", () => {
   it("a restore the server refuses says so and offers no second Undo", async () => {
     layoutStore = { web: { x: 1, y: 2 } };
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Auto-arrange" }, { timeout: 5000 }));
+    await screen.findByRole("button", { name: /^View/ }, { timeout: 5000 });
+    fireEvent.click(autoArrangeItem(screen) as HTMLElement);
     await waitFor(() => expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument());
     layoutAnswer = { status: 422, body: "web is not a part in map v2" };
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
