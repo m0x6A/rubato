@@ -24,8 +24,47 @@ import { issueKey, relative } from "./shared/format.ts";
 import { concernsUs, currentTenant, forgetTenant, learnTenants, setTenant, setWorkspace } from "./shared/workspace.ts";
 import { liveMap } from "./shared/map.ts";
 import { PANEL_ACTION, type PanelSize, nextPanelSize, readPanelSize, storePanelSize, useSideBySide } from "./shared/panel.ts";
+import { HOME, type Route, type View, currentRoute, navigate, parentOf, useRoute } from "./shared/route.ts";
 
 type Tab = "issues" | "plans" | "companions" | "repos";
+
+/** The tab a route's view sits under. An issue, a new issue and a link that names nothing sit under Issues. */
+function tabOf(route: Route): Tab {
+  switch (route.view) {
+    case "plans":
+    case "plan":
+      return "plans";
+    case "companions":
+      return "companions";
+    case "repos":
+      return "repos";
+    default:
+      return "issues";
+  }
+}
+
+/** Show another view; what is selected on the map stays selected. */
+function go(view: View, opts?: { replace?: boolean }): void {
+  navigate({ ...view, sel: currentRoute().sel }, opts);
+}
+
+/** Close the view: up one level, as Escape does. */
+function goUp(): void {
+  const up = parentOf(currentRoute());
+  if (up) {
+    navigate(up);
+  }
+}
+
+/** Select a part or a seam on the map, or nothing, without leaving the view. */
+function selectOnly(sel: MapRef | null): void {
+  navigate({ ...currentRoute(), sel });
+}
+
+/** The views that take the panel's place; closing one returns to where the person was. */
+function isPage(route: Route): boolean {
+  return route.view === "settings" || route.view === "members" || route.view === "operator";
+}
 
 /** A tab's count, quiet next to its name; the button's aria-label says what it counts. */
 function TabCount({ n, live = false }: { n: number; live?: boolean }) {
@@ -43,25 +82,34 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
-  const [selectedIssue, setSelectedIssue] = useState<IssueRef | null>(null);
-  const [selection, setSelection] = useState<MapRef | null>(null);
+  // The view comes from the URL (issue #357): the tab, the open issue, the part or seam selected
+  // on the map, a new issue being written, and the pages that take the panel's place.
+  const route = useRoute();
+  const tab = tabOf(route);
+  const selectedIssue: IssueRef | null = route.view === "issue" || route.view === "plan" ? route.issue : null;
+  const selection = route.sel;
   // "New issue here…": the part or seam a new issue is being written for (ADR 0025).
   // Started from "New issue…" with nothing selected, the place is still to be chosen (null).
-  const [newIssueAt, setNewIssueAt] = useState<{ at: MapRef | null } | null>(null);
-  const [tab, setTab] = useState<Tab>("issues");
-  // The Plans tab shows the open issue's plan only when it was opened from the board; coming
-  // from another tab, it shows the board, and the issue stays open under Issues.
-  const [planFromBoard, setPlanFromBoard] = useState(false);
+  const newIssueAt = route.view === "new-issue" ? { at: route.at } : null;
+  const configuring = route.view === "settings";
+  /** The members of this tenant, or the operator's page, in place of the panel. */
+  const side = route.view === "members" || route.view === "operator" ? route.view : null;
+  // Where the person was before a page took the panel's place: closing the page returns there.
+  const returnTo = useRef<Route>(HOME);
+  useEffect(() => {
+    if (!isPage(route)) {
+      returnTo.current = route;
+    }
+  }, [route]);
+  const closePage = useCallback(() => navigate({ ...returnTo.current, sel: currentRoute().sel }), []);
+  /** A header toggle: open the page, or close it when it is the one showing. */
+  const togglePage = (view: "settings" | "members" | "operator") => (route.view === view ? closePage() : go({ view }));
   // Edit mode: the draft panel shows, parts connect, a double-click on the canvas asks for a part.
   const [editing, setEditing] = useState(false);
   const [addPartFocus, setAddPartFocus] = useState(0);
   // A discrepancy taken from the observed system (issue #140): what the draft's form starts with.
   const [prefill, setPrefill] = useState<DraftPrefill | undefined>(undefined);
   const [trafficBusy, setTrafficBusy] = useState(false);
-  // Configure workspace (issue #189): the panel shows this workspace's settings instead of the tabs.
-  const [configuring, setConfiguring] = useState(false);
-  /** The members of this tenant, or the operator's page, in place of the panel. */
-  const [side, setSide] = useState<"members" | "operator" | null>(null);
   /** `/api/me` listed no tenant: there is no map to load. */
   const [noTenant, setNoTenant] = useState(false);
   const newPartAt = useRef<{ x: number; y: number } | null>(null);
@@ -131,6 +179,8 @@ export function App() {
           // Removed from this tenant: start again from whatever tenants are left.
           () => {
             forgetTenant();
+            // What was open belongs to the tenant that is gone.
+            navigate(HOME, { replace: true });
             location.reload();
           },
         );
@@ -150,8 +200,7 @@ export function App() {
       try {
         await pinsApi.addPin({ issue, target });
         setNotice(`${issueKey(issue)} pinned to ${target.id}`);
-        setTab("issues");
-        setSelectedIssue(issue);
+        go({ view: "issue", issue });
         await refresh();
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
@@ -276,11 +325,12 @@ export function App() {
     [refresh, setNotice],
   );
 
+  /** A part or seam chosen on the map: the Issues tab explains it, and an open issue gives way. */
   const onSelectOnMap = useCallback((ref: MapRef | null) => {
-    setSelection(ref);
     if (ref) {
-      setTab("issues");
-      setSelectedIssue(null);
+      navigate({ view: "issues", sel: ref });
+    } else {
+      selectOnly(null);
     }
   }, []);
 
@@ -291,24 +341,23 @@ export function App() {
       if (e.key !== "Escape" || e.defaultPrevented) {
         return;
       }
-      const t = e.target as HTMLElement | null;
-      if (t && (t.closest("input, textarea, select, [contenteditable=\"true\"], [role=\"menu\"], dialog") !== null)) {
+      const t = e.target;
+      if (t instanceof Element && (t.closest("input, textarea, select, [contenteditable=\"true\"], [role=\"menu\"], dialog") !== null)) {
         return;
       }
-      if (newIssueAt) {
-        setNewIssueAt(null);
-      } else if (selectedIssue) {
-        setSelectedIssue(null);
-      } else if (selection) {
-        setSelection(null);
-      } else {
+      // Up one level, never Back: a pasted link has no history to go back to. A page that took
+      // the panel's place closes to where the person was.
+      const here = currentRoute();
+      const up = isPage(here) ? { ...returnTo.current, sel: here.sel } : parentOf(here);
+      if (!up) {
         return;
       }
+      navigate(up);
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [newIssueAt, selectedIssue, selection]);
+  }, []);
 
   const onUnpin = async (req: PinRequest) => {
     try {
@@ -390,7 +439,7 @@ export function App() {
       setPrefill({ nonce: Date.now(), op: "add_seam", from: take.from, to: take.to, id: take.id });
     } else if (take.kind === "select_seam") {
       setPrefill(undefined);
-      setSelection({ kind: "seam", id: take.seam });
+      selectOnly({ kind: "seam", id: take.seam });
     } else {
       return;
     }
@@ -440,8 +489,10 @@ export function App() {
   const switchWorkspace = useCallback(
     (id: string) => {
       setWorkspace(id);
-      setSelection(null);
-      setSelectedIssue(null);
+      // An issue or a part of one workspace means nothing in another; the settings stay open on
+      // the workspace just chosen.
+      navigate(currentRoute().view === "settings" ? { view: "settings", sel: null } : HOME);
+      returnTo.current = HOME;
       setEditing(false);
       void refresh();
     },
@@ -465,6 +516,16 @@ export function App() {
 
   const selected = overview && selectedIssue ? (overview.issues.find((i) => issueKey(i.issue) === issueKey(selectedIssue)) ?? null) : null;
 
+  // A link may name what is not here: an issue the overview does not hold, or nothing at all.
+  // Said only once the overview is in, so a slow start never reads as "not found".
+  const missing = !overview
+    ? null
+    : route.view === "not-found"
+      ? `Nothing is at #${route.fragment}.`
+      : selectedIssue && !selected
+        ? `${issueKey(selectedIssue)} is not among the issues Rubato tracks in this workspace.`
+        : null;
+
   /** The tenant the page shows, with the person's own role in it. */
   const myTenant = me?.tenants?.find((t) => t.id === currentTenant()) ?? null;
 
@@ -479,6 +540,7 @@ export function App() {
             current={currentTenant()}
             onSwitch={(id) => {
               // Another tenant is another map, other people and another socket: the page starts over.
+              navigate(HOME, { replace: true });
               setTenant(id);
               location.reload();
             }}
@@ -486,7 +548,7 @@ export function App() {
           {overview && <WorkspaceSwitcher overview={overview} onSwitch={switchWorkspace} />}
           {/* Always drawn, also with one workspace, where the switcher is not (ADR 0075). */}
           {overview && (
-            <button type="button" className="configure-workspace" data-testid="configure-workspace" aria-pressed={configuring} onClick={() => setConfiguring((c) => !c)}>
+            <button type="button" className="configure-workspace" data-testid="configure-workspace" aria-pressed={configuring} onClick={() => togglePage("settings")}>
               Configure workspace
             </button>
           )}
@@ -496,12 +558,12 @@ export function App() {
           <span className={live ? "dot live" : "dot"} title={live ? "live" : "disconnected"} />
           <span className="muted">{live ? "live" : "disconnected"}{refreshedAt ? ` · refreshed ${relative(refreshedAt)}` : ""}</span>
           {myTenant && (
-            <button type="button" className="configure-workspace" data-testid="open-members" aria-pressed={side === "members"} onClick={() => setSide((v) => (v === "members" ? null : "members"))}>
+            <button type="button" className="configure-workspace" data-testid="open-members" aria-pressed={side === "members"} onClick={() => togglePage("members")}>
               Members
             </button>
           )}
           {me?.operator && (
-            <button type="button" className="configure-workspace" data-testid="open-operator" aria-pressed={side === "operator"} onClick={() => setSide((v) => (v === "operator" ? null : "operator"))}>
+            <button type="button" className="configure-workspace" data-testid="open-operator" aria-pressed={side === "operator"} onClick={() => togglePage("operator")}>
               Operator
             </button>
           )}
@@ -541,7 +603,7 @@ export function App() {
                 newPartAt.current = at;
                 setAddPartFocus((n) => n + 1);
               }}
-              onConfigure={() => setConfiguring(true)}
+              onConfigure={() => go({ view: "settings" })}
               trafficActions={<Discrepancies overview={overview} onTake={onTake} onDismiss={(k) => void onDismiss(k)} onUndo={(id) => void onUndismiss(id)} busy={trafficBusy} canWrite={me !== null} />}
             />
           ) : (
@@ -550,40 +612,36 @@ export function App() {
         </section>
         <aside className="panel">
           {side === "members" && myTenant && me ? (
-            <MembersView tenant={myTenant} me={me.login} onClose={() => setSide(null)} onNotice={(text) => setNotice(text)} />
+            <MembersView tenant={myTenant} me={me.login} onClose={closePage} onNotice={(text) => setNotice(text)} />
           ) : side === "operator" || (noTenant && me?.operator) ? (
-            <AdminView onClose={() => setSide(null)} onNotice={(text) => setNotice(text)} />
+            <AdminView onClose={closePage} onNotice={(text) => setNotice(text)} />
           ) : configuring && overview ? (
-            <SettingsView overview={overview} onClose={() => setConfiguring(false)} onChanged={() => void refresh()} onNotice={(text) => setNotice(text)} onSwitch={switchWorkspace} />
+            <SettingsView overview={overview} onClose={closePage} onChanged={() => void refresh()} onNotice={(text) => setNotice(text)} onSwitch={switchWorkspace} />
           ) : (
           <>
           <nav className="tabs">
-            <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} aria-label={overview ? `Issues (${openIssues(overview).length})` : undefined} title="Open issues Rubato tracks: pinned to the map, or with a plan">
+            <button className={tab === "issues" ? "active" : ""} onClick={() => go({ view: "issues" })} aria-label={overview ? `Issues (${openIssues(overview).length})` : undefined} title="Open issues Rubato tracks: pinned to the map, or with a plan">
               Issues{overview && <TabCount n={openIssues(overview).length} />}
             </button>
-            <button className={tab === "plans" ? "active" : ""} onClick={() => {
-                if (tab !== "plans") {
-                  setPlanFromBoard(false);
-                }
-                setTab("plans");
-              }} data-testid="tab-plans" aria-label={overview ? `Plans (${groupPlans(overview).proposed.length} proposed)` : undefined} title="Plans waiting for approval are counted">
+            <button className={tab === "plans" ? "active" : ""} onClick={() => go({ view: "plans" })} data-testid="tab-plans" aria-label={overview ? `Plans (${groupPlans(overview).proposed.length} proposed)` : undefined} title="Plans waiting for approval are counted">
               Plans{overview && <TabCount n={groupPlans(overview).proposed.length} />}
             </button>
             {/* Dragging an issue over this tab opens it, so the issue can be dropped on a lane. */}
             <button
               className={tab === "companions" ? "active" : ""}
-              onClick={() => setTab("companions")}
+              onClick={() => go({ view: "companions" })}
               aria-label={overview ? `Companions (${overview.companions.filter((c) => c.connected).length} live)` : undefined}
               title="Connected companions are counted"
               onDragEnter={(e) => {
                 if (hasIssueDrag(e)) {
-                  setTab("companions");
+                  // Part of one gesture, so not a step for Back to undo.
+                  go({ view: "companions" }, { replace: true });
                 }
               }}
             >
               Companions{overview && <TabCount n={overview.companions.filter((c) => c.connected).length} live />}
             </button>
-            <button className={tab === "repos" ? "active" : ""} onClick={() => setTab("repos")} data-testid="tab-repos" aria-label={overview ? `Repos (${(overview.repos ?? []).length})` : undefined}>
+            <button className={tab === "repos" ? "active" : ""} onClick={() => go({ view: "repos" })} data-testid="tab-repos" aria-label={overview ? `Repos (${(overview.repos ?? []).length})` : undefined}>
               Repos{overview && <TabCount n={(overview.repos ?? []).length} />}
             </button>
             {/* One button, three sizes (#265). Stacked under 901 px, the panel has one size. */}
@@ -605,12 +663,20 @@ export function App() {
             )}
           </nav>
           {overview && <Findings findings={overview.findings} />}
+          {overview && missing && (
+            <p className="banner notice not-found" data-testid="not-found">
+              {missing}{" "}
+              <button type="button" onClick={goUp}>
+                {tab === "plans" ? "All plans" : "All issues"}
+              </button>
+            </p>
+          )}
           {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} prefill={prefill} />}
           {/* The map explains what is selected; an open issue takes the panel instead. */}
           {/* With a part or seam selected, its inspector offers "New issue here…" instead. */}
           {overview && tab === "issues" && !newIssueAt && !selected && !selection && liveMap(overview.map.map).nodes[0] && (
             <p className="new-issue-start">
-              <button type="button" data-testid="new-issue-start" onClick={() => setNewIssueAt({ at: null })}>
+              <button type="button" data-testid="new-issue-start" onClick={() => go({ view: "new-issue", at: null })}>
                 New issue…
               </button>
             </p>
@@ -620,12 +686,11 @@ export function App() {
               key={newIssueAt.at ? `${newIssueAt.at.kind}:${newIssueAt.at.id}` : "anywhere"}
               overview={overview}
               target={newIssueAt.at}
-              onCancel={() => setNewIssueAt(null)}
+              onCancel={goUp}
               onNotice={(text) => setNotice(text)}
               onCreated={(issue) => {
-                setNewIssueAt(null);
-                setSelectedIssue(issue);
-                void refresh();
+                // The overview has to hold the issue before its view can show it.
+                void refresh().then(() => go({ view: "issue", issue }, { replace: true }));
               }}
             />
           )}
@@ -634,11 +699,8 @@ export function App() {
               overview={shown ?? overview}
               selection={selection}
               onSelect={onSelectOnMap}
-              onSelectIssue={(issue) => {
-                setTab("issues");
-                setSelectedIssue(issue);
-              }}
-              onNewIssue={(at) => setNewIssueAt({ at })}
+              onSelectIssue={(issue) => go({ view: "issue", issue })}
+              onNewIssue={(at) => go({ view: "new-issue", at })}
             />
           )}
           {overview && tab === "issues" && (
@@ -647,8 +709,8 @@ export function App() {
               me={me}
               selected={selected}
               selection={selection}
-              onSelect={setSelectedIssue}
-              onClearSelection={() => setSelection(null)}
+              onSelect={(issue) => go(issue ? { view: "issue", issue } : { view: "issues" })}
+              onClearSelection={() => selectOnly(null)}
               onLaunch={onLaunch}
               onLaunchLead={onLaunchLead}
               onPin={onPin}
@@ -659,22 +721,16 @@ export function App() {
                 void refresh();
               }}
               onShowSeam={(id) => onSelectOnMap({ kind: "seam", id })}
-              onPairCompanion={() => setTab("companions")}
+              onPairCompanion={() => go({ view: "companions" })}
             />
           )}
           {overview && tab === "plans" && (
             <PlansBoard
               overview={overview}
               me={me}
-              selected={planFromBoard ? selected : null}
-              onSelect={(issue) => {
-                setPlanFromBoard(issue !== null);
-                setSelectedIssue(issue);
-              }}
-              onOpenIssue={(issue) => {
-                setTab("issues");
-                setSelectedIssue(issue);
-              }}
+              selected={route.view === "plan" ? selected : null}
+              onSelect={(issue) => go(issue ? { view: "plan", issue } : { view: "plans" })}
+              onOpenIssue={(issue) => go({ view: "issue", issue })}
               onResume={ownConnectedCompanions(overview, me).length > 0 ? (issue, branch) => onLaunch(issue, branch) : undefined}
               onNotice={(text) => {
                 setNotice(text);
@@ -686,20 +742,14 @@ export function App() {
             <ConnectedRepos
               overview={overview}
               onPin={onPin}
-              onOpenIssue={(issue) => {
-                setTab("issues");
-                setSelectedIssue(issue);
-              }}
+              onOpenIssue={(issue) => go({ view: "issue", issue })}
             />
           )}
           {/* An open issue with a plan: the map shows the plan, and below the issue this says what the plan says. */}
           {overview && tab === "issues" && selected?.plan && (
             <PlanInspector
               issue={selected}
-              onSelect={(ref) => {
-                setSelectedIssue(null);
-                onSelectOnMap(ref);
-              }}
+              onSelect={onSelectOnMap}
             />
           )}
           {overview && tab === "companions" && <CompanionsPanel overview={overview} me={me} onChanged={refresh} onQueue={onQueue} onReorder={onReorder} onUnqueue={onUnqueue} onStart={onStart} />}

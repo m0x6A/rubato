@@ -49,6 +49,16 @@ test("a team member logs in through the App and sees what the installation lists
   await expect(page.getByTestId("node-rubato-server")).toBeVisible();
 });
 
+test("logging in returns to the view the link named", { tag: "@navigation.login-returns" }, async ({ page }) => {
+  await page.goto("/#/plans");
+  await page.getByRole("link", { name: "Log in with GitHub" }).click();
+  await expect(page.getByRole("heading", { name: "GitHub stand-in" })).toBeVisible();
+  await Promise.all([page.waitForResponse((r) => r.url().includes("/auth/github/callback")), page.getByRole("link", { name: "Continue as member" }).click()]);
+  // The callback returns to the page with no fragment; the view asked for is restored.
+  await expect(page.getByTestId("tab-plans")).toHaveClass(/active/);
+  await expect(page).toHaveURL(/#\/plans$/);
+});
+
 test("a member creates an issue from a part, as the App, and it is pinned there (ADR 0025)", { tag: ["@new-issue.pinned-where-begun", "@new-issue.created-as-the-app"] }, async ({ page }) => {
   await logInAs(page, "member");
   // The server read the installation's permissions as the App on its first full pass.

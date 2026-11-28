@@ -91,14 +91,15 @@ test("edit mode says how to edit the map", { tag: ["@map.edit-hint"] }, async ({
   await expect(hint).toHaveCount(0);
 });
 
-test("Plans from another tab shows the board; the open issue stays open", { tag: ["@plans.board-from-another-tab"] }, async ({ page }) => {
+test("Plans from another tab shows the board; Back returns to the open issue", { tag: ["@plans.board-from-another-tab"] }, async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("issue-row-915").click();
   await expect(page.getByTestId("issue-detail")).toBeVisible();
   await page.getByTestId("tab-plans").click();
   await expect(page.getByTestId("plan-columns")).toBeVisible();
   await expect(page.getByTestId("plan-detail")).toHaveCount(0);
-  await page.getByRole("button", { name: /^Issues/ }).click();
+  // One view at a time (issue #357): the board took the issue's place, and Back returns to it.
+  await page.goBack();
   await expect(page.getByTestId("issue-detail")).toBeVisible();
 });
 

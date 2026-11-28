@@ -163,7 +163,7 @@ graph          this machine's copy of the context graph: fetch, check, apply; th
 `shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's tenant and workspace,
 `inTenant()` for tenant paths and `scoped()` for map-scoped ones, ADR 0089; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
-its retired parts, for every reader that draws or offers ids, ADR 0077; `traffic.ts` `nothingObserved`, a fresh report with nothing in it; `trace.ts` the web's own client spans and their post to the relay, ADR 0082; `finished.ts` the issues the
+its retired parts, for every reader that draws or offers ids, ADR 0077; `traffic.ts` `nothingObserved`, a fresh report with nothing in it; `trace.ts` the web's own client spans and their post to the relay, ADR 0082; `route.ts` the view the URL's fragment names and the map selection beside it, `navigate()`, the way up from a view, issue #357; `finished.ts` the issues the
 default views show and the Done views show, read from the server's `finished`; `panel.ts` the
 panel's three sizes, remembered per browser; `uuid.ts` a v4 id also over plain http, where
 browsers have no `crypto.randomUUID`, issue #304);
