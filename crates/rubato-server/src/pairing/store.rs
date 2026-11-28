@@ -229,6 +229,17 @@ pub async fn list_pairings(db: &SqlitePool, user: Option<&str>) -> Result<Vec<Pa
 /// Revoke every live pairing of `user` inside the caller's transaction, and return the
 /// companions they were: the login now belongs to someone else (Decision 15), or its person left
 /// their last tenant (ADR 0088). A companion socket fails its next envelope's check.
+/// The companions a person has paired and not revoked.
+pub async fn companions_of(conn: &mut sqlx::SqliteConnection, user: &str) -> Result<Vec<Uuid>> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT companion_id FROM pairings WHERE lower(user) = lower(?) AND revoked_at IS NULL",
+    )
+    .bind(user)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(ids.iter().filter_map(|i| Uuid::parse_str(i).ok()).collect())
+}
+
 pub async fn revoke_all_of(conn: &mut sqlx::SqliteConnection, user: &str) -> Result<Vec<Uuid>> {
     let ids: Vec<String> = sqlx::query_scalar(
         "SELECT companion_id FROM pairings WHERE lower(user) = lower(?) AND revoked_at IS NULL",

@@ -32,7 +32,7 @@ pub struct Refreshed {
 }
 
 /// Everything of these repositories that would go on running for the tenant they left.
-async fn leave(
+pub(super) async fn leave(
     conn: &mut SqliteConnection,
     t: &TenantId,
     repos: &[String],

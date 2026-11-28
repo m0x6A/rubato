@@ -318,6 +318,38 @@ pub async fn leave_repos(
     Ok((agents, requests))
 }
 
+/// A person left the tenant (design §4.6): their agents leave its rooms and their pending
+/// call-in requests are withdrawn, inside the caller's transaction. Returns how many of each.
+pub async fn leave_person(
+    conn: &mut SqliteConnection,
+    t: &TenantId,
+    login: &str,
+    at: DateTime<Utc>,
+) -> Result<(u64, u64)> {
+    let agents = sqlx::query(
+        "UPDATE room_agents SET left_at = ?, left_reason = ? WHERE tenant_id = ? AND lower(owner) = lower(?) AND left_at IS NULL",
+    )
+    .bind(ts(at))
+    .bind(reason_name(LeftReason::Dismissed))
+    .bind(t.as_str())
+    .bind(login)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    let requests = sqlx::query(
+        "UPDATE room_requests SET state = ?, answered_at = ? WHERE tenant_id = ? AND (lower(owner) = lower(?) OR lower(requested_by) = lower(?)) AND state = 'pending'",
+    )
+    .bind(state_name(RequestState::Withdrawn))
+    .bind(ts(at))
+    .bind(t.as_str())
+    .bind(login)
+    .bind(login)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    Ok((agents, requests))
+}
+
 /// Answer a pending request. False when it was answered already.
 pub async fn answer(
     db: &SqlitePool,

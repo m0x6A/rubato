@@ -116,8 +116,13 @@ const DYNAMIC: &[(&str, usize, &str)] = &[
     ),
     (
         "kernel/workspaces.rs",
+        2,
+        "the orphan and id-reuse counts over SCOPED_TABLES, one table name per query; each names tenant_id",
+    ),
+    (
+        "kernel/purge.rs",
         4,
-        "the orphan and id-reuse counts over SCOPED_TABLES and WORKSPACE_ONLY_TABLES, one table name per query; each names tenant_id where its table has it",
+        "a purge counts and deletes a tenant's rows of a repository in every table that has one, the table names read from the schema; each names tenant_id",
     ),
     (
         "launch/store.rs",

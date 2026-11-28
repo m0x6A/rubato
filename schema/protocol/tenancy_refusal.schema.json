@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TenancyRefusal",
+  "description": "A refusal of a tenancy request: its reason, and what to do about it where there is more to\nsay (the tenant to purge, the workspace in the way).",
+  "type": "object",
+  "properties": {
+    "detail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason"
+  ]
+}

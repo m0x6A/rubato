@@ -14,12 +14,14 @@ import { ConnectedRepos } from "./features/repos/index.ts";
 import { queueApi } from "./features/queue/index.ts";
 import { SettingsView } from "./features/settings/index.ts";
 import { WorkspaceSwitcher } from "./features/workspaces/index.ts";
+import { MembersView, TenantSwitcher } from "./features/tenants/index.ts";
+import { AdminView } from "./features/admin/index.ts";
 import type { DiscrepancyKey, IssueRef, MapLayout, MapRef, Me, Overview, PinRequest } from "./protocol.ts";
 import { ApiError, failureText, onNeedsLogin, resetNeedsLogin } from "./shared/api.ts";
 import { hasIssueDrag } from "./shared/dnd.ts";
 import { openIssues } from "./shared/finished.ts";
 import { issueKey, relative } from "./shared/format.ts";
-import { concernsUs, learnTenants, setWorkspace } from "./shared/workspace.ts";
+import { concernsUs, currentTenant, forgetTenant, learnTenants, setTenant, setWorkspace } from "./shared/workspace.ts";
 import { liveMap } from "./shared/map.ts";
 import { PANEL_ACTION, type PanelSize, nextPanelSize, readPanelSize, storePanelSize, useSideBySide } from "./shared/panel.ts";
 
@@ -58,6 +60,10 @@ export function App() {
   const [trafficBusy, setTrafficBusy] = useState(false);
   // Configure workspace (issue #189): the panel shows this workspace's settings instead of the tabs.
   const [configuring, setConfiguring] = useState(false);
+  /** The members of this tenant, or the operator's page, in place of the panel. */
+  const [side, setSide] = useState<"members" | "operator" | null>(null);
+  /** `/api/me` listed no tenant: there is no map to load. */
+  const [noTenant, setNoTenant] = useState(false);
   const newPartAt = useRef<{ x: number; y: number } | null>(null);
   // A notice may carry one way back ("Undo"), offered to the person who caused it.
   const [noticeState, setNoticeState] = useState<{ text: string; undo?: (() => void) | undefined } | null>(null);
@@ -107,18 +113,27 @@ export function App() {
         if (inATenant === null || gone) {
           return;
         }
-        if (inATenant) {
-          void refresh();
-        } else {
-          setError("You are not in a tenant yet. Ask one of its admins for an invite.");
+        if (!inATenant) {
+          // An operator need be in no tenant: the operator's page is theirs to start from.
+          setNoTenant(true);
+          return;
         }
+        void refresh();
         // The socket is opened for the tenant just learned (ADR 0089). A change for another
         // workspace is not ours to refetch for (ADR 0049).
-        unsubscribe = subscribe((ev) => {
-          if (concernsUs(ev)) {
-            void refresh();
-          }
-        }, setLive);
+        unsubscribe = subscribe(
+          (ev) => {
+            if (concernsUs(ev)) {
+              void refresh();
+            }
+          },
+          setLive,
+          // Removed from this tenant: start again from whatever tenants are left.
+          () => {
+            forgetTenant();
+            location.reload();
+          },
+        );
       });
     let gone = false;
     let unsubscribe = () => {};
@@ -450,12 +465,24 @@ export function App() {
 
   const selected = overview && selectedIssue ? (overview.issues.find((i) => issueKey(i.issue) === issueKey(selectedIssue)) ?? null) : null;
 
+  /** The tenant the page shows, with the person's own role in it. */
+  const myTenant = me?.tenants?.find((t) => t.id === currentTenant()) ?? null;
+
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
           <strong>Rubato</strong>
           {overview && <span className="map-version" title={`The map file as read at commit ${overview.map.version}; plans name parts of this version`}>map {overview.map.map.name} @ {overview.map.version.slice(0, 7)}</span>}
+          <TenantSwitcher
+            tenants={me?.tenants ?? []}
+            current={currentTenant()}
+            onSwitch={(id) => {
+              // Another tenant is another map, other people and another socket: the page starts over.
+              setTenant(id);
+              location.reload();
+            }}
+          />
           {overview && <WorkspaceSwitcher overview={overview} onSwitch={switchWorkspace} />}
           {/* Always drawn, also with one workspace, where the switcher is not (ADR 0075). */}
           {overview && (
@@ -468,10 +495,25 @@ export function App() {
         <div className="status">
           <span className={live ? "dot live" : "dot"} title={live ? "live" : "disconnected"} />
           <span className="muted">{live ? "live" : "disconnected"}{refreshedAt ? ` · refreshed ${relative(refreshedAt)}` : ""}</span>
+          {myTenant && (
+            <button type="button" className="configure-workspace" data-testid="open-members" aria-pressed={side === "members"} onClick={() => setSide((v) => (v === "members" ? null : "members"))}>
+              Members
+            </button>
+          )}
+          {me?.operator && (
+            <button type="button" className="configure-workspace" data-testid="open-operator" aria-pressed={side === "operator"} onClick={() => setSide((v) => (v === "operator" ? null : "operator"))}>
+              Operator
+            </button>
+          )}
           {me && <span className="me">{me.login}</span>}
         </div>
       </header>
       {error && <div className="banner error">{error}</div>}
+      {noTenant && !error && (
+        <div className="banner notice" data-testid="no-tenant">
+          {me?.operator ? "You are in no tenant. As an operator you can create one and name its admin; a tenant's data is its members' to see." : "You are not in a tenant yet. Ask one of its admins for an invite."}
+        </div>
+      )}
       {/* The live region stays mounted so a screen reader hears each notice; the button sits outside it. */}
       <div className={notice ? "banner notice" : undefined}>
         <span role="status">{notice}</span>
@@ -503,11 +545,15 @@ export function App() {
               trafficActions={<Discrepancies overview={overview} onTake={onTake} onDismiss={(k) => void onDismiss(k)} onUndo={(id) => void onUndismiss(id)} busy={trafficBusy} canWrite={me !== null} />}
             />
           ) : (
-            <div className="empty">{error ?? "Loading the map…"}</div>
+            <div className="empty">{error ?? (noTenant ? "No tenant, so no map to show." : "Loading the map…")}</div>
           )}
         </section>
         <aside className="panel">
-          {configuring && overview ? (
+          {side === "members" && myTenant && me ? (
+            <MembersView tenant={myTenant} me={me.login} onClose={() => setSide(null)} onNotice={(text) => setNotice(text)} />
+          ) : side === "operator" || (noTenant && me?.operator) ? (
+            <AdminView onClose={() => setSide(null)} onNotice={(text) => setNotice(text)} />
+          ) : configuring && overview ? (
             <SettingsView overview={overview} onClose={() => setConfiguring(false)} onChanged={() => void refresh()} onNotice={(text) => setNotice(text)} onSwitch={switchWorkspace} />
           ) : (
           <>

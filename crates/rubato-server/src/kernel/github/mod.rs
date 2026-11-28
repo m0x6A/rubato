@@ -8,10 +8,10 @@ mod fake;
 mod local;
 
 pub use api::{
-    BODY_EXCERPT_BYTES, BranchHead, Comment, FILES_PER_PAGE, GitHubApi, ISSUES_PER_PAGE, IssueInfo,
-    MergeError, Octo, OpenIssueInfo, OpenIssues, OpenPulls, PULLS_PER_PAGE, PostError,
-    PostedComment, PullFull, PullInfo, READ_TIMEOUT, RepoAccess, ReviewInfo, Tarball,
-    USER_WRITE_TIMEOUT, issues_from_page, summarize_check_runs,
+    AppInstallation, BODY_EXCERPT_BYTES, BranchHead, Comment, FILES_PER_PAGE, GitHubApi,
+    ISSUES_PER_PAGE, IssueInfo, MergeError, Octo, OpenIssueInfo, OpenIssues, OpenPulls,
+    PULLS_PER_PAGE, PostError, PostedComment, PullFull, PullInfo, READ_TIMEOUT, RepoAccess,
+    ReviewInfo, Tarball, USER_WRITE_TIMEOUT, issues_from_page, summarize_check_runs,
 };
 pub use app::{AppCheckError, check_app};
 pub use apps::{Attached, Client, GitHubApps, Live, MakeClient, NotCovered, Routes};

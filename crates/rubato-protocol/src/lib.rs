@@ -131,7 +131,7 @@ pub use session_message::{
 };
 pub use tenant::{
     AccountType, AdminInstallation, AdminTenant, InstallationState, InviteRequest, MemberView,
-    NewTenant, Role, RoleChange, TenantInfo, is_tenant_id,
+    NewTenant, PurgeReport, Role, RoleChange, TenancyRefusal, TenantInfo, is_tenant_id,
 };
 pub use traffic::{
     DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, LastSeen, ObservedTraffic, SeamTraffic,

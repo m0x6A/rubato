@@ -193,7 +193,7 @@ pub fn check_file(entries: &[WorkspaceEntry]) -> Result<()> {
 }
 
 /// Tables that hold a tenant's workspace id (ADR 0047, ADR 0089), for the orphan count.
-pub const SCOPED_TABLES: [&str; 10] = [
+pub const SCOPED_TABLES: [&str; 11] = [
     "map_layout",
     "map_layout_grouped",
     "traffic_dismissals",
@@ -204,12 +204,8 @@ pub const SCOPED_TABLES: [&str; 10] = [
     "map_draft_ops",
     "issue_creations",
     "issue_suggestions",
+    "launches",
 ];
-
-/// Tables that hold a workspace id and no tenant yet: `launches` gains its `tenant_id` with the
-/// launch tables (plan 345, design §13). Until then a workspace id held by a launch of any
-/// tenant counts, which can only refuse more.
-pub const WORKSPACE_ONLY_TABLES: [&str; 1] = ["launches"];
 
 /// At start: log which workspaces this server holds (`workspace config`), record how many, and
 /// count rows whose workspace is no longer configured. Those rows are kept, never deleted, and
@@ -242,22 +238,6 @@ pub async fn report(app: &crate::kernel::state::App) -> Result<u64> {
             orphans += n;
         }
     }
-    for t in WORKSPACE_ONLY_TABLES {
-        let sql = format!(
-            "SELECT workspace_id, COUNT(*) AS n FROM {t} WHERE workspace_id NOT IN ({placeholders}) GROUP BY workspace_id"
-        );
-        let mut q = sqlx::query(&sql);
-        for id in &ids {
-            q = q.bind(*id);
-        }
-        for r in q.fetch_all(&app.db).await? {
-            use sqlx::Row;
-            let n = r.get::<i64, _>("n") as u64;
-            let ws: String = r.get("workspace_id");
-            tracing::warn!(table = t, rubato.workspace = %ws, rows = n, "orphan workspace rows");
-            orphans += n;
-        }
-    }
     app.metrics.workspace_orphan_rows.record(orphans, &[]);
     Ok(orphans)
 }
@@ -270,16 +250,6 @@ pub async fn id_has_rows(db: &sqlx::SqlitePool, id: &WsKey) -> Result<Option<&'s
             format!("SELECT EXISTS(SELECT 1 FROM {t} WHERE tenant_id = ? AND workspace_id = ?)");
         if sqlx::query_scalar::<_, bool>(&sql)
             .bind(id.tenant.as_str())
-            .bind(id.ws())
-            .fetch_one(db)
-            .await?
-        {
-            return Ok(Some(t));
-        }
-    }
-    for t in WORKSPACE_ONLY_TABLES {
-        let sql = format!("SELECT EXISTS(SELECT 1 FROM {t} WHERE workspace_id = ?)");
-        if sqlx::query_scalar::<_, bool>(&sql)
             .bind(id.ws())
             .fetch_one(db)
             .await?

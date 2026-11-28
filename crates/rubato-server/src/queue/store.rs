@@ -219,6 +219,25 @@ pub async fn drop_repos(
     Ok(n)
 }
 
+/// A person left the tenant (design §4.6): what is queued for it on their companions is
+/// dropped, inside the caller's transaction. Returns how many rows.
+pub async fn drop_companions_in(
+    conn: &mut SqliteConnection,
+    t: &TenantId,
+    companions: &[Uuid],
+) -> Result<u64> {
+    let mut n = 0;
+    for c in companions {
+        n += sqlx::query("DELETE FROM companion_queue WHERE tenant_id = ? AND companion_id = ?")
+            .bind(t.as_str())
+            .bind(c.to_string())
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+    }
+    Ok(n)
+}
+
 /// Drop every queued issue on these companions inside the caller's transaction: their pairings
 /// were just revoked (Decision 15, ADR 0088), so nobody can start them. Returns how many rows.
 pub async fn drop_companions(conn: &mut SqliteConnection, companions: &[Uuid]) -> Result<u64> {

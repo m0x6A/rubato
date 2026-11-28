@@ -6,8 +6,8 @@
 
 use crate::kernel::state::App;
 use crate::{
-    approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue, overview,
-    pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages,
+    admin, approve, auth, companion_link, import, launch, layout, map, map_draft, new_issue,
+    overview, pairing, pins, plan_drafts, pulls, queue, rooms, session_log, session_messages,
     telemetry_relay, tenants, traffic, voice, web_link, webhooks, workspace_settings,
 };
 use axum::Router;
@@ -27,6 +27,7 @@ use rubato_protocol::plan_draft::routes as plan_draft_routes;
 use rubato_protocol::progress::routes as overview_routes;
 use rubato_protocol::pulls::routes as pull_routes;
 use rubato_protocol::queue::routes as queue_routes;
+use rubato_protocol::tenant::routes as tenant_routes_of;
 use rubato_protocol::tenant::routes as tenant_routes;
 use rubato_protocol::traffic::routes as traffic_routes;
 use rubato_protocol::web_link::routes as web_routes;
@@ -193,6 +194,22 @@ fn tenant_routes() -> Vec<TenantRoute> {
             settings_routes::TRAFFIC_SOURCES,
             vec![(M::GET, get(workspace_settings::sources))],
         ),
+        // A tenant's members, managed by its admins (ADR 0088): `tenant::routes::MEMBERS` and
+        // `MEMBER`, written here without their tenant prefix like every other row.
+        t(
+            "/api/members",
+            vec![
+                (M::GET, get(admin::members::list)),
+                (M::POST, post(admin::members::invite)),
+            ],
+        ),
+        t(
+            "/api/members/{github_id}",
+            vec![
+                (M::PUT, put(admin::members::set_role)),
+                (M::DELETE, delete(admin::members::remove)),
+            ],
+        ),
         t(
             queue_routes::QUEUE,
             vec![
@@ -301,6 +318,28 @@ pub fn router(app: App) -> Router {
         .route(
             &format!("{}/{{companion_id}}", pr::PAIRINGS),
             delete(pairing::revoke),
+        )
+        // The operator's routes (ADR 0087, 0088): 404 for anyone else.
+        .route(
+            tenant_routes_of::ADMIN_INSTALLATIONS,
+            get(admin::operator::installations),
+        )
+        .route(
+            tenant_routes_of::ADMIN_TENANTS,
+            get(admin::operator::tenants_list).post(admin::operator::create_tenant),
+        )
+        .route(
+            tenant_routes_of::ADMIN_TENANT,
+            delete(admin::operator::delete_tenant),
+        )
+        .route(
+            tenant_routes_of::ADMIN_ATTACH,
+            post(admin::operator::attach).delete(admin::operator::detach),
+        )
+        .route(tenant_routes_of::ADMIN_PURGE, post(admin::operator::purge))
+        .route(
+            tenant_routes_of::ADMIN_TENANT_ADMINS,
+            post(admin::operator::name_admin),
         )
         .route(pr::PAIR_APPROVE, post(pairing::approve))
         .route(pr::PAIR_START, post(pairing::start))

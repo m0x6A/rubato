@@ -726,6 +726,7 @@ Progress?: Progress
 ProposeResponse?: ProposeResponse
 PullDetail?: PullDetail
 PullRequestState?: PullRequestState
+PurgeReport?: PurgeReport
 QueueOrder?: QueueOrder
 QueueRequest?: QueueRequest
 RequestAnswerBody?: RequestAnswerBody
@@ -741,6 +742,7 @@ SettingsRefusal?: SettingsRefusal
 SourceFields?: SourceFields
 StaleSession?: StaleSession1
 SystemMap?: SystemMap
+TenancyRefusal?: TenancyRefusal
 TenantInfo?: TenantInfo
 TrafficReport?: TrafficReport
 UtteranceQuery?: UtteranceQuery
@@ -3224,6 +3226,20 @@ state: string
 submitted_at: string
 }
 /**
+ * What a purge of a detached installation deletes (`purged` false: a count, nothing was
+ * deleted) or deleted (design §3.3): the repositories it covered in its tenant, and the rows
+ * per table.
+ */
+export interface PurgeReport {
+installation_id: number
+purged: boolean
+repos: string[]
+rows: {
+[k: string]: number | undefined
+}
+tenant: string
+}
+/**
  * Body of `PUT`: the full order of one lane. Refused when its set of issues differs from what
  * is stored, so a reorder never drops an entry added elsewhere meanwhile.
  */
@@ -3594,6 +3610,14 @@ issue?: (IssueRef | null)
 last_seen: string
 session_id?: (string | null)
 silent_for_secs: number
+}
+/**
+ * A refusal of a tenancy request: its reason, and what to do about it where there is more to
+ * say (the tenant to purge, the workspace in the way).
+ */
+export interface TenancyRefusal {
+detail?: (string | null)
+reason: string
 }
 /**
  * What any source of observed traffic produces (ADR 0039).

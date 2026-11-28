@@ -154,6 +154,27 @@ pub struct AdminTenant {
     pub workspaces: u32,
 }
 
+/// What a purge of a detached installation deletes (`purged` false: a count, nothing was
+/// deleted) or deleted (design §3.3): the repositories it covered in its tenant, and the rows
+/// per table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PurgeReport {
+    pub installation_id: u64,
+    pub tenant: String,
+    pub repos: Vec<String>,
+    pub rows: std::collections::BTreeMap<String, u64>,
+    pub purged: bool,
+}
+
+/// A refusal of a tenancy request: its reason, and what to do about it where there is more to
+/// say (the tenant to purge, the workspace in the way).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TenancyRefusal {
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 /// Why a tenancy request was refused.
 pub mod reason {
     /// A login that is neither an operator nor invited to any tenant (ADR 0088).
@@ -182,6 +203,16 @@ pub mod reason {
     pub const INSTALLATION_IN_USE: &str = "installation_in_use";
     /// Delete refused while the tenant has workspaces or attached installations.
     pub const TENANT_NOT_EMPTY: &str = "tenant_not_empty";
+    /// An operator route called by someone who is not an operator (404).
+    pub const NOT_OPERATOR: &str = "not_operator";
+    /// No such installation of the App, or none this server has a row for.
+    pub const UNKNOWN_INSTALLATION: &str = "unknown_installation";
+    /// Purge refused: the installation is attached. Detach it first.
+    pub const NOT_DETACHED: &str = "not_detached";
+    /// GitHub could not be asked who a login is; nothing was changed.
+    pub const LOOKUP_FAILED: &str = "lookup_failed";
+    /// A member route called by a member who is not an admin (403).
+    pub const NOT_ADMIN: &str = "not_admin";
 }
 
 /// Route paths. Tenant routes live under `/api/t/{tenant}` (ADR 0089); operator routes under
@@ -209,8 +240,11 @@ pub mod routes {
     pub const ADMIN_TENANT: &str = "/api/admin/tenants/{tenant}";
     /// `POST` attaches, `DELETE` detaches.
     pub const ADMIN_ATTACH: &str = "/api/admin/tenants/{tenant}/installations/{installation_id}";
-    /// `POST`: delete a detached installation's rows.
+    /// `POST`: what a purge of a detached installation would delete, as a [`super::PurgeReport`];
+    /// with `?confirm=true`, deleted.
     pub const ADMIN_PURGE: &str = "/api/admin/installations/{installation_id}/purge";
+    /// `POST` an [`super::InviteRequest`]: the operator names an admin of a tenant (ADR 0088).
+    pub const ADMIN_TENANT_ADMINS: &str = "/api/admin/tenants/{tenant}/admins";
 }
 
 #[cfg(test)]

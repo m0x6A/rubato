@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PurgeReport",
+  "description": "What a purge of a detached installation deletes (`purged` false: a count, nothing was\ndeleted) or deleted (design §3.3): the repositories it covered in its tenant, and the rows\nper table.",
+  "type": "object",
+  "properties": {
+    "installation_id": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "purged": {
+      "type": "boolean"
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rows": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0
+      }
+    },
+    "tenant": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "installation_id",
+    "tenant",
+    "repos",
+    "rows",
+    "purged"
+  ]
+}

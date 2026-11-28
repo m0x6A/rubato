@@ -57,6 +57,15 @@ pub async fn upgrade(
     ws.on_upgrade(move |socket| handle(app, socket, scope))
 }
 
+/// Whether the socket's person is still a member of its tenant. A read that fails says nothing
+/// either way: the socket stays, and the next check decides.
+async fn still_member(app: &App, scope: &crate::kernel::tenancy::TenantScope) -> bool {
+    !matches!(
+        crate::tenants::scope_for(app, scope.tenant(), scope.login()).await,
+        Ok(None)
+    )
+}
+
 async fn handle(app: App, socket: WebSocket, scope: crate::kernel::tenancy::TenantScope) {
     let (mut sink, mut stream) = socket.split();
     let mut rx = app.web_tx.subscribe();
@@ -65,6 +74,7 @@ async fn handle(app: App, socket: WebSocket, scope: crate::kernel::tenancy::Tena
     // it within that long (design §6.1).
     let mut recheck = tokio::time::interval(app.config.web_membership_check);
     recheck.tick().await;
+    let members_changed = tokio::sync::Notify::new();
     let n = WEB_CLIENTS.fetch_add(1, Ordering::SeqCst) + 1;
     app.metrics
         .ws_clients
@@ -73,13 +83,17 @@ async fn handle(app: App, socket: WebSocket, scope: crate::kernel::tenancy::Tena
         tokio::select! {
             // Membership is read again on a timer: a person removed from the tenant is told so
             // with close code 4403, and hears nothing more of it.
-            _ = recheck.tick() => {
-                let still = crate::tenants::scope_for(&app, &mine, scope.login())
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some();
-                if !still {
+            // Also at once when the tenant's members changed: the event that says so reaches
+            // every socket of the tenant, the removed person's own included, and theirs ends
+            // here instead of sending it.
+            gone = async {
+                tokio::select! {
+                    _ = recheck.tick() => {}
+                    _ = members_changed.notified() => {}
+                }
+                !still_member(&app, &scope).await
+            } => {
+                if gone {
                     tracing::info!(rubato.tenant = %mine, rubato.user = %scope.login(), "web socket closed: no longer a member");
                     let _ = sink
                         .send(Message::Close(Some(axum::extract::ws::CloseFrame {
@@ -94,6 +108,12 @@ async fn handle(app: App, socket: WebSocket, scope: crate::kernel::tenancy::Tena
                 // Another tenant's event is dropped here, before it is sent (design §6.1): the
                 // browser never sees it, whatever its own filter does.
                 Ok(ev) if ev.tenant().is_some_and(|t| t != mine.as_str()) => {}
+                Ok(WebEvent::Changed { reason, .. })
+                    if reason == rubato_protocol::web_link::changed::MEMBERS
+                        && !still_member(&app, &scope).await =>
+                {
+                    members_changed.notify_one();
+                }
                 Ok(ev) => {
                     let span = tracing::debug_span!(span::WS_FANOUT, rubato.subscribers = app.web_tx.receiver_count());
                     let text = serde_json::to_string(&ev).unwrap_or_default();

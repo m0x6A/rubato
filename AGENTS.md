@@ -97,7 +97,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, built from one table of tenant routes that the cross-tenant sweep also reads: tenant routes under `/api/t/{tenant}` and map-scoped ones under
 `/api/t/{tenant}/w/{ws}`, ADR 0089; 404 for unknown `/api`, `/ws`, `/auth` paths, the paths of before tenants among them), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per tenant's workspace and each companion's latest sessions, signer, `http::internal`, `http::Ws` and `http::check_repos` (a tenant route refuses a repository that is not its tenant's, ADR 0089), GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth`, companion intake and the context graph reach tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, `WsKey`, `TenantScope` and `AdminScope`, ADR 0087, 0088, 0089); slices:
+(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `purge` (a tenant's rows of repositories that left it, counted then deleted, ADR 0087), `AppState` with a map per tenant's workspace and each companion's latest sessions, signer, `http::internal`, `http::Ws` and `http::check_repos` (a tenant route refuses a repository that is not its tenant's, ADR 0089), GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth`, companion intake and the context graph reach tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, `WsKey`, `TenantScope` and `AdminScope`, ADR 0087, 0088, 0089); slices:
 
 ```text
 auth            GitHub login (invited people and operators only, ADR 0088), CurrentUser, tokens  users, web_sessions, user_tokens
@@ -132,7 +132,7 @@ web_link        websocket fan-out to browsers, one tenant per socket (`/ws/web?t
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
 workspace_settings  each workspace's settings: seeded once, read and changed at runtime, create and delete (ADR 0075)  workspace_settings
 tenants         who belongs to which tenant, its installations and repositories, the seed, the membership layer that grants a `TenantScope` (ADR 0087, 0088)  tenants, tenant_installations, tenant_members, tenant_repos
-admin           people and tenants across slices: the admission adapter, the identity guard, an installation's life after it is attached (ADR 0087, 0088)  (none)
+admin           people and tenants across slices: the admission adapter, the identity guard, an installation's life after it is attached; the members routes of a tenant's admins with the removal cascade; the operator's routes: tenants, installations, attach, detach, purge (ADR 0087, 0088)  (none)
 ```
 <!-- /slices -->
 <!-- slices: rubato-companion -->
@@ -187,6 +187,8 @@ repos       connected repos, what each provides, their open pull requests and is
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
 room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
 workspaces  which application the map shows, the switcher       (none; map calls go under /api/t/{tenant}/w/{ws})
+tenants     which tenant the page shows, the switcher; a tenant's members: invite by GitHub login, roles, remove (ADR 0087, 0088)  GET, POST /api/t/{tenant}/members; PUT, DELETE /api/t/{tenant}/members/:github_id
+admin       the operator's page: tenants, the App's installations, attach, detach, purge, name an admin  GET /api/admin/installations; GET, POST /api/admin/tenants; DELETE /api/admin/tenants/:tenant; POST, DELETE /api/admin/tenants/:tenant/installations/:id; POST /api/admin/installations/:id/purge; POST /api/admin/tenants/:tenant/admins
 settings    Configure workspace: name, map ref, traffic source from the adapter's field list and how it is doing, launch defaults, create, delete  GET, PUT /api/settings; GET /api/traffic/sources; POST /api/workspaces; DELETE /api/t/{tenant}/w/{ws}
 ```
 <!-- /slices -->
@@ -223,7 +225,7 @@ voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, Voice
 web_link   WebEvent (with its tenant); WEB_WS, CLOSE_NOT_A_MEMBER
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, scoped (tenant, workspace, route)
 workspace_settings  WorkspaceSettings, TrafficSourceSettings, SecretState, SourceFields, SourceField, WorkspaceSettingsUpdate, TrafficSourceUpdate, SecretUpdate, NewWorkspace, SettingsRefusal, reasons; SETTINGS, WORKSPACE, TRAFFIC_SOURCES
-tenant     TenantInfo, Role, MemberView, InviteRequest, RoleChange, AccountType, InstallationState, AdminInstallation, NewTenant, AdminTenant, is_tenant_id, reasons; TENANT_PREFIX, in_tenant, MEMBERS, MEMBER, ADMIN_* (ADR 0087, 0088, 0089)
+tenant     TenantInfo, Role, MemberView, InviteRequest, RoleChange, AccountType, InstallationState, AdminInstallation, NewTenant, AdminTenant, PurgeReport, TenancyRefusal, is_tenant_id, reasons; TENANT_PREFIX, in_tenant, MEMBERS, MEMBER, ADMIN_* (ADR 0087, 0088, 0089)
 ```
 
 The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).

@@ -67,6 +67,19 @@ describe("subscribe (S24)", () => {
     off();
   });
 
+  it("a socket the server closed with 4403 is not opened again, and says the person was removed", async () => {
+    const probe = vi.fn(async () => new Response(JSON.stringify({ login: "m0x6A" }), { status: 200 }));
+    vi.stubGlobal("fetch", probe);
+    const removed = vi.fn();
+    const stop = subscribe(() => {}, () => {}, removed);
+    (FakeSocket.instances[0]?.onclose as ((ev: { code: number }) => void) | undefined)?.({ code: 4403 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(removed).toHaveBeenCalledTimes(1);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(probe).not.toHaveBeenCalled();
+    stop();
+  });
+
   it("a closed socket reconnects when the probe cannot reach the server", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("network down"))));
     const stop = subscribe(() => {}, () => {});

@@ -29,7 +29,16 @@ struct H {
     _tmp: tempfile::TempDir,
 }
 
-/// People: `ada` admin of acme, `mia` member of acme, `bob` admin of bcorp, `zed` in no tenant.
+/// The accounts GitHub knows: the four with a login here, and `Carol`, who has never logged in.
+fn people() -> HashMap<String, (i64, String)> {
+    [("ada", 1), ("bob", 2), ("mia", 3), ("zed", 4), ("Carol", 5)]
+        .into_iter()
+        .map(|(login, id)| (login.to_ascii_lowercase(), (id, login.to_owned())))
+        .collect()
+}
+
+/// People: `ada` admin of acme, `mia` member of acme, `bob` admin of bcorp, `zed` in no tenant
+/// and the operator.
 async fn two_tenants() -> H {
     two_tenants_with(|_| {}).await
 }
@@ -42,6 +51,7 @@ async fn two_tenants_with(configure: impl FnOnce(&mut Config)) -> H {
         let f = Arc::new(FakeGitHub::new());
         f.with(|g| {
             g.installation = Some(vec![map_repo.into(), code.into()]);
+            g.users = people();
             g.files.insert(
                 (map_repo.into(), "system-map.yml".into(), "main".into()),
                 map_yaml(name, code),
@@ -51,6 +61,25 @@ async fn two_tenants_with(configure: impl FnOnce(&mut Config)) -> H {
         });
         f
     };
+    let person = Arc::new(FakeGitHub::new());
+    person.with(|g| {
+        g.users = people();
+        g.app_installations = [
+            (11, "acme", "Organization"),
+            (22, "bcorp", "Organization"),
+            (33, "newco", "User"),
+        ]
+        .into_iter()
+        .map(
+            |(id, login, kind)| rubato_server::kernel::github::AppInstallation {
+                id,
+                account_login: login.into(),
+                account_type: kind.into(),
+                suspended: false,
+            },
+        )
+        .collect();
+    });
     let fakes: HashMap<u64, Client> = [
         (
             11,
@@ -60,11 +89,16 @@ async fn two_tenants_with(configure: impl FnOnce(&mut Config)) -> H {
             22,
             installation("bcorp/map", "Bcorp site", "bcorp/web") as Client,
         ),
+        // Installed, attached to no tenant yet.
+        (
+            33,
+            installation("newco/map", "Newco", "newco/app") as Client,
+        ),
     ]
     .into_iter()
     .collect();
     let github = GitHubApps::installations(
-        Arc::new(FakeGitHub::new()),
+        person,
         Box::new(move |id| {
             fakes
                 .get(&id)
@@ -74,6 +108,8 @@ async fn two_tenants_with(configure: impl FnOnce(&mut Config)) -> H {
     );
     let mut cfg = Config::for_tests(db_url, "unused");
     cfg.dev_user = None;
+    // `zed` is the operator, and in no tenant.
+    cfg.operators = vec![4];
     cfg.github_app = Some(GitHubApp {
         app_id: 1,
         private_key: "unused".into(),
@@ -651,6 +687,17 @@ fn fixture(method: &Method, template: &str) -> Option<(String, Case)> {
                 serde_json::json!({"issue": issue, "companion_id": A_COMPANION}),
             )),
         ),
+        // Members: bcorp's admin (GitHub id 2) is nobody in acme.
+        ("GET", "/members") => (rest.into(), Own(None)),
+        ("POST", "/members") => (
+            rest.into(),
+            Own(Some(serde_json::json!({"login": "nobody-by-this-name"}))),
+        ),
+        ("PUT", "/members/{github_id}") => (
+            "/members/2".into(),
+            Foreign(Some(serde_json::json!({"role": "member"}))),
+        ),
+        ("DELETE", "/members/{github_id}") => ("/members/2".into(), Foreign(None)),
         ("PUT", "/queue") => (
             rest.into(),
             Foreign(Some(
@@ -794,7 +841,8 @@ async fn the_cross_tenant_sweep_finds_nothing() {
             .replace("{owner}/{repo}/{number}", "bcorp/web/1")
             .replace("{rev}", "1")
             .replace("{seq}", "1")
-            .replace("{id}", "1");
+            .replace("{id}", "1")
+            .replace("{github_id}", "2");
         let (status, body) = h.call("ada", method.clone(), &theirs, None).await;
         if (status, body.as_str()) != (404, r#"{"reason":"unknown_tenant"}"#) {
             problems.push(format!("{method} {theirs}: {status} {body}"));
@@ -1266,5 +1314,602 @@ mod graph {
             want.sort();
             assert_eq!(shown, want, "{tenant}");
         }
+    }
+}
+
+// ---- Members and the operator (ADR 0087, 0088; design §3.3, §4.5, §4.6, §5.4) ----
+
+mod people_and_operator {
+    use super::*;
+    use serde_json::{Value, json};
+
+    const MEMBERS: &str = "/api/t/acme/members";
+
+    fn parsed(body: &str) -> Value {
+        serde_json::from_str(body).unwrap_or(Value::Null)
+    }
+
+    async fn count(h: &H, sql: &str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(&h.app.db).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_admin_invites_by_login_and_the_invite_binds_to_the_github_id() {
+        let h = two_tenants().await;
+        // Every member reads the list; only an admin writes.
+        let (status, body) = h.call("mia", GET, MEMBERS, None).await;
+        assert_eq!(status, 200, "{body}");
+        let logins: Vec<String> = parsed(&body)
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["login"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(logins, ["ada", "mia"], "admins first; nobody of bcorp");
+        for (method, path, body) in [
+            (POST, MEMBERS.to_owned(), Some(json!({"login": "carol"}))),
+            (PUT, format!("{MEMBERS}/1"), Some(json!({"role": "member"}))),
+            (DELETE, format!("{MEMBERS}/1"), None),
+        ] {
+            let (status, text) = h.call("mia", method, &path, body).await;
+            assert_eq!((status, text.as_str()), (403, r#"{"reason":"not_admin"}"#));
+        }
+        // An invite by login: the account GitHub names, by its id and its own spelling.
+        let (status, body) = h
+            .call("ada", POST, MEMBERS, Some(json!({"login": "@carol"})))
+            .await;
+        assert_eq!(status, 201, "{body}");
+        let m = parsed(&body);
+        assert_eq!(
+            (
+                m["github_id"].as_i64(),
+                m["login"].as_str(),
+                m["role"].as_str()
+            ),
+            (Some(5), Some("Carol"), Some("member"))
+        );
+        assert_eq!(m["joined"], false, "invited, never logged in");
+        assert_eq!(m["invited_by"], "ada");
+        let again = h
+            .call("ada", POST, MEMBERS, Some(json!({"login": "CAROL"})))
+            .await;
+        assert_eq!(again.0, 409, "{}", again.1);
+        assert_eq!(parsed(&again.1)["reason"], "already_member");
+        let nobody = h
+            .call(
+                "ada",
+                POST,
+                MEMBERS,
+                Some(json!({"login": "nobody-by-this-name"})),
+            )
+            .await;
+        assert_eq!(nobody.0, 422);
+        assert_eq!(parsed(&nobody.1)["reason"], "unknown_login");
+        // A person may be in several tenants: bcorp's admin is invited to acme as well.
+        let (status, _) = h
+            .call(
+                "ada",
+                POST,
+                MEMBERS,
+                Some(json!({"login": "bob", "role": "admin"})),
+            )
+            .await;
+        assert_eq!(status, 201);
+        let (_, me) = h.call("bob", GET, "/api/me", None).await;
+        let mut of_bob: Vec<String> = parsed(&me)["tenants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| {
+                format!(
+                    "{}:{}",
+                    t["id"].as_str().unwrap(),
+                    t["role"].as_str().unwrap()
+                )
+            })
+            .collect();
+        of_bob.sort();
+        assert_eq!(of_bob, ["acme:admin", "bcorp:admin"]);
+        // Nothing of this reached bcorp.
+        assert_eq!(
+            count(
+                &h,
+                "SELECT COUNT(*) FROM tenant_members WHERE tenant_id = 'bcorp'"
+            )
+            .await,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn the_last_admin_stays_and_roles_change_only_inside_the_tenant() {
+        let h = two_tenants().await;
+        for (method, body) in [(PUT, Some(json!({"role": "member"}))), (DELETE, None)] {
+            let (status, text) = h.call("ada", method, &format!("{MEMBERS}/1"), body).await;
+            assert_eq!(status, 409, "{text}");
+            assert_eq!(parsed(&text)["reason"], "last_admin");
+        }
+        // With a second admin the first may step down, and then no longer writes.
+        let (status, _) = h
+            .call(
+                "ada",
+                PUT,
+                &format!("{MEMBERS}/3"),
+                Some(json!({"role": "admin"})),
+            )
+            .await;
+        assert_eq!(status, 204);
+        let (status, _) = h
+            .call(
+                "ada",
+                PUT,
+                &format!("{MEMBERS}/1"),
+                Some(json!({"role": "member"})),
+            )
+            .await;
+        assert_eq!(status, 204);
+        let (status, _) = h
+            .call(
+                "ada",
+                PUT,
+                &format!("{MEMBERS}/1"),
+                Some(json!({"role": "admin"})),
+            )
+            .await;
+        assert_eq!(status, 403, "a member now");
+        // A member of another tenant is not one here, whatever the id.
+        let (status, text) = h
+            .call(
+                "mia",
+                PUT,
+                &format!("{MEMBERS}/2"),
+                Some(json!({"role": "admin"})),
+            )
+            .await;
+        assert_eq!(status, 404, "{text}");
+        assert_eq!(parsed(&text)["reason"], "not_a_member");
+    }
+
+    #[tokio::test]
+    async fn removing_a_person_ends_what_they_had_in_the_tenant_and_everything_when_it_was_their_last()
+     {
+        let h = two_tenants().await;
+        h.with_main().await;
+        // mia has a session, a pairing, something queued and an agent in a room of acme.
+        let mias_cookie = h.cookie("mia").await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let companion = "00000000-0000-0000-0000-0000000000c3";
+        for sql in [
+            format!(
+                "INSERT INTO pairings (companion_id, user, token_hash, hostname, created_at) VALUES ('{companion}', 'mia', 'hm', 'mia-laptop', '{now}')"
+            ),
+            format!(
+                "INSERT INTO companion_queue (tenant_id, companion_id, repo, number, position, queued_by, queued_at) VALUES ('acme', '{companion}', 'acme/api', 7, 0, 'mia', '{now}')"
+            ),
+            format!(
+                "INSERT INTO room_requests (tenant_id, id, repo, number, branch, owner, launch_id, requested_by, at, state) VALUES ('acme', '00000000-0000-0000-0000-0000000000d1', 'acme/api', 7, 'issue/7-x', 'ada', '{B_LAUNCH}', 'mia', '{now}', 'pending')"
+            ),
+        ] {
+            sqlx::query(&sql)
+                .execute(&h.app.db)
+                .await
+                .unwrap_or_else(|e| panic!("{e}: {sql}"));
+        }
+        let mut socket = h.socket("mia", Some("acme")).await.unwrap();
+        let reach = |cookie: String| {
+            let (http, url) = (h.http.clone(), h.url.clone());
+            async move {
+                http.get(format!("{url}/api/me"))
+                    .header("cookie", cookie)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16()
+            }
+        };
+        assert_eq!(reach(mias_cookie.clone()).await, 200);
+
+        let (status, text) = h.call("ada", DELETE, &format!("{MEMBERS}/3"), None).await;
+        assert_eq!(status, 204, "{text}");
+
+        // Her socket for the tenant is closed at once, by the event that says members changed.
+        use futures_util::StreamExt;
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match socket.next().await {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(Some(f)))) => {
+                        return Some(u16::from(f.code));
+                    }
+                    Some(Ok(_)) => {}
+                    _ => return None,
+                }
+            }
+        })
+        .await
+        .expect("closed without waiting for the timer");
+        assert_eq!(closed, Some(4403));
+        // It was her last membership: her session, her pairing and her queue are gone.
+        assert_eq!(reach(mias_cookie).await, 401);
+        assert_eq!(
+            count(
+                &h,
+                "SELECT COUNT(*) FROM pairings WHERE user = 'mia' AND revoked_at IS NULL"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            count(
+                &h,
+                "SELECT COUNT(*) FROM companion_queue WHERE tenant_id = 'acme'"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            count(
+                &h,
+                "SELECT COUNT(*) FROM room_requests WHERE tenant_id = 'acme' AND state = 'pending'"
+            )
+            .await,
+            0
+        );
+        // Removed twice is not a member; and a login with no invite gets no session again.
+        let (status, _) = h.call("ada", DELETE, &format!("{MEMBERS}/3"), None).await;
+        assert_eq!(status, 404);
+
+        // bob is in two tenants: leaving one ends nothing of the other.
+        let (status, _) = h
+            .call("ada", POST, MEMBERS, Some(json!({"login": "bob"})))
+            .await;
+        assert_eq!(status, 201);
+        let bobs_cookie = h.cookie("bob").await;
+        let (status, _) = h.call("ada", DELETE, &format!("{MEMBERS}/2"), None).await;
+        assert_eq!(status, 204);
+        assert_eq!(
+            reach(bobs_cookie).await,
+            200,
+            "still in bcorp: the session stays"
+        );
+        let (status, _) = h
+            .call("bob", GET, &scoped("bcorp", "main", "/api/overview"), None)
+            .await;
+        assert_eq!(status, 200);
+        let (status, _) = h
+            .call("bob", GET, &scoped("acme", "main", "/api/overview"), None)
+            .await;
+        assert_eq!(status, 404);
+    }
+
+    #[tokio::test]
+    async fn the_operator_makes_tenants_and_sees_names_and_counts_but_no_data() {
+        let h = two_tenants().await;
+        h.with_main().await;
+        // Not an operator: the routes do not exist, admin of a tenant or not.
+        for (method, path) in [
+            (GET, "/api/admin/installations"),
+            (GET, "/api/admin/tenants"),
+            (POST, "/api/admin/tenants"),
+            (DELETE, "/api/admin/tenants/bcorp"),
+            (POST, "/api/admin/tenants/acme/installations/33"),
+            (DELETE, "/api/admin/tenants/bcorp/installations/22"),
+            (POST, "/api/admin/installations/22/purge?confirm=true"),
+            (POST, "/api/admin/tenants/bcorp/admins"),
+        ] {
+            let body = (method != GET && method != DELETE)
+                .then(|| json!({"id": "x", "name": "x", "first_admin": "ada", "login": "ada"}));
+            let (status, text) = h.call("ada", method.clone(), path, body).await;
+            assert_eq!(status, 404, "{method} {path}: {text}");
+            assert_eq!(parsed(&text)["reason"], "not_operator", "{method} {path}");
+        }
+        // The operator is in no tenant: every tenant's data answers as if there were none.
+        let (status, _) = h
+            .call("zed", GET, &scoped("acme", "main", "/api/overview"), None)
+            .await;
+        assert_eq!(status, 404);
+
+        let (status, body) = h.call("zed", GET, "/api/admin/installations", None).await;
+        assert_eq!(status, 200, "{body}");
+        let seen: Vec<(u64, String, String, Option<String>)> = parsed(&body)
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| {
+                (
+                    i["installation_id"].as_u64().unwrap(),
+                    i["account_login"].as_str().unwrap().to_owned(),
+                    i["state"].as_str().unwrap().to_owned(),
+                    i["tenant"].as_str().map(str::to_owned),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (
+                    11,
+                    "acme".to_owned(),
+                    "attached".to_owned(),
+                    Some("acme".to_owned())
+                ),
+                (
+                    22,
+                    "bcorp".to_owned(),
+                    "attached".to_owned(),
+                    Some("bcorp".to_owned())
+                ),
+                (33, "newco".to_owned(), "unattached".to_owned(), None),
+            ]
+        );
+        let (status, body) = h.call("zed", GET, "/api/admin/tenants", None).await;
+        assert_eq!(status, 200);
+        assert_eq!(
+            parsed(&body),
+            json!([
+                {"id": "acme", "name": "acme", "installations": [11], "members": 2, "admins": 1, "workspaces": 1},
+                {"id": "bcorp", "name": "bcorp", "installations": [22], "members": 1, "admins": 1, "workspaces": 1},
+            ])
+        );
+
+        // A tenant, its installation and its first admin, in one step.
+        let new =
+            json!({"id": "newco", "name": "Newco", "first_admin": "carol", "installations": [33]});
+        let (status, body) = h
+            .call("zed", POST, "/api/admin/tenants", Some(new.clone()))
+            .await;
+        assert_eq!(status, 201, "{body}");
+        let (status, body) = h.call("zed", POST, "/api/admin/tenants", Some(new)).await;
+        assert_eq!(
+            (status, parsed(&body)["reason"].as_str()),
+            (409, Some("duplicate"))
+        );
+        for (bad, why) in [
+            (
+                json!({"id": "Not An Id", "name": "x", "first_admin": "ada"}),
+                "bad_id",
+            ),
+            (
+                json!({"id": "other", "name": "x", "first_admin": "nobody-by-this-name"}),
+                "unknown_login",
+            ),
+            (
+                json!({"id": "other", "name": "x", "first_admin": "ada", "installations": [99]}),
+                "unknown_installation",
+            ),
+            (
+                json!({"id": "other", "name": "x", "first_admin": "ada", "installations": [22]}),
+                "installation_taken",
+            ),
+        ] {
+            let (_, body) = h.call("zed", POST, "/api/admin/tenants", Some(bad)).await;
+            assert_eq!(parsed(&body)["reason"], why, "{body}");
+        }
+        assert_eq!(
+            count(&h, "SELECT COUNT(*) FROM tenants WHERE id = 'other'").await,
+            0,
+            "all or nothing"
+        );
+        // Its repositories are its own now, and its first admin is the account GitHub named.
+        assert_eq!(
+            h.app.github.tenant_of("newco/app").map(|t| t.to_string()),
+            Some("newco".to_owned())
+        );
+        assert_eq!(
+            count(&h, "SELECT COUNT(*) FROM tenant_members WHERE tenant_id = 'newco' AND github_id = 5 AND role = 'admin'").await,
+            1
+        );
+        // An installation belongs to one tenant: the answer names the one that holds it.
+        let (status, body) = h
+            .call(
+                "zed",
+                POST,
+                "/api/admin/tenants/acme/installations/33",
+                None,
+            )
+            .await;
+        assert_eq!(status, 409, "{body}");
+        assert_eq!(
+            parsed(&body),
+            json!({"reason": "installation_taken", "detail": "newco"})
+        );
+        // The operator can always name an admin: a member is promoted, a stranger invited.
+        let (status, body) = h
+            .call(
+                "zed",
+                POST,
+                "/api/admin/tenants/bcorp/admins",
+                Some(json!({"login": "mia"})),
+            )
+            .await;
+        assert_eq!(status, 204, "{body}");
+        let (status, _) = h
+            .call(
+                "zed",
+                POST,
+                "/api/admin/tenants/acme/admins",
+                Some(json!({"login": "mia"})),
+            )
+            .await;
+        assert_eq!(status, 204);
+        assert_eq!(
+            count(
+                &h,
+                "SELECT COUNT(*) FROM tenant_members WHERE github_id = 3 AND role = 'admin'"
+            )
+            .await,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn detach_keeps_the_rows_hidden_and_purge_names_them_before_it_deletes_them() {
+        let h = two_tenants().await;
+        h.with_main().await;
+        seed_bcorp(&h).await;
+        let purge = "/api/admin/installations/22/purge";
+        let detach = "/api/admin/tenants/bcorp/installations/22";
+        // Attached: nothing to purge. In use by a workspace: not detached.
+        let (status, body) = h.call("zed", POST, purge, None).await;
+        assert_eq!(
+            (status, parsed(&body)["reason"].as_str()),
+            (409, Some("not_detached"))
+        );
+        let (status, body) = h.call("zed", DELETE, detach, None).await;
+        assert_eq!(status, 409, "{body}");
+        assert_eq!(
+            parsed(&body),
+            json!({"reason": "installation_in_use", "detail": "workspace main"})
+        );
+        // A tenant with a workspace or an installation is not deleted.
+        let (status, body) = h
+            .call("zed", DELETE, "/api/admin/tenants/bcorp", None)
+            .await;
+        assert_eq!(
+            (status, parsed(&body)["reason"].as_str()),
+            (409, Some("tenant_not_empty"))
+        );
+        // Its admin deletes the workspace; then the operator detaches.
+        let (status, body) = h.call("bob", DELETE, "/api/t/bcorp/w/main", None).await;
+        assert!(status == 204 || status == 200, "{status} {body}");
+        let (status, body) = h.call("zed", DELETE, detach, None).await;
+        assert_eq!(status, 204, "{body}");
+        assert_eq!(h.app.github.tenant_of("bcorp/web"), None, "no longer read");
+        let kept = count(
+            &h,
+            "SELECT COUNT(*) FROM room_messages WHERE tenant_id = 'bcorp'",
+        )
+        .await;
+        assert_eq!(kept, 1, "kept, hidden, until purged");
+        assert_eq!(
+            count(
+                &h,
+                "SELECT COUNT(*) FROM companion_queue WHERE tenant_id = 'bcorp'"
+            )
+            .await,
+            0
+        );
+        // Another tenant cannot take the installation while bcorp's rows of it remain.
+        let (status, body) = h
+            .call(
+                "zed",
+                POST,
+                "/api/admin/tenants/acme/installations/22",
+                None,
+            )
+            .await;
+        assert_eq!(status, 409, "{body}");
+        assert_eq!(
+            parsed(&body),
+            json!({"reason": "rows_of_other_tenant", "detail": "bcorp"})
+        );
+        // The purge names what it would delete, and deletes nothing until confirmed.
+        let (status, body) = h.call("zed", POST, purge, None).await;
+        assert_eq!(status, 200, "{body}");
+        let report = parsed(&body);
+        assert_eq!(report["purged"], false);
+        assert_eq!(report["tenant"], "bcorp");
+        assert_eq!(report["repos"], json!(["bcorp/map", "bcorp/web"]));
+        let rows = report["rows"].as_object().unwrap().clone();
+        for table in [
+            "launches",
+            "plans",
+            "plan_drafts",
+            "plan_draft_revisions",
+            "room_messages",
+            "room_requests",
+            "session_messages",
+            "session_log_entries",
+            "issue_meta",
+            "open_issues",
+            "pins",
+        ] {
+            assert!(
+                rows.get(table).and_then(Value::as_u64) >= Some(1),
+                "{table}: {rows:?}"
+            );
+        }
+        assert_eq!(
+            count(
+                &h,
+                "SELECT COUNT(*) FROM room_messages WHERE tenant_id = 'bcorp'"
+            )
+            .await,
+            1
+        );
+        let acme_before = count(&h, "SELECT COUNT(*) FROM pins WHERE tenant_id = 'acme'").await
+            + count(
+                &h,
+                "SELECT COUNT(*) FROM tenant_repos WHERE tenant_id = 'acme'",
+            )
+            .await;
+        let (status, body) = h
+            .call("zed", POST, &format!("{purge}?confirm=true"), None)
+            .await;
+        assert_eq!(status, 200, "{body}");
+        let done = parsed(&body);
+        assert_eq!(done["purged"], true);
+        assert_eq!(
+            done["rows"], report["rows"],
+            "what it named is what it deleted"
+        );
+        // Nothing of bcorp's repositories is left in any table, and acme is as it was.
+        let mut conn = h.app.db.acquire().await.unwrap();
+        let left = rubato_server::kernel::purge::rows_of_repos(
+            &mut conn,
+            "bcorp",
+            &["bcorp/map".into(), "bcorp/web".into()],
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(left.is_empty(), "{left:?}");
+        drop(conn);
+        assert_eq!(
+            count(
+                &h,
+                "SELECT COUNT(*) FROM tenant_installations WHERE installation_id = 22"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            count(&h, "SELECT COUNT(*) FROM pins WHERE tenant_id = 'acme'").await
+                + count(
+                    &h,
+                    "SELECT COUNT(*) FROM tenant_repos WHERE tenant_id = 'acme'"
+                )
+                .await,
+            acme_before
+        );
+        let (status, _) = h.call("zed", POST, purge, None).await;
+        assert_eq!(status, 404, "purged: no such installation here");
+        // Now the installation is free, and the empty tenant can go; its admin with it.
+        let bobs = h.cookie("bob").await;
+        let (status, body) = h
+            .call("zed", DELETE, "/api/admin/tenants/bcorp", None)
+            .await;
+        assert_eq!(status, 204, "{body}");
+        let r = h
+            .http
+            .get(format!("{}/api/me", h.url))
+            .header("cookie", bobs)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401, "bcorp was bob's only tenant");
+        let (status, body) = h
+            .call(
+                "zed",
+                POST,
+                "/api/admin/tenants/acme/installations/22",
+                None,
+            )
+            .await;
+        assert_eq!(status, 204, "{body}");
+        assert_eq!(
+            h.app.github.tenant_of("bcorp/web").map(|t| t.to_string()),
+            Some("acme".to_owned())
+        );
     }
 }

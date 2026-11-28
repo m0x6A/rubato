@@ -498,3 +498,191 @@ pub async fn detach_installation(
     .await?;
     Ok(repos)
 }
+
+/// One row of `tenant_installations`, for the operator page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallationRow {
+    pub installation_id: u64,
+    pub tenant: String,
+    pub account_login: Option<String>,
+    pub account_type: Option<String>,
+    pub suspended: bool,
+    pub detached: bool,
+}
+
+/// Every installation this server has a row for, attached or detached.
+pub async fn installation_rows(db: &SqlitePool) -> Result<Vec<InstallationRow>> {
+    let rows = sqlx::query(
+        "SELECT installation_id, tenant_id, account_login, account_type, suspended_at, detached_at FROM tenant_installations ORDER BY installation_id",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| InstallationRow {
+            installation_id: r.get::<i64, _>("installation_id") as u64,
+            tenant: r.get("tenant_id"),
+            account_login: r.get("account_login"),
+            account_type: r.get("account_type"),
+            suspended: r.get::<Option<String>, _>("suspended_at").is_some(),
+            detached: r.get::<Option<String>, _>("detached_at").is_some(),
+        })
+        .collect())
+}
+
+/// What GitHub says the installation's account is, kept for the operator page.
+pub async fn set_account(
+    conn: &mut SqliteConnection,
+    installation_id: u64,
+    login: &str,
+    account_type: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE tenant_installations SET account_login = ?, account_type = ? WHERE installation_id = ?",
+    )
+    .bind(login)
+    .bind(account_type)
+    .bind(installation_id as i64)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// One tenant as the operator sees it: its name and how many people, never its data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantRow {
+    pub id: String,
+    pub name: String,
+    pub members: u32,
+    pub admins: u32,
+}
+
+pub async fn tenant_rows(db: &SqlitePool) -> Result<Vec<TenantRow>> {
+    let rows = sqlx::query(
+        "SELECT t.id, t.name,          (SELECT COUNT(*) FROM tenant_members m WHERE m.tenant_id = t.id) AS members,          (SELECT COUNT(*) FROM tenant_members m WHERE m.tenant_id = t.id AND m.role = 'admin') AS admins          FROM tenants t ORDER BY t.id",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| TenantRow {
+            id: r.get("id"),
+            name: r.get("name"),
+            members: r.get::<i64, _>("members") as u32,
+            admins: r.get::<i64, _>("admins") as u32,
+        })
+        .collect())
+}
+
+/// Delete a tenant (design §3.3): refused while an installation is attached to it. The caller
+/// has refused already while it has workspaces. Its members go with it; the tombstones of
+/// detached installations stay until they are purged, and keep the id from being reused.
+/// Returns the members removed, for the caller to end what was their last membership.
+pub async fn delete_tenant(
+    conn: &mut SqliteConnection,
+    tenant: &str,
+) -> Result<Outcome<Vec<(i64, String)>>> {
+    let attached: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tenant_installations WHERE tenant_id = ? AND detached_at IS NULL",
+    )
+    .bind(tenant)
+    .fetch_one(&mut *conn)
+    .await?;
+    if attached > 0 {
+        return Ok(Err(Refused(reason::TENANT_NOT_EMPTY)));
+    }
+    let members: Vec<(i64, String)> =
+        sqlx::query_as("SELECT github_id, login FROM tenant_members WHERE tenant_id = ?")
+            .bind(tenant)
+            .fetch_all(&mut *conn)
+            .await?;
+    sqlx::query("DELETE FROM tenant_members WHERE tenant_id = ?")
+        .bind(tenant)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM tenants WHERE id = ?")
+        .bind(tenant)
+        .execute(&mut *conn)
+        .await?;
+    Ok(Ok(members))
+}
+
+/// Whether a person is in any tenant at all.
+pub async fn in_any_tenant(conn: &mut SqliteConnection, github_id: i64) -> Result<bool> {
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_members WHERE github_id = ?")
+        .bind(github_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(n > 0)
+}
+
+/// A member's login as last seen, for what a removal ends by login.
+pub async fn member_login(
+    conn: &mut SqliteConnection,
+    tenant: &str,
+    github_id: i64,
+) -> Result<Option<String>> {
+    Ok(
+        sqlx::query_scalar(
+            "SELECT login FROM tenant_members WHERE tenant_id = ? AND github_id = ?",
+        )
+        .bind(tenant)
+        .bind(github_id)
+        .fetch_optional(&mut *conn)
+        .await?,
+    )
+}
+
+/// The live repositories of an attached installation.
+pub async fn live_repos_of(
+    conn: &mut SqliteConnection,
+    installation_id: u64,
+) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT repo FROM tenant_repos WHERE installation_id = ? AND detached_at IS NULL ORDER BY repo",
+    )
+    .bind(installation_id as i64)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
+/// A detached installation: its tenant and the repositories whose rows are still kept. `None`
+/// for an installation with no row; `Err(NOT_DETACHED)` for one that is attached.
+pub async fn detached(
+    conn: &mut SqliteConnection,
+    installation_id: u64,
+) -> Result<Option<Outcome<(String, Vec<String>)>>> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT tenant_id, detached_at FROM tenant_installations WHERE installation_id = ?",
+    )
+    .bind(installation_id as i64)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((tenant, detached_at)) = row else {
+        return Ok(None);
+    };
+    if detached_at.is_none() {
+        return Ok(Some(Err(Refused(reason::NOT_DETACHED))));
+    }
+    let repos: Vec<String> =
+        sqlx::query_scalar("SELECT repo FROM tenant_repos WHERE installation_id = ? ORDER BY repo")
+            .bind(installation_id as i64)
+            .fetch_all(&mut *conn)
+            .await?;
+    Ok(Some(Ok((tenant, repos))))
+}
+
+/// After a purge deleted the rows: the tombstones themselves.
+pub async fn drop_tombstones(conn: &mut SqliteConnection, installation_id: u64) -> Result<()> {
+    sqlx::query("DELETE FROM tenant_repos WHERE installation_id = ? AND detached_at IS NOT NULL")
+        .bind(installation_id as i64)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "DELETE FROM tenant_installations WHERE installation_id = ? AND detached_at IS NOT NULL",
+    )
+    .bind(installation_id as i64)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}

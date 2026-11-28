@@ -114,6 +114,7 @@ RUBATO_BIND=127.0.0.1:18091 RUBATO_PUBLIC_URL=http://127.0.0.1:18091 \
   GITHUB_CLIENT_ID=Iv1.e2e GITHUB_CLIENT_SECRET=e2e-secret \
   RUBATO_TOKEN_KEY=0707070707070707070707070707070707070707070707070707070707070707 \
   RUBATO_GITHUB_APP_ID=12 RUBATO_GITHUB_APP_PRIVATE_KEY_FILE="$TMP/app.pem" RUBATO_GITHUB_APP_INSTALLATION_ID=34 \
+  RUBATO_OPERATORS=1001 \
   RUBATO_MAP_REPO=m0x6A/rubato RUBATO_MAP_FILE="$ROOT/docs/design/rubato-map.yml" \
   RUBATO_WEB_DIST="$PWD/dist" RUBATO_GITHUB_POLL_SECS=5 RUST_LOG=info \
   "$BIN" > "$TMP/app-server.log" 2>&1 &
@@ -125,7 +126,9 @@ done
 curl -sf http://127.0.0.1:18091/api/health > /dev/null || { echo "the App server did not start"; cat "$TMP/app-server.log" "$TMP/github.log"; exit 1; }
 # ADR 0088: only invited people log in. The seed made tenant `default` with installation 34; the
 # stand-in's `member` (GitHub user 1001) is invited here, straight into the table, until the
-# members page of plan 345 can do it through the API. `outsider` (1002) is invited nowhere.
+# first admin of a tenant is named by an operator, and the operator here is `member` itself
+# (RUBATO_OPERATORS=1001), who must first be let in. `outsider` (1002) is invited nowhere; the
+# members page invites and removes `newcomer` through the API (e2e/tenants.spec.ts).
 command -v sqlite3 > /dev/null || { echo "sqlite3 is needed to invite the e2e member" >&2; exit 2; }
 sqlite3 "$TMP/app.db" "INSERT INTO tenant_members (tenant_id, github_id, login, role, invited_by, invited_at) VALUES ('default', 1001, 'member', 'admin', 'e2e', '2026-01-01T00:00:00+00:00');"
 # Its first poll tick lists the open issues as the installation.

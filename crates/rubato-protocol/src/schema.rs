@@ -97,5 +97,7 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         one::<crate::tenant::AdminInstallation>("admin_installation"),
         one::<crate::tenant::NewTenant>("new_tenant"),
         one::<crate::tenant::AdminTenant>("admin_tenant"),
+        one::<crate::tenant::PurgeReport>("purge_report"),
+        one::<crate::tenant::TenancyRefusal>("tenancy_refusal"),
     ]
 }

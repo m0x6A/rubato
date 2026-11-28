@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
             );
             let (app, base) = (app.clone(), api.map(str::to_owned));
             GitHubApps::installations(
-                Arc::new(Octo::for_people(api)?),
+                Arc::new(Octo::for_app(&app, api)?),
                 Box::new(move |installation_id| {
                     let one = GitHubApp {
                         installation_id,

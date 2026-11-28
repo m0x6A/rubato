@@ -13,9 +13,11 @@ mod store;
 pub use scope::{check_tenant, member_logins, scope_for};
 pub use seed::{DEFAULT_TENANT, Seeded, start};
 pub use store::{
-    Outcome, Refused, Removed, Synced, add_member, attach_installation, attached, create_tenant,
-    detach_installation, installations_of, members, note_login, remove_member, role_of, set_role,
-    set_suspended, sync_repos, tenant_exists, tenants_of,
+    InstallationRow, Outcome, Refused, Removed, Synced, TenantRow, add_member, attach_installation,
+    attached, create_tenant, delete_tenant, detach_installation, detached, drop_tombstones,
+    in_any_tenant, installation_rows, installations_of, live_repos_of, member_login, members,
+    note_login, remove_member, role_of, set_account, set_role, set_suspended, sync_repos,
+    tenant_exists, tenant_rows, tenants_of,
 };
 
 use crate::kernel::state::App;

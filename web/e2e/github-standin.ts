@@ -189,6 +189,20 @@ const server = createServer(async (req, res) => {
     }
     return send(res, 201, { token: INSTALLATION_TOKEN, expires_at: new Date(Date.now() + 3600_000).toISOString(), permissions: { issues: "write", contents: "write" } });
   }
+  // Every installation of the App, read as the App: the operator's page (ADR 0087).
+  if (path === "/app/installations") {
+    return isAppJwt(bearer(req)) ? send(res, 200, [{ id: INSTALLATION, account: { login: "m0x6A", type: "User" }, suspended_at: null }]) : unauthorized();
+  }
+  // Who a login is, asked as the installation when someone is invited (ADR 0088). `newcomer` has
+  // an account and no way to log in here: an invite needs only the account.
+  if (path.startsWith("/users/")) {
+    if (bearer(req) !== INSTALLATION_TOKEN) {
+      return unauthorized();
+    }
+    const known: Record<string, number> = { ...Object.fromEntries(Object.entries(ACCOUNTS).map(([l, a]) => [l, a.id])), newcomer: 1004 };
+    const login = Object.keys(known).find((l) => l === path.slice("/users/".length).toLowerCase());
+    return login ? send(res, 200, { id: known[login], login }) : send(res, 404, { message: "Not Found" });
+  }
   // The installation's permissions, read as the App (ADR 0025).
   if (path === `/app/installations/${INSTALLATION}`) {
     return isAppJwt(bearer(req)) ? send(res, 200, { id: INSTALLATION, permissions: { issues: "write", contents: "write", pull_requests: "write" } }) : unauthorized();

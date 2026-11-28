@@ -60,6 +60,13 @@ pub enum WebResource {
     },
 }
 
+/// Reasons of a `Changed` event that a reader acts on by name.
+pub mod changed {
+    /// Who is in the tenant changed (ADR 0088): the members page refetches, and each socket of
+    /// the tenant reads its own membership again.
+    pub const MEMBERS: &str = "members";
+}
+
 /// Route path for the browser websocket.
 pub mod routes {
     /// With `?t=<tenant>`: one socket per tenant the page shows (ADR 0089).
