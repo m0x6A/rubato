@@ -54,10 +54,22 @@ function show(ov: Overview = overview(), selection: MapRef | null = null) {
 }
 const writes = () => calls.filter((c) => c.method !== "GET");
 
+/** The forms that add are opened when asked for (issue #357). */
+function openForm(name: "Add part" | "Add seam"): HTMLElement {
+  fireEvent.click(screen.getByRole("button", { name: `${name}…` }));
+  return screen.getByRole("form", { name });
+}
+
+/** What is rarely wanted is behind More. */
+function more(panel: HTMLElement, name: string): void {
+  fireEvent.click(within(panel).getByRole("button", { name: "More to do with the draft" }));
+  fireEvent.click(within(panel).getByRole("menuitem", { name }));
+}
+
 describe("editing the map as a draft (S18, S19)", () => {
   it("Add part form posts AddNode", async () => {
     const { onChanged, onPartAdded } = show();
-    const form = screen.getByRole("form", { name: "Add part" });
+    const form = openForm("Add part");
     fireEvent.change(within(form).getByLabelText(/^Id/), { target: { value: "billing" } });
     fireEvent.change(within(form).getByLabelText("Kind"), { target: { value: "external" } });
     fireEvent.change(within(form).getByLabelText("What it is"), { target: { value: "Invoices and payments." } });
@@ -69,13 +81,15 @@ describe("editing the map as a draft (S18, S19)", () => {
     // Empty fields are left out, and the browser made the id that lets a retry add it once.
     expect(body).toEqual({ op: "add_node", node: { id: "billing", kind: "external", description: "Invoices and payments." }, op_id: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     expect(onChanged).toHaveBeenCalled();
-    expect(within(form).getByLabelText(/^Id/)).toHaveValue("");
+    // Added, the form is put away: the change is in the list, and another is one press away.
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    expect(screen.getByRole("button", { name: "Add part…" })).toBeInTheDocument();
   });
 
   it("a refused operation shows the server's reason and stores nothing here", async () => {
     answer = { status: 422, body: "id web already exists" };
     const { onPartAdded } = show();
-    const form = screen.getByRole("form", { name: "Add part" });
+    const form = openForm("Add part");
     fireEvent.change(within(form).getByLabelText(/^Id/), { target: { value: "web" } });
     fireEvent.click(within(form).getByRole("button", { name: "Add part" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Part web was not added: id web already exists");
@@ -86,7 +100,7 @@ describe("editing the map as a draft (S18, S19)", () => {
 
   it("Add seam form posts AddSeam", async () => {
     show();
-    const form = screen.getByRole("form", { name: "Add seam" });
+    const form = openForm("Add seam");
     fireEvent.change(within(form).getByLabelText(/^From/), { target: { value: "web" } });
     fireEvent.change(within(form).getByLabelText(/^To/), { target: { value: "github" } });
     fireEvent.change(within(form).getByLabelText("Carries"), { target: { value: "issue links" } });
@@ -143,7 +157,7 @@ describe("editing the map as a draft (S18, S19)", () => {
 
   it("a new seam joins live parts only (ADR 0077)", () => {
     show(overview(), null);
-    const add = screen.getByRole("form", { name: "Add seam" });
+    const add = openForm("Add seam");
     for (const name of ["from", "to"]) {
       const select = add.querySelector(`select[name="${name}"]`) as HTMLSelectElement;
       expect([...select.options].map((o) => o.value)).not.toContain("tmux-ide");
@@ -221,10 +235,14 @@ describe("proposing, withdrawing and discarding the draft (S21 to S23)", () => {
     const { panel, onNotice } = show(withOps([addBilling], { proposal }), { kind: "node", id: "web" });
     expect(within(panel).getByTestId("proposal")).toHaveTextContent("Proposed · pull request #7 by alice");
     expect(within(panel).getByRole("link", { name: "pull request #7" })).toHaveAttribute("href", "https://example.invalid/pull/7");
-    // No forms, no removal, no discard: only Withdraw and Copy YAML.
+    // No forms nor a way to open one, no removal, no discard: only Withdraw, and Copy YAML behind More.
     expect(screen.queryByRole("form")).toBeNull();
+    expect(within(panel).queryByRole("button", { name: /^Add (part|seam)…$/ })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /^Remove/ })).toBeNull();
-    expect(within(panel).queryByRole("button", { name: "Discard draft" })).toBeNull();
+    expect(within(panel).queryByTestId("edit-hint")).toBeNull();
+    fireEvent.click(within(panel).getByRole("button", { name: "More to do with the draft" }));
+    expect(within(panel).getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Copy YAML"]);
+    fireEvent.keyDown(within(panel).getByRole("menu"), { key: "Escape" });
     fireEvent.click(within(panel).getByRole("button", { name: "Withdraw proposal" }));
     await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("editable again")));
     expect(writes()[0]!.url).toBe("/api/map/draft/withdraw");
@@ -244,7 +262,7 @@ describe("proposing, withdrawing and discarding the draft (S21 to S23)", () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     const { panel, onNotice } = show(withOps([addBilling]));
-    fireEvent.click(within(panel).getByRole("button", { name: "Copy YAML" }));
+    more(panel, "Copy YAML");
     const text = (await screen.findByTestId("draft-yaml")) as HTMLTextAreaElement;
     // The whole proposed file, shown to copy by hand too (the clipboard may be refused).
     expect(text.value).toBe(yaml.proposed);
@@ -256,7 +274,7 @@ describe("proposing, withdrawing and discarding the draft (S21 to S23)", () => {
   it("Discard shows Undo", async () => {
     answer = { status: 200 };
     const { panel, onNotice } = show(withOps([addBilling, addSeam]));
-    fireEvent.click(within(panel).getByRole("button", { name: "Discard draft" }));
+    more(panel, "Discard draft");
     await waitFor(() => expect(onNotice).toHaveBeenCalled());
     expect(writes()[0]!.url).toBe("/api/map/draft/discard");
     const [text, undo] = onNotice.mock.calls[0] as [string, () => void];
@@ -272,7 +290,22 @@ describe("proposing, withdrawing and discarding the draft (S21 to S23)", () => {
     await waitFor(() => expect(other.onNotice).toHaveBeenCalledWith("The draft is back, with every change and its author."));
     // With an empty draft there is nothing to propose, discard or copy.
     expect(within(other.panel).getByRole("button", { name: "Propose map change…" })).toBeDisabled();
-    expect(within(other.panel).queryByRole("button", { name: "Discard draft" })).toBeNull();
+    expect(within(other.panel).queryByRole("button", { name: "More to do with the draft" })).toBeNull();
+  });
+
+  it("one primary step, the forms on demand, and the hint that says how to edit (issue #357)", async () => {
+    const { panel } = show(withOps([addBilling]));
+    expect(panel.querySelectorAll(".primary")).toHaveLength(1);
+    expect(within(panel).getByRole("button", { name: "Propose map change…" })).toHaveClass("primary");
+    expect(within(panel).getByTestId("edit-hint")).toHaveTextContent("Double-click the canvas to add a part");
+    // No form until one is asked for; one at a time; "Not now" puts it away.
+    expect(screen.queryByRole("form")).toBeNull();
+    const form = openForm("Add seam");
+    expect(screen.getAllByRole("form")).toHaveLength(1);
+    expect(form.querySelector('select[name="from"]')).toHaveFocus();
+    fireEvent.click(within(panel).getByRole("button", { name: "Not now" }));
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Add part…" })).toBeInTheDocument();
   });
 });
 

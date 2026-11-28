@@ -943,3 +943,7 @@ body:has(.login) { background-color: var(--canvas); background-image: radial-gra
 /* In its own view the list has the room: no cap on its height, no band's border. */
 .territory-view .discrepancies { max-height: none; border-top: 0; padding: 0; background: none; }
 .territory-view .discrepancies h2 { color: var(--warn-ink); }
+
+/* The map draft's view (issue #357): the changes, one next step, the rest behind More. */
+.draft-more > .pin-menu > button { padding: 4px 10px; min-height: 28px; font-size: 13px; }
+.draft-panel .edit-hint { margin: 0; font-size: 12px; color: var(--chip-ink); }

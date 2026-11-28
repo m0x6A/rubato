@@ -66,3 +66,9 @@ export async function openTerritory(page: Page) {
   await page.getByTestId("to-settle").click();
   await expect(page.getByTestId("territory")).toBeVisible();
 }
+
+/** Choose something from the map draft's More menu: "Copy YAML" or "Discard draft". */
+export async function draftMore(page: Page, item: "Copy YAML" | "Discard draft") {
+  await page.getByTestId("draft-more").getByRole("button").first().click();
+  await page.getByTestId("draft-more").getByRole("menuitem", { name: item }).click();
+}
