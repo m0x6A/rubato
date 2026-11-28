@@ -199,7 +199,7 @@ export function App() {
       try {
         await pinsApi.addPin({ issue, target });
         setNotice(`${issueKey(issue)} pinned to ${target.id}`);
-        go({ view: "issue", issue });
+        go({ view: "issue", issue, section: "overview" });
         await refresh();
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
@@ -711,7 +711,7 @@ export function App() {
               onNotice={(text) => setNotice(text)}
               onCreated={(issue) => {
                 // The overview has to hold the issue before its view can show it.
-                void refresh().then(() => go({ view: "issue", issue }, { replace: true }));
+                void refresh().then(() => go({ view: "issue", issue, section: "overview" }, { replace: true }));
               }}
             />
           )}
@@ -720,7 +720,7 @@ export function App() {
               overview={shown ?? overview}
               selection={selection}
               onSelect={onSelectOnMap}
-              onSelectIssue={(issue) => go({ view: "issue", issue })}
+              onSelectIssue={(issue) => go({ view: "issue", issue, section: "overview" })}
               onNewIssue={(at) => go({ view: "new-issue", at })}
             />
           )}
@@ -732,7 +732,7 @@ export function App() {
               onList={(which) => go({ view: "issues", list: which })}
               selection={selection}
               onClearSelection={() => selectOnly(null)}
-              onOpen={(issue) => go({ view: "issue", issue })}
+              onOpen={(issue) => go({ view: "issue", issue, section: "overview" })}
               onPin={onPin}
               onQueue={onQueue}
             />
@@ -743,8 +743,11 @@ export function App() {
               me={me}
               selected={selected}
               // "← all issues" says where it goes: the list (Escape goes up, to the part's inspector when one is selected).
+              section={route.section}
+              onSection={(section) => go({ view: "issue", issue: selected.issue, section })}
               onClose={() => go({ view: "issues", list: "open" })}
-              onOpenIssue={(issue) => go({ view: "issue", issue })}
+              onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview" })}
+              planOnMap={selected.plan ? <PlanInspector issue={selected} onSelect={onSelectOnMap} /> : null}
               onLaunch={onLaunch}
               onLaunchLead={onLaunchLead}
               onPin={onPin}
@@ -763,7 +766,7 @@ export function App() {
               me={me}
               selected={route.view === "plan" ? selected : null}
               onSelect={(issue) => go(issue ? { view: "plan", issue } : { view: "plans" })}
-              onOpenIssue={(issue) => go({ view: "issue", issue })}
+              onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview" })}
               onResume={ownConnectedCompanions(overview, me).length > 0 ? (issue, branch) => onLaunch(issue, branch) : undefined}
               onNotice={(text) => {
                 setNotice(text);
@@ -775,14 +778,7 @@ export function App() {
             <ConnectedRepos
               overview={overview}
               onPin={onPin}
-              onOpenIssue={(issue) => go({ view: "issue", issue })}
-            />
-          )}
-          {/* An open issue with a plan: the map shows the plan, and below the issue this says what the plan says. */}
-          {overview && onIssues && selected?.plan && (
-            <PlanInspector
-              issue={selected}
-              onSelect={onSelectOnMap}
+              onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview" })}
             />
           )}
           {overview && tab === "companions" && <CompanionsPanel overview={overview} me={me} onChanged={refresh} onQueue={onQueue} onReorder={onReorder} onUnqueue={onUnqueue} onStart={onStart} />}

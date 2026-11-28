@@ -197,3 +197,57 @@ describe("the voice panel (ADR 0073)", () => {
     expect(made[0]?.pause).toHaveBeenCalled();
   });
 });
+
+describe("a voice channel never outlives what shows it (issue #357)", () => {
+  /** A LiveKit stand-in whose Room counts its disconnects. */
+  function countingLiveKit() {
+    const disconnected = vi.fn();
+    const { lk } = fakeLiveKit();
+    const Base = (lk as unknown as { Room: new () => { disconnect(): void } }).Room;
+    class Room extends Base {
+      override disconnect() {
+        disconnected();
+      }
+    }
+    return { lk: { ...lk, Room } as unknown as typeof import("livekit-client"), disconnected };
+  }
+  const token = () => vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ url: "wss://lk.example", token: "jwt", room: "r", identity: "bob#1", expires_at: after }));
+
+  it("says who holds it while joined, with where speech goes and the way out, and says so when left", async () => {
+    token();
+    const { lk, disconnected } = countingLiveKit();
+    const onHeld = vi.fn();
+    localStorage.setItem("rubato.voice.consent", "1");
+    render(<VoicePanel room={room} voice={voice} agents={[]} messages={[]} onPosted={() => {}} onHeld={onHeld} deps={deps({ loadLiveKit: async () => lk })} />);
+    expect(onHeld).toHaveBeenLastCalledWith(null);
+    fireEvent.click(screen.getByRole("button", { name: "Join voice" }));
+    await waitFor(() => expect(onHeld).toHaveBeenLastCalledWith(expect.objectContaining({ via: "speaches:8000" })));
+
+    // The way out handed up is the panel's own Leave.
+    const held = onHeld.mock.lastCall?.[0] as { leave: () => void };
+    await act(async () => held.leave());
+    await waitFor(() => expect(onHeld).toHaveBeenLastCalledWith(null));
+    expect(disconnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("disconnects when the panel goes: closing the issue leaves the channel", async () => {
+    token();
+    const { lk, disconnected } = countingLiveKit();
+    const onHeld = vi.fn();
+    const view = render(<VoicePanel room={room} voice={voice} agents={[]} messages={[]} onPosted={() => {}} onHeld={onHeld} deps={deps({ loadLiveKit: async () => lk })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Join voice" }));
+    await waitFor(() => expect(onHeld).toHaveBeenLastCalledWith(expect.objectContaining({ via: "speaches:8000" })));
+    expect(disconnected).not.toHaveBeenCalled();
+    view.unmount();
+    expect(disconnected).toHaveBeenCalledTimes(1);
+    expect(onHeld).toHaveBeenLastCalledWith(null);
+  });
+
+  it("must fail: a panel that was never joined has nothing to disconnect", () => {
+    const { lk, disconnected } = countingLiveKit();
+    const view = render(<VoicePanel room={room} voice={voice} agents={[]} messages={[]} onPosted={() => {}} deps={deps({ loadLiveKit: async () => lk })} />);
+    view.unmount();
+    // The count above would mean nothing if unmounting always disconnected.
+    expect(disconnected).not.toHaveBeenCalled();
+  });
+});

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { companion, issue, overview } from "../../../test/fixtures.ts";
 import { IssuePanel } from "../../../test/IssuePanel.tsx";
@@ -34,10 +34,33 @@ describe("start session button (ADR 0004: own tmux only)", () => {
     expect(onLaunch).toHaveBeenCalledWith({ repo: "m0x6A/rubato", number: 4 });
   });
 
-  it("is disabled for an issue that is not pinned", () => {
+  it("an issue that is not pinned offers Pin to… as its one next step, not a disabled Start (issue #357)", () => {
     const ov = overview({ issues: [issue(5, "web", { pins: [] })], companions: [companion("m0x6A", true)] });
     renderPanel(ov);
-    expect(screen.getByTestId("start-session")).toBeDisabled();
+    expect(screen.queryByTestId("start-session")).toBeNull();
+    expect(screen.getByTestId("issue-next")).toHaveAttribute("data-next", "pin");
+    expect(within(screen.getByTestId("next-step")).getByRole("button", { name: "Pin m0x6A/rubato#5 to…" })).toBeInTheDocument();
+    expect(screen.getByTestId("issue-next")).toHaveTextContent("not on the map yet");
+  });
+
+  it("the header offers exactly one primary step, whatever the issue's state", () => {
+    const states = [
+      issue(1, "web"),
+      issue(2, "web", { pins: [] }),
+      issue(3, "web", { sessions: [{ companion_id: "c1", user: "m0x6A", cwd: "/w", source: "hook", status: "working", last_seen: new Date().toISOString() }] }),
+      issue(4, "web", { finished: true, closed: true }),
+    ];
+    let checked = 0;
+    for (const i of states) {
+      const { unmount } = render(<IssuePanel overview={overview({ issues: [i], companions: [companion("m0x6A", true)] })} me={me} selected={i} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+      const head = screen.getByTestId("issue-detail").querySelector(".issue-head") as HTMLElement;
+      const primaries = head.querySelectorAll('.primary, [data-testid="next-step"]');
+      expect(primaries.length, `issue ${i.issue.number}`).toBeLessThanOrEqual(1);
+      expect(primaries.length, `issue ${i.issue.number}`).toBe(i.finished ? 0 : 1);
+      checked += 1;
+      unmount();
+    }
+    console.log(`checked ${checked} issue headers for one primary step`);
   });
 });
 
@@ -245,6 +268,9 @@ describe("messages for launched sessions (plan 122, ADR 0051)", () => {
     const base = { companion_id: "c1", user: "alice", cwd: "/w/9", source: "hook" as const, status: "idle" as const, last_seen: now };
     const launched = issue(9, "web", { sessions: [{ ...base, session_id: "s1", launch_id: "6f1c0c1e-0000-4000-8000-000000000009", spend_usd: 1.25 }, { ...base, session_id: "s2" }] });
     renderPanel(overview({ issues: [launched] }), launched);
+    // The sessions are a part of the issue of their own (issue #357).
+    expect(screen.getByTestId("section-sessions")).toHaveTextContent("Sessions2");
+    fireEvent.click(screen.getByTestId("section-sessions"));
     const toggles = screen.getAllByRole("button", { name: /Conversation/ });
     expect(toggles).toHaveLength(1);
     // The session row itself is unchanged: its spend still reads in dollars.

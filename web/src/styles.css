@@ -910,3 +910,23 @@ body:has(.login) { background-color: var(--canvas); background-image: radial-gra
 .row-actions { display: inline-flex; gap: 6px; opacity: 0; }
 .issue-row:hover .row-actions, .issue-row:focus-within .row-actions, .issue-row.to-pin .row-actions { opacity: 1; }
 @media (hover: none) { .row-actions { opacity: 1; } }
+
+/* The issue view (issue #357): a header that says where the issue stands and offers one next
+   step, then its parts, one at a time. */
+.issue-view { display: flex; flex-direction: column; gap: 12px; }
+.issue-head { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.issue-head h2 { margin: 4px 0 0; }
+.issue-head p { margin: 0; }
+.issue-title { font-size: 14px; }
+.issue-next { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; margin-top: 4px; }
+.issue-next > .muted { margin-right: auto; }
+.issue-next .primary { padding: 6px 14px; min-height: 32px; }
+.primary-menu > .pin-menu > button { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); font-weight: 600; padding: 6px 14px; min-height: 32px; font-size: 13px; }
+.in-voice { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.in-voice button { padding: 2px 10px; min-height: 24px; }
+.issue-section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.issue-section[hidden] { display: none; }
+.issue-section h3 { margin: 6px 0 0; }
+.issue-section > p, .issue-section > ul { margin: 0; }
+/* In the header's column the rail is as wide as the header and as high as itself. */
+.issue-head .stage-rail { flex: none; width: 100%; margin: 4px 0 2px; }
