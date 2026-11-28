@@ -27,9 +27,11 @@ impl From<Uuid> for LaunchParam {
 
 pub async fn log(
     State(app): State<App>,
+    scope: crate::kernel::tenancy::TenantScope,
     CurrentUser(user): CurrentUser,
     Path(LaunchParam { launch_id }): Path<LaunchParam>,
 ) -> Result<Json<LaunchLog>, (StatusCode, Json<Value>)> {
+    let t = scope.tenant();
     let internal = |e: anyhow::Error| {
         tracing::error!(slice = "session_log", error = %format!("{e:#}"), "session log failed");
         (
@@ -37,10 +39,11 @@ pub async fn log(
             Json(json!({ "reason": "internal" })),
         )
     };
+    // A launch of another tenant is unknown here, like one that does not exist (ADR 0089).
     if launch::launch_target(&app.db, launch_id)
         .await
         .map_err(internal)?
-        .is_none()
+        .is_none_or(|l| app.github.tenant_of(&l.issue.repo).as_ref() != Some(t))
     {
         app.reject(routes::LAUNCH_LOG, "unknown_launch", &user);
         return Err((
@@ -48,7 +51,7 @@ pub async fn log(
             Json(json!({ "reason": "unknown_launch" })),
         ));
     }
-    let entries = store::for_launch(&app.db, launch_id)
+    let entries = store::for_launch(&app.db, t, launch_id)
         .await
         .map_err(internal)?;
     Ok(Json(LaunchLog { launch_id, entries }))

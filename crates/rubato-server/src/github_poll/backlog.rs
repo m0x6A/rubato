@@ -5,7 +5,7 @@
 use super::{store, suggest};
 use crate::kernel::github::OpenIssueInfo;
 use crate::kernel::state::App;
-use crate::kernel::tenancy::WsKey;
+use crate::kernel::tenancy::{TenantId, WsKey};
 use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
@@ -98,8 +98,8 @@ pub struct Request {
 /// List each repo any workspace's map names, once (ADR 0048), and store the result; each
 /// workspace whose map names the repo places and suggests on its own map (ADR 0046). Never
 /// fails the poll: a repo that cannot be listed keeps its rows and gets its error recorded.
-pub async fn list_open_issues(app: &App, maps: &[(&WsKey, &SystemMap)]) -> Listed {
-    list_open_issues_in(app, maps, None).await
+pub async fn list_open_issues(app: &App, t: &TenantId, maps: &[(&WsKey, &SystemMap)]) -> Listed {
+    list_open_issues_in(app, t, maps, None).await
 }
 
 /// As [`list_open_issues`], listing only the repos in `only` (lower case) when it is given: a
@@ -107,6 +107,7 @@ pub async fn list_open_issues(app: &App, maps: &[(&WsKey, &SystemMap)]) -> Liste
 /// so a refresh for one repo leaves the others' rows alone.
 pub async fn list_open_issues_in(
     app: &App,
+    t: &TenantId,
     maps: &[(&WsKey, &SystemMap)],
     only: Option<&std::collections::BTreeSet<String>>,
 ) -> Listed {
@@ -124,8 +125,9 @@ pub async fn list_open_issues_in(
         if only.is_some_and(|o| !o.contains(&repo.to_ascii_lowercase())) {
             continue;
         }
-        // No live installation covers it: not listed (ADR 0087); coverage reports it.
-        if app.github.tenant_of(repo).is_none() {
+        // Not live in this tenant (nobody covers it, or another tenant does): not listed
+        // (ADR 0087, design §5.2); coverage reports it.
+        if app.github.tenant_of(repo).as_ref() != Some(t) {
             continue;
         }
         match app
@@ -208,6 +210,7 @@ pub async fn list_open_issues_in(
                 for (ws, placements) in &by_ws {
                     if let Err(e) = store::replace_open_issues(
                         &app.db,
+                        t,
                         ws,
                         repo,
                         &listing,
@@ -222,7 +225,8 @@ pub async fn list_open_issues_in(
             }
             Err(e) => {
                 tracing::warn!(rubato.repo = %repo, error = %e, "open issues listing failed");
-                if let Err(e) = store::record_listing_error(&app.db, repo, &format!("{e:#}")).await
+                if let Err(e) =
+                    store::record_listing_error(&app.db, t, repo, &format!("{e:#}")).await
                 {
                     tracing::error!(rubato.repo = %repo, error = %e, "storing the listing error failed");
                 }
@@ -239,7 +243,7 @@ pub async fn list_open_issues_in(
         none = counts.none,
         "backlog placement"
     );
-    record_gauges(app, &repos).await;
+    record_gauges(app, t, &repos).await;
     listed
 }
 
@@ -254,9 +258,10 @@ struct Counts {
 
 /// Both gauges on every tick, for every repo with a row: a gauge recorded only on change keeps
 /// its last value. A repo the map no longer names is recorded once as 0 and its rows removed.
-async fn record_gauges(app: &App, named: &[String]) {
+async fn record_gauges(app: &App, t: &TenantId, named: &[String]) {
     let (issues, repos) = match store::backlog(
         &app.db,
+        t,
         &WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
     )
     .await
@@ -280,7 +285,7 @@ async fn record_gauges(app: &App, named: &[String]) {
         } else {
             app.metrics.backlog_issues.record(0, &attrs);
             app.metrics.backlog_listed_at.record(0, &attrs);
-            if let Err(e) = store::forget_repo(&app.db, &r.repo).await {
+            if let Err(e) = store::forget_repo(&app.db, t, &r.repo).await {
                 tracing::error!(rubato.repo = %r.repo, error = %e, "forgetting a repo failed");
             }
         }
@@ -365,6 +370,7 @@ mod tests {
         let (app, reader, _tmp) = app(github.clone()).await;
         list_open_issues(
             &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &[(
                 &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &map(),
@@ -374,6 +380,7 @@ mod tests {
 
         let (issues, repos) = store::backlog(
             &app.db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         )
         .await
@@ -406,6 +413,7 @@ mod tests {
         });
         list_open_issues(
             &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &[(
                 &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &map(),
@@ -414,6 +422,7 @@ mod tests {
         .await;
         let (issues, _) = store::backlog(
             &app.db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         )
         .await
@@ -440,6 +449,7 @@ mod tests {
         let (app, reader, _tmp) = app(github.clone()).await;
         list_open_issues(
             &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &[(
                 &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &map(),
@@ -448,6 +458,7 @@ mod tests {
         .await;
         let (_, before) = store::backlog(
             &app.db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         )
         .await
@@ -466,6 +477,7 @@ mod tests {
         let (events, _guard) = capture::start();
         list_open_issues(
             &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &[(
                 &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &map(),
@@ -474,6 +486,7 @@ mod tests {
         .await;
         let (issues, repos) = store::backlog(
             &app.db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         )
         .await
@@ -508,6 +521,7 @@ mod tests {
         github.with(|g| g.open_errors.clear());
         list_open_issues(
             &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &[(
                 &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &map(),
@@ -516,6 +530,7 @@ mod tests {
         .await;
         let (_, repos) = store::backlog(
             &app.db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         )
         .await
@@ -534,6 +549,7 @@ mod tests {
         let (events, _guard) = capture::start();
         list_open_issues(
             &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &[(
                 &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &map(),
@@ -542,6 +558,7 @@ mod tests {
         .await;
         let (issues, repos) = store::backlog(
             &app.db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         )
         .await
@@ -576,6 +593,7 @@ mod tests {
         let (app, reader, _tmp) = app(github).await;
         list_open_issues(
             &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &[(
                 &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &map(),
@@ -586,6 +604,7 @@ mod tests {
         smaller.nodes[0].repo = None;
         list_open_issues(
             &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &[(
                 &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &smaller,
@@ -602,6 +621,7 @@ mod tests {
         );
         let (issues, repos) = store::backlog(
             &app.db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
             &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         )
         .await
@@ -690,13 +710,21 @@ mod workspace_tests {
         );
         let (kd, ks) = (WsKey::of_default("default"), WsKey::of_default("shop"));
         let maps = vec![(&kd, &default), (&ks, &shop)];
-        let listed = list_open_issues(&app, &maps).await;
+        let listed = list_open_issues(
+            &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
+            &maps,
+        )
+        .await;
 
         // Who wrote each issue is kept with it (migration 0031): the context graph keeps a
         // title only from the team.
-        let authors = crate::github_poll::open_issue_authors(&app.db)
-            .await
-            .unwrap();
+        let authors = crate::github_poll::open_issue_authors(
+            &app.db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
+        )
+        .await
+        .unwrap();
         assert_eq!(authors.len(), 4);
         assert_eq!(
             authors[&rubato_protocol::IssueRef::new("acme/auth", 1)],

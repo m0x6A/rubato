@@ -250,6 +250,28 @@ impl AppState {
         (r.entries.clone(), r.source)
     }
 
+    /// The tenant a repository is live in, for work that acts for no person (the poll, companion
+    /// intake, housekeeping): a repository belongs to at most one tenant (ADR 0087). An error
+    /// when no attached installation covers it, so nothing is read or written for it (design
+    /// §3.1). A request acts for the tenant of its `TenantScope`, never for this one.
+    pub fn repo_tenant(&self, repo: &str) -> anyhow::Result<TenantId> {
+        self.github.tenant_of(repo).ok_or_else(|| {
+            crate::kernel::github::NotCovered {
+                repo: repo.to_owned(),
+            }
+            .into()
+        })
+    }
+
+    /// Every tenant this server reads for: those with a live installation, in id order. With one
+    /// GitHub context, tenant `default`.
+    pub fn tenants(&self) -> Vec<TenantId> {
+        let mut out: Vec<TenantId> = self.github.live().into_iter().map(|l| l.tenant).collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// Whether a tenant holds this workspace now.
     pub fn holds_workspace(&self, key: &WsKey) -> bool {
         self.workspaces

@@ -1,6 +1,7 @@
 //! Table `plan_links`: the link comment of each approval (ADR 0055), at most one per approval.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::SqliteRow;
@@ -45,11 +46,11 @@ fn row(r: &SqliteRow) -> Result<LinkRow> {
 }
 
 /// Every link row, by approval.
-pub async fn all(db: &SqlitePool) -> Result<HashMap<Uuid, LinkRow>> {
+pub async fn all(db: &SqlitePool, t: &TenantId) -> Result<HashMap<Uuid, LinkRow>> {
     let rows = sqlx::query(
-        "SELECT approval_id, commit_sha, state, comment_id, url, created_at, posted_at FROM plan_links",
+        "SELECT approval_id, commit_sha, state, comment_id, url, created_at, posted_at FROM plan_links WHERE tenant_id = ?",
     )
-    .fetch_all(db)
+    .bind(t.as_str()).fetch_all(db)
     .await?;
     rows.iter()
         .map(|r| row(r).map(|l| (l.approval_id, l)))
@@ -60,14 +61,15 @@ pub async fn all(db: &SqlitePool) -> Result<HashMap<Uuid, LinkRow>> {
 /// another tick or task claimed it, and nothing is posted twice.
 pub async fn open(
     db: &SqlitePool,
+    t: &TenantId,
     approval_id: Uuid,
     commit_sha: &str,
     now: DateTime<Utc>,
 ) -> Result<bool> {
     let n = sqlx::query(
-        "INSERT OR IGNORE INTO plan_links (approval_id, commit_sha, state, created_at) VALUES (?, ?, 'opening', ?)",
+        "INSERT OR IGNORE INTO plan_links (tenant_id, approval_id, commit_sha, state, created_at) VALUES (?, ?, ?, 'opening', ?)",
     )
-    .bind(approval_id.to_string())
+    .bind(t.as_str()).bind(approval_id.to_string())
     .bind(commit_sha)
     .bind(ts(now))
     .execute(db)
@@ -78,18 +80,19 @@ pub async fn open(
 
 pub async fn posted(
     db: &SqlitePool,
+    t: &TenantId,
     approval_id: Uuid,
     comment_id: u64,
     url: &str,
     now: DateTime<Utc>,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE plan_links SET state = 'posted', comment_id = ?, url = ?, posted_at = ? WHERE approval_id = ?",
+        "UPDATE plan_links SET state = 'posted', comment_id = ?, url = ?, posted_at = ? WHERE tenant_id = ? AND approval_id = ?",
     )
     .bind(comment_id as i64)
     .bind(url)
     .bind(ts(now))
-    .bind(approval_id.to_string())
+    .bind(t.as_str()).bind(approval_id.to_string())
     .execute(db)
     .await?;
     Ok(())
@@ -97,10 +100,13 @@ pub async fn posted(
 
 /// GitHub refused the post: nothing exists on the issue, so the claim goes and a later tick
 /// tries again.
-pub async fn forget(db: &SqlitePool, approval_id: Uuid) -> Result<()> {
-    sqlx::query("DELETE FROM plan_links WHERE approval_id = ? AND state = 'opening'")
-        .bind(approval_id.to_string())
-        .execute(db)
-        .await?;
+pub async fn forget(db: &SqlitePool, t: &TenantId, approval_id: Uuid) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM plan_links WHERE tenant_id = ? AND approval_id = ? AND state = 'opening'",
+    )
+    .bind(t.as_str())
+    .bind(approval_id.to_string())
+    .execute(db)
+    .await?;
     Ok(())
 }

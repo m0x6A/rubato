@@ -101,6 +101,7 @@ pub async fn approve_draft(
     CurrentUser(login): CurrentUser,
     Json(req): Json<DraftApproveRequest>,
 ) -> Result<Answer, Refused> {
+    let t = ws.key().tenant();
     let refuse = |status: StatusCode, why: &str, extra: Value| {
         app.reject(routes::PLAN_DRAFT_APPROVE, why, &login);
         let mut v = json!({ "reason": why });
@@ -145,6 +146,7 @@ pub async fn approve_draft(
     // This version approved already: the first approval stands, whatever the session does now.
     if let Some(existing) = records::find(
         &app.db,
+        t,
         &issue,
         &draft.branch,
         &rev.info.plan_sha,
@@ -220,11 +222,12 @@ pub async fn approve_draft(
         summary: req.summary.clone(),
         handoff: None,
     };
-    let created = records::insert(&app.db, &approval)
+    let created = records::insert(&app.db, t, &approval)
         .await
         .map_err(internal)?;
     let stored = records::find(
         &app.db,
+        t,
         &issue,
         &draft.branch,
         &rev.info.plan_sha,

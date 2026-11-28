@@ -34,6 +34,7 @@ pub async fn fetch_and_store(
     branch: &str,
     head_sha: &str,
 ) -> Result<()> {
+    let t = &app.repo_tenant(&issue.repo)?;
     let path = plan_path(map, issue, branch);
     match app
         .github
@@ -61,6 +62,7 @@ pub async fn fetch_and_store(
                 let sha = approval_hash(&text);
                 store::upsert_plan(
                     &app.db,
+                    t,
                     issue,
                     branch,
                     &path,
@@ -82,6 +84,7 @@ pub async fn fetch_and_store(
                 let sha = approval_hash(&text);
                 store::upsert_plan(
                     &app.db,
+                    t,
                     issue,
                     branch,
                     &path,
@@ -93,7 +96,7 @@ pub async fn fetch_and_store(
                 .await?;
             }
         },
-        None => store::delete_plan(&app.db, issue).await?,
+        None => store::delete_plan(&app.db, t, issue).await?,
     }
     Ok(())
 }

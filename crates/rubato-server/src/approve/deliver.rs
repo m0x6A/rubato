@@ -96,9 +96,10 @@ async fn bind_waiting(app: &App, launch_id: Uuid) -> Result<()> {
     let Some(branch) = t.branch.as_deref() else {
         return Ok(());
     };
-    let drafts = crate::plan_drafts::latest_drafts(app).await?;
+    let tenant = app.repo_tenant(&t.issue.repo)?;
+    let drafts = crate::plan_drafts::latest_drafts(app, &tenant).await?;
     let mut waiting: Vec<RubatoApproval> = Vec::new();
-    for a in super::records::all(&app.db).await? {
+    for a in super::records::all(&app.db, &tenant).await? {
         let current_owned = drafts.iter().any(|d| {
             d.summary.draft_id == a.draft_id
                 && d.summary.plan_sha == a.plan_sha

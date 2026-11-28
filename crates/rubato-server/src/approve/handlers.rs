@@ -45,6 +45,7 @@ pub async fn approve(
     CurrentUser(login): CurrentUser,
     Json(req): Json<ApproveRequest>,
 ) -> Result<Answer, Refused> {
+    let t = ws.key().tenant();
     let refuse = |status: StatusCode, why: &str, extra: Value| {
         app.reject(routes::PLAN_APPROVE, why, &login);
         let mut v = json!({ "reason": why });
@@ -73,7 +74,7 @@ pub async fn approve(
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     let issue = req.issue.clone();
-    let Some(row) = plans::all(&app.db)
+    let Some(row) = plans::all(&app.db, t)
         .await
         .map_err(internal)?
         .into_iter()
@@ -110,7 +111,7 @@ pub async fn approve(
             json!({ "reasons": f.reasons }),
         ));
     }
-    if let Some(existing) = store::find(&app.db, &login, &issue, &req.sha)
+    if let Some(existing) = store::find(&app.db, t, &login, &issue, &req.sha)
         .await
         .map_err(internal)?
     {
@@ -134,12 +135,12 @@ pub async fn approve(
             ));
         }
     };
-    if !store::open(&app.db, &login, &issue, &req.sha, &row.branch)
+    if !store::open(&app.db, t, &login, &issue, &req.sha, &row.branch)
         .await
         .map_err(internal)?
     {
         // A concurrent request for the same intent inserted first; it posts.
-        let existing = store::find(&app.db, &login, &issue, &req.sha)
+        let existing = store::find(&app.db, t, &login, &issue, &req.sha)
             .await
             .map_err(internal)?;
         return existing
@@ -159,13 +160,13 @@ pub async fn approve(
         rubato.outcome = tracing::field::Empty
     ))
     .await;
-    let mut intent = store::find(&app.db, &login, &issue, &req.sha)
+    let mut intent = store::find(&app.db, t, &login, &issue, &req.sha)
         .await
         .map_err(internal)?
         .ok_or_else(|| internal(anyhow::anyhow!("approval row vanished")))?;
     match posted {
         Ok(c) => {
-            store::posted(&app.db, &intent, c.id, &c.url)
+            store::posted(&app.db, t, &intent, c.id, &c.url)
                 .await
                 .map_err(internal)?;
             tracing::info!(rubato.issue = %issue, login, rubato.outcome = "posted", "plan approved from Rubato");
@@ -175,7 +176,7 @@ pub async fn approve(
             Ok(answer(&intent))
         }
         Err(PostError::Refused { status }) => {
-            store::forget(&app.db, &login, &issue, &req.sha)
+            store::forget(&app.db, t, &login, &issue, &req.sha)
                 .await
                 .map_err(internal)?;
             tracing::warn!(rubato.issue = %issue, login, status, rubato.outcome = "refused", "GitHub refused the approval");

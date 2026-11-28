@@ -1,7 +1,8 @@
 //! Plan 345 task 3 (ADR 0087, design §3.3, §5): one GitHub client per App installation, each
 //! attached to one tenant. Two tenants here: `acme` with installation 11 covering
 //! `m0x6A/rubato` (the map's own repo) and `bcorp` with installation 22 covering `bcorp/web`.
-//! The map also names `stranger/repo`, which no installation covers.
+//! Workspace `main` is acme's; its map also names `bcorp/web`, another tenant's repository,
+//! and `stranger/repo`, which no installation covers. Neither is acme's to read.
 
 use rubato_server::kernel::config::{Config, WebhookSecret};
 use rubato_server::kernel::db;
@@ -99,6 +100,20 @@ async fn two() -> Two {
     tenants::load_routes(&app).await.unwrap();
     let r = admin::refresh_installations(&app).await;
     assert_eq!((r.installations, r.failed, r.added), (2, 0, 2), "{r:?}");
+    // Workspace `main` of tenant acme, on the map in acme's own repository.
+    app.set_workspaces(rubato_server::kernel::workspaces::Registry {
+        entries: vec![rubato_server::kernel::workspaces::WorkspaceEntry {
+            tenant: t("acme"),
+            id: "main".into(),
+            name: None,
+            map_repo: REPO.into(),
+            map_path: "docs/design/rubato-map.yml".into(),
+            map_ref: "main".into(),
+            map_file: None,
+            settings: Default::default(),
+        }],
+        source: rubato_server::kernel::workspaces::Source::Database,
+    });
     map::reload(&app).await.unwrap();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -120,7 +135,7 @@ async fn two() -> Two {
 impl Two {
     async fn pin(&self, repo: &str, number: i64) {
         sqlx::query(
-            "INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'default', ?, ?, 'node', 'rubato-server', 'm0x6A', ?)",
+            "INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('acme', 'main', ?, ?, 'node', 'rubato-server', 'm0x6A', ?)",
         )
         .bind(repo)
         .bind(number)
@@ -176,6 +191,16 @@ impl Two {
 #[tokio::test]
 async fn each_repository_is_read_only_through_the_installation_of_its_tenant() {
     let h = two().await;
+    h.acme.with(|g| {
+        g.issues.insert(
+            (REPO.into(), 2),
+            rubato_server::kernel::github::IssueInfo {
+                title: "acme's own issue".into(),
+                state: "open".into(),
+                url: "https://github.com/m0x6A/rubato/issues/2".into(),
+            },
+        );
+    });
     h.pin(REPO, 2).await;
     h.pin(STRANGER, 1).await;
     tasks::poll_once(&h.app).await.unwrap();
@@ -188,32 +213,38 @@ async fn each_repository_is_read_only_through_the_installation_of_its_tenant() {
     let ours = h.calls_naming("m0x6a/rubato");
     assert!(!ours.is_empty());
     assert!(ours.iter().all(|(who, _, _)| *who == "acme"), "{ours:?}");
+    // Design §5.2, §11.3: acme's map names bcorp's repository. That is a finding for acme, never
+    // a read: not through acme's installation, and not through bcorp's on acme's behalf.
     let theirs = h.calls_naming(BCORP);
-    assert!(
-        !theirs.is_empty(),
-        "the map names it and bcorp's installation covers it"
-    );
-    assert!(
-        theirs.iter().all(|(who, _, _)| *who == "bcorp"),
-        "{theirs:?}"
-    );
+    assert!(theirs.is_empty(), "{theirs:?}");
     // Each installation's own budget is read, through itself.
     for f in [&h.acme, &h.bcorp] {
         assert!(f.calls().iter().any(|(m, _)| *m == "rate_limit"));
     }
     assert!(h.person.calls().is_empty(), "{:?}", h.person.calls());
-    let uncovered: Vec<String> = sqlx::query_scalar("SELECT repo FROM uncovered_repos")
-        .fetch_all(&h.app.db)
-        .await
-        .unwrap();
+    let uncovered: Vec<(String, String)> =
+        sqlx::query_as("SELECT tenant_id, repo FROM uncovered_repos ORDER BY repo")
+            .fetch_all(&h.app.db)
+            .await
+            .unwrap();
     assert_eq!(
         uncovered,
-        [STRANGER],
-        "an uncovered repository is a finding"
+        [
+            ("acme".to_owned(), BCORP.to_owned()),
+            ("acme".to_owned(), STRANGER.to_owned())
+        ],
+        "both are uncovered for the tenant whose map names them"
     );
+    // What was read about acme's own issue is acme's row.
+    let meta: Vec<(String, String)> =
+        sqlx::query_as("SELECT tenant_id, repo FROM issue_meta ORDER BY repo")
+            .fetch_all(&h.app.db)
+            .await
+            .unwrap();
+    assert_eq!(meta, [("acme".to_owned(), REPO.to_owned())]);
     println!(
         "checked {} calls across 3 repositories and 2 installations",
-        ours.len() + theirs.len()
+        ours.len()
     );
 }
 
@@ -258,8 +289,8 @@ async fn an_installation_deleted_on_github_is_detached_and_its_rows_kept() {
     let h = two().await;
     let now = rubato_server::kernel::db::ts(chrono::Utc::now());
     for sql in [
-        "INSERT INTO room_agents (id, repo, number, branch, launch_id, owner, called_by, joined_at) VALUES ('a1', 'bcorp/web', 3, 'issue/3-x', 'l1', 'ada', 'ada', ?)",
-        "INSERT INTO room_requests (id, repo, number, branch, owner, launch_id, requested_by, at, state) VALUES ('r1', 'bcorp/web', 3, 'issue/3-x', 'ada', 'l1', 'bob', ?, 'pending')",
+        "INSERT INTO room_agents (tenant_id, id, repo, number, branch, launch_id, owner, called_by, joined_at) VALUES ('bcorp', 'a1', 'bcorp/web', 3, 'issue/3-x', 'l1', 'ada', 'ada', ?)",
+        "INSERT INTO room_requests (tenant_id, id, repo, number, branch, owner, launch_id, requested_by, at, state) VALUES ('bcorp', 'r1', 'bcorp/web', 3, 'issue/3-x', 'ada', 'l1', 'bob', ?, 'pending')",
         "INSERT INTO companion_queue (companion_id, repo, number, position, queued_by, queued_at) VALUES ('00000000-0000-0000-0000-0000000000aa', 'bcorp/web', 3, 0, 'ada', ?)",
     ] {
         sqlx::query(sql)

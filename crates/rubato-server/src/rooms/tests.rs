@@ -117,7 +117,7 @@ async fn merged(h: &H, n: u64, branch: &str) {
         updated_at: Utc::now(),
         url: "u".into(),
     };
-    sqlx::query("INSERT INTO pull_requests (repo, number, pr, fetched_at) VALUES (?, ?, ?, ?)")
+    sqlx::query("INSERT INTO pull_requests (tenant_id, repo, number, pr, fetched_at) VALUES ('default', ?, ?, ?, ?)")
         .bind(REPO)
         .bind(n as i64)
         .bind(serde_json::to_string(&pr).unwrap())
@@ -296,9 +296,16 @@ async fn a_seam_notice_is_posted_once_per_pair_in_both_rooms() {
     draft_on(&h, 2, "issue/2-d", "web-server").await;
     plan_on(&h, 3, "issue/3-z", "server-github").await;
     let (events, _guard) = capture::start();
-    assert_eq!(post_seam_notices(&h.app).await.unwrap(), 2);
     assert_eq!(
-        post_seam_notices(&h.app).await.unwrap(),
+        post_seam_notices(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        post_seam_notices(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap(),
         0,
         "the second tick posts none"
     );
@@ -340,16 +347,32 @@ async fn no_notice_when_the_seams_differ_or_one_plan_has_merged() {
     let h = harness().await;
     plan_on(&h, 1, "issue/1-x", "web-server").await;
     plan_on(&h, 3, "issue/3-z", "server-github").await;
-    assert_eq!(post_seam_notices(&h.app).await.unwrap(), 0);
+    assert_eq!(
+        post_seam_notices(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap(),
+        0
+    );
     plan_on(&h, 4, "issue/4-m", "web-server").await;
     merged(&h, 4, "issue/4-m").await;
-    assert_eq!(post_seam_notices(&h.app).await.unwrap(), 0, "#4 is done");
+    assert_eq!(
+        post_seam_notices(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap(),
+        0,
+        "#4 is done"
+    );
     // The same pair with #4 open: the check above is not passing by accident.
     sqlx::query("DELETE FROM pull_requests")
         .execute(&h.app.db)
         .await
         .unwrap();
-    assert_eq!(post_seam_notices(&h.app).await.unwrap(), 2);
+    assert_eq!(
+        post_seam_notices(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap(),
+        2
+    );
 }
 
 /// #265: no notice with a plan whose issue is closed on GitHub, merged or not.
@@ -360,8 +383,8 @@ async fn no_notice_when_one_issue_is_closed() {
     plan_on(&h, 4, "issue/4-m", "web-server").await;
     let set = async |state: &str| {
         sqlx::query(
-            "INSERT INTO issue_meta (repo, number, github_state, fetched_at) VALUES (?, 4, ?, ?) \
-             ON CONFLICT(repo, number) DO UPDATE SET github_state = excluded.github_state",
+            "INSERT INTO issue_meta (tenant_id, repo, number, github_state, fetched_at) VALUES ('default', ?, 4, ?, ?) \
+             ON CONFLICT(tenant_id, repo, number) DO UPDATE SET github_state = excluded.github_state",
         )
         .bind(REPO)
         .bind(state)
@@ -371,10 +394,21 @@ async fn no_notice_when_one_issue_is_closed() {
         .unwrap();
     };
     set("closed").await;
-    assert_eq!(post_seam_notices(&h.app).await.unwrap(), 0, "#4 is closed");
+    assert_eq!(
+        post_seam_notices(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap(),
+        0,
+        "#4 is closed"
+    );
     // The same pair with #4 open: the check above is not passing by accident.
     set("open").await;
-    assert_eq!(post_seam_notices(&h.app).await.unwrap(), 2);
+    assert_eq!(
+        post_seam_notices(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap(),
+        2
+    );
 }
 
 // ---- PR 11: calling an agent in, addressed turns, replies, limits (ADR 0057, plan 122 §D8) ----
@@ -480,6 +514,7 @@ mod call_in_tests {
     ) -> Result<RoomRequest, (StatusCode, String)> {
         answer(
             State(h.app.clone()),
+            crate::kernel::tenancy::default_scope(),
             CurrentUser(user.into()),
             Path(id.into()),
             Json(RequestAnswerBody { answer: a }),

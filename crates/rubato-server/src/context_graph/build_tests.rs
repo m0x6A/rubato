@@ -243,7 +243,7 @@ async fn repositories_build_one_after_the_other_and_an_uncovered_one_is_not_aske
             tarball(&fixture_files()),
         );
     });
-    sqlx::query("INSERT INTO uncovered_repos (repo, seen_at) VALUES ('m0x6A/private', '2026-11-26T17:00:00Z')")
+    sqlx::query("INSERT INTO uncovered_repos (tenant_id, repo, seen_at) VALUES ('default', 'm0x6A/private', '2026-11-26T17:00:00Z')")
         .execute(&app.db)
         .await
         .unwrap();

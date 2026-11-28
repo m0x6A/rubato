@@ -71,8 +71,9 @@ pub(super) fn addressed_agents<'a>(text: &str, present: &'a [AgentRow]) -> Vec<&
 
 /// The plan is on the branch: building, so turns run in a read-only fork.
 async fn building(app: &App, room: &RoomKey) -> Result<bool> {
+    let t = &app.repo_tenant(&room.repo)?;
     let issue = IssueRef::new(room.repo.clone(), room.number);
-    Ok(plans::all(&app.db)
+    Ok(plans::all(&app.db, t)
         .await?
         .iter()
         .any(|p| p.issue == issue && p.branch == room.branch && p.plan.is_some()))
@@ -90,8 +91,9 @@ pub(super) async fn dispatch_turn(
     turn_id: Uuid,
     addressed_by: &str,
 ) -> Result<()> {
+    let t = &app.repo_tenant(&room.repo)?;
     let since = agent.since();
-    let context: Vec<(String, String)> = store::messages(&app.db, room)
+    let context: Vec<(String, String)> = store::messages(&app.db, t, room)
         .await?
         .into_iter()
         .filter(|m| m.at > since || m.id == trigger.id)
@@ -130,7 +132,7 @@ pub(super) async fn dispatch_turn(
         session_messages::CHAT_PRIORITY,
     )
     .await?;
-    agents::addressed(&app.db, agent.id, trigger.at.max(since)).await?;
+    agents::addressed(&app.db, t, agent.id, trigger.at.max(since)).await?;
     tracing::info!(
         rubato.room = %room_attr(room),
         rubato.launch_id = %agent.agent.launch_id,
@@ -145,7 +147,8 @@ pub(super) async fn dispatch_turn(
 
 /// Turns made by agents' messages since the last person posted, and whether the stop was said.
 async fn agent_streak(app: &App, room: &RoomKey) -> Result<(usize, bool)> {
-    let messages = store::messages(&app.db, room).await?;
+    let t = &app.repo_tenant(&room.repo)?;
+    let messages = store::messages(&app.db, t, room).await?;
     let start = messages
         .iter()
         .rposition(|m| m.author_kind == RoomAuthorKind::Person)
@@ -179,9 +182,10 @@ fn system(text: String, turn_id: Option<Uuid>, at: chrono::DateTime<chrono::Utc>
 /// Post an agent's answer to turn `t`, and make the turns it addresses, up to the limit.
 async fn post_reply(app: &App, t: &RoomTurnRef, text: &str) -> Result<bool> {
     let room = &t.room;
+    let tenant = &app.repo_tenant(&room.repo)?;
     let handle = agent_handle(&t.owner);
     super::callin::sweep_room(app, room).await?;
-    let present: Vec<AgentRow> = agents::agents_in(&app.db, room)
+    let present: Vec<AgentRow> = agents::agents_in(&app.db, tenant, room)
         .await?
         .into_iter()
         .filter(|a| a.present() && !a.agent.handle.eq_ignore_ascii_case(&handle))
@@ -207,7 +211,7 @@ async fn post_reply(app: &App, t: &RoomTurnRef, text: &str) -> Result<bool> {
         turn_id: Some(t.turn_id),
         spoken: false,
     };
-    if !store::insert(&app.db, room, &m).await? {
+    if !store::insert(&app.db, tenant, room, &m).await? {
         tracing::debug!(turn_id = %t.turn_id, "room reply already posted");
         return Ok(false);
     }
@@ -230,7 +234,7 @@ async fn post_reply(app: &App, t: &RoomTurnRef, text: &str) -> Result<bool> {
                 None,
                 now,
             );
-            store::insert(&app.db, room, &notice).await?;
+            store::insert(&app.db, tenant, room, &notice).await?;
             tracing::warn!(rubato.room = %room_attr(room), limit, "room turn limit reached");
         }
     }
@@ -254,7 +258,7 @@ pub async fn on_hook(app: &App, companion_id: Uuid, hook: &HookEvent) {
     };
     let result = async {
         let Some(message_id) =
-            session_log::prompt_message(&app.db, launch_id, &hook.session_id, prompt_id).await?
+            session_log::prompt_message(app, launch_id, &hook.session_id, prompt_id).await?
         else {
             return Ok(());
         };
@@ -305,8 +309,9 @@ pub async fn on_room_reply(app: &App, companion_id: Uuid, r: &RoomReply) -> bool
     }
     let result = async {
         let now = app.clock.now();
+        let tenant = app.repo_tenant(&t.room.repo)?;
         if let Some(fork) = &r.fork_session_id {
-            agents::set_fork_session(&app.db, &t.room, t.launch_id, fork).await?;
+            agents::set_fork_session(&app.db, &tenant, &t.room, t.launch_id, fork).await?;
         }
         if let Some(usd) = r.cost_usd {
             let key = match &r.fork_session_id {
@@ -314,7 +319,16 @@ pub async fn on_room_reply(app: &App, companion_id: Uuid, r: &RoomReply) -> bool
                 None => format!("fork-turn:{}", r.turn_id),
             };
             let issue = IssueRef::new(t.room.repo.clone(), t.room.number);
-            spend_history::add_cost(&app.db, &app.metrics, companion_id, &key, &issue, usd, now)
+            spend_history::add_cost(
+                &app.db,
+                &tenant,
+                &app.metrics,
+                companion_id,
+                &key,
+                &issue,
+                usd,
+                now,
+            )
                 .await?;
         }
         let failed = r.error.clone().or_else(|| {
@@ -330,7 +344,7 @@ pub async fn on_room_reply(app: &App, companion_id: Uuid, r: &RoomReply) -> bool
                 Some(t.turn_id),
                 now,
             );
-            store::insert(&app.db, &t.room, &m).await?;
+            store::insert(&app.db, &tenant, &t.room, &m).await?;
             tracing::warn!(rubato.room = %room_attr(&t.room), turn_id = %t.turn_id, error = %why, "room fork turn failed");
             notify(app, &t.room);
             return Ok(true);

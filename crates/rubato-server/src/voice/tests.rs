@@ -239,6 +239,7 @@ async fn say(h: &H, user: &str, id: Uuid, to: Option<&str>, audio: Vec<u8>) -> S
     );
     utterance(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(user.into()),
         Query(UtteranceQuery {
             repo: REPO.into(),
@@ -258,6 +259,7 @@ async fn say(h: &H, user: &str, id: Uuid, to: Option<&str>, audio: Vec<u8>) -> S
 async fn hear(h: &H, id: Uuid) -> Result<(StatusCode, Vec<u8>), (StatusCode, String)> {
     match speech(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser("carol".into()),
         Path(id.into()),
     )

@@ -1,6 +1,7 @@
 //! Tables `plan_drafts` and `plan_draft_revisions`.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{DraftFile, DraftRevisionInfo, IssueRef, Plan};
@@ -77,13 +78,14 @@ const REVISION_COLUMNS: &str =
 /// The draft of this branch, created with `owner` when there is none.
 pub async fn get_or_create(
     db: &SqlitePool,
+    t: &TenantId,
     issue: &IssueRef,
     branch: &str,
     owner: &str,
     now: DateTime<Utc>,
 ) -> Result<DraftRow> {
-    sqlx::query("INSERT OR IGNORE INTO plan_drafts (id, repo, number, branch, owner, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .bind(Uuid::new_v4().to_string())
+    sqlx::query("INSERT OR IGNORE INTO plan_drafts (tenant_id, id, repo, number, branch, owner, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(t.as_str()).bind(Uuid::new_v4().to_string())
         .bind(&issue.repo)
         .bind(issue.number as i64)
         .bind(branch)
@@ -92,9 +94,9 @@ pub async fn get_or_create(
         .execute(db)
         .await?;
     let r = sqlx::query(&format!(
-        "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE repo = ? AND number = ? AND branch = ?"
+        "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE tenant_id = ? AND repo = ? AND number = ? AND branch = ?"
     ))
-    .bind(&issue.repo)
+    .bind(t.as_str()).bind(&issue.repo)
     .bind(issue.number as i64)
     .bind(branch)
     .fetch_one(db)
@@ -106,6 +108,7 @@ pub async fn get_or_create(
 /// draft already: an import never takes one over.
 pub async fn create_imported(
     db: &SqlitePool,
+    t: &TenantId,
     issue: &IssueRef,
     branch: &str,
     owner: &str,
@@ -113,8 +116,8 @@ pub async fn create_imported(
     now: DateTime<Utc>,
 ) -> Result<Option<Uuid>> {
     let id = Uuid::new_v4();
-    let done = sqlx::query("INSERT OR IGNORE INTO plan_drafts (id, repo, number, branch, owner, created_at, imported_from, original_author) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(id.to_string())
+    let done = sqlx::query("INSERT OR IGNORE INTO plan_drafts (tenant_id, id, repo, number, branch, owner, created_at, imported_from, original_author) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(t.as_str()).bind(id.to_string())
         .bind(&issue.repo)
         .bind(issue.number as i64)
         .bind(branch)
@@ -127,11 +130,16 @@ pub async fn create_imported(
     Ok((done.rows_affected() == 1).then_some(id))
 }
 
-pub async fn find(db: &SqlitePool, issue: &IssueRef, branch: &str) -> Result<Option<DraftRow>> {
+pub async fn find(
+    db: &SqlitePool,
+    t: &TenantId,
+    issue: &IssueRef,
+    branch: &str,
+) -> Result<Option<DraftRow>> {
     let r = sqlx::query(&format!(
-        "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE repo = ? AND number = ? AND branch = ?"
+        "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE tenant_id = ? AND repo = ? AND number = ? AND branch = ?"
     ))
-    .bind(&issue.repo)
+    .bind(t.as_str()).bind(&issue.repo)
     .bind(issue.number as i64)
     .bind(branch)
     .fetch_optional(db)
@@ -139,20 +147,22 @@ pub async fn find(db: &SqlitePool, issue: &IssueRef, branch: &str) -> Result<Opt
     r.as_ref().map(draft).transpose()
 }
 
-pub async fn get(db: &SqlitePool, id: Uuid) -> Result<Option<DraftRow>> {
+pub async fn get(db: &SqlitePool, t: &TenantId, id: Uuid) -> Result<Option<DraftRow>> {
     let r = sqlx::query(&format!(
-        "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE id = ?"
+        "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE tenant_id = ? AND id = ?"
     ))
+    .bind(t.as_str())
     .bind(id.to_string())
     .fetch_optional(db)
     .await?;
     r.as_ref().map(draft).transpose()
 }
 
-pub async fn all(db: &SqlitePool) -> Result<Vec<DraftRow>> {
+pub async fn all(db: &SqlitePool, t: &TenantId) -> Result<Vec<DraftRow>> {
     let rows = sqlx::query(&format!(
-        "SELECT {DRAFT_COLUMNS} FROM plan_drafts ORDER BY repo, number, branch"
+        "SELECT {DRAFT_COLUMNS} FROM plan_drafts WHERE tenant_id = ? ORDER BY repo, number, branch"
     ))
+    .bind(t.as_str())
     .fetch_all(db)
     .await?;
     rows.iter().map(draft).collect()
@@ -160,44 +170,53 @@ pub async fn all(db: &SqlitePool) -> Result<Vec<DraftRow>> {
 
 pub async fn record_conflict(
     db: &SqlitePool,
+    t: &TenantId,
     id: Uuid,
     user: &str,
     at: DateTime<Utc>,
 ) -> Result<()> {
-    sqlx::query("UPDATE plan_drafts SET conflict_user = ?, conflict_at = ? WHERE id = ?")
-        .bind(user)
-        .bind(ts(at))
-        .bind(id.to_string())
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "UPDATE plan_drafts SET conflict_user = ?, conflict_at = ? WHERE tenant_id = ? AND id = ?",
+    )
+    .bind(user)
+    .bind(ts(at))
+    .bind(t.as_str())
+    .bind(id.to_string())
+    .execute(db)
+    .await?;
     Ok(())
 }
 
-pub async fn latest(db: &SqlitePool, draft_id: Uuid) -> Result<Option<RevisionRow>> {
+pub async fn latest(db: &SqlitePool, t: &TenantId, draft_id: Uuid) -> Result<Option<RevisionRow>> {
     let r = sqlx::query(&format!(
-        "SELECT {REVISION_COLUMNS} FROM plan_draft_revisions WHERE draft_id = ? ORDER BY rev DESC LIMIT 1"
+        "SELECT {REVISION_COLUMNS} FROM plan_draft_revisions WHERE tenant_id = ? AND draft_id = ? ORDER BY rev DESC LIMIT 1"
     ))
-    .bind(draft_id.to_string())
+    .bind(t.as_str()).bind(draft_id.to_string())
     .fetch_optional(db)
     .await?;
     r.as_ref().map(revision).transpose()
 }
 
-pub async fn revisions(db: &SqlitePool, draft_id: Uuid) -> Result<Vec<RevisionRow>> {
+pub async fn revisions(db: &SqlitePool, t: &TenantId, draft_id: Uuid) -> Result<Vec<RevisionRow>> {
     let rows = sqlx::query(&format!(
-        "SELECT {REVISION_COLUMNS} FROM plan_draft_revisions WHERE draft_id = ? ORDER BY rev"
+        "SELECT {REVISION_COLUMNS} FROM plan_draft_revisions WHERE tenant_id = ? AND draft_id = ? ORDER BY rev"
     ))
-    .bind(draft_id.to_string())
+    .bind(t.as_str()).bind(draft_id.to_string())
     .fetch_all(db)
     .await?;
     rows.iter().map(revision).collect()
 }
 
-pub async fn revision_of(db: &SqlitePool, draft_id: Uuid, rev: u32) -> Result<Option<RevisionRow>> {
+pub async fn revision_of(
+    db: &SqlitePool,
+    t: &TenantId,
+    draft_id: Uuid,
+    rev: u32,
+) -> Result<Option<RevisionRow>> {
     let r = sqlx::query(&format!(
-        "SELECT {REVISION_COLUMNS} FROM plan_draft_revisions WHERE draft_id = ? AND rev = ?"
+        "SELECT {REVISION_COLUMNS} FROM plan_draft_revisions WHERE tenant_id = ? AND draft_id = ? AND rev = ?"
     ))
-    .bind(draft_id.to_string())
+    .bind(t.as_str()).bind(draft_id.to_string())
     .bind(rev as i64)
     .fetch_optional(db)
     .await?;
@@ -208,16 +227,18 @@ pub async fn revision_of(db: &SqlitePool, draft_id: Uuid, rev: u32) -> Result<Op
 /// one's. One statement, so two bundles at once cannot take the same number or both be stored.
 pub async fn insert_revision(
     db: &SqlitePool,
+    t: &TenantId,
     draft_id: Uuid,
     rev: &RevisionRow,
 ) -> Result<Option<u32>> {
     let d = draft_id.to_string();
     let r = sqlx::query(
-        "INSERT INTO plan_draft_revisions (draft_id, rev, launch_id, session_id, files, missing, plan_sha, bundle_hash, plan, parse_error, at) \
-         SELECT ?, COALESCE(MAX(rev), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM plan_draft_revisions WHERE draft_id = ? \
-         HAVING COALESCE((SELECT bundle_hash FROM plan_draft_revisions WHERE draft_id = ? ORDER BY rev DESC LIMIT 1), '') <> ? \
+        "INSERT INTO plan_draft_revisions (tenant_id, draft_id, rev, launch_id, session_id, files, missing, plan_sha, bundle_hash, plan, parse_error, at) \
+         SELECT ?, ?, COALESCE(MAX(rev), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM plan_draft_revisions WHERE tenant_id = ? AND draft_id = ? \
+         HAVING COALESCE((SELECT bundle_hash FROM plan_draft_revisions WHERE tenant_id = ? AND draft_id = ? ORDER BY rev DESC LIMIT 1), '') <> ? \
          RETURNING rev",
     )
+    .bind(t.as_str())
     .bind(&d)
     .bind(rev.launch_id.map(|l| l.to_string()))
     .bind(&rev.info.session_id)
@@ -228,7 +249,9 @@ pub async fn insert_revision(
     .bind(rev.plan.as_ref().map(serde_json::to_string).transpose()?)
     .bind(&rev.info.parse_error)
     .bind(ts(rev.info.at))
+    .bind(t.as_str())
     .bind(&d)
+    .bind(t.as_str())
     .bind(&d)
     .bind(&rev.info.bundle_hash)
     .fetch_optional(db)

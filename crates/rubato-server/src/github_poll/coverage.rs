@@ -10,17 +10,20 @@
 
 use super::store;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use chrono::Utc;
 use std::collections::BTreeSet;
 
-/// Record the repos of `needed` no installation covers. On a port that is not an installation
-/// nothing is called: the gauge is 0 and nothing is uncovered.
-pub async fn check_coverage(app: &App, needed: &BTreeSet<String>) {
+/// Record the repos of `needed` (what tenant `t`'s maps and tracked issues name) that no
+/// installation of that tenant covers: one nobody covers, and one of another tenant, alike
+/// (design §5.2). On a port that is not an installation nothing is called: the gauge is 0 and
+/// nothing is uncovered.
+pub async fn check_coverage(app: &App, t: &TenantId, needed: &BTreeSet<String>) {
     let one = app.github.live().into_iter().next().map(|l| l.client);
     let uncovered: Vec<String> = if app.github.routes_by_installation() {
         needed
             .iter()
-            .filter(|r| app.github.tenant_of(r).is_none())
+            .filter(|r| app.github.tenant_of(r).as_ref() != Some(t))
             .cloned()
             .collect()
     } else if let Some(one) = one.filter(|c| c.is_installation()) {
@@ -40,12 +43,13 @@ pub async fn check_coverage(app: &App, needed: &BTreeSet<String>) {
         Vec::new()
     };
     for repo in &uncovered {
-        tracing::warn!(rubato.repo = %repo, "repo not covered by the installation");
+        tracing::warn!(rubato.tenant = %t, rubato.repo = %repo, "repo not covered by the installation");
     }
-    app.metrics
-        .github_repos_uncovered
-        .record(uncovered.len() as u64, &[]);
-    if let Err(e) = store::replace_uncovered(&app.db, &uncovered, Utc::now()).await {
+    app.metrics.github_repos_uncovered.record(
+        uncovered.len() as u64,
+        &crate::kernel::tenancy::tenant_attrs(t),
+    );
+    if let Err(e) = store::replace_uncovered(&app.db, t, &uncovered, Utc::now()).await {
         tracing::error!(error = %e, "storing uncovered repos failed");
     }
 }
@@ -78,17 +82,37 @@ mod tests {
         };
 
         // Not an installation (a personal token, the fake): no call, nothing uncovered, 0.
-        check_coverage(&app, &needed).await;
+        check_coverage(
+            &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
+            &needed,
+        )
+        .await;
         assert!(github.calls().is_empty(), "{:?}", github.calls());
         assert_eq!(gauge(&reader), 0);
-        assert!(store::uncovered(&app.db).await.unwrap().is_empty());
+        assert!(
+            store::uncovered(&app.db, &crate::kernel::tenancy::TenantId::default_tenant())
+                .await
+                .unwrap()
+                .is_empty()
+        );
 
         // An installation that covers one of the two.
         github.with(|g| g.installation = Some(vec!["O/Covered".into()]));
         let (events, _guard) = capture::start();
-        check_coverage(&app, &needed).await;
+        check_coverage(
+            &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
+            &needed,
+        )
+        .await;
         assert_eq!(github.calls(), [("installation_repos", String::new())]);
-        assert_eq!(store::uncovered(&app.db).await.unwrap(), ["o/left-out"]);
+        assert_eq!(
+            store::uncovered(&app.db, &crate::kernel::tenancy::TenantId::default_tenant())
+                .await
+                .unwrap(),
+            ["o/left-out"]
+        );
         assert_eq!(gauge(&reader), 1);
         {
             let events = events.lock().unwrap();
@@ -105,8 +129,18 @@ mod tests {
 
         // The repo is added to the installation: the finding goes away and the gauge is 0.
         github.with(|g| g.installation = Some(vec!["o/covered".into(), "o/left-out".into()]));
-        check_coverage(&app, &needed).await;
-        assert!(store::uncovered(&app.db).await.unwrap().is_empty());
+        check_coverage(
+            &app,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
+            &needed,
+        )
+        .await;
+        assert!(
+            store::uncovered(&app.db, &crate::kernel::tenancy::TenantId::default_tenant())
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(gauge(&reader), 0);
         println!("checked 2 repos against 3 installations");
     }

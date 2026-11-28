@@ -1,6 +1,7 @@
 //! Table `room_messages`.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::{Result, anyhow};
 use rubato_protocol::{IssueRef, RoomAuthorKind, RoomKey, RoomMessage, SeamNotice};
 use sqlx::sqlite::SqliteRow;
@@ -51,13 +52,17 @@ fn message(r: &SqliteRow) -> Result<RoomMessage> {
 
 /// Store a message in `room`. False when it is a seam notice the room already has, or an
 /// agent's reply to a turn it already answered.
-pub async fn insert(db: &SqlitePool, room: &RoomKey, m: &RoomMessage) -> Result<bool> {
+pub async fn insert(
+    db: &SqlitePool,
+    t: &TenantId,
+    room: &RoomKey,
+    m: &RoomMessage,
+) -> Result<bool> {
     let n = m.notice.as_ref();
     let r = sqlx::query(
-        "INSERT OR IGNORE INTO room_messages (id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO room_messages (tenant_id, id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(m.id.to_string())
+    .bind(t.as_str()).bind(m.id.to_string())
     .bind(&room.repo)
     .bind(room.number as i64)
     .bind(&room.branch)
@@ -82,12 +87,11 @@ pub async fn insert(db: &SqlitePool, room: &RoomKey, m: &RoomMessage) -> Result<
 }
 
 /// The room's messages, oldest first.
-pub async fn messages(db: &SqlitePool, room: &RoomKey) -> Result<Vec<RoomMessage>> {
+pub async fn messages(db: &SqlitePool, t: &TenantId, room: &RoomKey) -> Result<Vec<RoomMessage>> {
     let rows = sqlx::query(
-        "SELECT id, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken \
-         FROM room_messages WHERE repo = ? AND number = ? AND branch = ? ORDER BY at, rowid",
+        "SELECT id, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken FROM room_messages WHERE tenant_id = ? AND repo = ? AND number = ? AND branch = ? ORDER BY at, rowid",
     )
-    .bind(&room.repo)
+    .bind(t.as_str()).bind(&room.repo)
     .bind(room.number as i64)
     .bind(&room.branch)
     .fetch_all(db)
@@ -96,12 +100,15 @@ pub async fn messages(db: &SqlitePool, room: &RoomKey) -> Result<Vec<RoomMessage
 }
 
 /// One message by id, with the room it is in.
-pub async fn by_id(db: &SqlitePool, id: uuid::Uuid) -> Result<Option<(RoomKey, RoomMessage)>> {
+pub async fn by_id(
+    db: &SqlitePool,
+    t: &TenantId,
+    id: uuid::Uuid,
+) -> Result<Option<(RoomKey, RoomMessage)>> {
     let row = sqlx::query(
-        "SELECT id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken \
-         FROM room_messages WHERE id = ?",
+        "SELECT id, repo, number, branch, author_kind, author, text, at, notice_seam, notice_repo, notice_number, notice_branch, addressed, turn_id, spoken FROM room_messages WHERE tenant_id = ? AND id = ?",
     )
-    .bind(id.to_string())
+    .bind(t.as_str()).bind(id.to_string())
     .fetch_optional(db)
     .await?;
     row.map(|r| {
@@ -118,12 +125,16 @@ pub async fn by_id(db: &SqlitePool, id: uuid::Uuid) -> Result<Option<(RoomKey, R
 }
 
 /// Whether a person's spoken message in `room` made turn `turn_id` (ADR 0073).
-pub async fn turn_was_spoken(db: &SqlitePool, room: &RoomKey, turn_id: uuid::Uuid) -> Result<bool> {
+pub async fn turn_was_spoken(
+    db: &SqlitePool,
+    t: &TenantId,
+    room: &RoomKey,
+    turn_id: uuid::Uuid,
+) -> Result<bool> {
     let n: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM room_messages WHERE repo = ? AND number = ? AND branch = ? \
-         AND turn_id = ? AND author_kind = 'person' AND spoken = 1",
+        "SELECT COUNT(*) FROM room_messages WHERE tenant_id = ? AND repo = ? AND number = ? AND branch = ? AND turn_id = ? AND author_kind = 'person' AND spoken = 1",
     )
-    .bind(&room.repo)
+    .bind(t.as_str()).bind(&room.repo)
     .bind(room.number as i64)
     .bind(&room.branch)
     .bind(turn_id.to_string())

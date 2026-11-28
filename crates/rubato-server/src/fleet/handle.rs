@@ -294,7 +294,7 @@ async fn act_inner(
                 ));
             }
             let since = Utc::now() - Duration::days(limits::SOMEONE_ELSES_DAYS);
-            let drafted_by_another = plan_drafts::latest_drafts(app)
+            let drafted_by_another = plan_drafts::latest_drafts(app, lead_ws.tenant())
                 .await?
                 .iter()
                 .any(|d| d.issue == *issue && !d.summary.owner.eq_ignore_ascii_case(owner));

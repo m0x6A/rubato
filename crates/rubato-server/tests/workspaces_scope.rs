@@ -328,7 +328,7 @@ async fn shared_auth() -> H {
             "issue": { "repo": "acme/auth", "number": n }, "path": format!("docs/plans/{n}.md"),
             "affected_parts": [{ "node": part, "status": "affected", "change": "x" }], "o_rows": []
         });
-        sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, fetched_at, approval_sha) VALUES ('acme/auth', ?, ?, ?, ?, NULL, '2026-11-14T08:00:00Z', ?)")
+        sqlx::query("INSERT INTO plans (tenant_id, repo, number, branch, path, plan, parse_error, fetched_at, approval_sha) VALUES ('default', 'acme/auth', ?, ?, ?, ?, NULL, '2026-11-14T08:00:00Z', ?)")
             .bind(n).bind(format!("issue/{n}-x")).bind(format!("docs/plans/{n}.md")).bind(plan.to_string()).bind(SHA)
             .execute(&app.db).await.unwrap();
     }
@@ -453,5 +453,57 @@ async fn an_issue_pinned_in_another_workspace_says_so() {
             .issues
             .iter()
             .any(|i| i.issue.number == 8)
+    );
+}
+
+/// Plan 345, design §11.3 (the backlog gap): a workspace's backlog is the open issues of the
+/// repositories its own map names. Before, every workspace listed every open issue.
+#[tokio::test]
+async fn a_workspaces_backlog_holds_only_its_own_maps_repositories() {
+    let h = two_workspaces().await;
+    for (repo, number) in [("m0x6A/rubato", 900), ("acme/shop", 901)] {
+        sqlx::query(
+            "INSERT INTO open_issues (tenant_id, repo, number, title, url, labels, updated_at) VALUES ('default', ?, ?, 't', 'u', '[]', '2026-11-28T00:00:00+00:00')",
+        )
+        .bind(repo)
+        .bind(number)
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO backlog_repos (tenant_id, repo, listed_at) VALUES ('default', ?, '2026-11-28T00:00:00+00:00')",
+        )
+        .bind(repo)
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    }
+    let listed = |o: &Overview| {
+        (
+            o.backlog
+                .issues
+                .iter()
+                .map(|i| i.issue.to_string())
+                .collect::<Vec<_>>(),
+            o.backlog
+                .repos
+                .iter()
+                .map(|r| r.repo.clone())
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(
+        listed(&h.overview(None).await),
+        (
+            vec!["m0x6A/rubato#900".to_owned()],
+            vec!["m0x6A/rubato".to_owned()]
+        )
+    );
+    assert_eq!(
+        listed(&h.overview(Some("shop")).await),
+        (
+            vec!["acme/shop#901".to_owned()],
+            vec!["acme/shop".to_owned()]
+        )
     );
 }

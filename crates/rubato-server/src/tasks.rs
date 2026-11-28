@@ -11,7 +11,7 @@
 //! `github_poll` and `plans` name no other slice.
 
 use crate::kernel::state::{App, LoadedMap};
-use crate::kernel::tenancy::WsKey;
+use crate::kernel::tenancy::{TenantId, WsKey};
 use crate::{
     admin, agent_reports, approve, auth, companion_link, github_poll, launch, map, map_draft,
     new_issue, overview, pairing, pins, plan_status, plans, pulls, queue, rooms, session_messages,
@@ -323,13 +323,17 @@ impl Poller {
         Ok(())
     }
 
-    /// The GitHub reads of one pass (design §9.1, design 208 D7). `None` when no map is loaded.
+    /// The GitHub reads of one pass (design §9.1, design 208 D7), one tenant after another
+    /// (design §5.3: no anchor map; sequential on purpose at this scale, each under a
+    /// `rubato.poll.tenant_pass` span that carries its tenant and its duration). `None` when no
+    /// map is loaded at all.
     async fn pass(
         &mut self,
         app: &App,
         lane: Lane,
         scope: Scope<'_>,
     ) -> Result<Option<PassReport>> {
+        use tracing::Instrument as _;
         let targets = match scope {
             Scope::All => None,
             Scope::Targets(t) => Some(t),
@@ -340,38 +344,8 @@ impl Poller {
         {
             tracing::error!(error = %e, "map reload after a map-branch push failed");
         }
-        // Pinned in any workspace: each issue is read once, whatever views show it (ADR 0048).
-        let mut issues: BTreeSet<IssueRef> = pins::list_all(&app.db)
-            .await?
-            .into_iter()
-            .map(|p| p.issue)
-            .collect();
-        issues.extend(launch::launched_issues(&app.db).await?);
-        let sessions = companion_link::all_sessions(&app.db).await?;
-        let live: HashSet<IssueRef> = sessions
-            .iter()
-            .filter(|s| s.status != SessionStatus::Ended)
-            .filter_map(|s| s.issue.clone())
-            .collect();
-        issues.extend(sessions.into_iter().filter_map(|s| s.issue));
-        issues.extend(plans::all(&app.db).await?.into_iter().map(|p| p.issue));
-        // The issues deliveries name, and whether one asks for the full lane.
-        let mut named: HashMap<IssueRef, bool> = HashMap::new();
-        for t in targets.unwrap_or_default() {
-            if let Some(i) = &t.issue {
-                *named.entry(i.clone()).or_default() |= t.full;
-            }
-        }
-        let named_untracked: BTreeSet<IssueRef> = named
-            .keys()
-            .filter(|i| !issues.contains(*i))
-            .cloned()
-            .collect();
-
-        // Before the per-issue reads: every open issue of the map's repos (one listing per
-        // repo), then, as an installation only, which repos it covers.
-        // Every loaded workspace map, in id order: the listing is over their union (ADR 0048).
-        // Pointer copies under one guard, then borrowed: no map is copied (#171).
+        // Every loaded workspace map, by tenant then id. Pointer copies under one guard, then
+        // borrowed: no map is copied (#171).
         let maps: Vec<(WsKey, std::sync::Arc<LoadedMap>)> = app
             .maps
             .read()
@@ -379,7 +353,6 @@ impl Poller {
             .iter()
             .map(|(k, v)| (k.clone(), std::sync::Arc::clone(v)))
             .collect();
-        // No anchor map (design §5.3): with none loaded there is nothing to read.
         if maps.is_empty() {
             tracing::warn!("no map loaded; skipping poll");
             return Ok(None);
@@ -399,6 +372,108 @@ impl Poller {
                 );
             }
         }
+        // As an installation, on the full lane: whether Issues: write is granted (ADR 0025), so a
+        // re-approved installation is noticed within five minutes and no restart.
+        if lane == Lane::Full && app.github.is_installation() {
+            for live in app.github.live() {
+                if let Err(e) = live.client.refresh_issue_permission().await {
+                    tracing::warn!(
+                        rubato.github.installation = live.installation.unwrap_or(0),
+                        rubato.tenant = %live.tenant,
+                        error = %format!("{e:#}"),
+                        "reading the installation's permissions failed"
+                    );
+                }
+            }
+        }
+        let mut report = PassReport::default();
+        let mut polled: BTreeSet<String> = BTreeSet::new();
+        let mut first_error = None;
+        for t in app.tenants() {
+            let mine: Vec<(WsKey, std::sync::Arc<LoadedMap>)> = maps
+                .iter()
+                .filter(|(k, _)| k.tenant() == &t)
+                .cloned()
+                .collect();
+            if mine.is_empty() {
+                tracing::debug!(rubato.tenant = %t, "no map loaded for the tenant; not polled");
+                continue;
+            }
+            let span = tracing::info_span!(
+                rubato_protocol::otel::span::POLL_TENANT_PASS,
+                rubato.tenant = %t
+            );
+            // One tenant's failure ends its own pass; the others go on (design §5.3).
+            match self
+                .pass_in(app, &t, lane, scope, &mine, &mut polled)
+                .instrument(span)
+                .await
+            {
+                Ok(r) => report.read.extend(r.read),
+                Err(e) => {
+                    tracing::warn!(rubato.tenant = %t, error = %format!("{e:#}"), "poll pass failed for the tenant");
+                    first_error.get_or_insert(e);
+                }
+            }
+        }
+        *app.polled_repos.lock().unwrap() = polled;
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(Some(report)),
+        }
+    }
+
+    /// One tenant's part of a pass: its maps, its pinned and tracked issues, its repositories.
+    async fn pass_in(
+        &mut self,
+        app: &App,
+        t: &TenantId,
+        lane: Lane,
+        scope: Scope<'_>,
+        maps: &[(WsKey, std::sync::Arc<LoadedMap>)],
+        polled: &mut BTreeSet<String>,
+    ) -> Result<PassReport> {
+        let targets = match scope {
+            Scope::All => None,
+            Scope::Targets(t) => Some(t),
+        };
+        // Pinned in any workspace: each issue is read once, whatever views show it (ADR 0048).
+        let mut issues: BTreeSet<IssueRef> = pins::list_all(&app.db)
+            .await?
+            .into_iter()
+            .map(|p| p.issue)
+            .collect();
+        issues.extend(launch::launched_issues(&app.db).await?);
+        let sessions = companion_link::all_sessions(&app.db).await?;
+        let live: HashSet<IssueRef> = sessions
+            .iter()
+            .filter(|s| s.status != SessionStatus::Ended)
+            .filter_map(|s| s.issue.clone())
+            .collect();
+        issues.extend(sessions.into_iter().filter_map(|s| s.issue));
+        issues.extend(plans::all(&app.db, t).await?.into_iter().map(|p| p.issue));
+        // This tenant's only: an issue belongs to the tenant its repository is live in. One of a
+        // repository no attached installation covers belongs to none and is not read (ADR 0087);
+        // coverage shows the repository as a finding.
+        issues.retain(|i| app.github.tenant_of(&i.repo).as_ref() == Some(t));
+        let live: HashSet<IssueRef> = live.into_iter().filter(|i| issues.contains(i)).collect();
+        // The issues deliveries name, and whether one asks for the full lane.
+        let mut named: HashMap<IssueRef, bool> = HashMap::new();
+        for t in targets.unwrap_or_default() {
+            if let Some(i) = &t.issue {
+                *named.entry(i.clone()).or_default() |= t.full;
+            }
+        }
+        let named_untracked: BTreeSet<IssueRef> = named
+            .keys()
+            .filter(|i| !issues.contains(*i))
+            .cloned()
+            .collect();
+
+        // Before the per-issue reads: every open issue of the map's repos (one listing per
+        // repo), then, as an installation only, which repos it covers.
+        // The tenant's loaded workspace maps, in id order: the listing is over their union
+        // (ADR 0048).
         let systems: Vec<(&WsKey, &rubato_protocol::SystemMap)> =
             maps.iter().map(|(k, v)| (k, &v.map)).collect();
         // With targets, only the repos they name, unless this is a full lane (every 300 s, so
@@ -419,7 +494,7 @@ impl Poller {
         };
         let listed = match &list_only {
             Some(only) if only.is_empty() => github_poll::Listed::default(),
-            only => github_poll::list_open_issues_in(app, &systems, only.as_ref()).await,
+            only => github_poll::list_open_issues_in(app, t, &systems, only.as_ref()).await,
         };
         // Creations GitHub did not confirm, found by their `Rubato-Request:` line (ADR 0025).
         let found: Vec<new_issue::Found> = listed
@@ -436,7 +511,7 @@ impl Poller {
         new_issue::reconcile(app, &found, listed.fresh_repos()).await;
         // `Map:` lines of trusted authors pin their issues (ADR 0026). No GitHub call: the
         // bodies came with the listing. A newly pinned issue is read from the next tick on.
-        for (ws, m) in &maps {
+        for (ws, m) in maps {
             let lines: Vec<pins::Line> = listed
                 .map_lines()
                 .iter()
@@ -452,44 +527,24 @@ impl Poller {
                 .collect();
             pins::apply_map_lines(app, ws, &m.map, &m.version, &lines).await;
         }
-        // Every distinct repo of every workspace, once (ADR 0048), and the repos of tracked work.
-        let mut repos: BTreeSet<String> = app.union_repos().await.into_iter().collect();
+        // Every distinct repo of the tenant's workspaces, once (ADR 0048), and the repos of its
+        // tracked work.
+        let union = union_repos(maps);
+        let mut repos: BTreeSet<String> = union.iter().cloned().collect();
         repos.extend(issues.iter().map(|i| i.repo.clone()));
-        // A repository no attached installation covers is not read (ADR 0087): its issues are
-        // left out of this pass, and coverage shows it as a finding.
-        let before = issues.len();
-        issues.retain(|i| app.github.tenant_of(&i.repo).is_some());
-        if issues.len() < before {
-            tracing::debug!(
-                skipped = before - issues.len(),
-                "issues of repositories no tenant covers are not read"
-            );
-        }
-        *app.polled_repos.lock().unwrap() = repos.iter().map(|r| r.to_ascii_lowercase()).collect();
+        polled.extend(repos.iter().map(|r| r.to_ascii_lowercase()));
+        // A repository a map of this tenant names that is not live in it is uncovered for the
+        // tenant (design §5.2): a finding, never a read.
         if targets.is_none() || lane == Lane::Full {
-            github_poll::check_coverage(app, &repos).await;
-        }
-        // As an installation, on the full lane: whether Issues: write is granted (ADR 0025), so a
-        // re-approved installation is noticed within five minutes and no restart.
-        if lane == Lane::Full && app.github.is_installation() {
-            for live in app.github.live() {
-                if let Err(e) = live.client.refresh_issue_permission().await {
-                    tracing::warn!(
-                        rubato.github.installation = live.installation.unwrap_or(0),
-                        rubato.tenant = %live.tenant,
-                        error = %format!("{e:#}"),
-                        "reading the installation's permissions failed"
-                    );
-                }
-            }
+            github_poll::check_coverage(app, t, &repos).await;
         }
 
         let mut view = github_poll::RepoView::default();
         // One list of counted approvals, comments under the cutover and Rubato approvals
         // (ADR 0054), built here so `github_poll` never names `approve`.
-        let approvals = approve::approvals(app).await?;
+        let approvals = approve::approvals(app, t).await?;
         let approved = github_poll::approved_branches(&approvals.counted);
-        let stored: HashMap<IssueRef, String> = plans::all(&app.db)
+        let stored: HashMap<IssueRef, String> = plans::all(&app.db, t)
             .await?
             .into_iter()
             .map(|p| (p.issue, p.branch))
@@ -498,7 +553,7 @@ impl Poller {
         // repos the installation covers (GitHub sends webhooks for no other, design 208 D10).
         let counting = self.count_changes && targets.is_none();
         let uncovered: HashSet<String> = if counting {
-            github_poll::uncovered(&app.db)
+            github_poll::uncovered(&app.db, t)
                 .await?
                 .into_iter()
                 .map(|r| r.to_ascii_lowercase())
@@ -535,7 +590,7 @@ impl Poller {
             match self
                 .poll_issue(
                     app,
-                    map_for(&maps, &issue.repo),
+                    map_for(maps, &issue.repo),
                     issue,
                     busy,
                     &listed,
@@ -566,7 +621,9 @@ impl Poller {
         let discovered = self
             .discover(
                 app,
-                &maps,
+                t,
+                maps,
+                &union,
                 &issues,
                 &listed,
                 &mut view,
@@ -587,19 +644,19 @@ impl Poller {
         let pulls = if pulls_only.as_ref().is_some_and(BTreeSet::is_empty) {
             github_poll::PullsPass::default()
         } else {
-            let owned: HashSet<(String, u64)> = github_poll::all_prs(&app.db)
+            let owned: HashSet<(String, u64)> = github_poll::all_prs(&app.db, t)
                 .await?
                 .into_values()
                 .map(|p| (p.repo, p.number))
                 .collect();
-            let union = app.union_repos().await;
             let named: BTreeSet<&str> = union
                 .iter()
                 .map(String::as_str)
-                .filter(|r| app.github.tenant_of(r).is_some())
+                .filter(|r| app.github.tenant_of(r).as_ref() == Some(t))
                 .collect();
             github_poll::list_repo_pulls_in(
                 app,
+                t,
                 &named,
                 &mut view,
                 &owned,
@@ -610,12 +667,13 @@ impl Poller {
         };
         // Merges sent from Rubato that GitHub did not confirm, against the listings just made in
         // full (ADR 0033, plan 82 Decision 12). A delivery-scoped pass lists some repos whole.
-        pulls::reconcile(app, &pulls.complete).await;
+        pulls::reconcile(app, t, &pulls.complete).await;
         // Every pass: info on the full lane (every 300 s) and for catch-ups, debug otherwise.
         let (tracked, repos) = (issues.len(), view.repos());
         let scope_name = if targets.is_some() { "targets" } else { "all" };
         if lane == Lane::Full {
             tracing::info!(
+                rubato.tenant = %t,
                 lane = lane.name(),
                 scope = scope_name,
                 tracked,
@@ -631,6 +689,7 @@ impl Poller {
             );
         } else {
             tracing::debug!(
+                rubato.tenant = %t,
                 lane = lane.name(),
                 scope = scope_name,
                 tracked,
@@ -641,7 +700,7 @@ impl Poller {
                 "poll tick"
             );
         }
-        Ok(Some(report))
+        Ok(report)
     }
 
     /// The local work of a tick, after its GitHub reads: link comments, seam notices, room
@@ -649,11 +708,18 @@ impl Poller {
     async fn housekeeping(&mut self, app: &App, lane: Lane) -> Result<()> {
         // Every tick, after the plans and comments are read: handoff commits get their link
         // comment, found or posted once, and the handoff gauges are recorded (ADR 0055).
-        approve::reconcile_links(app).await;
+        // Per tenant (design §5.5): link comments, seam notices and unconfirmed approvals are
+        // read and written inside one tenant, never across two.
+        let tenants = app.tenants();
+        for t in &tenants {
+            approve::reconcile_links(app, t).await;
+        }
         // Every tick, after the plans are read: one notice per pair of issue and seam in the
         // rooms of two open plans that touch the same seam (ADR 0057).
-        if let Err(e) = rooms::post_seam_notices(app).await {
-            tracing::error!(error = %format!("{e:#}"), "posting seam notices failed");
+        for t in &tenants {
+            if let Err(e) = rooms::post_seam_notices(app, t).await {
+                tracing::error!(rubato.tenant = %t, error = %format!("{e:#}"), "posting seam notices failed");
+            }
         }
         // Agents not addressed for the idle limit, or whose session ended, leave their rooms.
         if let Err(e) = rooms::sweep_agents(app).await {
@@ -662,7 +728,9 @@ impl Poller {
         // After the comments pass: approvals posted from Rubato that GitHub did not confirm,
         // and the tokens of people with no session that still counts (ADR 0030).
         if lane == Lane::Full {
-            approve::reconcile(app).await;
+            for t in &tenants {
+                approve::reconcile(app, t).await;
+            }
             if let Err(e) = auth::sweep_tokens(app).await {
                 tracing::error!(error = %format!("{e:#}"), "sweeping user tokens failed");
             }
@@ -703,8 +771,9 @@ impl Poller {
     /// What a catch-up compares for one issue (D10): stored title and state, the pull request's
     /// state, and the plan head last read. Database reads only.
     async fn seen_of(&self, app: &App, issue: &IssueRef) -> Result<Seen> {
-        let meta = github_poll::issue_meta(&app.db, issue).await?;
-        let pr = github_poll::pr_for(&app.db, issue).await?;
+        let t = &app.repo_tenant(&issue.repo)?;
+        let meta = github_poll::issue_meta(&app.db, t, issue).await?;
+        let pr = github_poll::pr_for(&app.db, t, issue).await?;
         Ok(Seen {
             issue: meta.map(|m| (m.title, m.github_state)),
             pull: pr.map(|p| (p.number, p.open, p.draft, p.merged_at.is_some(), p.checks)),
@@ -750,6 +819,7 @@ impl Poller {
         lane: Lane,
         prefer: &github_poll::BranchPrefs<'_>,
     ) -> Result<bool> {
+        let t = &app.repo_tenant(&issue.repo)?;
         use github_poll::Standing;
         let first = !self.seen.contains(issue);
         let full = lane == Lane::Full || first;
@@ -792,7 +862,7 @@ impl Poller {
             {
                 let sha = plans::hash_on_branch(app, map, issue, branch).await?;
                 if let Some(id) = a.comment_id {
-                    github_poll::set_target_sha(&app.db, issue, id, sha.as_deref()).await?;
+                    github_poll::set_target_sha(&app.db, t, issue, id, sha.as_deref()).await?;
                 }
             }
         }
@@ -813,7 +883,9 @@ impl Poller {
     async fn discover(
         &mut self,
         app: &App,
+        t: &TenantId,
         maps: &[(WsKey, std::sync::Arc<LoadedMap>)],
+        union: &[String],
         tracked: &BTreeSet<IssueRef>,
         listed: &github_poll::Listed,
         view: &mut github_poll::RepoView,
@@ -827,10 +899,10 @@ impl Poller {
             .collect();
         untracked.sort();
         let mut found = 0;
-        let union = app.union_repos().await;
         for repo in union.iter().map(String::as_str) {
-            // Not covered by a live installation: not read (ADR 0087).
-            if app.github.tenant_of(repo).is_none() {
+            // Not live in this tenant (nobody covers it, or another tenant does): not read
+            // (ADR 0087, design §5.2).
+            if app.github.tenant_of(repo).as_ref() != Some(t) {
                 continue;
             }
             let map = map_for(maps, repo);
@@ -862,7 +934,7 @@ impl Poller {
                 match plans::fetch_and_store(app, map, issue, &head.name, &head.sha).await {
                     Ok(()) => {
                         self.discovered.insert((*issue).clone(), key);
-                        if plans::has_plan(&app.db, issue).await.unwrap_or(false) {
+                        if plans::has_plan(&app.db, t, issue).await.unwrap_or(false) {
                             found += 1;
                             tracing::info!(rubato.issue = %issue, branch = %head.name, "plan discovered");
                         }
@@ -875,6 +947,20 @@ impl Poller {
         }
         found
     }
+}
+
+/// Every distinct repo these maps name, each once (ADR 0048), in order.
+fn union_repos(maps: &[(WsKey, std::sync::Arc<LoadedMap>)]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for (_, m) in maps {
+        for r in m.map.repos_named() {
+            if seen.insert(r.to_ascii_lowercase()) {
+                out.push(r.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// The map an issue's plan path and branch rules come from: the first workspace, in id order,

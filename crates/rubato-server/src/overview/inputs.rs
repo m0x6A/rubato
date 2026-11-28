@@ -54,32 +54,51 @@ pub async fn build_overview_inputs(
     all: &[WorkspaceInfo],
     maps: &Maps,
 ) -> Result<OverviewInputs> {
+    let t = ws.tenant();
     // Comments under the cutover and approvals given in Rubato, as one list (ADR 0054).
-    let approvals = approve::approvals(app).await?;
+    let approvals = approve::approvals(app, t).await?;
+    // The workspace's own repositories only (design §11.3, the backlog gap): the open issues of
+    // a repository another workspace's map names are that workspace's backlog, not this one's.
+    let backlog = {
+        let (mut issues, mut repos) = github_poll::backlog(&app.db, t, ws).await?;
+        let named: std::collections::HashSet<String> = maps
+            .get(ws)
+            .map(|m| {
+                m.map
+                    .repos_named()
+                    .iter()
+                    .map(|r| r.to_ascii_lowercase())
+                    .collect()
+            })
+            .unwrap_or_default();
+        issues.retain(|i| named.contains(&i.issue.repo.to_ascii_lowercase()));
+        repos.retain(|r| named.contains(&r.repo.to_ascii_lowercase()));
+        (issues, repos)
+    };
     Ok(OverviewInputs {
         pins: pins::list(&app.db, ws).await?,
         sessions: companion_link::all_sessions(&app.db).await?,
-        plans: plans::all(&app.db).await?,
-        drafts: plan_drafts::latest_drafts(app).await?,
-        prs: github_poll::all_prs(&app.db).await?,
-        decisions: github_poll::all_decisions(&app.db).await?,
-        reviews: github_poll::all_reviews(&app.db).await?,
+        plans: plans::all(&app.db, t).await?,
+        drafts: plan_drafts::latest_drafts(app, t).await?,
+        prs: github_poll::all_prs(&app.db, t).await?,
+        decisions: github_poll::all_decisions(&app.db, t).await?,
+        reviews: github_poll::all_reviews(&app.db, t).await?,
         approvals: approvals.counted,
         ignored_approvals: approvals.ignored,
         approvals_in_rubato: app.config.comment_approvals_until.is_some(),
-        approval_findings: approve::link_findings(app).await?,
+        approval_findings: approve::link_findings(app, t).await?,
         launched: launch::launched_issues(&app.db).await?,
         cap_hits: launch::issues_with_live_cap_hit(&app.db).await?,
-        meta: github_poll::all_issue_meta(&app.db).await?,
+        meta: github_poll::all_issue_meta(&app.db, t).await?,
         launch_map_versions: launch::launch_map_versions(&app.db, ws).await?,
-        backlog: github_poll::backlog(&app.db, ws).await?,
-        uncovered_repos: github_poll::uncovered(&app.db).await?,
+        backlog,
+        uncovered_repos: github_poll::uncovered(&app.db, t).await?,
         layout: layout::all(&app.db, ws).await?,
         queue: queue::all(&app.db).await?,
-        repo_pulls: github_poll::repo_pulls(&app.db).await?,
+        repo_pulls: github_poll::repo_pulls(&app.db, t).await?,
         traffic: app.traffic_of(ws).await,
         dismissals: traffic::dismissals(&app.db, ws).await?,
-        spend: spend_history::series(&app.db).await?,
+        spend: spend_history::series(&app.db, t).await?,
         workspaces: workspace_inputs(app, ws, all, maps).await?,
     })
 }

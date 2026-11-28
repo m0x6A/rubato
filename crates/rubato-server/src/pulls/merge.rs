@@ -44,6 +44,7 @@ pub async fn merge(
     CurrentUser(login): CurrentUser,
     Json(req): Json<MergeRequest>,
 ) -> Result<Answer, Refused> {
+    let t = ws.key().tenant();
     let refuse = |status: StatusCode, why: &str, extra: Value| {
         app.reject(routes::PULLS_MERGE, why, &login);
         let mut v = json!({ "reason": why });
@@ -62,7 +63,10 @@ pub async fn merge(
     let Some(map) = app.map_of(ws.key()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
-    let Some(repo) = known_repo(&app, &map, &req.repo).await.map_err(internal)? else {
+    let Some(repo) = known_repo(&app, t, &map, &req.repo)
+        .await
+        .map_err(internal)?
+    else {
         return Err(refuse(
             StatusCode::NOT_FOUND,
             reason::UNKNOWN_REPO,
@@ -70,7 +74,7 @@ pub async fn merge(
         ));
     };
     // A retry, a double click or a second person on the same head gets the first press's row.
-    if let Some(existing) = store::find(&app.db, &repo, req.number, &req.head_sha)
+    if let Some(existing) = store::find(&app.db, t, &repo, req.number, &req.head_sha)
         .await
         .map_err(internal)?
     {
@@ -142,6 +146,7 @@ pub async fn merge(
     }
     if !store::open(
         &app.db,
+        t,
         &repo,
         req.number,
         &req.head_sha,
@@ -152,7 +157,7 @@ pub async fn merge(
     .map_err(internal)?
     {
         // A concurrent request for this head inserted first; it merges.
-        let existing = store::find(&app.db, &repo, req.number, &req.head_sha)
+        let existing = store::find(&app.db, t, &repo, req.number, &req.head_sha)
             .await
             .map_err(internal)?;
         return existing
@@ -174,14 +179,14 @@ pub async fn merge(
     .await;
     let cache = app.slots.get::<ViewCache>();
     cache.evict(&repo, req.number);
-    let mut intent = store::find(&app.db, &repo, req.number, &req.head_sha)
+    let mut intent = store::find(&app.db, t, &repo, req.number, &req.head_sha)
         .await
         .map_err(internal)?
         .ok_or_else(|| internal(anyhow::anyhow!("merge row vanished")))?;
     match merged {
         Ok(sha) => {
             let sha = (!sha.is_empty()).then_some(sha);
-            store::merged(&app.db, &intent, sha.as_deref())
+            store::merged(&app.db, t, &intent, sha.as_deref())
                 .await
                 .map_err(internal)?;
             tracing::info!(rubato.repo = %repo, rubato.pr = req.number, login, method = req.method.as_str(), rubato.outcome = "merged", "pull merged from Rubato");
@@ -191,7 +196,7 @@ pub async fn merge(
             Ok(answer(&intent))
         }
         Err(MergeError::Refused { status, message }) => {
-            store::forget(&app.db, &repo, req.number, &req.head_sha)
+            store::forget(&app.db, t, &repo, req.number, &req.head_sha)
                 .await
                 .map_err(internal)?;
             tracing::warn!(rubato.repo = %repo, rubato.pr = req.number, login, status, message, rubato.outcome = "refused", "GitHub refused the merge");

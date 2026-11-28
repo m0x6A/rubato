@@ -105,28 +105,6 @@ const CLASSES: &[(&str, Class)] = &[
 /// Checked tables whose `tenant_id` has not landed yet (design §13): each pull request that
 /// scopes a table's queries adds its column and takes it off this list.
 const NOT_YET_SCOPED: &[&str] = &[
-    "open_issues",
-    "backlog_repos",
-    "uncovered_repos",
-    "pull_requests",
-    "decisions",
-    "issue_meta",
-    "plan_signals",
-    "repo_pulls",
-    "repo_pulls_status",
-    "plans",
-    "plan_approvals",
-    "rubato_approvals",
-    "plan_links",
-    "plan_drafts",
-    "plan_draft_revisions",
-    "pr_merges",
-    "room_messages",
-    "room_agents",
-    "room_requests",
-    "spend_sessions",
-    "spend_points",
-    "session_log_entries",
     "launches",
     "companion_queue",
     "session_messages",
@@ -193,11 +171,6 @@ const GLOBAL: &[(&str, &str, &str)] = &[
         "new_issue/store.rs",
         "SELECT * FROM issue_creations WHERE state = 'opening'",
         "the poll's work list of creations GitHub did not confirm; each row carries its tenant and is settled inside it",
-    ),
-    (
-        "github_poll/store.rs",
-        "DELETE FROM issue_suggestions WHERE repo = ?",
-        "a repository no map names any more loses its suggestions; a repository belongs to one tenant (ADR 0087), and only that tenant's workspaces hold suggestions for it",
     ),
 ];
 

@@ -376,11 +376,15 @@ async fn a_handoff_report_is_taken_only_from_the_launchs_companion_for_its_issue
     let facts = || {
         let db = db.clone();
         async move {
-            records::get(&db, a.approval_id)
-                .await
-                .unwrap()
-                .unwrap()
-                .handoff
+            records::get(
+                &db,
+                &crate::kernel::tenancy::TenantId::default_tenant(),
+                a.approval_id,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .handoff
         }
     };
     let r = report(
@@ -719,14 +723,14 @@ async fn the_reconcile_records_the_handoff_gauges() {
     .await;
     let gauge =
         |h: &H, name: &str| -> Vec<u64> { h.reader.points(name).iter().map(|p| p.value).collect() };
-    reconcile_links(&h.app).await;
+    reconcile_links(&h.app, &crate::kernel::tenancy::TenantId::default_tenant()).await;
     assert_eq!(
         gauge(&h, metric::PLANS_HANDOFF_OVERDUE),
         [0],
         "not yet 30 minutes"
     );
     h.app.clock.set(Utc::now() + Duration::minutes(31));
-    reconcile_links(&h.app).await;
+    reconcile_links(&h.app, &crate::kernel::tenancy::TenantId::default_tenant()).await;
     assert_eq!(gauge(&h, metric::PLANS_HANDOFF_OVERDUE), [1]);
     assert_eq!(gauge(&h, metric::PLANS_LINK_COMMENT_MISSING), [0]);
     assert_eq!(gauge(&h, metric::PLANS_APPROVAL_RECORD_MISMATCH), [0]);
@@ -736,7 +740,7 @@ async fn the_reconcile_records_the_handoff_gauges() {
         &report(h.launch, a.approval_id, HandoffOutcome::PlanChanged, &[]),
     )
     .await;
-    reconcile_links(&h.app).await;
+    reconcile_links(&h.app, &crate::kernel::tenancy::TenantId::default_tenant()).await;
     assert_eq!(
         gauge(&h, metric::PLANS_HANDOFF_OVERDUE),
         [0],

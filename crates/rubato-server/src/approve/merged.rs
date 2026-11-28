@@ -6,6 +6,7 @@
 use super::records::{self, RubatoApproval};
 use crate::github_poll;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use crate::plan_drafts;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -76,9 +77,9 @@ pub fn rubato_target(a: &RubatoApproval, newest: &(String, String)) -> String {
 }
 
 /// The merged list as stored now.
-pub async fn approvals(app: &App) -> Result<Approvals> {
-    let comments = github_poll::all_approvals(&app.db).await?;
-    let newest: HashMap<Uuid, (String, String)> = plan_drafts::latest_drafts(app)
+pub async fn approvals(app: &App, t: &TenantId) -> Result<Approvals> {
+    let comments = github_poll::all_approvals(&app.db, t).await?;
+    let newest: HashMap<Uuid, (String, String)> = plan_drafts::latest_drafts(app, t)
         .await?
         .into_iter()
         .map(|d| {
@@ -88,7 +89,7 @@ pub async fn approvals(app: &App) -> Result<Approvals> {
             )
         })
         .collect();
-    let rubato = records::all(&app.db)
+    let rubato = records::all(&app.db, t)
         .await?
         .into_iter()
         .map(|a| {

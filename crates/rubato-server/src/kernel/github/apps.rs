@@ -360,7 +360,6 @@ pub(crate) const UNSCOPED_CALLERS: &[&str] = &[
     "github_poll/poll.rs",
     "github_poll/pulls.rs",
     "import/handler.rs",
-    "map/load.rs",
     "map_draft/poll.rs",
     "map_draft/propose.rs",
     "new_issue/handlers.rs",
@@ -454,12 +453,12 @@ mod tests {
             .map(|f| ((*f).to_owned(), 1))
             .collect();
         found.insert("pins/handlers.rs".into(), 1);
-        found.remove("map/load.rs");
+        found.remove("plans/fetch.rs");
         assert_eq!(
             unlisted_and_stale(&found),
             (
                 vec!["pins/handlers.rs".to_owned()],
-                vec!["map/load.rs".to_owned()]
+                vec!["plans/fetch.rs".to_owned()]
             )
         );
     }

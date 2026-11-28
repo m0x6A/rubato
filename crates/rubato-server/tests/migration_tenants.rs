@@ -191,3 +191,94 @@ async fn workspace_rows_land_in_tenant_default_and_the_column_has_no_default() {
         .unwrap();
     println!("checked {} tables of migration 0034", tables.len());
 }
+
+/// An insert of one row into `table` as its columns stand now, leaving `tenant_id` out: text
+/// columns get `text`, numbers `n`. Enough for tables whose only constraints are their keys.
+async fn insert_of(pool: &SqlitePool, table: &str, text: &str, n: i64) -> String {
+    let cols: Vec<(String, String)> = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.get::<String, _>("name"), r.get::<String, _>("type")))
+        .filter(|(name, _)| name != "tenant_id")
+        .collect();
+    let values: Vec<String> = cols
+        .iter()
+        .map(|(name, ty)| match (table, name.as_str()) {
+            // The one CHECK among these tables.
+            ("pr_merges", "state") => "'opening'".to_owned(),
+            _ if ty.eq_ignore_ascii_case("TEXT") => format!("'{text}'"),
+            _ => n.to_string(),
+        })
+        .collect();
+    format!(
+        "INSERT INTO {table} ({}) VALUES ({})",
+        cols.iter()
+            .map(|(c, _)| c.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        values.join(", ")
+    )
+}
+
+/// The Repo-fact tables of migration 0035 (design §3.1).
+const REPO_FACT_TABLES: [&str; 22] = [
+    "open_issues",
+    "backlog_repos",
+    "uncovered_repos",
+    "pull_requests",
+    "decisions",
+    "issue_meta",
+    "plan_signals",
+    "repo_pulls",
+    "repo_pulls_status",
+    "plans",
+    "plan_approvals",
+    "rubato_approvals",
+    "plan_links",
+    "plan_drafts",
+    "plan_draft_revisions",
+    "pr_merges",
+    "room_messages",
+    "room_agents",
+    "room_requests",
+    "spend_sessions",
+    "spend_points",
+    "session_log_entries",
+];
+
+#[tokio::test]
+async fn repo_fact_rows_land_in_tenant_default_and_the_column_has_no_default() {
+    let (pool, _tmp) = at(34).await;
+    for t in REPO_FACT_TABLES {
+        let sql = insert_of(&pool, t, "a/b", 1).await;
+        sqlx::query(&sql)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("{t}: {e}: {sql}"));
+    }
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let mut tables = Vec::new();
+    for t in REPO_FACT_TABLES {
+        tables.push(Table {
+            name: t,
+            before: String::new(),
+            rows: 1,
+            without_tenant: insert_of(&pool, t, "c/d", 2).await,
+        });
+    }
+    check(&pool, &tables).await;
+    // A repository's facts in another tenant are other rows, not a conflict on the old keys.
+    for t in ["plans", "issue_meta", "open_issues", "pull_requests"] {
+        let sql = insert_of(&pool, t, "a/b", 1)
+            .await
+            .replacen(&format!("INTO {t} ("), &format!("INTO {t} (tenant_id, "), 1)
+            .replacen("VALUES (", "VALUES ('acme', ", 1);
+        sqlx::query(&sql)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("{t}: {e}"));
+    }
+    println!("checked {} tables of migration 0035", tables.len());
+}

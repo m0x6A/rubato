@@ -667,7 +667,7 @@ async fn decisions_count_only_from_members() {
         url: "c1".into(),
     };
     sqlx::query(
-        "INSERT OR REPLACE INTO decisions (repo, number, comment_id, record) VALUES (?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO decisions (tenant_id, repo, number, comment_id, record) VALUES ('default', ?, ?, ?, ?)",
     )
     .bind("m0x6A/rubato")
     .bind(71_i64)
@@ -2623,7 +2623,12 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         "a finished issue's plan is not a finding: {:?}",
         ov.findings
     );
-    let rows = rubato_server::plans::all(&h.app.db).await.unwrap();
+    let rows = rubato_server::plans::all(
+        &h.app.db,
+        &rubato_server::kernel::tenancy::TenantId::default_tenant(),
+    )
+    .await
+    .unwrap();
     assert!(
         rows.iter()
             .any(|p| p.issue.number == 32 && p.parse_error.is_some()),
@@ -2679,9 +2684,11 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .into_iter()
         .map(|(m, a)| format!("{m} {a}"))
         .collect();
+    // The permission read comes first, once for the pass, before any tenant's part of it
+    // (plan 345); the coverage call follows the open-issues listing as before.
     let mut as_installation: Vec<&str> = expected.to_vec();
-    as_installation.insert(1, "installation_repos ");
-    as_installation.insert(2, "installation ");
+    as_installation.insert(0, "installation ");
+    as_installation.insert(2, "installation_repos ");
     // #32's pull request is stored as merged by now: final, not looked up again (S5).
     as_installation.retain(|c| *c != "pull_for_branch m0x6A/rubato issue/32-bad");
     assert_eq!(
@@ -5699,7 +5706,12 @@ async fn the_poll_reads_the_plan_from_the_branch_approved_in_rubato() {
             "{tick} tick: the bottom of the stack and the newer comment both name {bottom}"
         );
     }
-    let approval = rubato_server::approve::approvals(&h.app).await.unwrap();
+    let approval = rubato_server::approve::approvals(
+        &h.app,
+        &rubato_server::kernel::tenancy::TenantId::default_tenant(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         approval.counted.len(),
         2,
@@ -7704,7 +7716,7 @@ async fn seed_guard(h: &Harness, companion_id: Uuid) {
     sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 122, '{}', ?)")
         .bind(GUARD_LAUNCH).bind(companion_id.to_string()).bind(&now)
         .execute(&h.app.db).await.unwrap();
-    sqlx::query("INSERT INTO rubato_approvals (id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at) VALUES (?, 'm0x6A/rubato', 122, 'issue/122-plan-in-rubato', ?, 3, 'abc1234', 'def5678', 'alice', ?, 0, 'ok', ?)")
+    sqlx::query("INSERT INTO rubato_approvals (tenant_id, id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at) VALUES ('default', ?, 'm0x6A/rubato', 122, 'issue/122-plan-in-rubato', ?, 3, 'abc1234', 'def5678', 'alice', ?, 0, 'ok', ?)")
         .bind(GUARD_APPROVAL).bind(Uuid::from_u128(77).to_string()).bind(&now).bind(&now)
         .execute(&h.app.db).await.unwrap();
 }
@@ -7740,7 +7752,7 @@ async fn replay_every_fixture(
             acked += 1;
         }
         if tamper && name == "companion_draft.json" {
-            sqlx::query("INSERT INTO plan_approvals (login, repo, number, sha, branch, state, created_at) VALUES ('mallory', 'm0x6A/rubato', 122, 'abc1234', 'issue/122-plan-in-rubato', 'posted', '2026-11-16T00:00:00Z')")
+            sqlx::query("INSERT INTO plan_approvals (tenant_id, login, repo, number, sha, branch, state, created_at) VALUES ('default', 'mallory', 'm0x6A/rubato', 122, 'abc1234', 'issue/122-plan-in-rubato', 'posted', '2026-11-16T00:00:00Z')")
                 .execute(&h.app.db).await.unwrap();
         }
     }

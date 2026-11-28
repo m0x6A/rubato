@@ -1,6 +1,7 @@
 //! Table `plans`.
 
 use crate::kernel::db::ts;
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::Utc;
 use rubato_protocol::{IssueRef, Plan};
@@ -22,6 +23,7 @@ pub struct PlanRow {
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_plan(
     db: &SqlitePool,
+    t: &TenantId,
     issue: &IssueRef,
     branch: &str,
     path: &str,
@@ -30,14 +32,15 @@ pub async fn upsert_plan(
     approval_sha: &str,
     head_sha: &str,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, approval_sha, head_sha, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(repo, number) DO UPDATE SET branch = excluded.branch, path = excluded.path, plan = excluded.plan, parse_error = excluded.parse_error, approval_sha = excluded.approval_sha, head_sha = excluded.head_sha, fetched_at = excluded.fetched_at")
-        .bind(&issue.repo).bind(issue.number as i64).bind(branch).bind(path).bind(plan.map(serde_json::to_string).transpose()?).bind(error).bind(approval_sha).bind(head_sha).bind(ts(Utc::now()))
+    sqlx::query("INSERT INTO plans (tenant_id, repo, number, branch, path, plan, parse_error, approval_sha, head_sha, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, repo, number) DO UPDATE SET branch = excluded.branch, path = excluded.path, plan = excluded.plan, parse_error = excluded.parse_error, approval_sha = excluded.approval_sha, head_sha = excluded.head_sha, fetched_at = excluded.fetched_at")
+        .bind(t.as_str()).bind(&issue.repo).bind(issue.number as i64).bind(branch).bind(path).bind(plan.map(serde_json::to_string).transpose()?).bind(error).bind(approval_sha).bind(head_sha).bind(ts(Utc::now()))
         .execute(db).await?;
     Ok(())
 }
 
-pub async fn delete_plan(db: &SqlitePool, issue: &IssueRef) -> Result<()> {
-    sqlx::query("DELETE FROM plans WHERE repo = ? AND number = ?")
+pub async fn delete_plan(db: &SqlitePool, t: &TenantId, issue: &IssueRef) -> Result<()> {
+    sqlx::query("DELETE FROM plans WHERE tenant_id = ? AND repo = ? AND number = ?")
+        .bind(t.as_str())
         .bind(&issue.repo)
         .bind(issue.number as i64)
         .execute(db)
@@ -46,9 +49,10 @@ pub async fn delete_plan(db: &SqlitePool, issue: &IssueRef) -> Result<()> {
 }
 
 /// Whether a plan row (parsed or not) exists for the issue.
-pub async fn has_plan(db: &SqlitePool, issue: &IssueRef) -> Result<bool> {
+pub async fn has_plan(db: &SqlitePool, t: &TenantId, issue: &IssueRef) -> Result<bool> {
     Ok(
-        sqlx::query("SELECT 1 FROM plans WHERE repo = ? AND number = ?")
+        sqlx::query("SELECT 1 FROM plans WHERE tenant_id = ? AND repo = ? AND number = ?")
+            .bind(t.as_str())
             .bind(&issue.repo)
             .bind(issue.number as i64)
             .fetch_optional(db)
@@ -57,8 +61,11 @@ pub async fn has_plan(db: &SqlitePool, issue: &IssueRef) -> Result<bool> {
     )
 }
 
-pub async fn all_plans(db: &SqlitePool) -> Result<Vec<PlanRow>> {
-    let rows = sqlx::query("SELECT * FROM plans").fetch_all(db).await?;
+pub async fn all_plans(db: &SqlitePool, t: &TenantId) -> Result<Vec<PlanRow>> {
+    let rows = sqlx::query("SELECT * FROM plans WHERE tenant_id = ?")
+        .bind(t.as_str())
+        .fetch_all(db)
+        .await?;
     Ok(rows
         .iter()
         .map(|r| PlanRow {

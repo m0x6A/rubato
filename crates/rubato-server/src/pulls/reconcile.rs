@@ -8,6 +8,7 @@ use super::facts::ViewCache;
 use super::store;
 use crate::github_poll;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use chrono::{Duration, Utc};
 
 /// An `opening` row is dropped after this long.
@@ -20,8 +21,8 @@ const MERGED_KEPT_DAYS: i64 = 7;
 const LISTINGS_OPEN: u32 = 2;
 
 /// `complete`: the repos listed and stored in full this tick.
-pub async fn reconcile(app: &App, complete: &[String]) {
-    let rows = match store::opening(&app.db).await {
+pub async fn reconcile(app: &App, t: &TenantId, complete: &[String]) {
+    let rows = match store::opening(&app.db, t).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %format!("{e:#}"), "reading opening merges failed");
@@ -31,14 +32,16 @@ pub async fn reconcile(app: &App, complete: &[String]) {
     let listings = if rows.is_empty() {
         Vec::new()
     } else {
-        github_poll::repo_pulls(&app.db).await.unwrap_or_default()
+        github_poll::repo_pulls(&app.db, t)
+            .await
+            .unwrap_or_default()
     };
     let cache = app.slots.get::<ViewCache>();
     let now = Utc::now();
     let mut stuck = 0u64;
     for i in rows {
         let gone = |why: &'static str| tracing::warn!(rubato.repo = %i.repo, rubato.pr = i.number, login = %i.login, why, "merge not confirmed");
-        let forget = || store::forget(&app.db, &i.repo, i.number, &i.head_sha);
+        let forget = || store::forget(&app.db, t, &i.repo, i.number, &i.head_sha);
         if now - i.opened_at > Duration::seconds(OPENING_LIMIT_SECS) {
             gone("ten minutes");
             let _ = forget().await;
@@ -51,7 +54,8 @@ pub async fn reconcile(app: &App, complete: &[String]) {
                 .flat_map(|r| &r.pulls)
                 .find(|p| p.number == i.number);
             match listed {
-                Some(p) if p.head_sha == i.head_sha => match store::seen_open(&app.db, &i).await {
+                Some(p) if p.head_sha == i.head_sha => match store::seen_open(&app.db, t, &i).await
+                {
                     Ok(n) if n >= LISTINGS_OPEN => {
                         gone("still open");
                         let _ = forget().await;
@@ -69,7 +73,7 @@ pub async fn reconcile(app: &App, complete: &[String]) {
                 }
                 None => match app.github.unscoped(&i.repo).pull(&i.repo, i.number).await {
                     Ok(Some(p)) if p.info.merged_at.is_some() => {
-                        if let Err(e) = store::merged(&app.db, &i, None).await {
+                        if let Err(e) = store::merged(&app.db, t, &i, None).await {
                             tracing::error!(error = %format!("{e:#}"), "settling a merge failed");
                         } else {
                             tracing::info!(rubato.repo = %i.repo, rubato.pr = i.number, login = %i.login, "merge confirmed by poll");
@@ -100,7 +104,7 @@ pub async fn reconcile(app: &App, complete: &[String]) {
         }
     }
     app.metrics.pulls_merges_opening.record(stuck, &[]);
-    if let Err(e) = store::prune_merged(&app.db, now - Duration::days(MERGED_KEPT_DAYS)).await {
+    if let Err(e) = store::prune_merged(&app.db, t, now - Duration::days(MERGED_KEPT_DAYS)).await {
         tracing::error!(error = %format!("{e:#}"), "pruning merged rows failed");
     }
 }

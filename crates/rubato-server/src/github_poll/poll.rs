@@ -41,7 +41,8 @@ pub async fn read_meta(
     listed: &Listed,
     full: bool,
 ) -> Result<Standing> {
-    let stored = store::issue_meta(&app.db, issue).await?;
+    let t = &app.repo_tenant(&issue.repo)?;
+    let stored = store::issue_meta(&app.db, t, issue).await?;
     if let Some(info) = listed.open(issue) {
         let meta = IssueMeta {
             title: Some(info.title.clone()),
@@ -55,7 +56,7 @@ pub async fn read_meta(
             {
                 tracing::info!(rubato.issue = %issue, "issue reopened; polled again");
             }
-            store::upsert_issue_meta(&app.db, issue, &meta).await?;
+            store::upsert_issue_meta(&app.db, t, issue, &meta).await?;
         }
         return Ok(Standing::Active);
     }
@@ -85,6 +86,7 @@ pub async fn read_meta(
             let closed = info.state == CLOSED;
             store::upsert_issue_meta(
                 &app.db,
+                t,
                 issue,
                 &IssueMeta {
                     title: Some(info.title),
@@ -242,7 +244,8 @@ impl RepoView {
 /// Whether the stored pull request of this issue is still open: a closed issue with an open
 /// pull request is not settled (design 49 S6).
 pub async fn has_open_pr(app: &App, issue: &IssueRef) -> Result<bool> {
-    Ok(store::pr_for(&app.db, issue)
+    let t = &app.repo_tenant(&issue.repo)?;
+    Ok(store::pr_for(&app.db, t, issue)
         .await?
         .is_some_and(|p| p.open && p.merged_at.is_none()))
 }
@@ -251,7 +254,8 @@ pub async fn has_open_pr(app: &App, issue: &IssueRef) -> Result<bool> {
 /// request is looked up by its own branch, so a merge with the branch deleted still reaches
 /// *Done* (design 49 S5).
 pub async fn poll_pr_of_gone_branch(app: &App, issue: &IssueRef) -> Result<()> {
-    let Some(stored) = store::pr_for(&app.db, issue).await? else {
+    let t = &app.repo_tenant(&issue.repo)?;
+    let Some(stored) = store::pr_for(&app.db, t, issue).await? else {
         return Ok(());
     };
     if !stored.open {
@@ -277,10 +281,11 @@ pub async fn poll_pr(
     view: &mut RepoView,
     full: bool,
 ) -> Result<()> {
+    let t = &app.repo_tenant(&issue.repo)?;
     let pr = match view.open_pull(app, &issue.repo, branch).await {
         Some(Some(pr)) => Some(pr),
         listing => {
-            let stored = store::pr_for(&app.db, issue).await?;
+            let stored = store::pr_for(&app.db, t, issue).await?;
             let look_up = match &stored {
                 _ if listing.is_none() => true,
                 Some(s) if s.branch == branch && !s.open => false,
@@ -300,6 +305,7 @@ pub async fn poll_pr(
 }
 
 async fn store_pr(app: &App, issue: &IssueRef, branch: &str, pr: Option<PullInfo>) -> Result<()> {
+    let t = &app.repo_tenant(&issue.repo)?;
     if let Some(pr) = pr {
         let checks = if pr.merged_at.is_some() {
             ChecksStatus::Green
@@ -311,6 +317,7 @@ async fn store_pr(app: &App, issue: &IssueRef, branch: &str, pr: Option<PullInfo
         };
         store::upsert_pr(
             &app.db,
+            t,
             issue,
             &PullRequestState {
                 repo: issue.repo.clone(),
@@ -345,6 +352,7 @@ pub struct CommentsRead {
 /// it as `CommentApprovalIgnored`, but it is never the newest counted approval; the first read
 /// of one counts on `rubato.plans.comment_after_cutover` (ADR 0054).
 pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> {
+    let t = &app.repo_tenant(&issue.repo)?;
     let cutover = app.config.comment_approvals_until;
     let mut read = CommentsRead::default();
     let mut kept: Vec<u64> = Vec::new();
@@ -382,7 +390,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             );
             if decision.is_some() {
                 // A row an older server stored before the author was checked (#164).
-                store::delete_decision(&app.db, issue, c.id).await?;
+                store::delete_decision(&app.db, t, issue, c.id).await?;
             }
             continue;
         }
@@ -400,6 +408,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             };
             store::upsert_signal(
                 &app.db,
+                t,
                 issue,
                 c.id,
                 "review",
@@ -425,6 +434,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             };
             let new = store::upsert_signal(
                 &app.db,
+                t,
                 issue,
                 c.id,
                 "approval",
@@ -464,14 +474,22 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
                 url: c.url.clone(),
                 created_at: c.created_at,
             };
-            store::upsert_signal(&app.db, issue, c.id, "link", &serde_json::to_string(&rec)?)
-                .await?;
+            store::upsert_signal(
+                &app.db,
+                t,
+                issue,
+                c.id,
+                "link",
+                &serde_json::to_string(&rec)?,
+            )
+            .await?;
             kept.push(c.id);
             continue;
         }
         if let Some(body) = decision {
             store::upsert_decision(
                 &app.db,
+                t,
                 &DecisionRecord {
                     issue: issue.clone(),
                     comment_id: c.id,
@@ -488,7 +506,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
             .await?;
         }
     }
-    store::drop_signals_except(&app.db, issue, &kept).await?;
+    store::drop_signals_except(&app.db, t, issue, &kept).await?;
     Ok(read)
 }
 

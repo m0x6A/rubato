@@ -8,7 +8,9 @@
 
 use super::downsample::{MAX_POINTS, downsample};
 use crate::kernel::db::parse_ts;
+use crate::kernel::github::GitHubApps;
 use crate::kernel::telemetry::Metrics;
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, DurationRound, SecondsFormat, TimeDelta, Utc};
 use opentelemetry::KeyValue;
@@ -44,12 +46,13 @@ struct Counts {
 pub async fn record(
     db: &SqlitePool,
     metrics: &Metrics,
+    github: &GitHubApps,
     companion_id: Uuid,
     sessions: &[SessionState],
     now: DateTime<Utc>,
 ) -> Result<()> {
     let mut counts = Counts::default();
-    let result = write(db, companion_id, sessions, now, &mut counts).await;
+    let result = write(db, github, companion_id, sessions, now, &mut counts).await;
     for (outcome, n) in [
         ("stored", counts.stored),
         ("unchanged", counts.unchanged),
@@ -67,6 +70,7 @@ pub async fn record(
 
 async fn write(
     db: &SqlitePool,
+    github: &GitHubApps,
     companion_id: Uuid,
     sessions: &[SessionState],
     now: DateTime<Utc>,
@@ -83,16 +87,19 @@ async fn write(
             counts.rejected += 1;
             continue;
         }
+        // Spend is its repository's tenant's (ADR 0087); a session on a repository in no tenant
+        // is not recorded.
+        let Some(t) = github.tenant_of(&issue.repo) else {
+            counts.rejected += 1;
+            continue;
+        };
+        let t = &t;
         // A session keeps the issue it was first recorded under (plan A9): the issue is not
         // updated on conflict, and the point below is written for the row's issue.
         let row = sqlx::query(
-            "INSERT INTO spend_sessions (companion_id, session_id, repo, number, usd, at) \
-             VALUES (?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(companion_id, session_id) DO UPDATE SET usd = excluded.usd, at = excluded.at \
-             WHERE excluded.usd <> spend_sessions.usd AND excluded.at >= spend_sessions.at \
-             RETURNING repo, number",
+            "INSERT INTO spend_sessions (tenant_id, companion_id, session_id, repo, number, usd, at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, companion_id, session_id) DO UPDATE SET usd = excluded.usd, at = excluded.at WHERE excluded.usd <> spend_sessions.usd AND excluded.at >= spend_sessions.at RETURNING repo, number",
         )
-        .bind(companion_id.to_string())
+        .bind(t.as_str()).bind(companion_id.to_string())
         .bind(session_id)
         .bind(&issue.repo)
         .bind(issue.number as i64)
@@ -106,7 +113,7 @@ async fn write(
         };
         let repo: String = row.get("repo");
         let number: i64 = row.get("number");
-        write_point(db, &repo, number, &bucket, &at).await?;
+        write_point(db, t, &repo, number, &bucket, &at).await?;
         counts.stored += 1;
     }
     Ok(())
@@ -117,21 +124,24 @@ async fn write(
 /// (design 103 §2, Concurrency).
 async fn write_point(
     db: &SqlitePool,
+    t: &TenantId,
     repo: &str,
     number: i64,
     bucket: &str,
     at: &str,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO spend_points (repo, number, bucket, usd, at) \
-         SELECT ?, ?, ?, SUM(usd), ? FROM spend_sessions WHERE repo = ? AND number = ? \
-         ON CONFLICT(repo, number, bucket) DO UPDATE SET usd = excluded.usd, at = excluded.at \
+        "INSERT INTO spend_points (tenant_id, repo, number, bucket, usd, at) \
+         SELECT ?, ?, ?, ?, SUM(usd), ? FROM spend_sessions WHERE tenant_id = ? AND repo = ? AND number = ? \
+         ON CONFLICT(tenant_id, repo, number, bucket) DO UPDATE SET usd = excluded.usd, at = excluded.at \
          WHERE excluded.at >= spend_points.at",
     )
+    .bind(t.as_str())
     .bind(repo)
     .bind(number)
     .bind(bucket)
     .bind(at)
+    .bind(t.as_str())
     .bind(repo)
     .bind(number)
     .execute(db)
@@ -143,8 +153,10 @@ async fn write_point(
 /// which runs outside the session's transcript. Kept as its own session row, `key`, summed with
 /// the issue's other sessions, so the issue's spend line includes it. Counted on
 /// `rubato.spend.points` like a snapshot's.
+#[allow(clippy::too_many_arguments)]
 pub async fn add_cost(
     db: &SqlitePool,
+    t: &TenantId,
     metrics: &Metrics,
     companion_id: Uuid,
     key: &str,
@@ -161,11 +173,9 @@ pub async fn add_cost(
     let at = stamp(now);
     let result = async {
         sqlx::query(
-            "INSERT INTO spend_sessions (companion_id, session_id, repo, number, usd, at) \
-             VALUES (?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(companion_id, session_id) DO UPDATE SET usd = spend_sessions.usd + excluded.usd, at = excluded.at",
+            "INSERT INTO spend_sessions (tenant_id, companion_id, session_id, repo, number, usd, at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, companion_id, session_id) DO UPDATE SET usd = spend_sessions.usd + excluded.usd, at = excluded.at",
         )
-        .bind(companion_id.to_string())
+        .bind(t.as_str()).bind(companion_id.to_string())
         .bind(key)
         .bind(&issue.repo)
         .bind(issue.number as i64)
@@ -173,7 +183,15 @@ pub async fn add_cost(
         .bind(&at)
         .execute(db)
         .await?;
-        write_point(db, &issue.repo, issue.number as i64, &stamp(bucket(now)), &at).await
+        write_point(
+            db,
+            t,
+            &issue.repo,
+            issue.number as i64,
+            &stamp(bucket(now)),
+            &at,
+        )
+        .await
     }
     .await;
     let outcome = if result.is_ok() { "stored" } else { "failed" };
@@ -185,11 +203,11 @@ pub async fn add_cost(
 
 /// Every issue's series, oldest first, downsampled to at most `MAX_POINTS`. Each point is at
 /// the start of its bucket.
-pub async fn series(db: &SqlitePool) -> Result<HashMap<IssueRef, Vec<SpendPoint>>> {
+pub async fn series(db: &SqlitePool, t: &TenantId) -> Result<HashMap<IssueRef, Vec<SpendPoint>>> {
     let rows = sqlx::query(
-        "SELECT repo, number, bucket, usd FROM spend_points ORDER BY repo, number, bucket",
+        "SELECT repo, number, bucket, usd FROM spend_points WHERE tenant_id = ? ORDER BY repo, number, bucket",
     )
-    .fetch_all(db)
+    .bind(t.as_str()).fetch_all(db)
     .await?;
     let mut out: HashMap<IssueRef, Vec<SpendPoint>> = HashMap::new();
     for r in rows {
@@ -213,6 +231,11 @@ mod tests {
     use rubato_protocol::otel::{attr, metric};
     use rubato_protocol::{SessionStatus, StateSource};
     use sqlx::Row;
+
+    /// One GitHub context: every repository is tenant `default`'s.
+    fn gh() -> GitHubApps {
+        GitHubApps::one(std::sync::Arc::new(crate::kernel::github::FakeGitHub::new()))
+    }
 
     async fn db() -> (SqlitePool, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
@@ -268,7 +291,7 @@ mod tests {
     }
 
     async fn latest(db: &SqlitePool) -> Option<f64> {
-        series(db)
+        series(db, &crate::kernel::tenancy::TenantId::default_tenant())
             .await
             .unwrap()
             .get(&issue())
@@ -291,8 +314,8 @@ mod tests {
         let (reader, metrics) = metric_reader::start();
         let c = Uuid::new_v4();
         let snap = [session("s1", Some(1.0))];
-        record(&db, &metrics, c, &snap, t0()).await.unwrap();
-        record(&db, &metrics, c, &snap, t0() + Duration::minutes(1))
+        record(&db, &metrics, &gh(), c, &snap, t0()).await.unwrap();
+        record(&db, &metrics, &gh(), c, &snap, t0() + Duration::minutes(1))
             .await
             .unwrap();
         assert_eq!(rows(&db, "spend_sessions").await, 1);
@@ -306,7 +329,7 @@ mod tests {
         let (db, _t) = db().await;
         let (_reader, metrics) = metric_reader::start();
         let snap = [session("s1", Some(1.0)), session("s2", Some(2.5))];
-        record(&db, &metrics, Uuid::new_v4(), &snap, t0())
+        record(&db, &metrics, &gh(), Uuid::new_v4(), &snap, t0())
             .await
             .unwrap();
         assert_eq!(latest(&db).await, Some(3.5));
@@ -318,13 +341,16 @@ mod tests {
         let (_reader, metrics) = metric_reader::start();
         let c = Uuid::new_v4();
         let both = [session("s1", Some(1.0)), session("s2", Some(2.0))];
-        record(&db, &metrics, c, &both, t0()).await.unwrap();
+        record(&db, &metrics, &gh(), c, &both, t0()).await.unwrap();
         // s2 ended and was swept from the companion's registry.
         let one = [session("s1", Some(1.5))];
-        record(&db, &metrics, c, &one, t0() + Duration::minutes(20))
+        record(&db, &metrics, &gh(), c, &one, t0() + Duration::minutes(20))
             .await
             .unwrap();
-        let s = series(&db).await.unwrap()[&issue()].clone();
+        let s = series(&db, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap()[&issue()]
+            .clone();
         assert_eq!(s.len(), 2, "{s:?}");
         assert_eq!(s[1].usd, 3.5);
     }
@@ -335,10 +361,10 @@ mod tests {
         let (reader, metrics) = metric_reader::start();
         let c = Uuid::new_v4();
         let later = t0() + Duration::minutes(20);
-        record(&db, &metrics, c, &[session("s1", Some(4.0))], later)
+        record(&db, &metrics, &gh(), c, &[session("s1", Some(4.0))], later)
             .await
             .unwrap();
-        record(&db, &metrics, c, &[session("s1", Some(1.0))], t0())
+        record(&db, &metrics, &gh(), c, &[session("s1", Some(1.0))], t0())
             .await
             .unwrap();
         assert_eq!(session_usd(&db, c, "s1").await, Some(4.0));
@@ -361,7 +387,7 @@ mod tests {
             session("s3", Some(f64::INFINITY)),
             session("s4", None),
         ];
-        record(&db, &metrics, Uuid::new_v4(), &snap, t0())
+        record(&db, &metrics, &gh(), Uuid::new_v4(), &snap, t0())
             .await
             .unwrap();
         assert_eq!(rows(&db, "spend_sessions").await, 0);
@@ -384,12 +410,21 @@ mod tests {
         let b = Uuid::new_v4();
         let mut theirs = session("s1", Some(5.0));
         theirs.companion_id = a;
-        record(&db, &metrics, a, &[theirs], t0()).await.unwrap();
-        let mut forged = session("s1", Some(0.0));
-        forged.companion_id = a; // claims to be A's session
-        record(&db, &metrics, b, &[forged], t0() + Duration::minutes(1))
+        record(&db, &metrics, &gh(), a, &[theirs], t0())
             .await
             .unwrap();
+        let mut forged = session("s1", Some(0.0));
+        forged.companion_id = a; // claims to be A's session
+        record(
+            &db,
+            &metrics,
+            &gh(),
+            b,
+            &[forged],
+            t0() + Duration::minutes(1),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             session_usd(&db, a, "s1").await,
             Some(5.0),
@@ -406,11 +441,16 @@ mod tests {
         let (reader, metrics) = metric_reader::start();
         let mut loose = session("s1", Some(2.0));
         loose.issue = None;
-        record(&db, &metrics, Uuid::new_v4(), &[loose], t0())
+        record(&db, &metrics, &gh(), Uuid::new_v4(), &[loose], t0())
             .await
             .unwrap();
         assert_eq!(rows(&db, "spend_sessions").await, 0);
-        assert!(series(&db).await.unwrap().is_empty());
+        assert!(
+            series(&db, &crate::kernel::tenancy::TenantId::default_tenant())
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(reader.points(metric::SPEND_POINTS).is_empty());
     }
 
@@ -426,9 +466,10 @@ mod tests {
             let at = t0() + Duration::seconds(round);
             let sa = [session("sa", Some(round as f64))];
             let sb = [session("sb", Some(round as f64 * 2.0))];
+            let github = gh();
             let (ra, rb) = tokio::join!(
-                record(&db, &metrics, a, &sa, at),
-                record(&db, &metrics, b, &sb, at)
+                record(&db, &metrics, &github, a, &sa, at),
+                record(&db, &metrics, &github, b, &sb, at)
             );
             ra.unwrap();
             rb.unwrap();
@@ -443,11 +484,21 @@ mod tests {
         let c = Uuid::new_v4();
         for i in 0..40 {
             let snap = [session("s1", Some(i as f64 + 1.0))];
-            record(&db, &metrics, c, &snap, t0() + Duration::minutes(15 * i))
-                .await
-                .unwrap();
+            record(
+                &db,
+                &metrics,
+                &gh(),
+                c,
+                &snap,
+                t0() + Duration::minutes(15 * i),
+            )
+            .await
+            .unwrap();
         }
-        let s = series(&db).await.unwrap()[&issue()].clone();
+        let s = series(&db, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap()[&issue()]
+            .clone();
         assert_eq!(s.len(), MAX_POINTS);
         assert_eq!(s[0].at, t0());
         assert_eq!(s.last().unwrap().usd, 40.0);

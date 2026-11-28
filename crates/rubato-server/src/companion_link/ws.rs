@@ -462,7 +462,7 @@ async fn on_envelope(
                     "record_spend",
                     companion_id,
                     env.seq,
-                    spend_history::record(&app.db, &app.metrics, companion_id, &sessions, now)
+                    spend_history::record(&app.db, &app.metrics, &app.github, companion_id, &sessions, now)
                         .await,
                 );
                 record_sessions_by_state(&app.metrics, companion_id, &sessions);

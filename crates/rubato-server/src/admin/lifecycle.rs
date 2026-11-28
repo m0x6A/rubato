@@ -32,11 +32,16 @@ pub struct Refreshed {
 }
 
 /// Everything of these repositories that would go on running for the tenant they left.
-async fn leave(conn: &mut SqliteConnection, repos: &[String], now: DateTime<Utc>) -> Result<()> {
+async fn leave(
+    conn: &mut SqliteConnection,
+    t: &TenantId,
+    repos: &[String],
+    now: DateTime<Utc>,
+) -> Result<()> {
     if repos.is_empty() {
         return Ok(());
     }
-    let (agents, requests) = rooms::leave_repos(conn, repos, now).await?;
+    let (agents, requests) = rooms::leave_repos(conn, t, repos, now).await?;
     let queued = queue::drop_repos(conn, repos).await?;
     tracing::info!(
         repos = repos.len(),
@@ -58,7 +63,7 @@ async fn apply(
     let now = app.clock.now();
     let mut tx = app.db.begin().await?;
     let s = tenants::sync_repos(&mut tx, tenant.as_str(), installation, listed, now).await?;
-    leave(&mut tx, &s.removed, now).await?;
+    leave(&mut tx, tenant, &s.removed, now).await?;
     tx.commit().await?;
     for repo in &s.conflicts {
         tracing::warn!(
@@ -160,7 +165,7 @@ pub async fn installation_changed(
         }
         InstallationEvent::Deleted => {
             let repos = tenants::detach_installation(&mut tx, installation, now).await?;
-            leave(&mut tx, &repos, now).await?;
+            leave(&mut tx, &TenantId::stored(tenant.clone()), &repos, now).await?;
             tx.commit().await?;
             tracing::warn!(
                 rubato.github.installation = installation,

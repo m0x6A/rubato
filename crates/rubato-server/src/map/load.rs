@@ -18,16 +18,36 @@ use tracing::Instrument as _;
 /// and keeps its last good map.
 pub async fn reload(app: &App) -> Result<Arc<LoadedMap>> {
     let (entries, _) = app.workspace_entries();
-    let mut default = None;
+    // The answer is the first team's workspace `default` when the server holds it, as before
+    // tenants; no tenant needs one (plan 345, Decision 12), so otherwise the first workspace's.
+    let (mut default, mut first) = (None, None);
     for w in &entries {
         let got = reload_ws(app, w).await;
-        if w.id == rubato_protocol::DEFAULT_WORKSPACE {
+        if let Err(e) = &got {
+            tracing::error!(rubato.tenant = %w.tenant, rubato.workspace = %w.id, error = %format!("{e:#}"), "workspace map load failed");
+        }
+        if w.key() == crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE)
+        {
             default = Some(got);
-        } else if let Err(e) = got {
-            tracing::error!(rubato.workspace = %w.id, error = %format!("{e:#}"), "workspace map load failed");
+        } else if first.is_none() {
+            first = Some(got);
         }
     }
-    default.unwrap_or_else(|| Err(anyhow::anyhow!("no workspace default configured")))
+    default
+        .or(first)
+        .unwrap_or_else(|| Err(anyhow::anyhow!("no workspace configured")))
+}
+
+/// The GitHub client a workspace's map is read through: the installation that covers the map
+/// repository in the workspace's own tenant (ADR 0087, design §5.2). A map repository that is
+/// another tenant's, or nobody's, is an error, never a read.
+fn client(app: &App, w: &WorkspaceEntry) -> Result<crate::kernel::github::Client> {
+    app.github.for_repo(&w.tenant, &w.map_repo).ok_or_else(|| {
+        crate::kernel::github::NotCovered {
+            repo: w.map_repo.clone(),
+        }
+        .into()
+    })
 }
 
 /// Fetch, validate and cache one workspace's map. Falls back to the cached copy when GitHub fails.
@@ -37,15 +57,12 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
         return load_from_file(app, w, file).await;
     }
     let fetched = async {
-        let sha = app
-            .github
-            .unscoped(&cfg.map_repo)
+        let github = client(app, cfg)?;
+        let sha = github
             .branch_sha(&cfg.map_repo, &cfg.map_ref)
             .await?
             .context("map ref not found")?;
-        let yaml = app
-            .github
-            .unscoped(&cfg.map_repo)
+        let yaml = github
             .file(&cfg.map_repo, &cfg.map_path, &cfg.map_ref)
             .instrument(crate::kernel::github::part_read(
                 crate::kernel::github::READS_MAP,
@@ -133,15 +150,12 @@ pub async fn fetch_and_validate(app: &App, w: &WorkspaceEntry) -> Result<LoadedM
             (file_version(&yaml), yaml)
         }
         None => {
-            let sha = app
-                .github
-                .unscoped(&w.map_repo)
+            let github = client(app, w)?;
+            let sha = github
                 .branch_sha(&w.map_repo, &w.map_ref)
                 .await?
                 .context("map ref not found")?;
-            let yaml = app
-                .github
-                .unscoped(&w.map_repo)
+            let yaml = github
                 .file(&w.map_repo, &w.map_path, &w.map_ref)
                 .instrument(crate::kernel::github::part_read(
                     crate::kernel::github::READS_MAP,

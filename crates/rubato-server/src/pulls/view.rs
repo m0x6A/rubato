@@ -9,6 +9,7 @@ use crate::auth::CurrentUser;
 use crate::github_poll;
 use crate::kernel::http::Ws;
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::TenantId;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -39,7 +40,12 @@ fn count(outcome: &'static str) {
 
 /// The repo as the workspace's map spells it, when the map names it and the installation covers
 /// it.
-pub async fn known_repo(app: &App, map: &LoadedMap, repo: &str) -> anyhow::Result<Option<String>> {
+pub async fn known_repo(
+    app: &App,
+    t: &TenantId,
+    map: &LoadedMap,
+    repo: &str,
+) -> anyhow::Result<Option<String>> {
     let Some(named) = map
         .map
         .repos_named()
@@ -50,7 +56,7 @@ pub async fn known_repo(app: &App, map: &LoadedMap, repo: &str) -> anyhow::Resul
         return Ok(None);
     };
     if app.github.is_installation()
-        && github_poll::uncovered(&app.db)
+        && github_poll::uncovered(&app.db, t)
             .await?
             .iter()
             .any(|u| u.eq_ignore_ascii_case(&named))
@@ -76,7 +82,7 @@ pub async fn pull_view(
         tracing::warn!(rubato.repo = %asked, rubato.pr = p.number, error = %format!("{e:#}"), "pull view failed");
         fail(StatusCode::BAD_GATEWAY, "github_failed")
     };
-    let repo = match known_repo(&app, &map, &asked).await {
+    let repo = match known_repo(&app, ws.key().tenant(), &map, &asked).await {
         Ok(Some(r)) => r,
         Ok(None) => return Err(fail(StatusCode::NOT_FOUND, reason::UNKNOWN_REPO)),
         Err(e) => return Err(failed(e)),

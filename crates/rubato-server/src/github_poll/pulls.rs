@@ -8,6 +8,7 @@ use super::poll::RepoView;
 use crate::kernel::db::{parse_ts, ts};
 use crate::kernel::github::OpenPulls;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{ChecksStatus, IssueRef, OpenPull, RepoPulls, SystemMap};
@@ -30,12 +31,13 @@ pub struct PullsPass {
 /// checks that are due for pull requests outside `tracked` (repo, pull request number).
 pub async fn list_repo_pulls(
     app: &App,
+    t: &TenantId,
     map: &SystemMap,
     view: &mut RepoView,
     tracked: &HashSet<(String, u64)>,
     full: bool,
 ) -> PullsPass {
-    list_repo_pulls_in(app, &map.repos_named(), view, tracked, full, None).await
+    list_repo_pulls_in(app, t, &map.repos_named(), view, tracked, full, None).await
 }
 
 /// As [`list_repo_pulls`], listing only the repos in `only` (lower case) when it is given: a
@@ -43,6 +45,7 @@ pub async fn list_repo_pulls(
 /// every repo of every workspace's map (ADR 0048).
 pub async fn list_repo_pulls_in(
     app: &App,
+    t: &TenantId,
     named: &BTreeSet<&str>,
     view: &mut RepoView,
     tracked: &HashSet<(String, u64)>,
@@ -58,7 +61,7 @@ pub async fn list_repo_pulls_in(
         let result = match view.pull_listing(app, repo).await {
             Ok(l) => {
                 pass.listed += 1;
-                let stored = replace(app, repo, l, tracked, full, &mut pass).await;
+                let stored = replace(app, t, repo, l, tracked, full, &mut pass).await;
                 if stored.is_ok() && !l.truncated {
                     pass.complete.push((*repo).to_owned());
                 }
@@ -67,7 +70,7 @@ pub async fn list_repo_pulls_in(
             Err(e) => {
                 pass.failed += 1;
                 tracing::warn!(rubato.repo = %repo, error = %e, "pulls listing failed");
-                record_error(&app.db, repo, e).await
+                record_error(&app.db, t, repo, e).await
             }
         };
         if let Err(e) = result {
@@ -75,7 +78,7 @@ pub async fn list_repo_pulls_in(
         }
     }
     if only.is_none()
-        && let Err(e) = forget_others(&app.db, named).await
+        && let Err(e) = forget_others(&app.db, t, named).await
     {
         tracing::error!(error = %format!("{e:#}"), "dropping pull listings of repos no longer in the map failed");
     }
@@ -89,30 +92,33 @@ struct Stored {
 
 async fn replace(
     app: &App,
+    t: &TenantId,
     repo: &str,
     listing: &OpenPulls,
     tracked: &HashSet<(String, u64)>,
     full: bool,
     pass: &mut PullsPass,
 ) -> Result<()> {
-    let before: HashMap<u64, Stored> =
-        sqlx::query("SELECT number, checks, checks_sha FROM repo_pulls WHERE repo = ?")
-            .bind(repo)
-            .fetch_all(&app.db)
-            .await?
-            .iter()
-            .map(|r| {
-                (
-                    r.get::<i64, _>("number") as u64,
-                    Stored {
-                        checks: r
-                            .get::<Option<String>, _>("checks")
-                            .and_then(|c| serde_json::from_value(c.into()).ok()),
-                        checks_sha: r.get("checks_sha"),
-                    },
-                )
-            })
-            .collect();
+    let before: HashMap<u64, Stored> = sqlx::query(
+        "SELECT number, checks, checks_sha FROM repo_pulls WHERE tenant_id = ? AND repo = ?",
+    )
+    .bind(t.as_str())
+    .bind(repo)
+    .fetch_all(&app.db)
+    .await?
+    .iter()
+    .map(|r| {
+        (
+            r.get::<i64, _>("number") as u64,
+            Stored {
+                checks: r
+                    .get::<Option<String>, _>("checks")
+                    .and_then(|c| serde_json::from_value(c.into()).ok()),
+                checks_sha: r.get("checks_sha"),
+            },
+        )
+    })
+    .collect();
     let mut rows = Vec::with_capacity(listing.pulls.len());
     for (branch, pr) in &listing.pulls {
         let old = before.get(&pr.number);
@@ -136,7 +142,8 @@ async fn replace(
         rows.push((branch.clone(), pr.clone(), checks, checks_sha));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("DELETE FROM repo_pulls WHERE repo = ?")
+    sqlx::query("DELETE FROM repo_pulls WHERE tenant_id = ? AND repo = ?")
+        .bind(t.as_str())
         .bind(repo)
         .execute(&mut *tx)
         .await?;
@@ -147,26 +154,27 @@ async fn replace(
                 .and_then(|v| v.as_str().map(str::to_owned))
                 .unwrap_or_default()
         });
-        sqlx::query("INSERT INTO repo_pulls (repo, number, branch, base, title, author, draft, head_sha, checks, checks_sha, updated_at, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            .bind(repo).bind(pr.number as i64).bind(&branch).bind(pr.base.as_deref().unwrap_or_default())
+        sqlx::query("INSERT INTO repo_pulls (tenant_id, repo, number, branch, base, title, author, draft, head_sha, checks, checks_sha, updated_at, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(t.as_str()).bind(repo).bind(pr.number as i64).bind(&branch).bind(pr.base.as_deref().unwrap_or_default())
             .bind(&pr.title).bind(&pr.author).bind(pr.draft).bind(&pr.head_sha).bind(checks).bind(checks_sha)
             .bind(ts(pr.updated_at)).bind(&pr.url).execute(&mut *tx).await?;
     }
-    sqlx::query("INSERT INTO repo_pulls_status (repo, listed_at, truncated, error) VALUES (?, ?, ?, NULL) ON CONFLICT(repo) DO UPDATE SET listed_at = excluded.listed_at, truncated = excluded.truncated, error = NULL")
-        .bind(repo).bind(ts(Utc::now())).bind(listing.truncated).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO repo_pulls_status (tenant_id, repo, listed_at, truncated, error) VALUES (?, ?, ?, ?, NULL) ON CONFLICT(tenant_id, repo) DO UPDATE SET listed_at = excluded.listed_at, truncated = excluded.truncated, error = NULL")
+        .bind(t.as_str()).bind(repo).bind(ts(Utc::now())).bind(listing.truncated).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
 
 /// A listing failed: keep the rows and the last good time, record why.
-async fn record_error(db: &SqlitePool, repo: &str, error: &str) -> Result<()> {
-    sqlx::query("INSERT INTO repo_pulls_status (repo, listed_at, truncated, error) VALUES (?, NULL, 0, ?) ON CONFLICT(repo) DO UPDATE SET error = excluded.error")
-        .bind(repo).bind(error).execute(db).await?;
+async fn record_error(db: &SqlitePool, t: &TenantId, repo: &str, error: &str) -> Result<()> {
+    sqlx::query("INSERT INTO repo_pulls_status (tenant_id, repo, listed_at, truncated, error) VALUES (?, ?, NULL, 0, ?) ON CONFLICT(tenant_id, repo) DO UPDATE SET error = excluded.error")
+        .bind(t.as_str()).bind(repo).bind(error).execute(db).await?;
     Ok(())
 }
 
-async fn forget_others(db: &SqlitePool, named: &BTreeSet<&str>) -> Result<()> {
-    let stored: Vec<String> = sqlx::query("SELECT repo FROM repo_pulls_status")
+async fn forget_others(db: &SqlitePool, t: &TenantId, named: &BTreeSet<&str>) -> Result<()> {
+    let stored: Vec<String> = sqlx::query("SELECT repo FROM repo_pulls_status WHERE tenant_id = ?")
+        .bind(t.as_str())
         .fetch_all(db)
         .await?
         .iter()
@@ -174,11 +182,13 @@ async fn forget_others(db: &SqlitePool, named: &BTreeSet<&str>) -> Result<()> {
         .collect();
     for repo in stored.iter().filter(|r| !named.contains(r.as_str())) {
         let mut tx = db.begin().await?;
-        sqlx::query("DELETE FROM repo_pulls WHERE repo = ?")
+        sqlx::query("DELETE FROM repo_pulls WHERE tenant_id = ? AND repo = ?")
+            .bind(t.as_str())
             .bind(repo)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM repo_pulls_status WHERE repo = ?")
+        sqlx::query("DELETE FROM repo_pulls_status WHERE tenant_id = ? AND repo = ?")
+            .bind(t.as_str())
             .bind(repo)
             .execute(&mut *tx)
             .await?;
@@ -190,11 +200,11 @@ async fn forget_others(db: &SqlitePool, named: &BTreeSet<&str>) -> Result<()> {
 /// Every stored listing, one entry per repo that has been listed or has failed, in repo order.
 /// `issue` comes from the branch name (ADR 0006); checks of a tracked pull request are left for
 /// the caller to take from `pull_requests`.
-pub async fn repo_pulls(db: &SqlitePool) -> Result<Vec<RepoPulls>> {
+pub async fn repo_pulls(db: &SqlitePool, t: &TenantId) -> Result<Vec<RepoPulls>> {
     let mut by_repo: Vec<RepoPulls> = sqlx::query(
-        "SELECT repo, listed_at, truncated, error FROM repo_pulls_status ORDER BY repo",
+        "SELECT repo, listed_at, truncated, error FROM repo_pulls_status WHERE tenant_id = ? ORDER BY repo",
     )
-    .fetch_all(db)
+    .bind(t.as_str()).fetch_all(db)
     .await?
     .iter()
     .map(|r| RepoPulls {
@@ -207,8 +217,8 @@ pub async fn repo_pulls(db: &SqlitePool) -> Result<Vec<RepoPulls>> {
         error: r.get("error"),
     })
     .collect();
-    let rows = sqlx::query("SELECT repo, number, branch, base, title, author, draft, head_sha, checks, updated_at, url FROM repo_pulls ORDER BY repo, number")
-        .fetch_all(db)
+    let rows = sqlx::query("SELECT repo, number, branch, base, title, author, draft, head_sha, checks, updated_at, url FROM repo_pulls WHERE tenant_id = ? ORDER BY repo, number")
+        .bind(t.as_str()).fetch_all(db)
         .await?;
     for r in &rows {
         let repo: String = r.get("repo");

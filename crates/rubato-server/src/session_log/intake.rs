@@ -73,7 +73,11 @@ pub async fn on_hook(app: &App, companion_id: Uuid, hook: &HookEvent) {
         mixed: hook.mixed,
         at: hook.received_at,
     };
-    match store::insert(&app.db, launch_id, &target.issue, &entry).await {
+    let Ok(t) = app.repo_tenant(&target.issue.repo) else {
+        tracing::warn!(rubato.issue = %target.issue, "session log entry for a repository in no tenant");
+        return;
+    };
+    match store::insert(&app.db, &t, launch_id, &target.issue, &entry).await {
         Ok(true) => {
             app.metrics.session_log_entries.add(
                 1,

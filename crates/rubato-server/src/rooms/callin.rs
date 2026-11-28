@@ -47,13 +47,17 @@ fn refuse(app: &App, route: &str, status: StatusCode, why: &str, user: &str) -> 
 
 /// Agents that should have left: not addressed for the idle limit, or their session ended.
 pub(super) async fn sweep_room(app: &App, room: &RoomKey) -> Result<usize> {
-    let rows = agents::agents_in(&app.db, room).await?;
+    let t = &app.repo_tenant(&room.repo)?;
+    let rows = agents::agents_in(&app.db, t, room).await?;
     sweep_rows(app, rows.into_iter().filter(AgentRow::present).collect()).await
 }
 
 /// Every room's agents (each poll tick).
 pub async fn sweep_agents(app: &App) -> Result<usize> {
-    let rows = agents::present_everywhere(&app.db).await?;
+    let mut rows = Vec::new();
+    for t in &app.tenants() {
+        rows.extend(agents::present_everywhere(&app.db, t).await?);
+    }
     sweep_rows(app, rows).await
 }
 
@@ -76,8 +80,11 @@ async fn sweep_rows(app: &App, rows: Vec<AgentRow>) -> Result<usize> {
         } else {
             None
         };
+        let Ok(t) = app.repo_tenant(&a.room.repo) else {
+            continue;
+        };
         if let Some(r) = reason
-            && agents::leave(&app.db, a.id, r, now).await?
+            && agents::leave(&app.db, &t, a.id, r, now).await?
         {
             left += 1;
             tracing::info!(rubato.room = %room_attr(&a.room), handle = %a.agent.handle, reason = ?r, "room agent left");
@@ -114,7 +121,10 @@ async fn may_join(
         ));
     }
     sweep_room(app, room).await.map_err(internal)?;
-    let present = agents::agents_in(&app.db, room).await.map_err(internal)?;
+    let t = &app.repo_tenant(&room.repo).map_err(internal)?;
+    let present = agents::agents_in(&app.db, t, room)
+        .await
+        .map_err(internal)?;
     if present
         .iter()
         .any(|a| a.present() && a.agent.owner.eq_ignore_ascii_case(owner))
@@ -149,7 +159,8 @@ async fn join(
         left_reason: None,
         last_turn_at: None,
     };
-    match agents::join(&app.db, room, &agent)
+    let t = &app.repo_tenant(&room.repo).map_err(internal)?;
+    match agents::join(&app.db, t, room, &agent)
         .await
         .map_err(internal)?
     {
@@ -175,6 +186,7 @@ pub async fn call_in(
 ) -> Result<(StatusCode, Json<CallInResponse>), Refused> {
     let route = routes::ROOM_AGENTS;
     let room = key_of(&req.repo, req.number, &req.branch);
+    let t = &app.repo_tenant(&room.repo).map_err(internal)?;
     if !has_plan(&app, &room).await.map_err(internal)? {
         return Err(refuse(
             &app,
@@ -216,7 +228,7 @@ pub async fn call_in(
         return Ok((StatusCode::CREATED, Json(CallInResponse::Joined { agent })));
     }
     // Someone else's agent: a request the owner answers. One pending request per launch.
-    if let Some(open) = agents::requests_in(&app.db, &room)
+    if let Some(open) = agents::requests_in(&app.db, t, &room)
         .await
         .map_err(internal)?
         .into_iter()
@@ -236,7 +248,7 @@ pub async fn call_in(
         state: RequestState::Pending,
         answered_at: None,
     };
-    agents::add_request(&app.db, &room, &request)
+    agents::add_request(&app.db, t, &room, &request)
         .await
         .map_err(internal)?;
     tracing::info!(rubato.room = %room_attr(&room), owner = %request.owner, requested_by = %user, "room call-in requested");
@@ -261,12 +273,14 @@ impl From<Uuid> for RequestParam {
 
 pub async fn answer(
     State(app): State<App>,
+    scope: crate::kernel::tenancy::TenantScope,
     CurrentUser(user): CurrentUser,
     Path(RequestParam { request_id }): Path<RequestParam>,
     Json(body): Json<RequestAnswerBody>,
 ) -> Result<Json<RoomRequest>, Refused> {
     let route = routes::ROOM_REQUEST;
-    let Some((room, request)) = agents::request_of(&app.db, request_id)
+    let t = scope.tenant();
+    let Some((room, request)) = agents::request_of(&app.db, t, request_id)
         .await
         .map_err(internal)?
     else {
@@ -329,7 +343,7 @@ pub async fn answer(
         None
     };
     let now = app.clock.now();
-    if !agents::answer(&app.db, request_id, to, now)
+    if !agents::answer(&app.db, t, request_id, to, now)
         .await
         .map_err(internal)?
     {
@@ -370,8 +384,9 @@ pub async fn dismiss(
 ) -> Result<Json<RoomAgent>, Refused> {
     let route = routes::ROOM_AGENTS;
     let room = key_of(&req.repo, req.number, &req.branch);
+    let t = &app.repo_tenant(&room.repo).map_err(internal)?;
     sweep_room(&app, &room).await.map_err(internal)?;
-    let Some(a) = agents::agents_in(&app.db, &room)
+    let Some(a) = agents::agents_in(&app.db, t, &room)
         .await
         .map_err(internal)?
         .into_iter()
@@ -396,7 +411,7 @@ pub async fn dismiss(
         ));
     }
     let now = app.clock.now();
-    agents::leave(&app.db, a.id, LeftReason::Dismissed, now)
+    agents::leave(&app.db, t, a.id, LeftReason::Dismissed, now)
         .await
         .map_err(internal)?;
     tracing::info!(rubato.room = %room_attr(&room), handle = %a.agent.handle, rubato.user = %user, "room agent dismissed");

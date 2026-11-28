@@ -379,6 +379,8 @@ pub mod span {
     /// the bytes. Draws `server-plan-file` and `server-system-map` on the service graph.
     pub const PART_READ: &str = "rubato.part.read";
     pub const GITHUB_CALL: &str = "rubato.github.call";
+    /// One tenant's part of a poll pass (ADR 0087), with `rubato.tenant`.
+    pub const POLL_TENANT_PASS: &str = "rubato.poll.tenant_pass";
     pub const WS_FANOUT: &str = "rubato.ws.fanout";
     pub const HANDOFF: &str = "rubato.handoff";
     /// An approval posted from Rubato as the person (ADR 0030).
@@ -694,6 +696,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::HTTP_REQUEST,
         span::PART_READ,
         span::GITHUB_CALL,
+        span::POLL_TENANT_PASS,
         span::WS_FANOUT,
         span::HANDOFF,
         span::PLAN_APPROVE,

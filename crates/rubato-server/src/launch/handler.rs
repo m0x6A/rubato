@@ -76,6 +76,7 @@ pub async fn start(
     // The owner's lead agent that asked for this worker (ADR 0072); `None` from the web.
     lead_launch_id: Option<Uuid>,
 ) -> Result<LaunchResponse, (StatusCode, String)> {
+    let t = ws.tenant();
     // A lead only while the orchestrator flag is on (ADR 0072); a lead never starts a lead.
     if req.role == LaunchRole::Lead && (!app.config.orchestrator || lead_launch_id.is_some()) {
         app.reject(routes::LAUNCH, fleet_reason::ORCHESTRATOR_OFF, user);
@@ -151,18 +152,18 @@ pub async fn start(
         .filter(|p| p.issue == req.issue)
         .map(|p| p.target.id().to_owned())
         .collect();
-    let meta = github_poll::issue_meta(&app.db, &req.issue)
+    let meta = github_poll::issue_meta(&app.db, t, &req.issue)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .unwrap_or_default();
-    let plan_row = plans::all(&app.db)
+    let plan_row = plans::all(&app.db, t)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
         .find(|p| p.issue == req.issue);
     // A draft of the caller's on this issue decides the branch (ADR 0053, plan 122 §D5), so
     // editing the title never orphans it. A teammate's draft stays theirs: taking it over is Import.
-    let mine: Vec<plan_drafts::LatestDraft> = plan_drafts::latest_drafts(app)
+    let mine: Vec<plan_drafts::LatestDraft> = plan_drafts::latest_drafts(app, t)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
@@ -194,7 +195,7 @@ pub async fn start(
             if branch_plan.is_none()
                 && app.announced(companion.companion_id, capability::DRAFT_RESTORE) =>
         {
-            plan_drafts::restore_of(app, d.summary.draft_id)
+            plan_drafts::restore_of(app, t, d.summary.draft_id)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?
         }

@@ -78,6 +78,7 @@ fn hook(
 async fn entries(h: &H) -> Vec<rubato_protocol::SessionLogEntry> {
     handlers::log(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser("alice".into()),
         Path(h.launch.into()),
     )

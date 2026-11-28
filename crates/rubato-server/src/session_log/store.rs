@@ -2,6 +2,7 @@
 //! nothing new.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use rubato_protocol::{IssueRef, LogKind, LogRole, SessionLogEntry};
 use sqlx::{Row, SqlitePool};
@@ -10,12 +11,13 @@ use uuid::Uuid;
 /// Insert one entry; returns false when it was already there.
 pub async fn insert(
     db: &SqlitePool,
+    t: &TenantId,
     launch_id: Uuid,
     issue: &IssueRef,
     e: &SessionLogEntry,
 ) -> Result<bool> {
-    let n = sqlx::query("INSERT OR IGNORE INTO session_log_entries (session_id, prompt_id, role, launch_id, repo, number, kind, text, truncated, message_id, mixed, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(&e.session_id)
+    let n = sqlx::query("INSERT OR IGNORE INTO session_log_entries (tenant_id, session_id, prompt_id, role, launch_id, repo, number, kind, text, truncated, message_id, mixed, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(t.as_str()).bind(&e.session_id)
         .bind(&e.prompt_id)
         .bind(e.role.name())
         .bind(launch_id.to_string())
@@ -53,12 +55,13 @@ fn kind(s: &str) -> LogKind {
 /// The session message a prompt carried (its `UserPromptSubmit` entry's `message_id`).
 pub async fn prompt_message(
     db: &SqlitePool,
+    t: &TenantId,
     launch_id: Uuid,
     session_id: &str,
     prompt_id: &str,
 ) -> Result<Option<Uuid>> {
-    let r = sqlx::query("SELECT message_id FROM session_log_entries WHERE launch_id = ? AND session_id = ? AND prompt_id = ? AND role = 'user'")
-        .bind(launch_id.to_string())
+    let r = sqlx::query("SELECT message_id FROM session_log_entries WHERE tenant_id = ? AND launch_id = ? AND session_id = ? AND prompt_id = ? AND role = 'user'")
+        .bind(t.as_str()).bind(launch_id.to_string())
         .bind(session_id)
         .bind(prompt_id)
         .fetch_optional(db)
@@ -69,9 +72,13 @@ pub async fn prompt_message(
 }
 
 /// A launch's entries, oldest first; within one turn the prompt before the reply.
-pub async fn for_launch(db: &SqlitePool, launch_id: Uuid) -> Result<Vec<SessionLogEntry>> {
-    let rows = sqlx::query("SELECT session_id, prompt_id, role, kind, text, truncated, message_id, mixed, at FROM session_log_entries WHERE launch_id = ? ORDER BY at, CASE role WHEN 'user' THEN 0 ELSE 1 END")
-        .bind(launch_id.to_string())
+pub async fn for_launch(
+    db: &SqlitePool,
+    t: &TenantId,
+    launch_id: Uuid,
+) -> Result<Vec<SessionLogEntry>> {
+    let rows = sqlx::query("SELECT session_id, prompt_id, role, kind, text, truncated, message_id, mixed, at FROM session_log_entries WHERE tenant_id = ? AND launch_id = ? ORDER BY at, CASE role WHEN 'user' THEN 0 ELSE 1 END")
+        .bind(t.as_str()).bind(launch_id.to_string())
         .fetch_all(db)
         .await?;
     rows.iter()

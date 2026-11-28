@@ -53,6 +53,19 @@ impl std::fmt::Display for TenantId {
     }
 }
 
+/// `rubato.tenant` for any tenant but `default`, whose series stay as they were before tenants
+/// (ADR 0087): what a gauge recorded per tenant carries.
+pub fn tenant_attrs(t: &TenantId) -> Vec<opentelemetry::KeyValue> {
+    if t.as_str() == DEFAULT_TENANT {
+        Vec::new()
+    } else {
+        vec![opentelemetry::KeyValue::new(
+            rubato_protocol::otel::attr::TENANT,
+            t.to_string(),
+        )]
+    }
+}
+
 /// One workspace of one tenant (ADR 0089).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WsKey {
@@ -200,6 +213,17 @@ impl<S: Send + Sync> FromRequestParts<S> for AdminScope {
         }
         Ok(AdminScope(scope))
     }
+}
+
+/// An admin of tenant `default`, for a test that calls a handler directly.
+#[cfg(test)]
+pub fn default_scope() -> TenantScope {
+    TenantScope::granted(
+        TenantId::default_tenant(),
+        0,
+        "m0x6A".to_owned(),
+        Role::Admin,
+    )
 }
 
 /// For a slice's handler tests, which mount its routes without the composition root's layers:

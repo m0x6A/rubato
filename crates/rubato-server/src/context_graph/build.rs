@@ -280,12 +280,17 @@ pub async fn tick(app: &App) -> Tick {
         return tick;
     };
     let named = app.union_repos().await;
-    let uncovered: BTreeSet<String> = crate::github_poll::uncovered(&app.db)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| r.to_ascii_lowercase())
-        .collect();
+    // Every tenant's: a repository uncovered in the tenant that names it is not built.
+    let mut uncovered: BTreeSet<String> = BTreeSet::new();
+    for t in &app.tenants() {
+        uncovered.extend(
+            crate::github_poll::uncovered(&app.db, t)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| r.to_ascii_lowercase()),
+        );
+    }
     let mut wanted = BTreeSet::new();
     for repo in &named {
         // A repository the installation does not cover is a finding in the overview already;
@@ -513,43 +518,66 @@ async fn team_input(
         .into_iter()
         .map(|p| (p.issue.repo, p.issue.number))
         .collect();
-    let issues = crate::github_poll::all_issue_meta(&app.db)
-        .await
-        .map_err(|e| ("issues", e))?
-        .into_iter()
-        .map(|(issue, m)| {
-            (
-                issue,
-                team::IssueFact {
-                    title: m.title,
-                    state: m.github_state,
-                    url: m.url,
-                },
-            )
-        })
-        .collect();
-    let authors = crate::github_poll::open_issue_authors(&app.db)
-        .await
-        .map_err(|e| ("issues", e))?;
-    let plans = crate::plans::all(&app.db)
-        .await
-        .map_err(|e| ("plans", e))?
-        .into_iter()
-        .filter_map(|row| {
-            Some(team::PlanFact {
-                issue: row.issue,
-                branch: row.branch,
-                path: row.path,
-                plan: row.plan?,
-            })
-        })
-        .collect();
-    let pulls = crate::github_poll::repo_pulls(&app.db)
-        .await
-        .map_err(|e| ("pulls", e))?
-        .into_iter()
-        .flat_map(|r| r.pulls)
-        .collect();
+    // Read tenant by tenant. The team source is still one for the server; it becomes one per
+    // tenant with the graph's own scoping (plan 345, design §6.4).
+    let mut input = team::Input {
+        repos,
+        pinned,
+        ..Default::default()
+    };
+    for t in &app.tenants() {
+        input.issues.extend(
+            crate::github_poll::all_issue_meta(&app.db, t)
+                .await
+                .map_err(|e| ("issues", e))?
+                .into_iter()
+                .map(|(issue, m)| {
+                    (
+                        issue,
+                        team::IssueFact {
+                            title: m.title,
+                            state: m.github_state,
+                            url: m.url,
+                        },
+                    )
+                }),
+        );
+        input.authors.extend(
+            crate::github_poll::open_issue_authors(&app.db, t)
+                .await
+                .map_err(|e| ("issues", e))?,
+        );
+        input.plans.extend(
+            crate::plans::all(&app.db, t)
+                .await
+                .map_err(|e| ("plans", e))?
+                .into_iter()
+                .filter_map(|row| {
+                    Some(team::PlanFact {
+                        issue: row.issue,
+                        branch: row.branch,
+                        path: row.path,
+                        plan: row.plan?,
+                    })
+                }),
+        );
+        input.pulls.extend(
+            crate::github_poll::repo_pulls(&app.db, t)
+                .await
+                .map_err(|e| ("pulls", e))?
+                .into_iter()
+                .flat_map(|r| r.pulls),
+        );
+    }
+    let team::Input {
+        repos,
+        pinned,
+        issues,
+        authors,
+        plans,
+        pulls,
+        ..
+    } = input;
     Ok(team::Input {
         repos,
         pinned,
