@@ -261,6 +261,8 @@ export function Inspector({ overview, selection, onSelect, onSelectIssue, onNewI
 interface PlanProps {
   issue: IssueSummary;
   onSelect: (ref: MapRef | null) => void;
+  /** The decisions recorded on the issue; left out where the issue shows them itself. */
+  showDecisions?: boolean;
 }
 
 /**
@@ -268,7 +270,7 @@ interface PlanProps {
  * where, what it will send across seams, how a break would be found at 3 am, the seam-level
  * questions that wait for a human, and the decisions recorded on the issue with who and when.
  */
-export function PlanInspector({ issue, onSelect }: PlanProps) {
+export function PlanInspector({ issue, onSelect, showDecisions = true }: PlanProps) {
   const plan = issue.plan;
   if (!plan) {
     return null;
@@ -328,8 +330,8 @@ export function PlanInspector({ issue, onSelect }: PlanProps) {
       ) : (
         <p className="muted">No seam-level question is open.</p>
       )}
-      <h3>Decisions</h3>
-      {decisions.length ? (
+      {showDecisions && <h3>Decisions</h3>}
+      {!showDecisions ? null : decisions.length ? (
         <ul className="plain">
           {decisions.map((d) => (
             <li key={d.comment_id}>

@@ -12,15 +12,17 @@ const EVERY: Route[] = [
   { view: "issues", list: "not-pinned", sel: null },
   { view: "issues", list: "done", sel: SEAM },
   { view: "map", sel: PART },
-  { view: "issue", issue: ISSUE, section: "overview", sel: null },
-  { view: "issue", issue: ISSUE, section: "plan", sel: SEAM },
-  { view: "issue", issue: ISSUE, section: "room", sel: null },
-  { view: "issue", issue: ISSUE, section: "sessions", sel: null },
-  { view: "issue", issue: ISSUE, section: "pr", sel: null },
+  { view: "issue", issue: ISSUE, section: "overview", from: null, sel: null },
+  { view: "issue", issue: ISSUE, section: "plan", from: null, sel: SEAM },
+  { view: "issue", issue: ISSUE, section: "room", from: null, sel: null },
+  { view: "issue", issue: ISSUE, section: "sessions", from: null, sel: null },
+  { view: "issue", issue: ISSUE, section: "pr", from: null, sel: null },
   { view: "new-issue", at: null, sel: null },
   { view: "new-issue", at: SEAM, sel: SEAM },
-  { view: "plans", sel: null },
-  { view: "plan", issue: ISSUE, sel: null },
+  { view: "plans", list: "plans", sel: null },
+  { view: "plans", list: "plans-done", sel: null },
+  { view: "issue", issue: ISSUE, section: "plan", from: "plans-done", sel: null },
+  { view: "issue", issue: ISSUE, section: "plan", from: "plans", sel: null },
   { view: "companions", sel: null },
   { view: "repos", sel: PART },
   { view: "findings", sel: null },
@@ -31,7 +33,7 @@ const EVERY: Route[] = [
   { view: "not-found", fragment: "/nowhere", sel: null },
 ];
 
-const KINDS = ["map", "issues", "issue", "new-issue", "plans", "plan", "companions", "repos", "findings", "settings", "workspaces", "members", "operator", "not-found"];
+const KINDS = ["map", "issues", "issue", "new-issue", "plans", "companions", "repos", "findings", "settings", "workspaces", "members", "operator", "not-found"];
 
 /** How many of the routes survive `format` then `parse`, and which kinds they cover. */
 function roundTrips(routes: Route[]): { ok: number; kinds: Set<string> } {
@@ -61,19 +63,19 @@ describe("the view in the URL fragment (issue #357)", () => {
   });
 
   it("must fail: the round trip notices a kind that is not covered", () => {
-    const { kinds } = roundTrips(EVERY.filter((r) => r.view !== "plan"));
+    const { kinds } = roundTrips(EVERY.filter((r) => r.view !== "plans"));
     expect([...kinds].sort()).not.toEqual([...KINDS].sort());
   });
 
   it("reads the fragments a person would paste", () => {
     expect(parseRoute("")).toEqual(HOME);
     expect(parseRoute("#/")).toEqual(HOME);
-    expect(parseRoute("#/issues/m0x6A/rubato/357")).toEqual({ view: "issue", issue: ISSUE, section: "overview", sel: null });
+    expect(parseRoute("#/issues/m0x6A/rubato/357")).toEqual({ view: "issue", issue: ISSUE, section: "overview", from: null, sel: null });
     expect(parseRoute("#/issues?sel=part:rubato-server")).toEqual({ view: "issues", list: "open", sel: PART });
     expect(parseRoute("#/issues/not-pinned")).toEqual({ view: "issues", list: "not-pinned", sel: null });
     expect(parseRoute("#/map?sel=seam:web-server")).toEqual({ view: "map", sel: SEAM });
     expect(parseRoute("#/issues/new?at=seam:web-server")).toEqual({ view: "new-issue", at: SEAM, sel: null });
-    expect(formatRoute({ view: "issue", issue: ISSUE, section: "overview", sel: SEAM })).toBe("#/issues/m0x6A/rubato/357?sel=seam:web-server");
+    expect(formatRoute({ view: "issue", issue: ISSUE, section: "overview", from: null, sel: SEAM })).toBe("#/issues/m0x6A/rubato/357?sel=seam:web-server");
   });
 
   it("names nothing it cannot read", () => {
@@ -86,13 +88,21 @@ describe("the view in the URL fragment (issue #357)", () => {
 
   it("the way up closes the view first and the selection last", () => {
     // An issue opened beside a selected part closes to that part's inspector, which closes to the list.
-    expect(parentOf({ view: "issue", issue: ISSUE, section: "overview", sel: PART })).toEqual({ view: "map", sel: PART });
+    expect(parentOf({ view: "issue", issue: ISSUE, section: "overview", from: null, sel: PART })).toEqual({ view: "map", sel: PART });
     expect(parentOf({ view: "map", sel: PART })).toEqual(HOME);
-    expect(parentOf({ view: "issue", issue: ISSUE, section: "overview", sel: null })).toEqual(HOME);
+    expect(parentOf({ view: "issue", issue: ISSUE, section: "overview", from: null, sel: null })).toEqual(HOME);
     expect(parentOf({ view: "issues", list: "open", sel: PART })).toEqual(HOME);
     expect(parentOf({ view: "issues", list: "done", sel: null })).toEqual(HOME);
     expect(parentOf(HOME)).toBeNull();
-    expect(parentOf({ view: "plan", issue: ISSUE, sel: null })).toEqual({ view: "plans", sel: null });
+    // A plan read from the board goes back to the board; its old address still opens it.
+    expect(parentOf({ view: "issue", issue: ISSUE, section: "plan", from: "plans", sel: null })).toEqual({ view: "plans", list: "plans", sel: null });
+    expect(parseRoute("#/plans/m0x6A/rubato/357")).toEqual({ view: "issue", issue: ISSUE, section: "plan", from: "plans", sel: null });
+    expect(formatRoute({ view: "issue", issue: ISSUE, section: "plan", from: "plans", sel: null })).toBe("#/issues/m0x6A/rubato/357/plan?from=plans");
+    expect(parseRoute("#/issues/m0x6A/rubato/357?from=elsewhere").view).toBe("not-found");
+    // A finished plan read from Done goes back to Done, which goes back to the board.
+    expect(parseRoute("#/plans/done")).toEqual({ view: "plans", list: "plans-done", sel: null });
+    expect(parentOf({ view: "issue", issue: ISSUE, section: "plan", from: "plans-done", sel: null })).toEqual({ view: "plans", list: "plans-done", sel: null });
+    expect(parentOf({ view: "plans", list: "plans-done", sel: null })).toEqual({ view: "plans", list: "plans", sel: null });
     expect(parentOf({ view: "new-issue", at: PART, sel: PART })).toEqual({ view: "map", sel: PART });
     expect(parentOf({ view: "companions", sel: null })).toBeNull();
     expect(parentOf({ view: "settings", sel: null })).toEqual(HOME);
@@ -104,10 +114,10 @@ describe("the view in the URL fragment (issue #357)", () => {
 
   it("a new view is a new history entry; another selection on the same view is not", () => {
     const before = history.length;
-    navigate({ view: "plans", sel: null });
+    navigate({ view: "plans", list: "plans", sel: null });
     expect(location.hash).toBe("#/plans");
     expect(history.length).toBe(before + 1);
-    navigate({ view: "plans", sel: PART });
+    navigate({ view: "plans", list: "plans", sel: PART });
     expect(location.hash).toBe("#/plans?sel=part:rubato-server");
     expect(history.length).toBe(before + 1);
     navigate({ view: "companions", sel: PART }, { replace: true });
@@ -115,11 +125,11 @@ describe("the view in the URL fragment (issue #357)", () => {
     navigate({ view: "companions", sel: PART });
     expect(history.length).toBe(before + 1);
     expect(currentRoute()).toEqual({ view: "companions", sel: PART });
-    expect(sameView({ view: "issue", issue: ISSUE, section: "overview", sel: PART }, { view: "issue", issue: ISSUE, section: "overview", sel: null })).toBe(true);
+    expect(sameView({ view: "issue", issue: ISSUE, section: "overview", from: null, sel: PART }, { view: "issue", issue: ISSUE, section: "overview", from: null, sel: null })).toBe(true);
     // Sections of one issue are one view: moving between them replaces the entry.
-    navigate({ view: "issue", issue: ISSUE, section: "overview", sel: null });
+    navigate({ view: "issue", issue: ISSUE, section: "overview", from: null, sel: null });
     const inIssue = history.length;
-    navigate({ view: "issue", issue: ISSUE, section: "room", sel: null });
+    navigate({ view: "issue", issue: ISSUE, section: "room", from: null, sel: null });
     expect(location.hash).toBe("#/issues/m0x6A/rubato/357/room");
     expect(history.length).toBe(inIssue);
     expect(parentOf(currentRoute())).toEqual(HOME);
@@ -138,7 +148,7 @@ describe("the view in the URL fragment (issue #357)", () => {
     // The login returns to the page with no fragment.
     history.replaceState(null, "", "/");
     restoreRouteAfterLogin();
-    expect(currentRoute()).toEqual({ view: "issue", issue: ISSUE, section: "overview", sel: null });
+    expect(currentRoute()).toEqual({ view: "issue", issue: ISSUE, section: "overview", from: null, sel: null });
     history.replaceState(null, "", "/");
     restoreRouteAfterLogin();
     expect(currentRoute()).toEqual(HOME);
@@ -150,7 +160,7 @@ describe("the view in the URL fragment (issue #357)", () => {
     history.replaceState(null, "", "/");
     restoreRouteAfterLogin();
     expect(location.search).toBe("?t=acme&w=shop");
-    expect(currentRoute()).toEqual({ view: "issue", issue: ISSUE, section: "overview", sel: null });
+    expect(currentRoute()).toEqual({ view: "issue", issue: ISSUE, section: "overview", from: null, sel: null });
   });
 
   it("a link to something on the page focuses it and leaves the fragment, which names the view", () => {

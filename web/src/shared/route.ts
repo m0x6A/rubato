@@ -19,14 +19,17 @@ export type IssueList = "open" | "not-pinned" | "done";
 /** The parts of an issue's view, one at a time; the overview is the issue's own address. */
 export type IssueSection = "overview" | "plan" | "room" | "sessions" | "pr";
 
+/** Which plans the board shows: those of open issues, or the finished ones. Also where a plan was opened from. */
+export type PlanList = "plans" | "plans-done";
+
 export type View =
   | { view: "issues"; list: IssueList }
   /** The inspector of the part or seam selected on the map. */
   | { view: "map" }
-  | { view: "issue"; issue: IssueRef; section: IssueSection }
+  /** `from`: the board the issue was opened from, which is then its way up. */
+  | { view: "issue"; issue: IssueRef; section: IssueSection; from: PlanList | null }
   | { view: "new-issue"; at: MapRef | null }
-  | { view: "plans" }
-  | { view: "plan"; issue: IssueRef }
+  | { view: "plans"; list: PlanList }
   | { view: "companions" }
   | { view: "repos" }
   | { view: "findings" }
@@ -45,6 +48,11 @@ const ID = /^[A-Za-z0-9._-]+$/;
 
 /** The lists of the issue view that have a path of their own; the open list is `/issues`. */
 const LISTS: Record<string, IssueList> = { "not-pinned": "not-pinned", done: "done" };
+
+/** The names a board goes by in `?from=`. */
+/** The path of the board's finished plans: `/plans/done`. */
+const BOARD_DONE = "done";
+const BOARDS: Record<string, PlanList> = { plans: "plans", "plans-done": "plans-done" };
 
 /** The sections of an issue's view that have a path of their own. */
 const SECTIONS: Record<string, IssueSection> = { plan: "plan", room: "room", sessions: "sessions", pr: "pr" };
@@ -114,14 +122,23 @@ export function parseRoute(hash: string): Route {
       }
       const issue = parseIssue(a, b, c);
       const section = d === undefined ? "overview" : SECTIONS[d];
-      return issue && section ? { view: "issue", issue, section, sel } : notFound;
+      const asked = params.get("from");
+      const from = asked === null ? null : BOARDS[asked];
+      if (from === undefined) {
+        return notFound;
+      }
+      return issue && section ? { view: "issue", issue, section, from, sel } : notFound;
     }
     case "plans": {
       if (only) {
-        return { view: "plans", sel };
+        return { view: "plans", list: "plans", sel };
       }
+      if (a === BOARD_DONE && b === undefined) {
+        return { view: "plans", list: "plans-done", sel };
+      }
+      // An address from before the plan became a part of its issue: the same plan, the board its way up.
       const issue = parseIssue(a, b, c);
-      return issue && d === undefined ? { view: "plan", issue, sel } : notFound;
+      return issue && d === undefined ? { view: "issue", issue, section: "plan", from: "plans", sel } : notFound;
     }
     case "settings":
       if (d !== undefined || c !== undefined) {
@@ -155,9 +172,9 @@ export function formatRoute(route: Route): string {
       break;
     case "issue":
       path = `/issues/${route.issue.repo}/${route.issue.number}${route.section === "overview" ? "" : `/${route.section}`}`;
-      break;
-    case "plan":
-      path = `/plans/${route.issue.repo}/${route.issue.number}`;
+      if (route.from) {
+        params.set("from", route.from);
+      }
       break;
     case "new-issue":
       path = "/issues/new";
@@ -167,6 +184,9 @@ export function formatRoute(route: Route): string {
       break;
     case "workspaces":
       path = "/settings/workspaces";
+      break;
+    case "plans":
+      path = route.list === "plans" ? "/plans" : `/plans/${BOARD_DONE}`;
       break;
     case "not-found":
       return `#${route.fragment}`;
@@ -191,7 +211,7 @@ export function isPage(route: Route): boolean {
  * whichever of its sections shows: moving between them is not a step for Back.
  */
 export function sameView(a: Route, b: Route): boolean {
-  const flat = (r: Route): Route => (r.view === "issue" ? { ...r, section: "overview", sel: null } : { ...r, sel: null });
+  const flat = (r: Route): Route => (r.view === "issue" ? { ...r, section: "overview", from: null, sel: null } : { ...r, sel: null });
   return formatRoute(flat(a)) === formatRoute(flat(b));
 }
 
@@ -202,21 +222,28 @@ export function sameView(a: Route, b: Route): boolean {
 export function parentOf(route: Route): Route | null {
   switch (route.view) {
     case "issue":
-    case "new-issue":
+      if (route.from) {
+        return { view: "plans", list: route.from, sel: route.sel };
+      }
       // Closed, the part it was opened beside shows again: its inspector.
+      return route.sel ? { view: "map", sel: route.sel } : HOME;
+    case "new-issue":
       return route.sel ? { view: "map", sel: route.sel } : HOME;
     case "findings":
     case "not-found":
       return { view: "issues", list: "open", sel: route.sel };
     case "map":
       return HOME;
+    case "plans":
+      if (route.sel) {
+        return { ...route, sel: null };
+      }
+      return route.list === "plans" ? null : { view: "plans", list: "plans", sel: null };
     case "issues":
       if (route.sel) {
         return { ...route, sel: null };
       }
       return route.list === "open" ? null : HOME;
-    case "plan":
-      return { view: "plans", sel: route.sel };
     case "settings":
     case "workspaces":
     case "members":

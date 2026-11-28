@@ -3,7 +3,7 @@ import { SpendGauge, SpendSparkline, StageRail } from "./visuals.tsx";
 import { SessionChat } from "../chat/index.ts";
 import { AgentLineView, agentLineFor } from "../companions/index.ts";
 import { PinMenu } from "../pins/index.ts";
-import { DraftSection, WhereItFits } from "../plans/index.ts";
+import { DraftSection, PlanFileNote, WhereItFits } from "../plans/index.ts";
 import { PullView } from "../pulls/index.ts";
 import { RoomSection, type VoiceHeld, roomFor, roomLimit } from "../room/index.ts";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../../protocol.ts";
@@ -23,8 +23,9 @@ interface Props {
   /** Which part of the issue shows; the others stay as they were left. */
   section: IssueSection;
   onSection: (section: IssueSection) => void;
-  /** Back to the list. */
+  /** Back to the list, or to the board the issue was opened from; `backLabel` says which. */
   onClose: () => void;
+  backLabel?: string;
   /** Open another issue: the other plan a room's seam notice names. */
   onOpenIssue: (issue: IssueRef) => void;
   /** `branch` resumes one of the caller's drafts on it (ADR 0053). */
@@ -59,7 +60,7 @@ const SECTIONS: { id: IssueSection; label: string }[] = [
  * and a voice channel they joined stays joined until the issue closes. Only the pull request is
  * read when its section is first opened (ADR 0034).
  */
-export function IssuePanel({ overview, me, selected, section, onSection, onClose, onOpenIssue, onLaunch, onPin, onUnpin, onNotice, onShowSeam, onLaunchLead, onPairCompanion, planOnMap }: Props) {
+export function IssuePanel({ overview, me, selected, section, onSection, onClose, backLabel = "← all issues", onOpenIssue, onLaunch, onPin, onUnpin, onNotice, onShowSeam, onLaunchLead, onPairCompanion, planOnMap }: Props) {
   const own = ownConnectedCompanions(overview, me);
   // A lead only with the server's flag on, on a companion of yours that runs leads (ADR 0072).
   const leadOn = overview.orchestrator ? own.find((c) => c.can_lead) : undefined;
@@ -94,7 +95,7 @@ export function IssuePanel({ overview, me, selected, section, onSection, onClose
   return (
     <section data-testid="issue-detail" className="issue-view">
       <header className="issue-head">
-        <button onClick={onClose}>← all issues</button>
+        <button onClick={onClose}>{backLabel}</button>
         <h2 ref={heading} tabIndex={-1}>
           {selected.url ? (
             <a href={selected.url} target="_blank" rel="noreferrer">
@@ -249,12 +250,14 @@ export function IssuePanel({ overview, me, selected, section, onSection, onClose
           <>
             <h3>Plan · {selected.plan?.path ?? "does not parse"}</h3>
             <WhereItFits issue={selected} map={overview.map.map} me={me} partsTable={!selected.plan} onNotice={(t) => onNotice?.(t)} approvalsInRubato={Boolean(overview.comment_approvals_until)} readOnly={finished} />
-            {selected.plan?.assumed && selected.plan.assumed.some((a) => a.scope === "seam") && (
+            {/* The questions themselves are listed with the plan on the map; without it, their count is said here. */}
+            {!planOnMap && selected.plan?.assumed && selected.plan.assumed.some((a) => a.scope === "seam") && (
               <p className="warn">⚠ {selected.plan.assumed.filter((a) => a.scope === "seam").length} seam-level question(s) wait for a human.</p>
             )}
           </>
         )}
         {planOnMap}
+        <PlanFileNote issue={selected} />
         {!selected.draft && !selected.plan && !selected.fit && (
           <p className="muted" data-testid="no-plan">
             No plan yet. A session on this issue writes it, and it shows here as it is drafted.

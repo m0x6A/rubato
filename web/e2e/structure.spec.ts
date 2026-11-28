@@ -13,7 +13,10 @@ const PANEL: [fragment: string, view: string][] = [
   ["#/issues/m0x6A/rubato/915", "issue"],
   ["#/issues/new", "new-issue"],
   ["#/plans", "plans"],
-  ["#/plans/m0x6A/rubato/915", "plan"],
+  ["#/plans/done", "plans"],
+  // A plan's address from before it became a part of its issue still opens it.
+  ["#/plans/m0x6A/rubato/915", "issue"],
+  ["#/issues/m0x6A/rubato/915/plan?from=plans", "issue"],
   ["#/companions", "companions"],
   ["#/repos", "repos"],
   ["#/findings", "findings"],

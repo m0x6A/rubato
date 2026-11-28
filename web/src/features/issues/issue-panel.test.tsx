@@ -64,6 +64,31 @@ describe("start session button (ADR 0004: own tmux only)", () => {
   });
 });
 
+describe("a finished issue's plan is read, not acted on (#265, issue #357)", () => {
+  it("offers no Accept, Import, Approve or Resume; an open one's parked draft can be resumed", async () => {
+    const now = new Date().toISOString();
+    const ref = (n: number) => ({ repo: "m0x6A/rubato", number: n });
+    const draft = (n: number) => ({ draft_id: `00000000-0000-0000-0000-00000000000${n}`, rev: 2, at: now, branch: `issue/${n}-x`, bundle_hash: "b", plan_sha: "p", owner: "m0x6A", live: false, fits: true });
+    const plan = (n: number) => ({ issue: ref(n), path: `docs/plans/${n}.md`, git_ref: `issue/${n}-x`, affected_parts: [{ node: "web", status: "affected", change: "x", seams: [] }], o_rows: [] });
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ draft_id: draft(4).draft_id, branch: "issue/4-x", issue: ref(4), owner: "m0x6A", revisions: [] }), { status: 200 }));
+    const done = issue(4, "web", { plan: plan(4) as never, fit: { fits: true } as never, closed: true, finished: true, draft: draft(4), outside_rubato: true });
+    const open = issue(6, "web", { plan: plan(6) as never, fit: { fits: true } as never, draft: draft(6) });
+    const ov = overview({ issues: [done, open], companions: [companion("m0x6A", true)], comment_approvals_until: now });
+    const { unmount } = render(<IssuePanel overview={ov} me={me} selected={done} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(screen.getByTestId("finished-note")).toBeInTheDocument();
+    expect(await screen.findByTestId("draft")).toBeInTheDocument();
+    for (const id of ["accept-plan", "import-plan", "approve-draft", "resume-draft", "issue-next"]) {
+      expect(screen.queryByTestId(id), id).toBeNull();
+    }
+    unmount();
+    // Must fail on purpose if these are gone for every plan: the open one's draft can be resumed.
+    render(<IssuePanel overview={ov} me={me} selected={open} selection={null} onSelect={() => {}} onClearSelection={() => {}} onLaunch={() => {}} onPin={() => {}} onUnpin={() => {}} />);
+    expect(await screen.findByTestId("resume-draft")).toBeInTheDocument();
+    expect(screen.getByTestId("issue-next")).toHaveAttribute("data-next", "resume");
+    fetch.mockRestore();
+  });
+});
+
 describe("a pin on a retired part (ADR 0077)", () => {
   it("stays in the issue detail, marked retired", () => {
     const pinned = issue(612, "tmux-ide");

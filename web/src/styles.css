@@ -666,16 +666,12 @@ tr.chat-row > td { padding-top: 0; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 :root[data-motion="full"] .badge { transition: background-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out); }
 /* the Plans tab: big counts, a mini map per plan */
-.big-counts { display: flex; gap: 22px; align-items: flex-end; margin: 4px 0 8px; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-.big-counts b { display: block; font-size: 28px; line-height: 1; color: var(--ink); letter-spacing: 0; }
-.big-counts .warn b { color: var(--warn-ink); }
 .plan-row > .row { display: flex; gap: 12px; align-items: flex-start; }
 /* The plans board (#265): its columns follow the panel's width, not the window's. */
 .plans-board { container-type: inline-size; }
 .plan-columns { display: grid; gap: 12px; }
 @container (min-width: 720px) { .plan-columns { grid-template-columns: 1fr 1fr; gap: 20px; } }
 .plan-column { min-width: 0; }
-.plan-detail-nav { display: flex; gap: 12px; align-items: center; }
 /* Plan text as a document (ADR 0079): the UI face, a readable measure, tables in their own box. */
 .plan-text { border-top: 1px solid var(--line); }
 .plan-text-mode { margin: 0; padding: 4px 8px 0; text-align: right; font-size: 11px; }

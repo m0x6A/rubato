@@ -3,6 +3,6 @@
  * 0029–0031); an issue's plan draft in Rubato, its revisions, what changed since you last looked
  * (ADR 0053), and its text as Markdown (ADR 0079). */
 export { DraftSection } from "./DraftSection.tsx";
-export { PlansBoard } from "./PlansBoard.tsx";
+export { PlanFileNote, PlansBoard } from "./PlansBoard.tsx";
 export { WhereItFits } from "./WhereItFits.tsx";
 export { groupPlans } from "./group.ts";

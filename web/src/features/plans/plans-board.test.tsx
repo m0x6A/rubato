@@ -3,7 +3,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issue, overview } from "../../../test/fixtures.ts";
 import type { DraftSummary, IssueRef, IssueSummary, Me, Overview, Plan } from "../../protocol.ts";
-import { PlansBoard } from "./index.ts";
+import { PlanFileNote, PlansBoard, WhereItFits } from "./index.ts";
 
 const ref = (n: number) => ({ repo: "m0x6A/rubato", number: n });
 const now = new Date().toISOString();
@@ -32,11 +32,10 @@ const board = () =>
     ],
   });
 
-/** The board in a shell that holds the selection, as App does. */
-function Shell({ ov, onOpenIssue = () => {} }: { ov: Overview; onOpenIssue?: (i: IssueRef) => void }) {
-  const [sel, setSel] = useState<IssueRef | null>(null);
-  const selected = sel ? (ov.issues.find((i) => i.issue.number === sel.number) ?? null) : null;
-  return <PlansBoard overview={ov} me={me} selected={selected} onSelect={setSel} onOpenIssue={onOpenIssue} onNotice={() => {}} onResume={() => {}} />;
+/** The board as the shell mounts it: a row hands its issue up, and the shell opens the issue's plan. */
+function Shell({ ov, onOpen = () => {} }: { ov: Overview; onOpen?: (i: IssueRef) => void }) {
+  const [done, setDone] = useState(false);
+  return <PlansBoard overview={ov} done={done} onDone={setDone} onOpen={onOpen} />;
 }
 
 const rowsIn = (testid: string) =>
@@ -59,12 +58,24 @@ describe("the plans board (#265)", () => {
     expect(screen.queryByTestId("plan-row-5")).toBeNull();
     expect(screen.getByTestId("plans-view-open")).toHaveTextContent("Open (3)");
     expect(screen.getByTestId("plans-view-done")).toHaveTextContent("Done (2)");
-    // The draft's row says whose it is; it is approved on the draft, so the row has no Accept.
+    // The draft's row says whose it is. No row accepts: a plan is accepted where it is read (issue #357).
     const draftRow = screen.getByTestId("plan-row-2");
     expect(draftRow).toHaveTextContent("draft · revision 2 · alice");
-    expect(draftRow).toHaveTextContent("fits");
-    expect(within(draftRow).queryByTestId("accept-plan")).toBeNull();
-    expect(within(screen.getByTestId("plan-row-1")).getByTestId("accept-plan")).toBeInTheDocument();
+    expect(screen.queryByTestId("accept-plan")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept plan" })).toBeNull();
+  });
+
+  it("a row badges only what calls for something: a plan that does not fit, an approval that went stale", () => {
+    const stale = { ...approved(7), version: "earlier" as const };
+    render(<Shell ov={overview({ issues: [planned(1, { review: { issue: ref(1), comment_id: 2, author: "m0x6A", created_at: now, url: "u", track: "small", outcome: "passed" } as never }), planned(6, { fit: { fits: false, reasons: [] } as never }), planned(7, { approval: stale }), planned(3, { approval: approved(3) })] })} />);
+    const badges = (n: number) => [...screen.getByTestId(`plan-row-${n}`).querySelectorAll(".row-end .badge")].map((b) => b.textContent);
+    expect(badges(1)).toEqual([]);
+    expect(badges(3)).toEqual([]);
+    expect(badges(6)).toEqual(["does not fit"]);
+    expect(badges(7)).toHaveLength(1);
+    expect(screen.getByTestId("plan-row-7").querySelector(".badge")).toHaveClass("approval-stale");
+    // The headings carry the counts; nothing repeats them above the columns.
+    expect(document.querySelector(".big-counts")).toBeNull();
   });
 
   it("Done lists the finished plans, marked merged or closed, with nothing to accept", () => {
@@ -77,51 +88,31 @@ describe("the plans board (#265)", () => {
     expect(screen.queryByTestId("accept-plan")).toBeNull();
   });
 
-  it("a plan opens in the Plans tab, goes back to the board, and can open its issue", () => {
-    const onOpenIssue = vi.fn();
-    render(<Shell ov={board()} onOpenIssue={onOpenIssue} />);
+  it("a row opens its plan: the board hands the issue up", () => {
+    const onOpen = vi.fn();
+    render(<Shell ov={board()} onOpen={onOpen} />);
     fireEvent.click(within(screen.getByTestId("plan-row-1")).getByRole("button", { name: "m0x6A/rubato#1" }));
-    const detail = screen.getByTestId("plan-detail");
-    expect(within(detail).getByRole("heading", { level: 2, name: "m0x6A/rubato#1" })).toHaveFocus();
-    expect(within(detail).getByTestId("where-it-fits")).toBeInTheDocument();
-    expect(within(detail).getByTestId("accept-plan")).toBeInTheDocument();
-    // No draft in Rubato: the text is on GitHub, on the plan's branch.
-    expect(within(detail).getByRole("link", { name: "Read docs/plans/1.md on GitHub" })).toHaveAttribute("href", "https://github.com/m0x6A/rubato/blob/issue/1-x/docs/plans/1.md");
-    expect(screen.queryByTestId("plans-panel")).toBeNull();
-    fireEvent.click(within(detail).getByTestId("plan-open-issue"));
-    expect(onOpenIssue).toHaveBeenCalledWith(ref(1));
-    fireEvent.click(within(detail).getByRole("button", { name: "← all plans" }));
+    expect(onOpen).toHaveBeenCalledWith(ref(1));
+    // The board itself shows no plan: the issue's Plan part does.
     expect(screen.getByTestId("plans-panel")).toBeInTheDocument();
-    expect(screen.queryByTestId("plan-detail")).toBeNull();
+    expect(screen.queryByTestId("where-it-fits")).toBeNull();
   });
 
-  it("a finished plan's detail is read-only: no Accept, Import, Approve or Resume", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ draft_id: draft(4).draft_id, branch: "issue/4-x", issue: ref(4), owner: "m0x6A", revisions: [] }), { status: 200 }));
-    const mine = { ...draft(4), owner: "m0x6A" };
-    const ov = overview({ issues: [planned(4, { closed: true, finished: true, draft: mine, outside_rubato: true }), planned(6, { draft: { ...mine, branch: "issue/6-x" } })], comment_approvals_until: now });
-    const { unmount } = render(<PlansBoard overview={ov} me={me} selected={ov.issues[0]!} onSelect={() => {}} onOpenIssue={() => {}} onNotice={() => {}} onResume={() => {}} />);
-    const detail = screen.getByTestId("plan-detail");
-    expect(within(detail).getByTestId("plan-finished-note")).toBeInTheDocument();
-    expect(within(detail).getByTestId("draft")).toBeInTheDocument();
-    for (const id of ["accept-plan", "import-plan", "approve-draft", "resume-draft"]) {
-      expect(within(detail).queryByTestId(id), id).toBeNull();
-    }
+  it("with no draft in Rubato, the plan's text is on GitHub: on its branch while open, on the default branch once merged", () => {
+    const { unmount } = render(<PlanFileNote issue={planned(1)} />);
+    expect(screen.getByRole("link", { name: "Read docs/plans/1.md on GitHub" })).toHaveAttribute("href", "https://github.com/m0x6A/rubato/blob/issue/1-x/docs/plans/1.md");
     unmount();
-    // Must fail on purpose if these are gone for every plan: the open one's draft can be resumed.
-    render(<PlansBoard overview={ov} me={me} selected={ov.issues[1]!} onSelect={() => {}} onOpenIssue={() => {}} onNotice={() => {}} onResume={() => {}} />);
-    expect(await screen.findByTestId("resume-draft")).toBeInTheDocument();
-    expect(screen.queryByTestId("plan-finished-note")).toBeNull();
-  });
-
-  it("an issue with no plan selected elsewhere leaves the board in place", () => {
-    const ov = overview({ issues: [issue(9, "web"), planned(1)] });
-    render(<PlansBoard overview={ov} me={me} selected={ov.issues[0]!} onSelect={() => {}} onOpenIssue={() => {}} onNotice={() => {}} />);
-    expect(screen.getByTestId("plans-panel")).toBeInTheDocument();
+    const merged = render(<PlanFileNote issue={planned(5, { progress: { issue: ref(5), state: "done", last_seen: now } })} />);
+    expect(screen.getByRole("link", { name: "Read docs/plans/5.md on GitHub" })).toHaveAttribute("href", "https://github.com/m0x6A/rubato/blob/HEAD/docs/plans/5.md");
+    merged.unmount();
+    // A draft in Rubato is the text: nothing to point at.
+    const { container } = render(<PlanFileNote issue={planned(2, { draft: draft(2) })} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });
 
 describe("Accept plan says what it did, where it was pressed (#283)", () => {
-  it("reads Accepting… while it posts, and the row keeps the sentence when it moves to Open", async () => {
+  it("reads Accepting… while it posts, and the plan keeps the sentence once the approval counts", async () => {
     let answer: (r: Response) => void = () => {};
     const posted: unknown[] = [];
     vi.stubGlobal(
@@ -133,8 +124,9 @@ describe("Accept plan says what it did, where it was pressed (#283)", () => {
         });
       }),
     );
-    const { rerender } = render(<Shell ov={board()} />);
-    const row = () => screen.getByTestId("plan-row-1");
+    const map = overview().map.map;
+    const { rerender } = render(<WhereItFits issue={planned(1)} map={map} me={me} onNotice={() => {}} />);
+    const row = () => screen.getByTestId("where-it-fits");
     fireEvent.click(within(row()).getByRole("button", { name: "Accept plan" }));
     const busy = within(row()).getByRole("button", { name: "Accepting…" });
     expect(busy).toBeDisabled();
@@ -144,22 +136,18 @@ describe("Accept plan says what it did, where it was pressed (#283)", () => {
     answer(new Response(JSON.stringify({ state: "posted", body: "Approved: plan" }), { status: 200 }));
     await waitFor(() => expect(within(row()).getByRole("status")).toHaveTextContent('Accepted: posted "Approved: plan f3c5e84f2b" as you.'));
 
-    // The overview now counts the approval: the row is under Open, without the button, and
-    // still says what happened. Must fail on purpose if the sentence goes with the button.
-    const ov = board();
-    rerender(<Shell ov={{ ...ov, issues: ov.issues.map((i) => (i.issue.number === 1 ? { ...i, approval: approved(1) } : i)) }} />);
-    expect(rowsIn("plans-open")).toEqual(["plan-row-1", "plan-row-3"]);
+    // The overview now counts the approval: the button is gone, and the plan still says what
+    // happened. Must fail on purpose if the sentence goes with the button.
+    rerender(<WhereItFits issue={planned(1, { approval: approved(1) })} map={map} me={me} onNotice={() => {}} />);
     expect(within(row()).queryByRole("button", { name: "Accept plan" })).toBeNull();
     expect(within(row()).getByTestId("plan-accepted")).toHaveTextContent("Accepted: posted");
-    // A plan nobody accepted here says nothing.
-    expect(within(screen.getByTestId("plan-row-3")).queryByTestId("plan-accepted")).toBeNull();
-    console.log("checked 1 accept: busy label, sentence before and after the row moved");
+    console.log("checked 1 accept: busy label, sentence before and after the approval counted");
   });
 
   it("a refusal stays under the button, which is offered again", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("GitHub is down", { status: 502 })));
-    render(<Shell ov={board()} />);
-    const row = screen.getByTestId("plan-row-1");
+    render(<WhereItFits issue={planned(1)} map={overview().map.map} me={me} onNotice={() => {}} />);
+    const row = screen.getByTestId("where-it-fits");
     fireEvent.click(within(row).getByRole("button", { name: "Accept plan" }));
     await waitFor(() => expect(within(row).getByRole("status")).toHaveTextContent("The plan was not accepted"));
     expect(within(row).getByRole("button", { name: "Accept plan" })).toBeEnabled();

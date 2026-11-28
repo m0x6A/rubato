@@ -181,6 +181,59 @@ describe("the view comes from the URL (issue #357)", () => {
   });
 });
 
+describe("an issue says each thing once (issue #357)", () => {
+  const now = new Date().toISOString();
+  const withPlan = (): IssueSummary =>
+    issue(1, "web", {
+      progress: { issue: { repo: REPO, number: 1 }, state: "designed", last_seen: now },
+      plan: {
+        issue: { repo: REPO, number: 1 },
+        path: "docs/plans/1.md",
+        git_ref: "issue/1-x",
+        affected_parts: [{ node: "web", status: "affected", change: "the board", seams: ["web-server"] }],
+        o_rows: [{ seam: "web-server", signal: "s", panel: "p", owner: "rubato-server" }],
+        assumed: [{ id: "A1", decision: "which field", chosen: "the new one", scope: "seam" }],
+      } as unknown as NonNullable<IssueSummary["plan"]>,
+      decisions: [{ comment_id: 9, title: "Decision: keep the field", author: "m0x6A", created_at: now, url: "u", chosen: "keep" }] as unknown as NonNullable<IssueSummary["decisions"]>,
+      spend_usd: 1.5,
+    });
+
+  /** How often each thing an issue with a plan says is said, anywhere in its view. */
+  function said(detail: HTMLElement) {
+    const count = (re: RegExp) => [...detail.querySelectorAll("h3, p, li")].filter((e) => re.test(e.textContent ?? "") && ![...e.querySelectorAll("h3, p, li")].some((c) => re.test(c.textContent ?? ""))).length;
+    return {
+      decisionsHeadings: [...detail.querySelectorAll("h3")].filter((h) => h.textContent === "Decisions").length,
+      decision: count(/Decision: keep the field/),
+      seamQuestion: count(/which field/),
+      seamQuestionCount: count(/seam-level question\(s\) wait/),
+      oRows: [...detail.querySelectorAll("h3")].filter((h) => /3 am/.test(h.textContent ?? "")).length,
+      spendLine: count(/^spend \$/),
+    };
+  }
+
+  it("decisions, the question at a seam, the O-rows and the spend each show once", async () => {
+    others = [withPlan()];
+    history.replaceState(null, "", "/#/issues/m0x6A/rubato/1/plan");
+    render(<App />);
+    const detail = await screen.findByTestId("issue-detail");
+    await within(detail).findByTestId("plan-inspector");
+    const got = said(detail);
+    console.log(`checked 6 things an issue says for being said once: ${JSON.stringify(got)}`);
+    expect(got).toEqual({ decisionsHeadings: 1, decision: 1, seamQuestion: 1, seamQuestionCount: 0, oRows: 1, spendLine: 0 });
+  });
+
+  it("must fail: the counter sees a second Decisions list", async () => {
+    others = [withPlan()];
+    history.replaceState(null, "", "/#/issues/m0x6A/rubato/1/plan");
+    render(<App />);
+    const detail = await screen.findByTestId("issue-detail");
+    const overviewPart = detail.querySelector('[data-section="overview"]') as HTMLElement;
+    detail.append(overviewPart.cloneNode(true));
+    expect(said(detail).decisionsHeadings).toBe(2);
+    expect(said(detail).decision).toBe(2);
+  });
+});
+
 describe("open on GitHub by default (#265)", () => {
   it("the head of the issue list counts what is not finished", async () => {
     const at = (n: number, state: "designed" | "done") => ({ issue: { repo: REPO, number: n }, state, last_seen: minutesAgo(1) });
