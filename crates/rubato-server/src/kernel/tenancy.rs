@@ -55,6 +55,25 @@ impl std::fmt::Display for TenantId {
 
 /// `rubato.tenant` for any tenant but `default`, whose series stay as they were before tenants
 /// (ADR 0087): what a gauge recorded per tenant carries.
+/// The labels of a per-workspace metric (ADR 0087): its workspace, and its tenant unless that
+/// is `default`. Two tenants may each have a workspace `main`; without the tenant their gauges
+/// would be one series, the last writer's. Tenant `default`'s series keep the labels they had
+/// before tenants, so a single-tenant server's dashboards and alerts read on.
+pub fn ws_attrs(ws: &WsKey) -> Vec<opentelemetry::KeyValue> {
+    use rubato_protocol::otel::attr;
+    let mut out = vec![opentelemetry::KeyValue::new(
+        attr::WORKSPACE,
+        ws.ws().to_owned(),
+    )];
+    if ws.tenant().as_str() != DEFAULT_TENANT {
+        out.push(opentelemetry::KeyValue::new(
+            attr::TENANT,
+            ws.tenant().to_string(),
+        ));
+    }
+    out
+}
+
 pub fn tenant_attrs(t: &TenantId) -> Vec<opentelemetry::KeyValue> {
     if t.as_str() == DEFAULT_TENANT {
         Vec::new()
@@ -315,5 +334,40 @@ mod tests {
         assert!(TenantId::parse("Acme").is_none());
         assert!(TenantId::parse("").is_none());
         assert_eq!(TenantId::default_tenant().as_str(), DEFAULT_TENANT);
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use rubato_protocol::otel::attr;
+
+    /// Design 345 §5.5: two tenants may both have a workspace `main` with the same seam ids.
+    /// Their gauges are different series; tenant `default`'s keep the labels of before tenants.
+    #[test]
+    fn a_workspace_metric_names_its_tenant_unless_that_is_default() {
+        let labels = |ws: &WsKey| -> Vec<(String, String)> {
+            ws_attrs(ws)
+                .into_iter()
+                .map(|kv| (kv.key.to_string(), kv.value.to_string()))
+                .collect()
+        };
+        let acme = labels(&WsKey::new(TenantId::parse("acme").unwrap(), "main"));
+        let bcorp = labels(&WsKey::new(TenantId::parse("bcorp").unwrap(), "main"));
+        assert_eq!(
+            acme,
+            [
+                (attr::WORKSPACE.to_owned(), "main".to_owned()),
+                (attr::TENANT.to_owned(), "acme".to_owned())
+            ]
+        );
+        assert_ne!(
+            acme, bcorp,
+            "the same workspace id in two tenants is two series"
+        );
+        assert_eq!(
+            labels(&WsKey::of_default("main")),
+            [(attr::WORKSPACE.to_owned(), "main".to_owned())]
+        );
     }
 }

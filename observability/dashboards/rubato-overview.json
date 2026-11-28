@@ -2385,6 +2385,161 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "id": 125,
+      "title": "Tenants and the public surface (ADR 0087, ADR 0090)",
+      "type": "row",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 186
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 126,
+      "title": "Requests and refusals by tenant",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 187
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Who uses the server, and where a rule said no. Requests admitted to a tenant route per minute, by tenant. Refusals in 10 minutes by reason: other_tenant is a member naming another tenant's repository (fires TenantCrossAccess, with the tenant it happened in); unknown_tenant is a tenant that does not exist or that the caller is not in; not_invited a login nobody invited; rate_limited a token bucket (fires RateLimited past 50 on one route); identity_changed a login GitHub now gives to another account. Refusals outside a tenant carry no tenant.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_tenant) (rate(rubato_web_tenant_requests_total[5m]) * 60)",
+          "legendFormat": "requests/min {{rubato_tenant}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rubato_reason, rubato_tenant) (increase(rubato_web_rejected_total{rubato_reason=~\"other_tenant|unknown_tenant|not_invited|not_operator|identity_changed\"}[10m]))",
+          "legendFormat": "{{rubato_reason}} {{rubato_tenant}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (rubato_route) (increase(rubato_web_rejected_total{rubato_reason=\"rate_limited\"}[10m]))",
+          "legendFormat": "rate limited {{rubato_route}}"
+        },
+        {
+          "refId": "D",
+          "expr": "sum by (rubato_reason) (increase(rubato_web_rejected_total{rubato_reason=~\"timeout|busy\"}[10m]))",
+          "legendFormat": "{{rubato_reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 127,
+      "title": "GitHub budget by installation",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 187
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Each attached installation has its own GitHub budget (ADR 0087): requests left this hour, by tenant and installation. One tenant running low does not slow another. The suspended line counts attached installations GitHub has suspended; while one is, nothing of its tenant's repositories is read (fires InstallationSuspended after 15 minutes).",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min by (rubato_tenant, rubato_github_installation) (rubato_github_rate_limit_remaining)",
+          "legendFormat": "left {{rubato_tenant}} {{rubato_github_installation}}"
+        },
+        {
+          "refId": "B",
+          "expr": "max(rubato_github_installations_suspended)",
+          "legendFormat": "suspended installations"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(increase(rubato_github_webhook_deliveries_total{rubato_outcome=\"unattached\"}[1h]))",
+          "legendFormat": "deliveries from unattached installations, 1 h"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 128,
+      "title": "Companion refusals",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 195
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "What a companion sent, or was to be sent, for a launch whose owner is no longer a member of the launch's tenant (ADR 0087): the server acts as if the launch did not exist. A few after a removal are the companion's outbox draining; more than 5 in 30 minutes fires CompanionRefusedNotMember: a companion still running agents in a tenant its owner left.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_reason) (increase(rubato_companion_refused_total[30m]))",
+          "legendFormat": "{{rubato_reason}}, 30 min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 129,
+      "title": "Graph sources per companion",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 195
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "The context graph goes to a tenant's members only (ADR 0087). Snapshot requests in 10 minutes by outcome: refused is a companion asking for a source of a tenant its owner is not in; stale an owner in no tenant. Truncated counts the times a companion's list of sources was cut at 256.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rubato_outcome) (increase(rubato_graph_snapshots_total[10m]))",
+          "legendFormat": "snapshots {{rubato_outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(rubato_graph_sources_truncated_total[1h]))",
+          "legendFormat": "lists truncated, 1 h"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

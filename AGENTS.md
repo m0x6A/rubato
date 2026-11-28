@@ -316,6 +316,11 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A GitHub App webhook that has stopped delivering while the catch-up poll finds changes, or a delivery not applied for 5 minutes (`GitHubWebhooksSilent`, `GitHubWebhooksStuck`, ADR 0074).
 - A context graph source that no tick has found current for three regeneration intervals, while its flag is on (`ContextGraphStale`, ADR 0084).
 - A companion whose copy of the context graph has been behind the announced list for three intervals (`ContextGraphCopyBehind`, ADR 0086).
+- A request inside one tenant that names another tenant's repository (`TenantCrossAccess`, ADR 0087).
+- A companion that keeps sending for launches of a person who left the launch's tenant (`CompanionRefusedNotMember`, ADR 0087).
+- An attached GitHub App installation suspended for 15 minutes (`InstallationSuspended`, ADR 0087).
+- A route that refused more than 50 requests as rate limited in 10 minutes (`RateLimited`, ADR 0090).
+- More than 100 webhook deliveries an hour from installations attached to no tenant (`WebhookUnattachedHigh`, ADR 0087).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

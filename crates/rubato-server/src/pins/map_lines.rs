@@ -89,13 +89,11 @@ pub async fn apply_map_lines(
                 "pinned by its Map: line"
             );
         }
-        app.metrics.backlog_map_lines.add(
-            1,
-            &[
-                KeyValue::new(attr::OUTCOME, outcome),
-                KeyValue::new(attr::WORKSPACE, ws.ws().to_owned()),
-            ],
-        );
+        app.metrics.backlog_map_lines.add(1, &{
+            let mut all = vec![KeyValue::new(attr::OUTCOME, outcome)];
+            all.extend(crate::kernel::tenancy::ws_attrs(ws));
+            all
+        });
     }
     if pinned > 0 {
         app.notify_in(ws.tenant(), "pin");

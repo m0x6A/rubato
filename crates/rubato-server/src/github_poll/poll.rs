@@ -513,6 +513,18 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
 /// Each installation's own budget (design §5.3): every installation has its own, so the gauge
 /// carries `rubato.github.installation` (absent with one context) and `rubato.tenant`.
 pub async fn record_rate_limit(app: &App) {
+    // Every pass, zeros included: an installation GitHub suspended is attached and read by
+    // nobody, which the tenant sees only as a map that stopped moving (design §3.3).
+    let suspended = app
+        .github
+        .routes()
+        .installations
+        .values()
+        .filter(|a| a.suspended)
+        .count();
+    app.metrics
+        .installations_suspended
+        .record(suspended as u64, &[]);
     for live in app.github.live() {
         let mut labels = vec![KeyValue::new(attr::TENANT, live.tenant.to_string())];
         if let Some(id) = live.installation {

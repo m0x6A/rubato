@@ -32,7 +32,7 @@ async fn record_gauges_ws(app: &App, w: &WorkspaceEntry) {
         Ok(n) => app
             .metrics
             .map_draft_ops
-            .record(n, &[KeyValue::new(attr::WORKSPACE, w.id.clone())]),
+            .record(n, &crate::kernel::tenancy::ws_attrs(&w.key())),
         Err(e) => tracing::error!(error = %e, "reading the draft size failed"),
     }
     let now = match store::proposal(&app.db, &w.key()).await {
@@ -48,13 +48,11 @@ async fn record_gauges_ws(app: &App, w: &WorkspaceEntry) {
             .filter(|p| p.state == s)
             .and_then(|p| u64::try_from(p.state_since.timestamp()).ok())
             .unwrap_or(0);
-        app.metrics.map_proposal_state_since.record(
-            since,
-            &[
-                KeyValue::new(attr::OUTCOME, state_name(s)),
-                KeyValue::new(attr::WORKSPACE, w.id.clone()),
-            ],
-        );
+        app.metrics.map_proposal_state_since.record(since, &{
+            let mut all = vec![KeyValue::new(attr::OUTCOME, state_name(s))];
+            all.extend(crate::kernel::tenancy::ws_attrs(&w.key()));
+            all
+        });
     }
 }
 

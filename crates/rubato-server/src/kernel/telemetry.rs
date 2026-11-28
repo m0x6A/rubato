@@ -128,6 +128,8 @@ pub struct Metrics {
     pub telemetry_relay: Counter<u64>,
     /// Spans the relay's rewrite dropped.
     pub telemetry_relay_dropped: Counter<u64>,
+    pub web_tenant_requests: Counter<u64>,
+    pub installations_suspended: Gauge<u64>,
     pub rate_limit_remaining: Gauge<u64>,
     pub rate_limit_limit: Gauge<u64>,
     pub plan_parse_failures: Counter<u64>,
@@ -244,6 +246,10 @@ impl Metrics {
             http_traceparent: m.u64_counter(otel::metric::HTTP_TRACEPARENT).build(),
             telemetry_relay: m.u64_counter(otel::metric::TELEMETRY_RELAY).build(),
             telemetry_relay_dropped: m.u64_counter(otel::metric::TELEMETRY_RELAY_DROPPED).build(),
+            web_tenant_requests: m.u64_counter(otel::metric::WEB_TENANT_REQUESTS).build(),
+            installations_suspended: m
+                .u64_gauge(otel::metric::GITHUB_INSTALLATIONS_SUSPENDED)
+                .build(),
             rate_limit_remaining: m
                 .u64_gauge(otel::metric::GITHUB_RATE_LIMIT_REMAINING)
                 .build(),

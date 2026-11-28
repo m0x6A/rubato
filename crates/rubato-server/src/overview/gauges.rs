@@ -71,10 +71,9 @@ pub async fn refresh(app: &App) -> Refreshed {
             .iter()
             .filter(|f| matches!(f, rubato_protocol::Finding::IdCollision { .. }))
             .count();
-        app.metrics.workspace_id_collisions.record(
-            collisions as u64,
-            &[KeyValue::new(attr::WORKSPACE, ws.ws().to_owned())],
-        );
+        app.metrics
+            .workspace_id_collisions
+            .record(collisions as u64, &crate::kernel::tenancy::ws_attrs(ws));
     }
     app.metrics
         .workspace_shared_repos
@@ -100,30 +99,35 @@ async fn refresh_one(
     all: &[WorkspaceInfo],
     maps: &Maps,
 ) -> Result<Vec<rubato_protocol::IssueSummary>> {
-    let w = || KeyValue::new(attr::WORKSPACE, ws.ws().to_owned());
+    // Every gauge of a workspace says its tenant too (ADR 0087): `with(extra)` is the
+    // workspace's labels and the gauge's own.
+    let with = |extra: Vec<KeyValue>| {
+        let mut all = crate::kernel::tenancy::ws_attrs(ws);
+        all.extend(extra);
+        all
+    };
     let built = build_overview_inputs(app, ws, all, maps).await?;
     let built = build::build(built, Some(map), &app.config.limits, Utc::now());
     let (by_state, by_seam) = build::counts(&built);
     for ((state, finished), n) in by_state {
         app.metrics.issues_by_state.record(
             n as u64,
-            &[
+            &with(vec![
                 KeyValue::new(attr::ISSUE_STATE, format!("{state:?}").to_lowercase()),
                 KeyValue::new(attr::ISSUE_FINISHED, finished),
-                w(),
-            ],
+            ]),
         );
     }
     for (at, n) in build::blocked_from_counts(&built) {
         app.metrics.issues_blocked_from.record(
             n as u64,
-            &[KeyValue::new(attr::ISSUE_BLOCKED_FROM, at), w()],
+            &with(vec![KeyValue::new(attr::ISSUE_BLOCKED_FROM, at)]),
         );
     }
     for (seam, n) in by_seam {
         app.metrics
             .seam_open_plans
-            .record(n as u64, &[KeyValue::new(attr::SEAM, seam), w()]);
+            .record(n as u64, &with(vec![KeyValue::new(attr::SEAM, seam)]));
     }
     let unknown: usize = built
         .findings
@@ -138,7 +142,7 @@ async fn refresh_one(
         .sum();
     app.metrics
         .plan_unknown_id_count
-        .record(unknown as u64, &[w()]);
+        .record(unknown as u64, &with(vec![]));
     let stale = built
         .findings
         .iter()
@@ -146,7 +150,7 @@ async fn refresh_one(
         .count();
     app.metrics
         .plans_approval_stale
-        .record(stale as u64, &[w()]);
+        .record(stale as u64, &with(vec![]));
     let not_fitting = built
         .issues
         .iter()
@@ -154,14 +158,16 @@ async fn refresh_one(
         .count();
     app.metrics
         .plans_not_fitting
-        .record(not_fitting as u64, &[w()]);
+        .record(not_fitting as u64, &with(vec![]));
     // Fits none of its workspaces (ADR 0045): with one workspace, the same as not fitting.
     let fit_none = built
         .issues
         .iter()
         .filter(|i| !i.finished && i.fit.as_ref().is_some_and(|f| !f.fits) && i.fits_in.is_empty())
         .count();
-    app.metrics.plans_fit_none.record(fit_none as u64, &[w()]);
+    app.metrics
+        .plans_fit_none
+        .record(fit_none as u64, &with(vec![]));
     Ok(built.issues)
 }
 

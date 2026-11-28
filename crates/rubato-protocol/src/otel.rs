@@ -159,8 +159,14 @@ pub mod metric {
     pub const BACKLOG_LISTED_AT: &str = "rubato.backlog.listed_at";
     /// Open issues listed per repo, recorded every poll tick.
     pub const BACKLOG_ISSUES: &str = "rubato.backlog.issues";
-    /// A web request refused by a rule, by route and reason.
+    /// A web request refused by a rule, by route and reason; with `rubato.tenant` where the
+    /// refusal happened inside a tenant the caller is in (`other_tenant`, ADR 0087).
     pub const WEB_REJECTED: &str = "rubato.web.rejected";
+    /// Requests admitted to a tenant route, by `rubato.tenant` (ADR 0087): who uses the server.
+    pub const WEB_TENANT_REQUESTS: &str = "rubato.web.tenant_requests";
+    /// Attached installations GitHub has suspended, recorded every poll pass, zeros included
+    /// (ADR 0087): nothing of their tenant's repositories is read while it lasts.
+    pub const GITHUB_INSTALLATIONS_SUSPENDED: &str = "rubato.github.installations.suspended";
     /// Repos the map or a tracked issue names that the GitHub App installation does not cover.
     pub const GITHUB_REPOS_UNCOVERED: &str = "rubato.github.repos_uncovered";
     /// Accepted writes to the shared map layout: a part moved, or the layout cleared.
@@ -617,6 +623,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::BACKLOG_LISTED_AT,
         metric::BACKLOG_ISSUES,
         metric::WEB_REJECTED,
+        metric::WEB_TENANT_REQUESTS,
+        metric::GITHUB_INSTALLATIONS_SUSPENDED,
         metric::GITHUB_REPOS_UNCOVERED,
         metric::LAYOUT_WRITES,
         metric::QUEUE_DEPTH,

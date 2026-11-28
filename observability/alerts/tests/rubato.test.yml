@@ -678,3 +678,133 @@ tests:
       - eval_time: 10m
         alertname: FleetCrossOwner
         exp_alerts: []
+
+  # #345 TenantCrossAccess: one refusal for another tenant's repository fires, with the tenant
+  # it happened in.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_web_rejected_total{rubato_route="/api/t/{tenant}/room",rubato_reason="other_tenant",rubato_tenant="acme"}'
+        values: "0 0 1 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: TenantCrossAccess
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: TenantCrossAccess
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: web-server
+              owner: rubato-server
+              rubato_tenant: acme
+            exp_annotations:
+              summary: "In tenant acme a request named another tenant's repository in the last 10 minutes"
+              panel: Requests and refusals by tenant
+
+  # Refusals for any other reason never fire it: a tenant that does not exist is a typo or a
+  # probe from outside, not a line crossed from inside.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_web_rejected_total{rubato_route="/api/t/{tenant}/room",rubato_reason="unknown_tenant"}'
+        values: "0+5x10"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TenantCrossAccess
+        exp_alerts: []
+
+  # #345 CompanionRefusedNotMember: a few refusals while an outbox drains stay quiet; more than
+  # five in half an hour fire.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_companion_refused_total{rubato_reason="not_member"}'
+        values: "0 1 2 3 3 3 3 3 3 3 3 4 5 6 7 8 9"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CompanionRefusedNotMember
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: CompanionRefusedNotMember
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: companion-server
+              owner: rubato-server
+            exp_annotations:
+              summary: "A companion still sends for launches of a person who left the launch's tenant"
+              panel: Companion refusals
+
+  # #345 InstallationSuspended: a suspension lifted within the hold stays quiet; one that lasts
+  # 15 minutes fires, and clears when it ends.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_github_installations_suspended'
+        values: "0 1 1 1 0 0 1x20 0 0"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: InstallationSuspended
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: InstallationSuspended
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: InstallationSuspended
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "An attached GitHub App installation has been suspended for 15 minutes; its tenant's repositories are not read"
+              panel: GitHub budget by installation
+      - eval_time: 28m
+        alertname: InstallationSuspended
+        exp_alerts: []
+
+  # #345 RateLimited: a route past 50 refusals in ten minutes fires alone; a route with a few,
+  # and many refusals spread thinly over routes, do not.
+  - interval: 1m
+    input_series:
+      - series: 'rubato_web_rejected_total{rubato_route="/api/pair/poll",rubato_reason="rate_limited"}'
+        values: "0+10x10"
+      - series: 'rubato_web_rejected_total{rubato_route="/auth/github/login",rubato_reason="rate_limited"}'
+        values: "0+3x10"
+      - series: 'rubato_web_rejected_total{rubato_route="/api/t/{tenant}/queue",rubato_reason="rate_limited"}'
+        values: "0+3x10"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: RateLimited
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: RateLimited
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: web-server
+              owner: rubato-server
+              rubato_route: /api/pair/poll
+            exp_annotations:
+              summary: "Route /api/pair/poll refused more than 50 requests as rate limited in 10 minutes"
+              panel: Requests and refusals by tenant
+
+  # #345 WebhookUnattachedHigh: a trickle of deliveries from installations nobody attached is
+  # a count; more than 100 in an hour fires. Applied deliveries never count.
+  - interval: 5m
+    input_series:
+      - series: 'rubato_github_webhook_deliveries_total{rubato_github_event="push",rubato_outcome="unattached"}'
+        values: "0+2x12 24+20x12"
+      - series: 'rubato_github_webhook_deliveries_total{rubato_github_event="push",rubato_outcome="applied"}'
+        values: "0+50x24"
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: WebhookUnattachedHigh
+        exp_alerts: []
+      - eval_time: 120m
+        alertname: WebhookUnattachedHigh
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: server-github
+              owner: rubato-server
+            exp_annotations:
+              summary: "More than 100 webhook deliveries in an hour came from installations attached to no tenant"
+              panel: Webhooks

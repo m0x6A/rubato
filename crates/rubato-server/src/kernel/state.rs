@@ -512,6 +512,28 @@ impl AppState {
         );
     }
 
+    /// [`Self::reject`] for a refusal inside a tenant the caller is a member of (ADR 0087): the
+    /// count also says which tenant, so `TenantCrossAccess` names where the line was tested.
+    /// Never with a tenant id taken from a request that was not admitted to it: that would let
+    /// anyone mint label values.
+    pub fn reject_in(&self, tenant: &TenantId, route: &str, reason: &str, user: &str) {
+        self.metrics.web_rejected.add(
+            1,
+            &[
+                KeyValue::new(attr::ROUTE, route.to_owned()),
+                KeyValue::new(attr::DROP_REASON, reason.to_owned()),
+                KeyValue::new(attr::TENANT, tenant.to_string()),
+            ],
+        );
+        tracing::info!(
+            rubato.route = route,
+            rubato.reason = reason,
+            rubato.user = user,
+            rubato.tenant = %tenant,
+            "web write rejected"
+        );
+    }
+
     pub fn connected_companions(&self) -> Vec<Uuid> {
         self.companions.lock().unwrap().keys().copied().collect()
     }

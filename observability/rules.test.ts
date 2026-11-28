@@ -35,13 +35,13 @@ const mutants: Mutant[] = [
   },
   {
     why: "#104: a report at 300 s is not stale; the bar is 600 s",
-    from: "max by (rubato_workspace) (rubato_traffic_report_age) > 600",
-    to: "max by (rubato_workspace) (rubato_traffic_report_age) > 200",
+    from: "max by (rubato_tenant, rubato_workspace) (rubato_traffic_report_age) > 600",
+    to: "max by (rubato_tenant, rubato_workspace) (rubato_traffic_report_age) > 200",
     caughtBy: "alertname: TrafficReportStale, time: 3m",
   },
   {
     why: "#189: a stale workspace fires alone, not folded into the server's max",
-    from: "max by (rubato_workspace) (rubato_traffic_report_age) > 600",
+    from: "max by (rubato_tenant, rubato_workspace) (rubato_traffic_report_age) > 600",
     to: "max(rubato_traffic_report_age) > 600",
     caughtBy: "alertname: TrafficReportStale, time: 8m",
   },
@@ -110,6 +110,30 @@ const mutants: Mutant[] = [
     from: 'rubato_reason=~"timeout|quiet|companion_restarted"',
     to: 'rubato_reason=~".+"',
     caughtBy: "alertname: HeadlessTurnsKilled, time: 4m",
+  },
+  {
+    why: "#345: only a refusal for another tenant's repository is TenantCrossAccess; an unknown tenant is not",
+    from: 'rubato_web_rejected_total{rubato_reason="other_tenant"}',
+    to: 'rubato_web_rejected_total{rubato_reason=~".+"}',
+    caughtBy: "alertname: TenantCrossAccess, time: 5m",
+  },
+  {
+    why: "#345: an outbox draining after a removal is not CompanionRefusedNotMember; the bar is five",
+    from: 'rubato_companion_refused_total{rubato_reason="not_member"}[30m])) > 5',
+    to: 'rubato_companion_refused_total{rubato_reason="not_member"}[30m])) > 0',
+    caughtBy: "alertname: CompanionRefusedNotMember, time: 10m",
+  },
+  {
+    why: "#345: a suspension must last 15 minutes before InstallationSuspended fires",
+    from: "max(rubato_github_installations_suspended) > 0\n        for: 15m",
+    to: "max(rubato_github_installations_suspended) > 0\n        for: 0m",
+    caughtBy: "alertname: InstallationSuspended, time: 15m",
+  },
+  {
+    why: "#345: RateLimited is per route; refusals spread over routes do not add up to one alert",
+    from: 'sum by (rubato_route) (increase(rubato_web_rejected_total{rubato_reason="rate_limited"}[10m])) > 50',
+    to: 'sum(increase(rubato_web_rejected_total{rubato_reason="rate_limited"}[10m])) > 50',
+    caughtBy: "alertname: RateLimited, time: 10m",
   },
 ];
 

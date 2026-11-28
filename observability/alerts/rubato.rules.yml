@@ -39,7 +39,7 @@ groups:
           seam: server-plan-file
           owner: plan-file
         annotations:
-          summary: "{{ $value }} plan id(s) are not in the map of workspace {{ $labels.rubato_workspace }}"
+          summary: "{{ $value }} plan id(s) are not in the map of workspace {{ if $labels.rubato_tenant }}{{ $labels.rubato_tenant }}/{{ end }}{{ $labels.rubato_workspace }}"
           panel: Plan checks
 
       - alert: SeamCollision
@@ -49,7 +49,7 @@ groups:
           severity: ticket
           owner: rubato-server
         annotations:
-          summary: "{{ $value }} open plans touch seam {{ $labels.rubato_seam }} in workspace {{ $labels.rubato_workspace }}"
+          summary: "{{ $value }} open plans touch seam {{ $labels.rubato_seam }} in workspace {{ if $labels.rubato_tenant }}{{ $labels.rubato_tenant }}/{{ end }}{{ $labels.rubato_workspace }}"
           panel: Map
 
       - alert: GitHubRateLimitLow
@@ -82,7 +82,7 @@ groups:
       - alert: TrafficReportStale
         # Per workspace (ADR 0075): each one with a source has its own report; default's series
         # carries no rubato_workspace label, as before workspaces.
-        expr: max by (rubato_workspace) (rubato_traffic_report_age) > 600
+        expr: max by (rubato_tenant, rubato_workspace) (rubato_traffic_report_age) > 600
         for: 0m
         labels:
           severity: ticket
@@ -248,3 +248,72 @@ groups:
         annotations:
           summary: "A lead agent's fleet request named another person's session or a lead it does not own"
           panel: Fleet requests by action and outcome
+
+      # #345, ADR 0087: inside a tenant, a member named a repository of another tenant, or one
+      # no installation covers, and was answered 404. Either the web sent it (a bug: the page
+      # only offers its own tenant's repositories) or someone is probing the line between
+      # tenants. The count carries the tenant the request was made in.
+      - alert: TenantCrossAccess
+        expr: sum by (rubato_tenant) (increase(rubato_web_rejected_total{rubato_reason="other_tenant"}[10m])) > 0
+        labels:
+          severity: ticket
+          seam: web-server
+          owner: rubato-server
+        annotations:
+          summary: "In tenant {{ $labels.rubato_tenant }} a request named another tenant's repository in the last 10 minutes"
+          panel: Requests and refusals by tenant
+
+      # #345, ADR 0087: a companion keeps sending for launches whose owner is no longer a member
+      # of the launch's tenant. One or two after a removal are the outbox draining; more than
+      # five in half an hour is a companion that should have been stopped, still running agents
+      # in a tenant its owner left.
+      - alert: CompanionRefusedNotMember
+        expr: sum(increase(rubato_companion_refused_total{rubato_reason="not_member"}[30m])) > 5
+        labels:
+          severity: ticket
+          seam: companion-server
+          owner: rubato-server
+        annotations:
+          summary: "A companion still sends for launches of a person who left the launch's tenant"
+          panel: Companion refusals
+
+      # #345, ADR 0087: GitHub suspended an attached installation. Nothing of its tenant's
+      # repositories is read, and to the tenant that looks like a map that stopped moving.
+      # Held for 15 minutes: a suspension that is lifted at once needs nobody.
+      - alert: InstallationSuspended
+        expr: max(rubato_github_installations_suspended) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          seam: server-github
+          owner: rubato-server
+        annotations:
+          summary: "An attached GitHub App installation has been suspended for 15 minutes; its tenant's repositories are not read"
+          panel: GitHub budget by installation
+
+      # #345, ADR 0090: one route answered more than 50 requests with 429 in ten minutes. On the
+      # anonymous paths that is a flood being held off; on a write route it is a page stuck in a
+      # loop, or a limit set too low for real use.
+      - alert: RateLimited
+        expr: sum by (rubato_route) (increase(rubato_web_rejected_total{rubato_reason="rate_limited"}[10m])) > 50
+        labels:
+          severity: ticket
+          seam: web-server
+          owner: rubato-server
+        annotations:
+          summary: "Route {{ $labels.rubato_route }} refused more than 50 requests as rate limited in 10 minutes"
+          panel: Requests and refusals by tenant
+
+      # #345, ADR 0087: with the App public, anyone may install it, and each such installation
+      # sends deliveries this server drops (answered 200, nothing done). That is a count, not a
+      # page per delivery; more than 100 an hour is someone's busy organisation attached to no
+      # tenant, worth attaching or asking to uninstall.
+      - alert: WebhookUnattachedHigh
+        expr: sum(increase(rubato_github_webhook_deliveries_total{rubato_outcome="unattached"}[1h])) > 100
+        labels:
+          severity: ticket
+          seam: server-github
+          owner: rubato-server
+        annotations:
+          summary: "More than 100 webhook deliveries in an hour came from installations attached to no tenant"
+          panel: Webhooks

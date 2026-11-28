@@ -91,6 +91,9 @@ pub async fn check_tenant(
         return unknown_tenant();
     };
     tracing::Span::current().record(rubato_protocol::otel::attr::TENANT, scope.tenant().as_str());
+    app.metrics
+        .web_tenant_requests
+        .add(1, &crate::kernel::tenancy::tenant_attrs(scope.tenant()));
     parts.extensions.insert(scope);
     next.run(Request::from_parts(parts, body)).await
 }

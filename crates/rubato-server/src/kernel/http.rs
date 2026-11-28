@@ -129,7 +129,8 @@ pub async fn check_repos(
         .unwrap_or_default();
     let foreign = |repo: &str| app.github.tenant_of(repo).as_ref() != Some(scope.tenant());
     let refuse = |repo: &str| {
-        app.reject(
+        app.reject_in(
+            scope.tenant(),
             &route,
             rubato_protocol::tenant::reason::OTHER_TENANT,
             scope.login(),

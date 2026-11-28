@@ -111,10 +111,7 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
     let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
-        &[
-            KeyValue::new(attr::MAP_VERSION, version.clone()),
-            KeyValue::new(attr::WORKSPACE, w.id.clone()),
-        ],
+        &with_ws(w, KeyValue::new(attr::MAP_VERSION, version.clone())),
     );
     record_loaded_at(app, w, loaded.loaded_at);
     tracing::info!(rubato.workspace = %w.id, version = %version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
@@ -189,10 +186,7 @@ pub async fn apply(app: &App, w: &WorkspaceEntry, loaded: LoadedMap) -> Result<A
     let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
-        &[
-            KeyValue::new(attr::MAP_VERSION, loaded.version.clone()),
-            KeyValue::new(attr::WORKSPACE, w.id.clone()),
-        ],
+        &with_ws(w, KeyValue::new(attr::MAP_VERSION, loaded.version.clone())),
     );
     record_loaded_at(app, w, loaded.loaded_at);
     tracing::info!(rubato.workspace = %w.id, version = %loaded.version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
@@ -242,10 +236,7 @@ async fn load_from_file(
     let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
-        &[
-            KeyValue::new(attr::MAP_VERSION, version.clone()),
-            KeyValue::new(attr::WORKSPACE, w.id.clone()),
-        ],
+        &with_ws(w, KeyValue::new(attr::MAP_VERSION, version.clone())),
     );
     record_loaded_at(app, w, loaded.loaded_at);
     tracing::info!(rubato.workspace = %w.id, version = %version, file = %file.display(), "map loaded from file");
@@ -309,8 +300,15 @@ fn record_loaded_at(app: &App, w: &WorkspaceEntry, at: DateTime<Utc>) {
         .record(u64::try_from(at.timestamp()).unwrap_or(0), &ws_attr(w));
 }
 
-fn ws_attr(w: &WorkspaceEntry) -> [KeyValue; 1] {
-    [KeyValue::new(attr::WORKSPACE, w.id.clone())]
+/// `first`, then the workspace's own labels.
+fn with_ws(w: &WorkspaceEntry, first: KeyValue) -> Vec<KeyValue> {
+    let mut all = vec![first];
+    all.extend(ws_attr(w));
+    all
+}
+
+fn ws_attr(w: &WorkspaceEntry) -> Vec<KeyValue> {
+    crate::kernel::tenancy::ws_attrs(&w.key())
 }
 
 #[cfg(test)]
