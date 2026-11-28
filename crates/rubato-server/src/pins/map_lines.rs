@@ -4,6 +4,7 @@
 
 use super::store;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::WsKey;
 use chrono::Utc;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
@@ -64,7 +65,7 @@ pub struct Line {
 /// `ws` is the workspace the lines speak to, `map` its map (ADR 0046).
 pub async fn apply_map_lines(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     map: &SystemMap,
     version: &str,
     lines: &[Line],
@@ -88,16 +89,14 @@ pub async fn apply_map_lines(
                 "pinned by its Map: line"
             );
         }
-        app.metrics.backlog_map_lines.add(
-            1,
-            &[
-                KeyValue::new(attr::OUTCOME, outcome),
-                KeyValue::new(attr::WORKSPACE, ws.to_owned()),
-            ],
-        );
+        app.metrics.backlog_map_lines.add(1, &{
+            let mut all = vec![KeyValue::new(attr::OUTCOME, outcome)];
+            all.extend(crate::kernel::tenancy::ws_attrs(ws));
+            all
+        });
     }
     if pinned > 0 {
-        app.notify("pin");
+        app.notify_in(ws.tenant(), "pin");
     }
     pinned
 }
@@ -106,7 +105,7 @@ pub async fn apply_map_lines(
 /// as applied, so a person's later unpin sticks. Running it twice changes nothing.
 pub async fn pin_created(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     issue: &IssueRef,
     target: &MapRef,
     by: &str,
@@ -128,7 +127,7 @@ pub async fn pin_created(
 /// `None` when the line was applied on an earlier tick (not counted again).
 async fn apply_one(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     map: &SystemMap,
     version: &str,
     line: &Line,
@@ -251,39 +250,66 @@ mod tests {
         let m = map();
         let lines = [line(1, MapRef::seam("web-server"))];
         assert_eq!(
-            apply_map_lines(&app, rubato_protocol::DEFAULT_WORKSPACE, &m, "v1", &lines).await,
+            apply_map_lines(
+                &app,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+                &m,
+                "v1",
+                &lines
+            )
+            .await,
             1
         );
-        let pins = store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
-            .await
-            .unwrap();
+        let pins = store::list_pins(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        )
+        .await
+        .unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0].target, MapRef::seam("web-server"));
         assert_eq!(pins[0].pinned_by, "m0x6A");
 
         // The next tick lists the same line: nothing changes and nothing is counted again.
         assert_eq!(
-            apply_map_lines(&app, rubato_protocol::DEFAULT_WORKSPACE, &m, "v1", &lines).await,
+            apply_map_lines(
+                &app,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+                &m,
+                "v1",
+                &lines
+            )
+            .await,
             0
         );
         // A person unpins it; the line is still in the body.
         store::remove_pin(
             &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             &lines[0].issue,
             &lines[0].target,
         )
         .await
         .unwrap();
         assert_eq!(
-            apply_map_lines(&app, rubato_protocol::DEFAULT_WORKSPACE, &m, "v1", &lines).await,
+            apply_map_lines(
+                &app,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+                &m,
+                "v1",
+                &lines
+            )
+            .await,
             0
         );
         assert!(
-            store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
-                .await
-                .unwrap()
-                .is_empty(),
+            store::list_pins(
+                &app.db,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE)
+            )
+            .await
+            .unwrap()
+            .is_empty(),
             "the unpin sticks"
         );
         assert_eq!(outcomes(&reader), [("pinned".to_string(), 1)]);
@@ -295,7 +321,7 @@ mod tests {
         let m = map();
         store::add_pin(
             &app.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             &IssuePin {
                 issue: IssueRef::new("o/r", 4),
                 target: MapRef::node("web"),
@@ -311,12 +337,22 @@ mod tests {
             line(4, MapRef::node("rubato-server")),
         ];
         assert_eq!(
-            apply_map_lines(&app, rubato_protocol::DEFAULT_WORKSPACE, &m, "v1", &lines).await,
+            apply_map_lines(
+                &app,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+                &m,
+                "v1",
+                &lines
+            )
+            .await,
             0
         );
-        let pins = store::list_pins(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
-            .await
-            .unwrap();
+        let pins = store::list_pins(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        )
+        .await
+        .unwrap();
         assert_eq!(pins.len(), 1, "#4 keeps the pin a person gave it");
         assert_eq!(pins[0].target, MapRef::node("web"));
         assert_eq!(
@@ -341,7 +377,7 @@ mod tests {
         assert_eq!(
             apply_map_lines(
                 &app,
-                rubato_protocol::DEFAULT_WORKSPACE,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 &bigger,
                 "v2",
                 &lines[..1]
@@ -373,8 +409,20 @@ mod tests {
             },
         ];
         let ws = rubato_protocol::DEFAULT_WORKSPACE;
-        assert_eq!(apply_map_lines(&app, ws, &m, "v1", &lines).await, 1);
-        let pins = store::list_pins(&app.db, ws).await.unwrap();
+        assert_eq!(
+            apply_map_lines(
+                &app,
+                &crate::kernel::tenancy::WsKey::of_default(ws),
+                &m,
+                "v1",
+                &lines
+            )
+            .await,
+            1
+        );
+        let pins = store::list_pins(&app.db, &crate::kernel::tenancy::WsKey::of_default(ws))
+            .await
+            .unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0].issue, IssueRef::new("O/R", 2));
         assert_eq!(
@@ -387,7 +435,14 @@ mod tests {
             plan_path: None,
         });
         assert_eq!(
-            apply_map_lines(&app, ws, &bigger, "v2", &lines[..1]).await,
+            apply_map_lines(
+                &app,
+                &crate::kernel::tenancy::WsKey::of_default(ws),
+                &bigger,
+                "v2",
+                &lines[..1]
+            )
+            .await,
             1
         );
         println!("checked {} lines", lines.len() + 1);

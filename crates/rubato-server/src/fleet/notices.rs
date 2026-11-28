@@ -5,6 +5,7 @@
 //! Nothing at all while the orchestrator flag is off.
 
 use crate::kernel::state::App;
+use crate::kernel::tenancy::WsKey;
 use crate::{launch, session_messages};
 use chrono::{DateTime, Duration, Utc};
 use opentelemetry::KeyValue;
@@ -61,7 +62,7 @@ pub async fn on_sessions(app: &App, sessions: &[SessionState]) {
     }
     let mut lines: Vec<(Uuid, String)> = Vec::new();
     for (l, status, before) in changes {
-        let Ok(Some(t)) = launch::launch_target(&app.db, l).await else {
+        let Ok(Some(t)) = launch::acting_target(app, l).await else {
             continue;
         };
         let Some(lead) = t.lead_launch_id else {
@@ -130,7 +131,7 @@ async fn flush(app: &App, notices: &Notices, lines: Vec<(Uuid, String)>, now: Da
 
 /// Each live lead in workspace `ws` and its live workers, from the latest snapshots. Empty while
 /// the orchestrator flag is off.
-pub async fn leads(app: &App, ws: &str) -> Vec<LeadView> {
+pub async fn leads(app: &App, ws: &WsKey) -> Vec<LeadView> {
     if !app.config.orchestrator {
         return vec![];
     }
@@ -142,13 +143,13 @@ pub async fn leads(app: &App, ws: &str) -> Vec<LeadView> {
         .collect();
     let mut out = Vec::new();
     for l in live.keys() {
-        let Ok(Some(t)) = launch::launch_target(&app.db, *l).await else {
+        let Ok(Some(t)) = launch::acting_target(app, *l).await else {
             continue;
         };
-        if t.role != LaunchRole::Lead || t.workspace != ws {
+        if t.role != LaunchRole::Lead || launch::ws_key(app, &t).as_ref() != Some(ws) {
             continue;
         }
-        let workers = launch::workers_of(&app.db, *l)
+        let workers = launch::workers_of(&app.db, &t.tenant, *l)
             .await
             .unwrap_or_default()
             .into_iter()

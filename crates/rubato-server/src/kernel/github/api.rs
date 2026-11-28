@@ -52,6 +52,16 @@ pub enum Tarball {
     TooLarge,
 }
 
+/// One installation of the GitHub App, as the App lists them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppInstallation {
+    pub id: u64,
+    pub account_login: String,
+    /// `User` or `Organization`, as GitHub says it.
+    pub account_type: String,
+    pub suspended: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueInfo {
     pub title: String,
@@ -328,6 +338,17 @@ pub trait GitHubApi: Send + Sync {
     async fn installation_repos(&self) -> Result<Vec<String>> {
         Ok(Vec::new())
     }
+    /// Every installation of the GitHub App, read as the App itself (`GET /app/installations`),
+    /// for the operator page (ADR 0087, design §5.4). Only a client that holds the App's key
+    /// answers.
+    async fn app_installations(&self) -> Result<Vec<AppInstallation>> {
+        Err(anyhow::anyhow!("not acting as a GitHub App"))
+    }
+    /// The account behind a login (`GET /users/{login}`): its id and the login as GitHub spells
+    /// it; `None` when there is none. An invite binds to the id (ADR 0088).
+    async fn user(&self, _login: &str) -> Result<Option<(i64, String)>> {
+        Err(anyhow::anyhow!("this GitHub port cannot look up a user"))
+    }
     /// Whether this port can write to GitHub: an installation, the local stand-in, or the fake
     /// when a test turns writes on. A personal-token client cannot (ADR 0018, 0022).
     fn can_write(&self) -> bool {
@@ -599,6 +620,9 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
 // ----- octocrab ------------------------------------------------------------------------------
 
 pub struct Octo {
+    /// The App itself (a JWT), on the client that acts for no installation: it lists the App's
+    /// installations for the operator page (ADR 0087).
+    app_jwt: Option<octocrab::Octocrab>,
     client: octocrab::Octocrab,
     /// The REST root, for clients made per call (a person's token, ADR 0030).
     base: Option<String>,
@@ -644,7 +668,37 @@ impl Octo {
             as_app: None,
             issues_write: Default::default(),
             app_login: Default::default(),
+            app_jwt: None,
         })
+    }
+
+    /// A client for calls made with a person's own token only (`repo_as`, `merge_as`,
+    /// `comment_as`), when the server acts as App installations (ADR 0087): it carries no
+    /// credential of its own.
+    pub fn for_people(base_uri: Option<&str>) -> Result<Self> {
+        let mut b = octocrab::Octocrab::builder()
+            .set_connect_timeout(Some(CONNECT_TIMEOUT))
+            .set_read_timeout(Some(READ_TIMEOUT));
+        if let Some(uri) = base_uri {
+            b = b.base_uri(uri)?;
+        }
+        Ok(Self {
+            client: b.build()?,
+            base: base_uri.map(str::to_owned),
+            installation: false,
+            as_app: None,
+            issues_write: Default::default(),
+            app_login: Default::default(),
+            app_jwt: None,
+        })
+    }
+
+    /// [`Self::for_people`], which can also list the App's installations as the App itself
+    /// (ADR 0087). The settings are checked by `kernel::github::check_app` before this is used.
+    pub fn for_app(app: &GitHubApp, base_uri: Option<&str>) -> Result<Self> {
+        let mut me = Self::for_people(base_uri)?;
+        me.app_jwt = Some(app_client(app, base_uri, READ_TIMEOUT)?);
+        Ok(me)
     }
 
     /// A client acting as the installation of a GitHub App (ADR 0022). Call from inside the
@@ -664,6 +718,7 @@ impl Octo {
             }),
             issues_write: Default::default(),
             app_login: Default::default(),
+            app_jwt: None,
         })
     }
 }
@@ -1233,6 +1288,65 @@ impl GitHubApi for Octo {
             }
         }
         Ok(out)
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "app_installations"))]
+    async fn app_installations(&self) -> Result<Vec<AppInstallation>> {
+        let Some(app) = self
+            .app_jwt
+            .as_ref()
+            .or(self.as_app.as_ref().map(|a| &a.app))
+        else {
+            return Err(anyhow::anyhow!("not acting as a GitHub App"));
+        };
+        count_call("app_installations", 1);
+        let mut out = Vec::new();
+        for page in 1..=10 {
+            let route = format!("/app/installations?per_page=100&page={page}");
+            let v: Vec<serde_json::Value> = app.get(route, None::<&()>).await?;
+            let n = v.len();
+            out.extend(v.iter().filter_map(|i| {
+                let account = i.get("account")?;
+                Some(AppInstallation {
+                    id: i.get("id")?.as_u64()?,
+                    account_login: account.get("login")?.as_str()?.to_owned(),
+                    account_type: account.get("type")?.as_str()?.to_owned(),
+                    suspended: i.get("suspended_at").is_some_and(|s| !s.is_null()),
+                })
+            }));
+            if n < 100 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    #[tracing::instrument(name = GITHUB_CALL, skip(self), err, fields(otel.kind = "client", peer.service = "github", rubato.github.endpoint = "user"))]
+    async fn user(&self, login: &str) -> Result<Option<(i64, String)>> {
+        // A login is at most 39 letters, digits and hyphens: nothing else reaches the path.
+        if login.is_empty()
+            || login.len() > 39
+            || !login
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return Ok(None);
+        }
+        count_call("user", 1);
+        let got: std::result::Result<serde_json::Value, _> = self
+            .client
+            .get(format!("/users/{login}"), None::<&()>)
+            .await;
+        match got {
+            Ok(v) => Ok(v
+                .get("id")
+                .and_then(|i| i.as_i64())
+                .zip(v.get("login").and_then(|l| l.as_str()).map(str::to_owned))),
+            Err(octocrab::Error::GitHub { source, .. }) if source.status_code.as_u16() == 404 => {
+                Ok(None)
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn can_write(&self) -> bool {

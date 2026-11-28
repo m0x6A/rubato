@@ -1,6 +1,10 @@
 //! The start-up check of the GitHub App settings (ADR 0022). A wrong key, a client id from
 //! another registration or an installation id that mints no token would otherwise show up
 //! later as "no access" for everyone, which sends on-call to the wrong cause.
+//!
+//! Installations are not checked here (ADR 0087, design §5.1): there may be none yet, and one
+//! that is suspended or gone is a finding on its tenant, logged by the poll with
+//! `rubato.github.installation`, not a reason to refuse to start.
 
 use super::api::{READ_TIMEOUT, app_client};
 use crate::kernel::config::GitHubApp;
@@ -17,12 +21,9 @@ pub enum AppCheckError {
         "GITHUB_CLIENT_ID is {configured:?} but the App's client id is {actual:?}; logins must go through the App's own registration"
     )]
     ClientId { configured: String, actual: String },
-    #[error("installation {installation} mints no token for this App: {reason}")]
-    Installation { installation: u64, reason: String },
 }
 
-/// Check that key, client id and installation belong together. One call as the App
-/// (`GET /app`) and one as the installation.
+/// Check that key and client id belong together: one call as the App (`GET /app`).
 pub async fn check_app(
     app: &GitHubApp,
     client_id: Option<&str>,
@@ -55,16 +56,6 @@ async fn check_app_with_timeout(
             actual: actual.to_owned(),
         });
     }
-    let installation = |reason: String| AppCheckError::Installation {
-        installation: app.installation_id,
-        reason,
-    };
-    let inst = crab
-        .installation(octocrab::models::InstallationId(app.installation_id))
-        .map_err(|e| installation(e.to_string()))?;
-    inst.get::<serde_json::Value, _, ()>("/installation/repositories?per_page=1", None::<&()>)
-        .await
-        .map_err(|e| installation(e.to_string()))?;
     Ok(())
 }
 
@@ -156,16 +147,10 @@ pub(crate) mod tests {
             installation_id: 99,
             ..good
         };
-        let e = run(wrong_installation, Some("Iv1.app")).await.unwrap_err();
-        assert!(
-            matches!(
-                e,
-                AppCheckError::Installation {
-                    installation: 99,
-                    ..
-                }
-            ),
-            "{e}"
+        assert_eq!(
+            run(wrong_installation, Some("Iv1.app")).await,
+            Ok(()),
+            "an installation is the poll's finding, not a refusal to start (design §5.1)"
         );
         println!("checked 5 App configurations");
     }

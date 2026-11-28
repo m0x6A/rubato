@@ -45,6 +45,7 @@ pub async fn approve(
     CurrentUser(login): CurrentUser,
     Json(req): Json<ApproveRequest>,
 ) -> Result<Answer, Refused> {
+    let t = ws.key().tenant();
     let refuse = |status: StatusCode, why: &str, extra: Value| {
         app.reject(routes::PLAN_APPROVE, why, &login);
         let mut v = json!({ "reason": why });
@@ -69,11 +70,11 @@ pub async fn approve(
             json!({ "cutover": cutover }),
         ));
     }
-    let Some(map) = app.map_of(ws.as_str()).await else {
+    let Some(map) = app.map_of(ws.key()).await else {
         return Err(refuse(StatusCode::SERVICE_UNAVAILABLE, "no_map", json!({})));
     };
     let issue = req.issue.clone();
-    let Some(row) = plans::all(&app.db)
+    let Some(row) = plans::all(&app.db, t)
         .await
         .map_err(internal)?
         .into_iter()
@@ -94,7 +95,7 @@ pub async fn approve(
     let fits_elsewhere = match fit.as_ref().filter(|f| !f.fits) {
         Some(_) => fits_another(
             &app,
-            ws.as_str(),
+            ws.key(),
             &issue,
             row.plan.as_ref(),
             row.parse_error.as_deref(),
@@ -110,7 +111,7 @@ pub async fn approve(
             json!({ "reasons": f.reasons }),
         ));
     }
-    if let Some(existing) = store::find(&app.db, &login, &issue, &req.sha)
+    if let Some(existing) = store::find(&app.db, t, &login, &issue, &req.sha)
         .await
         .map_err(internal)?
     {
@@ -134,12 +135,12 @@ pub async fn approve(
             ));
         }
     };
-    if !store::open(&app.db, &login, &issue, &req.sha, &row.branch)
+    if !store::open(&app.db, t, &login, &issue, &req.sha, &row.branch)
         .await
         .map_err(internal)?
     {
         // A concurrent request for the same intent inserted first; it posts.
-        let existing = store::find(&app.db, &login, &issue, &req.sha)
+        let existing = store::find(&app.db, t, &login, &issue, &req.sha)
             .await
             .map_err(internal)?;
         return existing
@@ -149,6 +150,7 @@ pub async fn approve(
     let text = body(&req.sha, &row.branch);
     let posted = async {
         app.github
+            .as_person()
             .comment_as(&token, &issue.repo, issue.number, &text)
             .await
     }
@@ -158,23 +160,23 @@ pub async fn approve(
         rubato.outcome = tracing::field::Empty
     ))
     .await;
-    let mut intent = store::find(&app.db, &login, &issue, &req.sha)
+    let mut intent = store::find(&app.db, t, &login, &issue, &req.sha)
         .await
         .map_err(internal)?
         .ok_or_else(|| internal(anyhow::anyhow!("approval row vanished")))?;
     match posted {
         Ok(c) => {
-            store::posted(&app.db, &intent, c.id, &c.url)
+            store::posted(&app.db, t, &intent, c.id, &c.url)
                 .await
                 .map_err(internal)?;
             tracing::info!(rubato.issue = %issue, login, rubato.outcome = "posted", "plan approved from Rubato");
             intent.state = ApproveState::Posted;
             intent.comment_url = Some(c.url);
-            app.notify("approve");
+            app.notify_in(t, "approve");
             Ok(answer(&intent))
         }
         Err(PostError::Refused { status }) => {
-            store::forget(&app.db, &login, &issue, &req.sha)
+            store::forget(&app.db, t, &login, &issue, &req.sha)
                 .await
                 .map_err(internal)?;
             tracing::warn!(rubato.issue = %issue, login, status, rubato.outcome = "refused", "GitHub refused the approval");
@@ -191,18 +193,23 @@ pub async fn approve(
     }
 }
 
-/// Whether the plan fits the map of a workspace other than `here` that holds the issue: its map
+/// Whether the plan fits the map of another workspace of `here`'s tenant that holds the issue: its map
 /// names the issue's repo, or the issue is pinned or launched there (ADR 0045).
 pub(super) async fn fits_another(
     app: &App,
-    here: &str,
+    here: &crate::kernel::tenancy::WsKey,
     issue: &rubato_protocol::IssueRef,
     plan: Option<&rubato_protocol::Plan>,
     parse_error: Option<&str>,
 ) -> anyhow::Result<bool> {
     let (entries, _) = app.workspace_entries();
-    for w in entries.iter().filter(|w| w.id != here) {
-        let Some(m) = app.map_of(&w.id).await else {
+    // Only the caller's own tenant's workspaces: another tenant's map is no reason to accept
+    // a plan here.
+    for w in entries
+        .iter()
+        .filter(|w| &w.tenant == here.tenant() && w.id != here.ws())
+    {
+        let Some(m) = app.map_of(&w.key()).await else {
             continue;
         };
         let holds = m
@@ -210,11 +217,11 @@ pub(super) async fn fits_another(
             .repos_named()
             .iter()
             .any(|r| r.eq_ignore_ascii_case(&issue.repo))
-            || crate::pins::list(&app.db, &w.id)
+            || crate::pins::list(&app.db, &w.key())
                 .await?
                 .iter()
                 .any(|p| &p.issue == issue)
-            || crate::launch::launched_issues_in(&app.db, &w.id)
+            || crate::launch::launched_issues_in(&app.db, &w.tenant, &w.key())
                 .await?
                 .contains(issue);
         if holds && plan_fit(plan, parse_error, &m.map).is_some_and(|f| f.fits) {

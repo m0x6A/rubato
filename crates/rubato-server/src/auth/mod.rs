@@ -8,9 +8,9 @@ mod store;
 mod team;
 mod tokens;
 
-pub use current_user::CurrentUser;
+pub use current_user::{CurrentUser, start};
 pub use handlers::{callback, login, logout, me};
-pub use store::has_fresh_team_record;
+pub use store::{Person, github_id_of, people, revoke_person};
 pub use tokens::{
     Granted, TokenError, access_token, can_act, keep as keep_token, reason as token_reason,
     sweep as sweep_tokens,

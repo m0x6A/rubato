@@ -51,7 +51,7 @@ test.describe("on the server with two workspaces", () => {
       await view.getByLabel("Ref").fill("issue/901-lens");
       await view.getByTestId("settings-save").click();
       await expect(view.getByRole("alert")).toContainText("its ref cannot move");
-      expect((await (await page.request.get("/api/w/shop/settings")).json()).map_ref).toBe("main");
+      expect((await (await page.request.get("/api/t/default/w/shop/settings")).json()).map_ref).toBe("main");
 
       // default reads its map from the seeded repository: the ref moves, and the map follows.
       await switcher.selectOption("default");
@@ -65,8 +65,8 @@ test.describe("on the server with two workspaces", () => {
     } finally {
       // Leave both workspaces as the other suites expect them.
       for (const [path, change] of [
-        ["/api/settings", { map_ref: "main" }],
-        ["/api/w/shop/settings", { name: "Shop" }],
+        ["/api/t/default/w/default/settings", { map_ref: "main" }],
+        ["/api/t/default/w/shop/settings", { name: "Shop" }],
       ] as const) {
         const now = await (await page.request.get(path)).json();
         const put = await page.request.put(path, { data: { ...now, ...change, traffic: null } });
@@ -97,13 +97,13 @@ test.describe("on the server with two workspaces", () => {
       await expect(view.getByText("m0x6A/rubato")).toBeVisible();
       await expect(view.getByLabel("Source")).toHaveValue("");
       await expect(status).toHaveCount(0);
-      expect((await (await page.request.get("/api/settings")).json()).traffic ?? null).toBeNull();
-      expect((await (await page.request.get("/api/w/shop/settings")).json()).traffic.fields.url).toBe("http://127.0.0.1:9");
-      const overview = await (await page.request.get("/api/overview")).json();
+      expect((await (await page.request.get("/api/t/default/w/default/settings")).json()).traffic ?? null).toBeNull();
+      expect((await (await page.request.get("/api/t/default/w/shop/settings")).json()).traffic.fields.url).toBe("http://127.0.0.1:9");
+      const overview = await (await page.request.get("/api/t/default/w/default/overview")).json();
       expect(overview.traffic?.state ?? "not_configured").toBe("not_configured");
     } finally {
-      const now = await (await page.request.get("/api/w/shop/settings")).json();
-      const put = await page.request.put("/api/w/shop/settings", { data: { ...now, traffic: null } });
+      const now = await (await page.request.get("/api/t/default/w/shop/settings")).json();
+      const put = await page.request.put("/api/t/default/w/shop/settings", { data: { ...now, traffic: null } });
       expect(put.status()).toBe(200);
     }
     await view.getByRole("button", { name: "Close" }).click();
@@ -123,13 +123,13 @@ test.describe("on the server with two workspaces", () => {
       await namespaces.fill("shop|.*");
       await view.getByTestId("settings-save").click();
       await expect(view.getByRole("alert")).toContainText("is not a namespace");
-      expect((await (await page.request.get("/api/w/shop/settings")).json()).traffic ?? null).toBeNull();
+      expect((await (await page.request.get("/api/t/default/w/shop/settings")).json()).traffic ?? null).toBeNull();
       await namespaces.fill("rubato, shop");
       await save(page);
-      expect((await (await page.request.get("/api/w/shop/settings")).json()).traffic.fields.namespaces).toBe("rubato, shop");
+      expect((await (await page.request.get("/api/t/default/w/shop/settings")).json()).traffic.fields.namespaces).toBe("rubato, shop");
     } finally {
-      const now = await (await page.request.get("/api/w/shop/settings")).json();
-      const put = await page.request.put("/api/w/shop/settings", { data: { ...now, traffic: null } });
+      const now = await (await page.request.get("/api/t/default/w/shop/settings")).json();
+      const put = await page.request.put("/api/t/default/w/shop/settings", { data: { ...now, traffic: null } });
       expect(put.status()).toBe(200);
     }
   });
@@ -145,7 +145,7 @@ test.describe("on the server with one workspace", () => {
     await page.getByRole("link", { name: "Log in with GitHub" }).click();
     await page.getByRole("link", { name: "Continue as member" }).click();
     await expect(page.getByTestId("node-rubato-server")).toBeVisible();
-    const before = await (await page.request.get("/api/workspaces")).json();
+    const before = await (await page.request.get("/api/t/default/workspaces")).json();
     expect(before.map((w: { id: string }) => w.id)).toEqual(["default"]);
 
     await expect(page.getByRole("combobox", { name: "Workspace" })).toHaveCount(0);
@@ -159,6 +159,6 @@ test.describe("on the server with one workspace", () => {
 
     await view.getByRole("button", { name: "Close" }).click();
     await expect(page.getByTestId("settings")).toHaveCount(0);
-    expect(await (await page.request.get("/api/workspaces")).json()).toEqual(before);
+    expect(await (await page.request.get("/api/t/default/workspaces")).json()).toEqual(before);
   });
 });

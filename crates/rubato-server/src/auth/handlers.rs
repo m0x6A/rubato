@@ -1,8 +1,7 @@
 //! GitHub OAuth login, logout and `me` for the web view.
 
-use super::current_user::{COOKIE, cookie_value};
+use super::current_user::cookie_value;
 use super::store;
-use super::team::{self, reason};
 use crate::kernel::state::App;
 use axum::Json;
 use axum::extract::{Query, State};
@@ -16,8 +15,6 @@ use oauth2::{
 use rubato_protocol::Me;
 use rubato_protocol::auth::routes;
 use serde::Deserialize;
-
-const STATE_COOKIE: &str = "rubato_oauth_state";
 
 fn set_cookie(name: &str, value: &str, max_age: i64, secure: bool) -> HeaderValue {
     let mut s = format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}");
@@ -77,7 +74,7 @@ pub async fn login(State(app): State<App>) -> Response {
     res.headers_mut().append(
         header::SET_COOKIE,
         set_cookie(
-            STATE_COOKIE,
+            app.config.oauth_state_cookie(),
             state.secret(),
             600,
             app.config.public_url.starts_with("https"),
@@ -107,7 +104,8 @@ pub async fn callback(
     let Some(client) = oauth_client(&app) else {
         return StatusCode::NOT_IMPLEMENTED.into_response();
     };
-    if cookie_value(&headers, STATE_COOKIE).as_deref() != Some(q.state.as_str()) {
+    if cookie_value(&headers, app.config.oauth_state_cookie()).as_deref() != Some(q.state.as_str())
+    {
         return (StatusCode::BAD_REQUEST, "oauth state mismatch").into_response();
     }
     let http = match oauth2::reqwest::ClientBuilder::new()
@@ -146,49 +144,42 @@ pub async fn callback(
         },
         Err(e) => return login_failed_upstream(&app, "user_lookup", &e.to_string()),
     };
-    // As a GitHub App: the person is on the team when their account can access the
-    // installation the server acts as (ADR 0022). A failed lookup is a fault of ours or of
-    // GitHub, not "no access", and answers differently.
-    let mut team_checked_at = None;
-    if let Some(app_cfg) = &app.config.github_app {
-        let answer = http
-            .get(format!(
-                "{}/user/installations?per_page=100",
-                app.config.github_api()
-            ))
-            .bearer_auth(token.access_token().secret())
-            .header(header::USER_AGENT, "rubato-server")
-            .header(header::ACCEPT, "application/vnd.github+json")
-            .send()
-            .await
-            .and_then(|r| r.error_for_status());
-        let answer: serde_json::Value = match answer {
-            Ok(r) => match r
-                .text()
-                .await
-                .map_err(|e| e.to_string())
-                .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
-            {
-                Ok(v) => v,
-                Err(e) => return installation_lookup_failed(&app, &user.login, &e),
-            },
-            Err(e) => return installation_lookup_failed(&app, &user.login, &e.to_string()),
-        };
-        if !team::member_of(&answer, app_cfg.installation_id) {
-            tracing::warn!(
-                login = %user.login,
-                installation_id = app_cfg.installation_id,
-                "login refused: no access to the installation"
+    // A login GitHub now gives another id belongs to someone else: the adapter revokes what
+    // the old person held before anything of this login is written (Decision 15).
+    match app
+        .admission()
+        .before_login(&app, &user.login, user.id)
+        .await
+    {
+        Ok(false) => {}
+        Ok(true) => {
+            tracing::warn!(login = %user.login, "identity changed: the login has a new GitHub id; the old person's sessions, tokens and pairings are revoked");
+            app.reject(
+                routes::CALLBACK,
+                rubato_protocol::tenant::reason::IDENTITY_CHANGED,
+                &user.login,
             );
-            app.reject(routes::CALLBACK, reason::NOT_ON_TEAM, &user.login);
-            return (
-                StatusCode::FORBIDDEN,
-                "Your GitHub account has no access to the repositories this Rubato is installed on.",
-            )
-                .into_response();
         }
-        team_checked_at = Some(Utc::now());
+        Err(e) => return login_failed_here(e),
     }
+    // ADR 0088, superseding ADR 0022's gate: a session is made only for an operator or for a
+    // person invited to at least one tenant. The invite alone is the gate; GitHub is not asked
+    // what the account can access. Refused before anything of this login is kept.
+    let invited = match app.admission().tenants_of(&app, user.id).await {
+        Ok(tenants) => !tenants.is_empty(),
+        Err(e) => return login_failed_here(e),
+    };
+    if !invited && !app.config.is_operator(Some(user.id)) {
+        tracing::warn!(login = %user.login, github_id = user.id, "login refused: not invited to any tenant");
+        app.reject(
+            routes::CALLBACK,
+            rubato_protocol::tenant::reason::NOT_INVITED,
+            &user.login,
+        );
+        return (StatusCode::FORBIDDEN, NOT_INVITED).into_response();
+    }
+    // Kept on the session for the seed's "who was here lately" (design §8); no gate reads it.
+    let team_checked_at = Some(Utc::now());
     if let Err(e) = store::upsert_user(
         &app.db,
         &user.login,
@@ -219,16 +210,36 @@ pub async fn callback(
         Ok(id) => id,
         Err(e) => return login_failed_here(e),
     };
+    // Its writes draw on the person's bucket from the first one (ADR 0090).
+    app.limiter.know(&id, &user.login);
+    if let Err(e) = app
+        .admission()
+        .after_login(&app, &user.login, user.id)
+        .await
+    {
+        tracing::error!(login = %user.login, error = %format!("{e:#}"), "noting the login on its memberships failed");
+    }
     let mut res = Redirect::to("/").into_response();
     let secure = app.config.public_url.starts_with("https");
     res.headers_mut().append(
         header::SET_COOKIE,
-        set_cookie(COOKIE, &app.signer.sign(&id), 60 * 60 * 24 * 30, secure),
+        set_cookie(
+            app.config.session_cookie(),
+            &app.signer.sign(&id),
+            60 * 60 * 24 * 30,
+            secure,
+        ),
     );
-    res.headers_mut()
-        .append(header::SET_COOKIE, set_cookie(STATE_COOKIE, "", 0, secure));
+    res.headers_mut().append(
+        header::SET_COOKIE,
+        set_cookie(app.config.oauth_state_cookie(), "", 0, secure),
+    );
     res
 }
+
+/// What the browser sees when nobody has invited the account (ADR 0088).
+pub const NOT_INVITED: &str =
+    "You have not been invited to a tenant on this Rubato. Ask one of its admins for an invite.";
 
 /// What the browser sees when GitHub did not complete the login (design 193 D8). The upstream
 /// text is logged, never echoed.
@@ -250,19 +261,8 @@ fn login_failed_here(e: impl std::fmt::Display) -> Response {
     (crate::kernel::http::internal("auth", e), LOGIN_FAILED_HERE).into_response()
 }
 
-/// The membership lookup itself failed: 502 with its own reason, never "no access".
-fn installation_lookup_failed(app: &App, login: &str, error: &str) -> Response {
-    tracing::error!(login, error, "installation lookup failed at login");
-    app.reject(routes::CALLBACK, reason::INSTALLATION_LOOKUP_FAILED, login);
-    (
-        StatusCode::BAD_GATEWAY,
-        "Could not check your access with GitHub. Try again; if it persists, the GitHub App settings need a look.",
-    )
-        .into_response()
-}
-
 pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
-    if let Some(v) = cookie_value(&headers, COOKIE)
+    if let Some(v) = cookie_value(&headers, app.config.session_cookie())
         && let Some(id) = app.signer.verify(&v)
     {
         if let Ok(Some(store::WebSession { login, .. })) = store::web_session(&app.db, &id).await {
@@ -277,18 +277,60 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
     let mut res = StatusCode::NO_CONTENT.into_response();
     res.headers_mut().append(
         header::SET_COOKIE,
-        set_cookie(COOKIE, "", 0, app.config.public_url.starts_with("https")),
+        set_cookie(
+            app.config.session_cookie(),
+            "",
+            0,
+            app.config.public_url.starts_with("https"),
+        ),
     );
     res
 }
 
 pub async fn me(State(app): State<App>, super::CurrentUser(login): super::CurrentUser) -> Json<Me> {
     let can = super::tokens::can_act(&app, &login).await;
+    let github_id = store::github_id_of(&app.db, &login)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %format!("{e:#}"), "reading the GitHub id for Me failed");
+            None
+        });
+    let tenants = match github_id {
+        Some(id) => app
+            .admission()
+            .tenants_of(&app, id)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %format!("{e:#}"), "reading tenants for Me failed");
+                Vec::new()
+            }),
+        None => Vec::new(),
+    };
+    // Local development (`RUBATO_DEV_USER`, loopback only): every dev login is an operator and
+    // an admin of tenant `default`, as `tenants::scope_for` grants it (design §12).
+    let dev = app.config.dev_user.is_some();
+    let mut tenants = tenants;
+    if dev
+        && !tenants
+            .iter()
+            .any(|t| t.id == crate::kernel::tenancy::DEFAULT_TENANT)
+    {
+        tenants.insert(
+            0,
+            rubato_protocol::TenantInfo {
+                id: crate::kernel::tenancy::DEFAULT_TENANT.to_owned(),
+                name: "Default".to_owned(),
+                role: rubato_protocol::Role::Admin,
+            },
+        );
+    }
     Json(Me {
         login,
         avatar_url: None,
         can_act_on_github: can.is_ok(),
         cannot_act_reason: can.err().map(str::to_owned),
         voice: app.config.voice_availability(),
+        tenants,
+        operator: dev || app.config.is_operator(github_id),
     })
 }

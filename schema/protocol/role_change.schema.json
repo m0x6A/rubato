@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RoleChange",
+  "description": "`PUT` a member: change their role.",
+  "type": "object",
+  "properties": {
+    "role": {
+      "$ref": "#/$defs/Role"
+    }
+  },
+  "required": [
+    "role"
+  ],
+  "$defs": {
+    "Role": {
+      "description": "A member's role in one tenant (ADR 0088). An operator is not a role: it comes from the\nserver's configuration, never from a tenant.",
+      "oneOf": [
+        {
+          "description": "Invites, changes roles, removes members, and creates, edits and deletes workspaces.",
+          "type": "string",
+          "const": "admin"
+        },
+        {
+          "description": "Uses the tenant's workspaces.",
+          "type": "string",
+          "const": "member"
+        }
+      ]
+    }
+  }
+}

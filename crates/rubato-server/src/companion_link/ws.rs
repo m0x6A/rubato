@@ -453,6 +453,19 @@ async fn on_envelope(
                     let named: Vec<&str> = union.iter().map(String::as_str).collect();
                     canonicalise_repos(&mut sessions, &named);
                 }
+                // A companion says which repository a session is in; the server says whether its
+                // owner is in that repository's tenant (ADR 0087). A session in a tenant the
+                // owner is not a member of is dropped here, before anything is stored: it
+                // would otherwise show on that tenant's issue, carry spend onto it, and stand
+                // as proof for a cap hit.
+                let dropped = keep_members_sessions(app, &pairing.user, &mut sessions).await;
+                if dropped > 0 {
+                    tracing::warn!(rubato.companion_id = %companion_id, rubato.user = %pairing.user, dropped, reason = "not_member", "sessions in a tenant their owner is not a member of dropped");
+                    app.metrics.companion_refused.add(
+                        dropped as u64,
+                        &[KeyValue::new(attr::DROP_REASON, "not_member")],
+                    );
+                }
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
@@ -462,7 +475,7 @@ async fn on_envelope(
                     "record_spend",
                     companion_id,
                     env.seq,
-                    spend_history::record(&app.db, &app.metrics, companion_id, &sessions, now)
+                    spend_history::record(&app.db, &app.metrics, &app.github, companion_id, &sessions, now)
                         .await,
                 );
                 record_sessions_by_state(&app.metrics, companion_id, &sessions);
@@ -522,8 +535,27 @@ async fn on_envelope(
                     return Some(ServerMessage::Ack { seq: env.seq });
                 }
                 tracing::warn!(rubato.issue = %hit.issue, rubato.session_id = ?hit.session_id, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
-                if let Err(e) = launch::record_cap_hit(&app.db, &hit, now).await {
-                    tracing::error!(error = %e, "storing cap hit");
+                // The hit is its issue's repository's tenant's (ADR 0087), and only from a
+                // companion whose owner is a member of it.
+                match app.repo_tenant(&hit.issue.repo) {
+                    Ok(t) if !app
+                        .admission()
+                        .is_member(app, &t, &pairing.user)
+                        .await
+                        .unwrap_or(false) =>
+                    {
+                        tracing::warn!(rubato.companion_id = %companion_id, rubato.issue = %hit.issue, rubato.tenant = %t, reason = "not_member", "cap hit for a tenant the companion's owner is not a member of dropped");
+                        app.metrics
+                            .companion_refused
+                            .add(1, &[KeyValue::new(attr::DROP_REASON, "not_member")]);
+                        return Some(ServerMessage::Ack { seq: env.seq });
+                    }
+                    Ok(t) => {
+                        if let Err(e) = launch::record_cap_hit(&app.db, &t, &hit, now).await {
+                            tracing::error!(error = %e, "storing cap hit");
+                        }
+                    }
+                    Err(e) => tracing::warn!(rubato.issue = %hit.issue, error = %e, "cap hit for a repository in no tenant not stored"),
                 }
                 app.notify("cap hit");
                 Some(ServerMessage::Ack { seq: env.seq })
@@ -544,7 +576,7 @@ async fn on_envelope(
             CompanionMessage::Draft(bundle) => {
                 // The launch decides the owner; a bundle for a launch of another companion, or
                 // for another issue, is not this companion's to send.
-                match launch::launch_target(&app.db, bundle.launch_id).await {
+                match launch::acting_target(app, bundle.launch_id).await {
                     Ok(Some(t)) if t.companion_id == companion_id && t.issue == bundle.issue => {
                         plan_drafts::on_draft(app, &bundle, &t.user).await;
                     }
@@ -578,14 +610,27 @@ async fn on_envelope(
                 let span = tracing::Span::current();
                 span.record("rubato.launch_id", r.launch_id.to_string());
                 match accept_report(app, companion_id, &r).await {
-                    Ok(Accepted::Yes { issue, doing, parts }) => {
+                    Ok(Accepted::Yes {
+                        tenant,
+                        issue,
+                        doing,
+                        parts,
+                    }) => {
                         span.record("rubato.issue", issue.to_string());
                         span.record("rubato.outcome", "stored");
                         observe(
                             "record_agent_report",
                             companion_id,
                             env.seq,
-                            agent_reports::record(&app.db, companion_id, r.launch_id, &doing, &parts, now)
+                            agent_reports::record(
+                                &app.db,
+                                &tenant,
+                                companion_id,
+                                r.launch_id,
+                                &doing,
+                                &parts,
+                                now,
+                            )
                                 .await
                                 .map(|_| ()),
                         );
@@ -621,6 +666,8 @@ async fn on_envelope(
 
 enum Accepted {
     Yes {
+        /// The launch's tenant (ADR 0087).
+        tenant: crate::kernel::tenancy::TenantId,
         issue: rubato_protocol::IssueRef,
         doing: String,
         parts: Vec<String>,
@@ -653,7 +700,7 @@ async fn accept_report(
     companion_id: Uuid,
     r: &rubato_protocol::AgentReport,
 ) -> anyhow::Result<Accepted> {
-    let Some(target) = launch::launch_target(&app.db, r.launch_id).await? else {
+    let Some(target) = launch::acting_target(app, r.launch_id).await? else {
         return Ok(Accepted::No("not_this_companion"));
     };
     if target.companion_id != companion_id {
@@ -666,7 +713,10 @@ async fn accept_report(
     if !live {
         return Ok(Accepted::No("not_live"));
     }
-    let map = app.map_of(&target.workspace).await;
+    let map = match launch::ws_key(app, &target) {
+        Some(ws) => app.map_of(&ws).await,
+        None => None,
+    };
     let known = |id: &str| {
         map.as_ref().is_some_and(|m| {
             m.map.nodes.iter().any(|n| n.id == id) || m.map.seams.iter().any(|s| s.id == id)
@@ -687,6 +737,7 @@ async fn accept_report(
         }
     }
     Ok(Accepted::Yes {
+        tenant: target.tenant.clone(),
         issue: target.issue,
         doing: bounded_line(&r.doing),
         parts,
@@ -729,6 +780,50 @@ fn own_sessions(sessions: &mut [SessionState], companion_id: Uuid, user: &str) -
         }
     }
     changed
+}
+
+/// Keep only the sessions whose repository is in a tenant `user` is a member of, or in no
+/// tenant at all (a repository no installation covers shows nowhere but on a server with one
+/// GitHub context). A membership that cannot be read keeps nothing of that tenant. Returns how
+/// many were dropped.
+#[doc(hidden)]
+pub async fn keep_members_sessions(
+    app: &App,
+    user: &str,
+    sessions: &mut Vec<SessionState>,
+) -> usize {
+    let mut member: std::collections::HashMap<crate::kernel::tenancy::TenantId, bool> =
+        Default::default();
+    let before = sessions.len();
+    let mut kept = Vec::with_capacity(before);
+    for s in sessions.drain(..) {
+        let repo = s
+            .issue
+            .as_ref()
+            .map(|i| i.repo.as_str())
+            .or(s.repo.as_deref());
+        let Some(tenant) = repo.and_then(|r| app.github.tenant_of(r)) else {
+            kept.push(s);
+            continue;
+        };
+        let ok = match member.get(&tenant) {
+            Some(ok) => *ok,
+            None => {
+                let ok = app
+                    .admission()
+                    .is_member(app, &tenant, user)
+                    .await
+                    .unwrap_or(false);
+                member.insert(tenant, ok);
+                ok
+            }
+        };
+        if ok {
+            kept.push(s);
+        }
+    }
+    *sessions = kept;
+    before - sessions.len()
 }
 
 /// A cap hit counts only from a companion that was sent a launch for the issue or reports a
@@ -1288,7 +1383,7 @@ mod tests {
         )
         .unwrap();
         app.set_map(
-            "default",
+            &crate::kernel::tenancy::WsKey::of_default("default"),
             crate::kernel::state::LoadedMap {
                 map: serde_yaml_ng::from_str(&yaml).unwrap(),
                 version: "v".into(),
@@ -1298,7 +1393,7 @@ mod tests {
         )
         .await;
         let target = launched_to.unwrap_or(pairing.companion_id);
-        sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 7, '{}', ?)")
+        sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, 'm0x6A', 'm0x6A/rubato', 7, '{}', ?)")
             .bind(LAUNCH.to_string())
             .bind(target.to_string())
             .bind(crate::kernel::db::ts(Utc::now()))
@@ -1344,7 +1439,9 @@ mod tests {
     }
 
     async fn lines(app: &App) -> Vec<rubato_protocol::AgentLine> {
-        crate::agent_reports::all(app).await.unwrap()
+        crate::agent_reports::all(app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap()
     }
 
     #[tokio::test(flavor = "current_thread")]

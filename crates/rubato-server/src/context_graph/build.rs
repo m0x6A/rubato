@@ -162,6 +162,7 @@ async fn build_repo(app: &App, store: &Store, repo: &str, key: &str) -> Result<O
     let now = app.clock.now();
     let head = app
         .github
+        .for_system(repo)
         .default_head(repo)
         .await
         .map_err(fail("head"))?
@@ -185,6 +186,7 @@ async fn build_repo(app: &App, store: &Store, repo: &str, key: &str) -> Result<O
     let tarball = tokio::time::timeout(
         TARBALL_DEADLINE,
         app.github
+            .for_system(repo)
             .tarball(repo, &head, limits::GRAPH_TARBALL_MAX_BYTES),
     )
     .await
@@ -278,12 +280,17 @@ pub async fn tick(app: &App) -> Tick {
         return tick;
     };
     let named = app.union_repos().await;
-    let uncovered: BTreeSet<String> = crate::github_poll::uncovered(&app.db)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| r.to_ascii_lowercase())
-        .collect();
+    // Every tenant's: a repository uncovered in the tenant that names it is not built.
+    let mut uncovered: BTreeSet<String> = BTreeSet::new();
+    for t in &app.tenants() {
+        uncovered.extend(
+            crate::github_poll::uncovered(&app.db, t)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| r.to_ascii_lowercase()),
+        );
+    }
     let mut wanted = BTreeSet::new();
     for repo in &named {
         // A repository the installation does not cover is a finding in the overview already;
@@ -296,7 +303,10 @@ pub async fn tick(app: &App) -> Tick {
         wanted.insert(key);
     }
     // What the server itself holds: each workspace's map and pins, and the team's shared facts.
-    let maps: Vec<(String, std::sync::Arc<crate::kernel::state::LoadedMap>)> = app
+    let maps: Vec<(
+        crate::kernel::tenancy::WsKey,
+        std::sync::Arc<crate::kernel::state::LoadedMap>,
+    )> = app
         .maps
         .read()
         .await
@@ -304,9 +314,13 @@ pub async fn tick(app: &App) -> Tick {
         .map(|(ws, m)| (ws.clone(), m.clone()))
         .collect();
     for (ws, loaded) in &maps {
-        let key = source_key::workspace(ws);
+        let key = source_key::workspace(ws.tenant().as_str(), ws.ws());
         let built = match crate::pins::list(&app.db, ws).await {
-            Ok(pins) => Ok(workspace::build(ws, &loaded.map, &pins)),
+            Ok(pins) => Ok(workspace::build(
+                &super::workspace_label(ws),
+                &loaded.map,
+                &pins,
+            )),
             Err(e) => Err(("pins", e)),
         };
         note(
@@ -324,24 +338,26 @@ pub async fn tick(app: &App) -> Tick {
         );
         wanted.insert(key);
     }
-    if !maps.is_empty() {
-        let built = team_input(app, &maps)
+    // One team source per tenant (design §6.4): a tenant's shared facts go to its members only.
+    let mut by_tenant: std::collections::BTreeMap<crate::kernel::tenancy::TenantId, Vec<_>> =
+        Default::default();
+    for m in &maps {
+        by_tenant
+            .entry(m.0.tenant().clone())
+            .or_default()
+            .push(m.clone());
+    }
+    for (t, its_maps) in &by_tenant {
+        let key = source_key::team(t.as_str());
+        let built = team_input(app, t, its_maps)
             .await
             .map(|input| team::build(&input));
         note(
             &mut tick,
-            source_key::TEAM,
-            derived(
-                app,
-                &store,
-                source_key::TEAM,
-                kind::source::TEAM,
-                None,
-                built,
-            )
-            .await,
+            &key,
+            derived(app, &store, &key, kind::source::TEAM, None, built).await,
         );
-        wanted.insert(source_key::TEAM.to_owned());
+        wanted.insert(key);
     }
     // Never on a tick with no map loaded: the list a companion is sent is the truth, and one
     // bad tick must not empty every copy.
@@ -351,10 +367,9 @@ pub async fn tick(app: &App) -> Tick {
                 continue;
             }
             if row.kind != kind::source::REPO {
-                // A workspace that is no longer held: its map and pins go with it.
-                if row.kind == kind::source::WORKSPACE
-                    && let Ok(true) = store.remove_source(&row.source).await
-                {
+                // A workspace that is no longer held, a tenant with no map left, and the keys
+                // of before tenants (`team`, `workspace/<id>`): what was built goes with them.
+                if let Ok(true) = store.remove_source(&row.source).await {
                     tracing::info!(rubato.graph.source = %row.source, "context graph source removed");
                     tick.removed.push(row.source);
                 }
@@ -485,63 +500,93 @@ async fn derived(
 /// What the team source is built from, read through the other slices' roots.
 async fn team_input(
     app: &App,
-    maps: &[(String, std::sync::Arc<crate::kernel::state::LoadedMap>)],
+    t: &crate::kernel::tenancy::TenantId,
+    maps: &[(
+        crate::kernel::tenancy::WsKey,
+        std::sync::Arc<crate::kernel::state::LoadedMap>,
+    )],
 ) -> Result<team::Input, Failed> {
     let mut repos: Vec<team::RepoFact> = Vec::new();
     for (ws, loaded) in maps {
         for name in loaded.map.repos_named() {
             match repos.iter_mut().find(|r| r.name.eq_ignore_ascii_case(name)) {
-                Some(r) => r.workspaces.push(ws.clone()),
+                Some(r) => r.workspaces.push(super::workspace_label(ws)),
                 None => repos.push(team::RepoFact {
                     name: name.to_owned(),
-                    workspaces: vec![ws.clone()],
+                    workspaces: vec![super::workspace_label(ws)],
                 }),
             }
         }
     }
-    let pinned = crate::pins::list_all(&app.db)
-        .await
-        .map_err(|e| ("pins", e))?
-        .into_iter()
-        .map(|p| (p.issue.repo, p.issue.number))
-        .collect();
-    let issues = crate::github_poll::all_issue_meta(&app.db)
-        .await
-        .map_err(|e| ("issues", e))?
-        .into_iter()
-        .map(|(issue, m)| {
-            (
-                issue,
-                team::IssueFact {
-                    title: m.title,
-                    state: m.github_state,
-                    url: m.url,
-                },
-            )
-        })
-        .collect();
-    let authors = crate::github_poll::open_issue_authors(&app.db)
-        .await
-        .map_err(|e| ("issues", e))?;
-    let plans = crate::plans::all(&app.db)
-        .await
-        .map_err(|e| ("plans", e))?
-        .into_iter()
-        .filter_map(|row| {
-            Some(team::PlanFact {
-                issue: row.issue,
-                branch: row.branch,
-                path: row.path,
-                plan: row.plan?,
-            })
-        })
-        .collect();
-    let pulls = crate::github_poll::repo_pulls(&app.db)
-        .await
-        .map_err(|e| ("pulls", e))?
-        .into_iter()
-        .flat_map(|r| r.pulls)
-        .collect();
+    // Only this tenant's pins, issues, plans and pull requests (design §6.4).
+    let mut pinned = BTreeSet::new();
+    for (ws, _) in maps {
+        pinned.extend(
+            crate::pins::list(&app.db, ws)
+                .await
+                .map_err(|e| ("pins", e))?
+                .into_iter()
+                .map(|p| (p.issue.repo, p.issue.number)),
+        );
+    }
+    let mut input = team::Input {
+        repos,
+        pinned,
+        ..Default::default()
+    };
+    {
+        input.issues.extend(
+            crate::github_poll::all_issue_meta(&app.db, t)
+                .await
+                .map_err(|e| ("issues", e))?
+                .into_iter()
+                .map(|(issue, m)| {
+                    (
+                        issue,
+                        team::IssueFact {
+                            title: m.title,
+                            state: m.github_state,
+                            url: m.url,
+                        },
+                    )
+                }),
+        );
+        input.authors.extend(
+            crate::github_poll::open_issue_authors(&app.db, t)
+                .await
+                .map_err(|e| ("issues", e))?,
+        );
+        input.plans.extend(
+            crate::plans::all(&app.db, t)
+                .await
+                .map_err(|e| ("plans", e))?
+                .into_iter()
+                .filter_map(|row| {
+                    Some(team::PlanFact {
+                        issue: row.issue,
+                        branch: row.branch,
+                        path: row.path,
+                        plan: row.plan?,
+                    })
+                }),
+        );
+        input.pulls.extend(
+            crate::github_poll::repo_pulls(&app.db, t)
+                .await
+                .map_err(|e| ("pulls", e))?
+                .into_iter()
+                .flat_map(|r| r.pulls),
+        );
+    }
+    let team::Input {
+        repos,
+        pinned,
+        issues,
+        authors,
+        plans,
+        pulls,
+        ..
+    } = input;
     Ok(team::Input {
         repos,
         pinned,

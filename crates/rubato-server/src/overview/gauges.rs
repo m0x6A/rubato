@@ -4,6 +4,7 @@
 use super::build;
 use super::inputs::{Maps, build_overview_inputs};
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use chrono::Utc;
 use opentelemetry::KeyValue;
@@ -25,25 +26,37 @@ pub async fn refresh_gauges(app: &App) -> Result<()> {
 /// that built, and the first error of one that did not (plan 226 §4). One failing workspace no
 /// longer stops the others; the composition root hands the issues to `plan_status`.
 pub struct Refreshed {
-    pub built: Vec<(String, Vec<rubato_protocol::IssueSummary>)>,
+    pub built: Vec<(WsKey, Vec<rubato_protocol::IssueSummary>)>,
     pub error: Option<anyhow::Error>,
 }
 
 /// [`refresh_gauges`], keeping what it built.
 pub async fn refresh(app: &App) -> Refreshed {
     // The workspace list and the maps once per tick, not once per workspace (#171).
-    let all = crate::map::list_workspaces(app).await;
     let maps = Maps::read(app).await;
-    let named = maps.named(&all);
+    // Each tenant's own workspace list: findings and collisions compare workspaces of one
+    // tenant, never across tenants (design §5.5).
+    let mut lists: std::collections::BTreeMap<
+        crate::kernel::tenancy::TenantId,
+        Vec<WorkspaceInfo>,
+    > = Default::default();
+    for (ws, _) in maps.iter() {
+        if !lists.contains_key(ws.tenant()) {
+            let all = crate::map::list_workspaces(app, ws.tenant()).await;
+            lists.insert(ws.tenant().clone(), all);
+        }
+    }
     let mut out = Refreshed {
         built: Vec::new(),
         error: None,
     };
     for (ws, map) in maps.iter() {
-        match refresh_one(app, ws, map, &all, &maps).await {
-            Ok(issues) => out.built.push((ws.to_owned(), issues)),
+        let all = &lists[ws.tenant()];
+        let named = maps.named(ws.tenant(), all);
+        match refresh_one(app, ws, map, all, &maps).await {
+            Ok(issues) => out.built.push((ws.clone(), issues)),
             Err(e) => {
-                tracing::warn!(rubato.workspace = ws, error = %format!("{e:#}"), "overview not built");
+                tracing::warn!(rubato.tenant = %ws.tenant, rubato.workspace = ws.ws(), error = %format!("{e:#}"), "overview not built");
                 if out.error.is_none() {
                     out.error = Some(e);
                 }
@@ -51,17 +64,16 @@ pub async fn refresh(app: &App) -> Refreshed {
         }
         let name = all
             .iter()
-            .find(|w| w.id == ws)
+            .find(|w| w.id == ws.ws())
             .map(|w| w.name.as_str())
             .unwrap_or_default();
         let collisions = build::cross_workspace_findings(name, &named)
             .iter()
             .filter(|f| matches!(f, rubato_protocol::Finding::IdCollision { .. }))
             .count();
-        app.metrics.workspace_id_collisions.record(
-            collisions as u64,
-            &[KeyValue::new(attr::WORKSPACE, ws.to_owned())],
-        );
+        app.metrics
+            .workspace_id_collisions
+            .record(collisions as u64, &crate::kernel::tenancy::ws_attrs(ws));
     }
     app.metrics
         .workspace_shared_repos
@@ -82,35 +94,40 @@ fn shared_repos<'a>(maps: impl Iterator<Item = &'a LoadedMap>) -> usize {
 
 async fn refresh_one(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     map: &LoadedMap,
     all: &[WorkspaceInfo],
     maps: &Maps,
 ) -> Result<Vec<rubato_protocol::IssueSummary>> {
-    let w = || KeyValue::new(attr::WORKSPACE, ws.to_owned());
+    // Every gauge of a workspace says its tenant too (ADR 0087): `with(extra)` is the
+    // workspace's labels and the gauge's own.
+    let with = |extra: Vec<KeyValue>| {
+        let mut all = crate::kernel::tenancy::ws_attrs(ws);
+        all.extend(extra);
+        all
+    };
     let built = build_overview_inputs(app, ws, all, maps).await?;
     let built = build::build(built, Some(map), &app.config.limits, Utc::now());
     let (by_state, by_seam) = build::counts(&built);
     for ((state, finished), n) in by_state {
         app.metrics.issues_by_state.record(
             n as u64,
-            &[
+            &with(vec![
                 KeyValue::new(attr::ISSUE_STATE, format!("{state:?}").to_lowercase()),
                 KeyValue::new(attr::ISSUE_FINISHED, finished),
-                w(),
-            ],
+            ]),
         );
     }
     for (at, n) in build::blocked_from_counts(&built) {
         app.metrics.issues_blocked_from.record(
             n as u64,
-            &[KeyValue::new(attr::ISSUE_BLOCKED_FROM, at), w()],
+            &with(vec![KeyValue::new(attr::ISSUE_BLOCKED_FROM, at)]),
         );
     }
     for (seam, n) in by_seam {
         app.metrics
             .seam_open_plans
-            .record(n as u64, &[KeyValue::new(attr::SEAM, seam), w()]);
+            .record(n as u64, &with(vec![KeyValue::new(attr::SEAM, seam)]));
     }
     let unknown: usize = built
         .findings
@@ -125,7 +142,7 @@ async fn refresh_one(
         .sum();
     app.metrics
         .plan_unknown_id_count
-        .record(unknown as u64, &[w()]);
+        .record(unknown as u64, &with(vec![]));
     let stale = built
         .findings
         .iter()
@@ -133,7 +150,7 @@ async fn refresh_one(
         .count();
     app.metrics
         .plans_approval_stale
-        .record(stale as u64, &[w()]);
+        .record(stale as u64, &with(vec![]));
     let not_fitting = built
         .issues
         .iter()
@@ -141,14 +158,16 @@ async fn refresh_one(
         .count();
     app.metrics
         .plans_not_fitting
-        .record(not_fitting as u64, &[w()]);
+        .record(not_fitting as u64, &with(vec![]));
     // Fits none of its workspaces (ADR 0045): with one workspace, the same as not fitting.
     let fit_none = built
         .issues
         .iter()
         .filter(|i| !i.finished && i.fit.as_ref().is_some_and(|f| !f.fits) && i.fits_in.is_empty())
         .count();
-    app.metrics.plans_fit_none.record(fit_none as u64, &[w()]);
+    app.metrics
+        .plans_fit_none
+        .record(fit_none as u64, &with(vec![]));
     Ok(built.issues)
 }
 
@@ -233,8 +252,11 @@ mod tests {
             loaded_at: Utc::now(),
             yaml: text.into(),
         };
-        app.set_map(rubato_protocol::DEFAULT_WORKSPACE, map.clone())
-            .await;
+        app.set_map(
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+            map.clone(),
+        )
+        .await;
 
         let i71 = IssueRef::new("m0x6A/rubato", 71);
         let (v1, v2) = (plan_text(71, "one"), plan_text(71, "two"));
@@ -261,7 +283,9 @@ mod tests {
         plan_drafts::on_draft(&app, &bundle(&r1), "m0x6A").await;
         let pressed = approve::approve_draft(
             State(app.clone()),
-            Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+            Ws(crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            )),
             CurrentUser("teammate".into()),
             Json(DraftApproveRequest {
                 repo: "m0x6A/rubato".into(),

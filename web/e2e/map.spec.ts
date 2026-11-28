@@ -143,7 +143,7 @@ test("drag a not-pinned issue onto a part and onto a seam", { tag: ["@pins.drag-
 
 test("start session appears only for the current user's own connected companion", { tag: ["@launch.only-own-companion", "@companions.see-teammates"] }, async ({ page }) => {
   // Pin an issue so there is something to select.
-  const pin = await fetch(`${base}/api/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } }) });
+  const pin = await fetch(`${base}/api/t/default/w/default/pins`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } }) });
   expect([201, 200]).toContain(pin.status);
 
   await page.goto("/");
@@ -374,7 +374,7 @@ for (const motion of ["no-preference", "reduce"] as const) {
 test("selecting an issue with a plan paints its parts and flows", { tag: "@plans.paints-the-map" }, async ({ page }) => {
   // The seeded repository has branch issue/901-lens with a plan that has a Flows table. Pinning
   // #901 makes it a tracked issue; the next poll tick (5 s in this harness) reads the plan.
-  const pin = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 901 }, target: { kind: "node", id: "rubato-server" } } });
+  const pin = await page.request.post("/api/t/default/w/default/pins", { data: { issue: { repo: "m0x6A/rubato", number: 901 }, target: { kind: "node", id: "rubato-server" } } });
   expect(pin.status()).toBe(201);
   await page.goto("/");
   const row = page.getByTestId("issue-row-901");
@@ -417,7 +417,7 @@ test("selecting an issue with a plan paints its parts and flows", { tag: "@plans
 
 test("queue an issue on a paired companion and start it", { tag: ["@queue.queue-on-own-lane", "@queue.refused-start-stays", "@queue.start-leaves-queue", "@companions.see-teammates"] }, async ({ page }) => {
   // Issue #9 was pinned by an earlier test; pin it here too so the test stands alone.
-  await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } } });
+  await page.request.post("/api/t/default/w/default/pins", { data: { issue: { repo: "m0x6A/rubato", number: 9 }, target: { kind: "node", id: "rubato-server" } } });
   const alice = await connectCompanion("alice");
   const mine = await connectCompanion("m0x6A");
   const commands: { id: string; branch: string }[] = [];
@@ -449,7 +449,7 @@ test("queue an issue on a paired companion and start it", { tag: ["@queue.queue-
   // Alice's lane is there for everyone to see, with no controls for me, and takes no drop.
   const aliceLane = page.locator('[data-testid^="lane-"][aria-label^="alice\'s companion"]').last();
   await expect(aliceLane).toContainText("Nothing queued.");
-  const refused = await page.request.post("/api/queue", { data: { issue: { repo: "m0x6A/rubato", number: 9 }, companion_id: (await aliceLane.getAttribute("data-testid"))!.replace("lane-", "") } });
+  const refused = await page.request.post("/api/t/default/queue", { data: { issue: { repo: "m0x6A/rubato", number: 9 }, companion_id: (await aliceLane.getAttribute("data-testid"))!.replace("lane-", "") } });
   expect(refused.status()).toBe(403);
 
   // Start: the launch reaches my companion's socket; the entry stays until the companion answers.
@@ -515,7 +515,7 @@ test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@
   await expect(panel).toContainText("add seam web-billing (web to billing)");
 
   // A draft id is not a map id: it cannot be pinned, and an invalid change says why.
-  const pin = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 903 }, target: { kind: "node", id: "billing" } } });
+  const pin = await page.request.post("/api/t/default/w/default/pins", { data: { issue: { repo: "m0x6A/rubato", number: 903 }, target: { kind: "node", id: "billing" } } });
   expect(pin.status()).toBe(422);
   await addPart.getByLabel(/^Id/).fill("web");
   await addPart.getByRole("button", { name: "Add part" }).click();
@@ -549,7 +549,7 @@ test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@
 
   // Proposed is read-only for everyone: no forms, and a write is refused.
   await expect(panel.getByRole("form")).toHaveCount(0);
-  const refused = await page.request.post("/api/map/draft/ops", { data: { op: "add_node", op_id: crypto.randomUUID(), node: { id: "ledger", kind: "context" } } });
+  const refused = await page.request.post("/api/t/default/w/default/map/draft/ops", { data: { op: "add_node", op_id: crypto.randomUUID(), node: { id: "ledger", kind: "context" } } });
   expect(refused.status()).toBe(409);
 
   // Withdraw: the branch goes, and the draft is editable again with every change kept.
@@ -619,7 +619,7 @@ test("a ghost taken into the draft becomes a part with its service, and its call
   await expect(panel).toContainText("add seam checkout-rubato-server");
 
   // The proposed map file keeps the service exactly as it was emitted.
-  const proposed = parseYaml(await (await page.request.get("/api/map/draft/yaml")).text()) as { nodes: { id: string; service?: { namespace?: string; name: string } }[] };
+  const proposed = parseYaml(await (await page.request.get("/api/t/default/w/default/map/draft/yaml")).text()) as { nodes: { id: string; service?: { namespace?: string; name: string } }[] };
   expect(proposed.nodes.find((n) => n.id === "checkout")?.service).toEqual({ namespace: "shop", name: "checkout" });
 
   // Leave the map as found.
@@ -690,12 +690,12 @@ test("the web sends each call's span to its own server, with the call's trace", 
   const sent = new Map<string, string>();
   page.on("request", (r) => {
     const tp = r.headers()["traceparent"];
-    if (tp && r.url().includes("/api/overview")) sent.set(tp.split("-")[1] ?? "", tp.split("-")[2] ?? "");
+    if (tp && r.url().includes("/api/t/default/w/default/overview")) sent.set(tp.split("-")[1] ?? "", tp.split("-")[2] ?? "");
   });
   await page.goto("/");
   await expect.poll(() => posts.length, { timeout: 5000 }).toBeGreaterThan(0);
   const spans = posts.flatMap((p) => (JSON.parse(p) as { resourceSpans: { scopeSpans: { spans: { traceId: string; spanId: string; name: string }[] }[] }[] }).resourceSpans[0]!.scopeSpans[0]!.spans);
-  const overview = spans.filter((s) => s.name === "GET /api/overview");
+  const overview = spans.filter((s) => s.name === "GET /api/t/{tenant}/w/{ws}/overview");
   expect(overview.length).toBeGreaterThan(0);
   for (const s of overview) {
     expect(sent.get(s.traceId), `a span for a request that sent trace ${s.traceId}`).toBe(s.spanId);
@@ -747,7 +747,7 @@ async function flatPositions(page: Page): Promise<Record<string, { x: number; y:
 }
 
 async function clearGrouped(page: Page, ws = ""): Promise<void> {
-  const r = await page.request.delete(`${base}${ws ? `/api/w/${ws}` : "/api"}/layout/grouped`, { headers: DEV });
+  const r = await page.request.delete(`${base}${ws ? `/api/t/default/w/${ws}` : "/api/t/default/w/default"}/layout/grouped`, { headers: DEV });
   expect(r.status()).toBe(200);
 }
 
@@ -818,7 +818,7 @@ test("By repo: a part dragged inside its box stays there for everyone and after 
   await page.getByRole("button", { name: "By repo" }).click();
   await expect(page.getByTestId(BOX)).toHaveCount(0);
   await expect.poll(() => flatPositions(page)).toEqual(flat);
-  const stored = await (await page.request.get(`${base}/api/overview`, { headers: DEV })).json();
+  const stored = await (await page.request.get(`${base}/api/t/default/w/default/overview`, { headers: DEV })).json();
   expect(Object.keys(stored.layout.positions ?? {})).toEqual([]);
   expect(stored.layout.grouped.web).toBeDefined();
 
@@ -853,7 +853,7 @@ test("By repo: a part dragged past its box's edge stays inside; a box moves with
     expect(await canvasPosition(page, id), id).toEqual(want);
   }
   // Saved for the team (the write follows the drop after a short pause), and after a reload the same.
-  await expect.poll(async () => (await (await page.request.get(`${base}/api/overview`, { headers: DEV })).json()).layout.boxes?.["m0x6A/rubato"]).toBeDefined();
+  await expect.poll(async () => (await (await page.request.get(`${base}/api/t/default/w/default/overview`, { headers: DEV })).json()).layout.boxes?.["m0x6A/rubato"]).toBeDefined();
   await page.reload();
   await byRepo(page);
   await expect.poll(() => canvasPosition(page, "repo:m0x6A/rubato")).toEqual(moved);
@@ -886,7 +886,7 @@ test("By repo in a workspace with two repos: a part or a box dropped on the othe
   const bar = (await shopBar.boundingBox())!;
   await dragBy(page, shopBar, target.x + 30 - bar.x, target.y + 10 - bar.y);
   await expect.poll(() => canvasPosition(page, "repo:acme/shop")).toEqual(shopAt);
-  const ov = await (await page.request.get(`${base}/api/w/shop/overview`, { headers: DEV })).json();
+  const ov = await (await page.request.get(`${base}/api/t/default/w/shop/overview`, { headers: DEV })).json();
   expect(ov.layout.grouped ?? {}).toEqual({});
   expect(ov.layout.boxes ?? {}).toEqual({});
 });
@@ -950,7 +950,7 @@ test("By repo: issues drop on a part and on a seam inside a box, New issue hereâ
     [917, { kind: "node", id: "plan-check" }],
     [918, { kind: "seam", id: "skill-system-map" }],
   ] as const) {
-    const r = await page.request.delete(`${base}/api/pins`, { headers: DEV, data: { issue: { repo: "m0x6A/rubato", number: n }, target } });
+    const r = await page.request.delete(`${base}/api/t/default/w/default/pins`, { headers: DEV, data: { issue: { repo: "m0x6A/rubato", number: n }, target } });
     expect(r.ok()).toBe(true);
   }
 });

@@ -6,6 +6,7 @@ use super::dispatch;
 use super::store::{self, MessageRow};
 use crate::auth::CurrentUser;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantScope;
 use crate::launch;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -30,14 +31,38 @@ pub mod reason {
     pub const CANNOT_STOP: &str = "companion_cannot_stop";
 }
 
+/// The `{launch_id}` of a tenant route. Named, because the path also carries `{tenant}` (ADR 0089).
+#[derive(serde::Deserialize)]
+pub struct LaunchParam {
+    launch_id: Uuid,
+}
+
+impl From<Uuid> for LaunchParam {
+    fn from(launch_id: Uuid) -> Self {
+        Self { launch_id }
+    }
+}
+
 /// `POST /api/launches/{launch_id}/stop` (ADR 0062, plan 122 §D14). Only the owner; never queued
 /// (409 when the companion is not live, so a stop never reaches a later session); pushed at once,
 /// past any message in flight; the companion skips only its idle check.
 pub async fn stop(
     State(app): State<App>,
+    scope: TenantScope,
     CurrentUser(user): CurrentUser,
-    Path(launch_id): Path<Uuid>,
+    Path(LaunchParam { launch_id }): Path<LaunchParam>,
 ) -> Result<Json<SessionMessageView>, Refused> {
+    if launch_in(&app, &scope, launch_id)
+        .await
+        .map_err(internal)?
+        .is_none()
+    {
+        app.reject(routes::LAUNCH_STOP, reason::UNKNOWN_LAUNCH, &user);
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "reason": reason::UNKNOWN_LAUNCH })),
+        ));
+    }
     match stop_as(&app, &user, launch_id, None).await {
         Ok(v) => Ok(Json(v)),
         Err(StopRefused::Internal(e)) => Err(internal(e)),
@@ -46,6 +71,18 @@ pub async fn stop(
             Err((status, Json(json!({ "reason": why }))))
         }
     }
+}
+
+/// The launch with this id in the tenant the request acts in. One of another tenant is unknown
+/// here, exactly like one that does not exist (ADR 0089, design §4.2).
+async fn launch_in(
+    app: &App,
+    scope: &TenantScope,
+    launch_id: Uuid,
+) -> anyhow::Result<Option<launch::LaunchTarget>> {
+    Ok(launch::launch_target(&app.db, launch_id)
+        .await?
+        .filter(|l| &l.tenant == scope.tenant()))
 }
 
 /// Why `stop_as` sent nothing: a status and a `reason`, or a store error.
@@ -82,6 +119,7 @@ pub async fn stop_as(
         return Err(no(StatusCode::CONFLICT, reason::COMPANION_OFFLINE));
     }
     let row = MessageRow {
+        tenant: target.tenant.clone(),
         id: Uuid::new_v4(),
         launch_id,
         session_id: target.session_id.clone(),
@@ -117,7 +155,7 @@ pub async fn stop_as(
         return Err(no(StatusCode::CONFLICT, reason::COMPANION_OFFLINE));
     }
     tracing::info!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, rubato.user = %user, via_launch = ?via, "session stop sent");
-    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     Ok(row.view())
 }
 
@@ -138,13 +176,11 @@ fn refuse(app: &App, status: StatusCode, why: &str, user: &str) -> Refused {
 
 pub async fn list(
     State(app): State<App>,
+    scope: TenantScope,
     CurrentUser(user): CurrentUser,
-    Path(launch_id): Path<Uuid>,
+    Path(LaunchParam { launch_id }): Path<LaunchParam>,
 ) -> Result<Json<LaunchMessages>, Refused> {
-    let Some(target) = launch::launch_target(&app.db, launch_id)
-        .await
-        .map_err(internal)?
-    else {
+    let Some(target) = launch_in(&app, &scope, launch_id).await.map_err(internal)? else {
         return Err(refuse(
             &app,
             StatusCode::NOT_FOUND,
@@ -152,7 +188,7 @@ pub async fn list(
             &user,
         ));
     };
-    let messages = store::for_launch(&app.db, launch_id)
+    let messages = store::for_launch(&app.db, &target.tenant, launch_id)
         .await
         .map_err(internal)?
         .iter()
@@ -170,14 +206,12 @@ pub async fn list(
 
 pub async fn send(
     State(app): State<App>,
+    scope: TenantScope,
     CurrentUser(user): CurrentUser,
-    Path(launch_id): Path<Uuid>,
+    Path(LaunchParam { launch_id }): Path<LaunchParam>,
     Json(req): Json<SessionMessageRequest>,
 ) -> Result<Json<SessionMessageView>, Refused> {
-    let Some(target) = launch::launch_target(&app.db, launch_id)
-        .await
-        .map_err(internal)?
-    else {
+    let Some(target) = launch_in(&app, &scope, launch_id).await.map_err(internal)? else {
         return Err(refuse(
             &app,
             StatusCode::NOT_FOUND,
@@ -212,6 +246,7 @@ pub async fn send(
     }
     let now = app.clock.now();
     let row = MessageRow {
+        tenant: target.tenant.clone(),
         id: Uuid::new_v4(),
         launch_id,
         session_id: target.session_id.clone(),
@@ -234,7 +269,7 @@ pub async fn send(
     store::insert(&app.db, &row).await.map_err(internal)?;
     tracing::info!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, rubato.user = %user, "session message queued");
     dispatch::dispatch(&app, launch_id).await;
-    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     let now_row = store::get(&app.db, row.id)
         .await
         .map_err(internal)?

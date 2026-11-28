@@ -24,6 +24,8 @@ pub mod reason {
     pub const FIELD_TOO_LONG: &str = "field_too_long";
     /// Too many codes are pending (#168).
     pub const PENDING_CAP: &str = "pending_cap";
+    /// One address holds its share of pending codes (ADR 0090).
+    pub const PENDING_CAP_ADDRESS: &str = "pending_cap_address";
     /// The companion id is paired to another person (#160).
     pub const COMPANION_TAKEN: &str = "companion_taken";
 }
@@ -35,6 +37,7 @@ type Refusal = (StatusCode, String);
 
 pub async fn start(
     State(app): State<App>,
+    client: Option<axum::Extension<crate::kernel::limits::ClientAddr>>,
     Json(req): Json<PairStartRequest>,
 ) -> Result<Json<PairStartResponse>, Refusal> {
     for (field, value) in [
@@ -58,11 +61,23 @@ pub async fn start(
         &code,
         app.config.pairing_ttl_secs,
         app.config.pairing_max_pending,
+        client.map(|c| c.0.0.to_string()).as_deref(),
     )
     .await
     .map_err(|e| (internal(SLICE, e), String::new()))?;
-    if !stored {
-        app.reject(routes::PAIR_START, reason::PENDING_CAP, ANONYMOUS);
+    if stored == store::Started::Displaced {
+        tracing::warn!(
+            companion_id = %req.companion_id,
+            "pairing codes are at the server's cap: the largest holder's oldest code ended early"
+        );
+    } else if stored != store::Started::Stored {
+        // The same answer for both caps: one address is not told how full the server is.
+        let why = if stored == store::Started::AddressFull {
+            reason::PENDING_CAP_ADDRESS
+        } else {
+            reason::PENDING_CAP
+        };
+        app.reject(routes::PAIR_START, why, ANONYMOUS);
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             "Too many pairings are waiting for approval; try again in a few minutes.".into(),

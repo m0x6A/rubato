@@ -9,6 +9,7 @@ pub mod app;
 pub mod kernel;
 pub mod tasks;
 
+pub mod admin;
 pub mod agent_reports;
 pub mod approve;
 pub mod auth;
@@ -35,12 +36,15 @@ pub mod session_log;
 pub mod session_messages;
 pub mod spend_history;
 pub mod telemetry_relay;
+pub mod tenants;
 pub mod traffic;
 pub mod voice;
 pub mod web_link;
 pub mod webhooks;
 pub mod workspace_settings;
 
+#[cfg(test)]
+mod scoping;
 #[cfg(test)]
 mod slices;
 

@@ -4,20 +4,11 @@ use super::store;
 use super::team::{self, reason};
 use crate::kernel::state::App;
 use axum::extract::FromRequestParts;
-use axum::http::{HeaderMap, StatusCode, header, request::Parts};
+use axum::http::{HeaderMap, StatusCode, request::Parts};
 use chrono::Utc;
 
-pub const COOKIE: &str = "rubato_session";
-
 pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|s| s.split(';'))
-        .filter_map(|kv| kv.trim().split_once('='))
-        .find(|(k, _)| *k == name)
-        .map(|(_, v)| v.to_owned())
+    crate::kernel::http::cookie(headers, name)
 }
 
 /// The logged-in GitHub login. In dev mode (`RUBATO_DEV_USER`) the header `x-rubato-dev-user`
@@ -38,33 +29,54 @@ impl FromRequestParts<App> for CurrentUser {
                 .unwrap_or_else(|| dev.clone());
             return Ok(CurrentUser(login));
         }
-        let value = cookie_value(&parts.headers, COOKIE).ok_or(StatusCode::UNAUTHORIZED)?;
+        let value = cookie_value(&parts.headers, app.config.session_cookie())
+            .ok_or(StatusCode::UNAUTHORIZED)?;
         let id = app.signer.verify(&value).ok_or(StatusCode::UNAUTHORIZED)?;
         let Ok(Some(session)) = store::web_session(&app.db, &id).await else {
             return Err(StatusCode::UNAUTHORIZED);
         };
         let now = Utc::now();
-        // As a GitHub App, a session counts only with a fresh team record (ADR 0022). This
-        // runs on every route and on the websocket upgrade, so a session from before the
-        // gate, or of someone who lost access, is refused too: 401, and the web logs in again.
-        if app.config.github_app.is_some() && !team::record_is_fresh(session.team_checked_at, now) {
-            app.reject(parts.uri.path(), reason::TEAM_RECORD_STALE, &session.login);
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-        // In every mode a session ends with its cookie, after 30 days (ADR 0064); without the
-        // App this is the only limit on the server.
+        // Who the person is; what they may reach is their memberships, read on every tenant
+        // request (ADR 0088, superseding ADR 0022's team record). A session ends with its cookie,
+        // after 30 days (ADR 0064).
         if !team::session_is_current(session.created_at, now) {
-            app.reject(parts.uri.path(), reason::SESSION_EXPIRED, &session.login);
+            // The route's template, never the concrete path (ADR 0090): a tenant id or a
+            // probe's path does not become a label value.
+            let route = parts
+                .extensions
+                .get::<axum::extract::MatchedPath>()
+                .map_or("unmatched", |m| m.as_str())
+                .to_owned();
+            app.reject(&route, reason::SESSION_EXPIRED, &session.login);
             return Err(StatusCode::UNAUTHORIZED);
         }
+        app.limiter.know(&id, &session.login);
         Ok(CurrentUser(session.login))
+    }
+}
+
+/// At start: tell the write limit whose each stored session is, so a person's sessions share
+/// one bucket from the first write after a restart (ADR 0090). Returns how many it told. A
+/// read that fails is logged; each session is then learned at its first admitted request.
+pub async fn start(app: &App) -> usize {
+    match store::web_sessions(&app.db).await {
+        Ok(sessions) => {
+            for (id, login) in &sessions {
+                app.limiter.know(id, login);
+            }
+            sessions.len()
+        }
+        Err(e) => {
+            tracing::error!(error = %format!("{e:#}"), "reading the web sessions for the write limit failed");
+            0
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::HeaderValue;
+    use axum::http::{HeaderValue, header};
 
     #[test]
     fn reads_a_cookie_among_many() {
@@ -73,7 +85,7 @@ mod tests {
             header::COOKIE,
             HeaderValue::from_static("a=1; rubato_session=x.y; b=2"),
         );
-        assert_eq!(cookie_value(&h, COOKIE).as_deref(), Some("x.y"));
+        assert_eq!(cookie_value(&h, "rubato_session").as_deref(), Some("x.y"));
         assert_eq!(cookie_value(&h, "zzz"), None);
     }
 
@@ -99,5 +111,35 @@ mod tests {
         let (mut parts, ()) = req.into_parts();
         let got = CurrentUser::from_request_parts(&mut parts, &app).await;
         assert_eq!(got.unwrap_err(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// After a restart the write limit knows whose each stored session is before any request:
+    /// two sessions of one person draw on one bucket, whatever the case of the login.
+    #[tokio::test]
+    async fn at_start_the_write_limit_learns_the_stored_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let app = crate::kernel::state::AppState::new(
+            pool,
+            crate::kernel::config::Config::for_tests(url, "m0x6A"),
+            std::sync::Arc::new(crate::kernel::github::FakeGitHub::new()),
+        );
+        let s1 = store::create_web_session(&app.db, "Ada", None)
+            .await
+            .unwrap();
+        let s2 = store::create_web_session(&app.db, "ada", None)
+            .await
+            .unwrap();
+        let s3 = store::create_web_session(&app.db, "mia", None)
+            .await
+            .unwrap();
+        assert_eq!(app.limiter.writer(&s1), format!("session:{s1}"));
+        assert_eq!(start(&app).await, 3);
+        assert_eq!(app.limiter.writer(&s1), "person:ada");
+        assert_eq!(app.limiter.writer(&s2), "person:ada");
+        assert_eq!(app.limiter.writer(&s3), "person:mia");
+        assert_eq!(app.limiter.writer("unknown"), "session:unknown");
+        println!("checked 3 stored sessions and 1 unknown one");
     }
 }

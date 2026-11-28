@@ -13,7 +13,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 test("the committed stack passes", () => {
   const r = checkDir(here);
   assert.deepEqual(r.problems, []);
-  assert.equal(r.services, 2);
+  assert.equal(r.services, 3);
   console.log(`checked ${r.services} services against ${r.rules} rules`);
 });
 
@@ -29,6 +29,12 @@ test("must fail: the bad fixture breaks every rule", () => {
       "livekit image must be pinned to an exact vX.Y.Z",
       "livekit LIVEKIT_KEYS must be \"${RUBATO_LIVEKIT_API_KEY}",
       "livekit.yaml must hold no keys",
+      "caddy must exist and be only in the public profile",
+      "caddy image must be pinned to an exact X.Y.Z",
+      "app must publish its port only as ${RUBATO_APP_BIND",
+      "the edge network must have a fixed subnet and hold caddy and app, so RUBATO_TRUSTED_PROXY can name it",
+      "Caddyfile must serve {$RUBATO_DOMAIN} and proxy to app",
+      "Caddyfile must keep public certificates and the https redirect, serve no http",
       "foundry.bicep must not read the account key (listKeys)",
       "foundry.bicep must pin every model version",
       "foundry.bicep must keep key auth on (disableLocalAuth",

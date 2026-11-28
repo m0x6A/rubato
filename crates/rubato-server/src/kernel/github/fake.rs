@@ -49,6 +49,10 @@ pub struct FakeInner {
     pub open_errors: HashMap<String, String>,
     /// `Some` makes this fake an App installation covering these repos.
     pub installation: Option<Vec<String>>,
+    /// What the App itself lists as its installations (the operator page).
+    pub app_installations: Vec<super::AppInstallation>,
+    /// The accounts `user` knows, by lower-case login: GitHub's id and spelling.
+    pub users: HashMap<String, (i64, String)>,
     /// Whether writes are allowed (tests of the proposal flow turn this on).
     pub writes: bool,
     /// A write call that fails when it is made, by its name (`create_ref`, `put_file`,
@@ -472,6 +476,18 @@ impl GitHubApi for FakeGitHub {
             return Err(anyhow!("API rate limit exceeded"));
         }
         Ok(g.installation.clone().unwrap_or_default())
+    }
+
+    async fn app_installations(&self) -> Result<Vec<super::AppInstallation>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("app_installations", String::new()));
+        Ok(g.app_installations.clone())
+    }
+
+    async fn user(&self, login: &str) -> Result<Option<(i64, String)>> {
+        let mut g = self.inner.lock().unwrap();
+        g.calls.push(("user", login.to_owned()));
+        Ok(g.users.get(&login.to_ascii_lowercase()).cloned())
     }
 
     fn can_write(&self) -> bool {

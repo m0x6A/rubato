@@ -1,11 +1,16 @@
 # Must fail every rule of check.ts: app in a profile, an extra unprofiled service, livekit
-# unpinned, in two profiles, with keys of its own.
+# unpinned, in two profiles, with keys of its own; caddy unpinned and always on, the app's port
+# published on every address, no network to trust.
 services:
   app:
     profiles: ["web"]
     image: local/rubato:sha-0000000
+    ports: ["8081:8080"]
   redis:
     image: redis:7
+  caddy:
+    image: caddy:latest
+    ports: ["80:80", "443:443"]
   livekit:
     profiles: ["voice", "default"]
     image: livekit/livekit-server:latest

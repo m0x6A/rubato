@@ -70,7 +70,7 @@ const WORD = /^[a-z_-]+$/;
 /**
  * The route template of an API path (ADR 0082): the query dropped, the workspace and every id
  * replaced by a placeholder, so span names stay few and say nothing about whose data it was.
- * `/api/w/shop/pins` → `/api/w/{ws}/pins`; `/api/pulls/m0x6A/rubato/12` →
+ * `/api/t/acme/w/shop/pins` → `/api/t/{tenant}/w/{ws}/pins`; `/api/pulls/m0x6A/rubato/12` →
  * `/api/pulls/{owner}/{repo}/{number}`; `/api/launches/9f…/messages` → `/api/launches/{id}/messages`.
  */
 export function routeOf(url: string): string {
@@ -79,11 +79,18 @@ export function routeOf(url: string): string {
   if (segs[0] !== "api") {
     return path;
   }
-  if (segs[1] === "w" && segs[2] !== undefined) {
-    segs[2] = "{ws}";
+  // ADR 0089: the tenant and the workspace are never part of a span name.
+  let at = 1;
+  if (segs[at] === "t" && segs[at + 1] !== undefined) {
+    segs[at + 1] = "{tenant}";
+    at += 2;
   }
-  if (segs[1] === "pulls" && segs.length === 5) {
-    return "/api/pulls/{owner}/{repo}/{number}";
+  if (segs[at] === "w" && segs[at + 1] !== undefined) {
+    segs[at + 1] = "{ws}";
+    at += 2;
+  }
+  if (segs[at] === "pulls" && segs.length === at + 4) {
+    return "/" + [...segs.slice(0, at), "pulls", "{owner}", "{repo}", "{number}"].join("/");
   }
   return "/" + segs.map((s, i) => (i === 0 || WORD.test(s) || s.startsWith("{") ? s : "{id}")).join("/");
 }

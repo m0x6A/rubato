@@ -26,7 +26,7 @@ fn dropped(app: &App, why: &'static str) {
 /// Record the report. Returns whether it was recorded.
 pub async fn on_handoff_report(app: &App, companion_id: Uuid, r: &HandoffReport) -> bool {
     let approval_id = r.line.approval;
-    let target = match launch::launch_target(&app.db, r.launch_id).await {
+    let target = match launch::acting_target(app, r.launch_id).await {
         Ok(Some(t)) if t.companion_id == companion_id => t,
         Ok(_) => {
             dropped(app, refused::FOREIGN_LAUNCH);
@@ -38,7 +38,16 @@ pub async fn on_handoff_report(app: &App, companion_id: Uuid, r: &HandoffReport)
             return false;
         }
     };
-    let approval = match records::get(&app.db, approval_id).await {
+    // The approval is the launch's repository's tenant's (ADR 0087).
+    let t = match app.repo_tenant(&target.issue.repo) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(rubato.issue = %target.issue, error = %format!("{e:#}"), "handoff: the issue's repository is in no tenant");
+            return false;
+        }
+    };
+    let t = &t;
+    let approval = match records::get(&app.db, t, approval_id).await {
         Ok(Some(a)) => a,
         Ok(None) => {
             dropped(app, refused::UNKNOWN_APPROVAL);
@@ -61,7 +70,7 @@ pub async fn on_handoff_report(app: &App, companion_id: Uuid, r: &HandoffReport)
         commit: r.line.commit.clone(),
         adrs_left: r.line.adrs_left.clone(),
     };
-    match records::record_handoff(&app.db, approval_id, &target.issue, &facts).await {
+    match records::record_handoff(&app.db, t, approval_id, &target.issue, &facts).await {
         Ok(true) => {
             tracing::info!(
                 rubato.issue = %target.issue,
@@ -74,7 +83,7 @@ pub async fn on_handoff_report(app: &App, companion_id: Uuid, r: &HandoffReport)
                 error = ?r.line.error,
                 "handoff reported"
             );
-            app.notify("handoff");
+            app.notify_in(t, "handoff");
             true
         }
         Ok(false) => false,

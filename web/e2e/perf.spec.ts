@@ -26,7 +26,7 @@ function stutter(long: number[]): string | null {
 
 async function openBigMap(page: Page, lens: RegExp = /^Data flow/, traffic = false): Promise<void> {
   const overview = bigMap(40, 60, traffic);
-  await page.route("**/api/overview", (route) => route.fulfill({ json: overview }));
+  await page.route("**/api/t/default/w/default/overview", (route) => route.fulfill({ json: overview }));
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto("/");
   await expect(page.getByTestId("node-part-00")).toBeVisible();

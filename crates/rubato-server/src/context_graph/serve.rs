@@ -2,17 +2,15 @@
 //! source's snapshot on a route the companion asks with its pairing token.
 //!
 //! **Who may read.** A pairing never expires, and the graph holds the file and symbol names of
-//! every repository on the maps. So a pairing reads it only while its owner has a team record
-//! that still counts: a web session whose access to the App's installation was checked at most
-//! seven days ago, the rule every web route is held to (ADR 0022). A person who leaves the
-//! team stops receiving the graph when they stop seeing the web. A server without the App
-//! starts with the graph only when it is local (`kernel::config`), where there is no team to
-//! check against.
-//!
-//! Every source goes to every such companion (plan 322, Q1, decided by Mattias 2026-11-27).
+//! every repository on the maps. So a pairing reads only the sources of the tenants its owner
+//! is a member of now (ADR 0087, design §6.4): a repository's source belongs to the tenant
+//! the repository is live in, a workspace's and a team's to the tenant their key names. A person
+//! who leaves a tenant stops receiving its sources when they stop seeing it on the web, and a
+//! person in no tenant receives none.
 
 use super::metrics;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -24,22 +22,27 @@ use serde_json::json;
 use tracing::Instrument;
 use uuid::Uuid;
 
-/// Whether `user`'s companions may read the graph now.
-pub(super) async fn may_read(app: &App, user: &str) -> bool {
-    if app.config.github_app.is_none() {
-        return true;
+/// The tenants whose sources `user`'s companions may read now: the ones `user` is a member
+/// of. Empty when the memberships cannot be read: nothing is sent on a guess.
+pub(super) async fn readable(app: &App, user: &str) -> Vec<TenantId> {
+    match app.admission().member_of(app, user).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(rubato.user = %user, error = %format!("{e:#}"), "context graph: memberships not read");
+            Vec::new()
+        }
     }
-    crate::auth::has_fresh_team_record(&app.db, user, app.clock.now())
-        .await
-        .unwrap_or(false)
 }
 
-/// What the server announces: every source that has been built, at most the cap.
-pub(super) async fn sources(app: &App) -> Option<GraphSources> {
+/// What a companion whose owner is in `tenants` is told to hold: every built source of those
+/// tenants. Filtered first, then cut at the cap (design §6.4): another tenant's sources never
+/// take a place in the list. A cut list is logged and counted.
+pub(super) async fn sources(app: &App, tenants: &[TenantId]) -> Option<GraphSources> {
     let store = super::store(app)?;
     let rows = store.sources().await.ok()?;
-    let sources: Vec<GraphSourceInfo> = rows
+    let mut sources: Vec<GraphSourceInfo> = rows
         .into_iter()
+        .filter(|r| super::source_tenant(app, &r.source).is_some_and(|t| tenants.contains(&t)))
         .filter_map(|r| {
             Some(GraphSourceInfo {
                 content_hash: r.content_hash?,
@@ -53,8 +56,17 @@ pub(super) async fn sources(app: &App) -> Option<GraphSources> {
                 truncated: r.truncated,
             })
         })
-        .take(limits::GRAPH_SOURCES_MAX)
         .collect();
+    if sources.len() > limits::GRAPH_SOURCES_MAX {
+        let dropped = sources.len() - limits::GRAPH_SOURCES_MAX;
+        tracing::warn!(
+            kept = limits::GRAPH_SOURCES_MAX,
+            dropped,
+            "graph sources truncated"
+        );
+        metrics::sources_truncated();
+        sources.truncate(limits::GRAPH_SOURCES_MAX);
+    }
     Some(GraphSources { sources })
 }
 
@@ -82,10 +94,11 @@ pub async fn announce_to(app: &App, companion_id: Uuid) -> bool {
     let Some(user) = owner_of(app, companion_id).await else {
         return false;
     };
-    if !may_read(app, &user).await {
+    let tenants = readable(app, &user).await;
+    if tenants.is_empty() {
         return false;
     }
-    let Some(list) = sources(app).await else {
+    let Some(list) = sources(app, &tenants).await else {
         return false;
     };
     app.send_to_companion(companion_id, ServerMessage::GraphSources(list))
@@ -142,8 +155,15 @@ pub async fn snapshot(
             return done("unauthorized", StatusCode::UNAUTHORIZED.into_response());
         };
         tracing::Span::current().record("rubato.companion_id", pairing.companion_id.to_string());
-        if !may_read(&app, &pairing.user).await {
+        // In no tenant: the answer a companion already knows how to wait on.
+        let tenants = readable(&app, &pairing.user).await;
+        if tenants.is_empty() {
             return done("stale", refuse(StatusCode::FORBIDDEN, reason::TEAM_RECORD_STALE));
+        }
+        // Another tenant's source, or one of no tenant, is answered as one that does not exist.
+        if !super::source_tenant(&app, &source).is_some_and(|t| tenants.contains(&t)) {
+            tracing::warn!(rubato.graph.source = %source, rubato.user = %pairing.user, "context graph snapshot refused: not a source of the owner's tenants");
+            return done("refused", refuse(StatusCode::NOT_FOUND, reason::UNKNOWN_SOURCE));
         }
         match store.export(&source).await {
             Ok(Some(body)) if body.len() as u64 <= limits::GRAPH_SNAPSHOT_MAX_BYTES => done(

@@ -68,7 +68,7 @@ async fn harness() -> H {
     let text = include_str!("../../../../docs/design/rubato-map.yml");
     let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -111,7 +111,7 @@ async fn insert_launch(app: &App, launch: Uuid, companion: Uuid, issue: &IssueRe
         role: Default::default(),
         lead_launch_id: None,
     };
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, ?, ?, ?, ?, ?)")
         .bind(launch.to_string())
         .bind(companion.to_string())
         .bind(OWNER)
@@ -195,7 +195,9 @@ async fn mirror(h: &H, text: &str) {
 async fn approve_as(h: &H, user: &str, text: &str) -> rubato_protocol::DraftApproveResponse {
     approve_draft(
         State(h.app.clone()),
-        Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+        Ws(crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        )),
         CurrentUser(user.into()),
         Json(DraftApproveRequest {
             repo: "m0x6A/rubato".into(),
@@ -216,8 +218,9 @@ async fn approve_as(h: &H, user: &str, text: &str) -> rubato_protocol::DraftAppr
 async fn chat(h: &H, text: &str) -> Uuid {
     session_messages::send(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(OWNER.into()),
-        Path(h.launch),
+        Path(h.launch.into()),
         Json(SessionMessageRequest { text: text.into() }),
     )
     .await
@@ -315,8 +318,9 @@ async fn plan_approved_waits_for_a_companion_that_can_type_it_and_for_a_live_ses
     approve_as(&h, "teammate", &two).await;
     let queued = session_messages::list(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(OWNER.into()),
-        Path(h.launch),
+        Path(h.launch.into()),
     )
     .await
     .unwrap()
@@ -374,11 +378,15 @@ async fn a_handoff_report_is_taken_only_from_the_launchs_companion_for_its_issue
     let facts = || {
         let db = db.clone();
         async move {
-            records::get(&db, a.approval_id)
-                .await
-                .unwrap()
-                .unwrap()
-                .handoff
+            records::get(
+                &db,
+                &crate::kernel::tenancy::TenantId::default_tenant(),
+                a.approval_id,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .handoff
         }
     };
     let r = report(
@@ -717,14 +725,14 @@ async fn the_reconcile_records_the_handoff_gauges() {
     .await;
     let gauge =
         |h: &H, name: &str| -> Vec<u64> { h.reader.points(name).iter().map(|p| p.value).collect() };
-    reconcile_links(&h.app).await;
+    reconcile_links(&h.app, &crate::kernel::tenancy::TenantId::default_tenant()).await;
     assert_eq!(
         gauge(&h, metric::PLANS_HANDOFF_OVERDUE),
         [0],
         "not yet 30 minutes"
     );
     h.app.clock.set(Utc::now() + Duration::minutes(31));
-    reconcile_links(&h.app).await;
+    reconcile_links(&h.app, &crate::kernel::tenancy::TenantId::default_tenant()).await;
     assert_eq!(gauge(&h, metric::PLANS_HANDOFF_OVERDUE), [1]);
     assert_eq!(gauge(&h, metric::PLANS_LINK_COMMENT_MISSING), [0]);
     assert_eq!(gauge(&h, metric::PLANS_APPROVAL_RECORD_MISMATCH), [0]);
@@ -734,7 +742,7 @@ async fn the_reconcile_records_the_handoff_gauges() {
         &report(h.launch, a.approval_id, HandoffOutcome::PlanChanged, &[]),
     )
     .await;
-    reconcile_links(&h.app).await;
+    reconcile_links(&h.app, &crate::kernel::tenancy::TenantId::default_tenant()).await;
     assert_eq!(
         gauge(&h, metric::PLANS_HANDOFF_OVERDUE),
         [0],
@@ -745,8 +753,9 @@ async fn the_reconcile_records_the_handoff_gauges() {
 async fn messages_of(h: &H, launch: Uuid) -> Vec<rubato_protocol::SessionMessageView> {
     session_messages::list(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(OWNER.into()),
-        Path(launch),
+        Path(launch.into()),
     )
     .await
     .unwrap()

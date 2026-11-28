@@ -12,7 +12,7 @@ test("a pull request lists on the Repos tab, opens, and merges into the reposito
   const pullHead = head("issue/917-pull");
   await page.goto("/");
   // The listing arrives with a poll tick.
-  await expect.poll(async () => JSON.stringify((await (await page.request.get("/api/overview")).json()).pulls ?? []), { timeout: 20_000 }).toContain('"number":917');
+  await expect.poll(async () => JSON.stringify((await (await page.request.get("/api/t/default/w/default/overview")).json()).pulls ?? []), { timeout: 20_000 }).toContain('"number":917');
   await page.getByTestId("tab-repos").click();
   const work = page.getByTestId("repo-work-m0x6A/rubato");
   await work.locator("summary").click();

@@ -34,9 +34,11 @@ pub async fn fetch_and_store(
     branch: &str,
     head_sha: &str,
 ) -> Result<()> {
+    let t = &app.repo_tenant(&issue.repo)?;
     let path = plan_path(map, issue, branch);
     match app
         .github
+        .within(t, &issue.repo)
         .file(&issue.repo, &path, head_sha)
         .instrument(crate::kernel::github::part_read(
             crate::kernel::github::READS_PLAN,
@@ -60,6 +62,7 @@ pub async fn fetch_and_store(
                 let sha = approval_hash(&text);
                 store::upsert_plan(
                     &app.db,
+                    t,
                     issue,
                     branch,
                     &path,
@@ -81,6 +84,7 @@ pub async fn fetch_and_store(
                 let sha = approval_hash(&text);
                 store::upsert_plan(
                     &app.db,
+                    t,
                     issue,
                     branch,
                     &path,
@@ -92,7 +96,7 @@ pub async fn fetch_and_store(
                 .await?;
             }
         },
-        None => store::delete_plan(&app.db, issue).await?,
+        None => store::delete_plan(&app.db, t, issue).await?,
     }
     Ok(())
 }
@@ -107,8 +111,10 @@ pub async fn hash_on_branch(
     branch: &str,
 ) -> Result<Option<String>> {
     let path = plan_path(map, issue, branch);
+    let t = &app.repo_tenant(&issue.repo)?;
     Ok(app
         .github
+        .within(t, &issue.repo)
         .file(&issue.repo, &path, branch)
         .instrument(crate::kernel::github::part_read(
             crate::kernel::github::READS_PLAN,

@@ -158,12 +158,12 @@ async fn rows_of_a_workspace_no_longer_configured_are_counted_and_kept() {
     use rubato_server::kernel::{config::Config, github::FakeGitHub, state::AppState, workspaces};
     let (pool, tmp) = at_0012().await;
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    sqlx::query(&format!("INSERT INTO map_layout VALUES ('gone', 'x', 1, 2, 'u', '{T}'), ('default', 'x', 1, 2, 'u', '{T}')"))
+    sqlx::query(&format!("INSERT INTO map_layout VALUES ('default', 'gone', 'x', 1, 2, 'u', '{T}'), ('default', 'default', 'x', 1, 2, 'u', '{T}')"))
         .execute(&pool)
         .await
         .unwrap();
     sqlx::query(&format!(
-        "INSERT INTO pins VALUES ('gone', 'a/b', 1, 'node', 'x', 'u', '{T}')"
+        "INSERT INTO pins VALUES ('default', 'gone', 'a/b', 1, 'node', 'x', 'u', '{T}')"
     ))
     .execute(&pool)
     .await

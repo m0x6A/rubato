@@ -47,7 +47,7 @@ pub async fn on_hook(app: &App, companion_id: Uuid, hook: &HookEvent) {
         dropped(app, "no_text");
         return;
     };
-    let target = match launch::launch_target(&app.db, launch_id).await {
+    let target = match launch::acting_target(app, launch_id).await {
         Ok(Some(t)) if t.companion_id == companion_id => t,
         Ok(_) => {
             dropped(app, "unknown_launch");
@@ -73,7 +73,11 @@ pub async fn on_hook(app: &App, companion_id: Uuid, hook: &HookEvent) {
         mixed: hook.mixed,
         at: hook.received_at,
     };
-    match store::insert(&app.db, launch_id, &target.issue, &entry).await {
+    let Ok(t) = app.repo_tenant(&target.issue.repo) else {
+        tracing::warn!(rubato.issue = %target.issue, "session log entry for a repository in no tenant");
+        return;
+    };
+    match store::insert(&app.db, &t, launch_id, &target.issue, &entry).await {
         Ok(true) => {
             app.metrics.session_log_entries.add(
                 1,
@@ -83,7 +87,7 @@ pub async fn on_hook(app: &App, companion_id: Uuid, hook: &HookEvent) {
                 ],
             );
             tracing::info!(rubato.issue = %target.issue, rubato.session_id = %hook.session_id, kind = kind.name(), "session log entry");
-            app.notify_resource(WebResource::LaunchLog { launch_id });
+            app.notify_resource(&t, WebResource::LaunchLog { launch_id });
         }
         Ok(false) => tracing::debug!("session log entry already stored"),
         Err(e) => tracing::error!(error = %format!("{e:#}"), "storing a session log entry failed"),

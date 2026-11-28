@@ -59,7 +59,7 @@
           }
         },
         {
-          "description": "One per team. Map, pins, plans, progress derivation, decisions, GitHub OAuth, websocket fan-out, embeds web.",
+          "description": "One per server, holding one or more tenants, each its own installations, workspaces and members (ADR 0087). Map, pins, plans, progress derivation, decisions, GitHub OAuth, websocket fan-out, embeds web.",
           "id": "rubato-server",
           "kind": "context",
           "path": "crates/rubato-server",
@@ -497,7 +497,7 @@
               "to": "rubato-companion"
             },
             {
-              "carries": "behind the context graph flag, a graph source's snapshot, fetched by the companion over the server URL with its pairing token, while its owner has a fresh team record (ADR 0086)",
+              "carries": "behind the context graph flag, a graph source's snapshot, fetched by the companion over the server URL with its pairing token, for a tenant its owner is a member of (ADR 0086, ADR 0087)",
               "from": "rubato-server",
               "kind": "data",
               "to": "rubato-companion"
@@ -544,7 +544,7 @@
               "to": "rubato-server"
             },
             {
-              "carries": "who a login is, and whether the account can access the App installation",
+              "carries": "who a login is (user id and login); as the App, its installations; per attached installation, the repositories it covers (ADR 0087)",
               "from": "github",
               "kind": "data",
               "to": "rubato-server"
@@ -568,7 +568,7 @@
               "to": "rubato-server"
             },
             {
-              "carries": "App webhook deliveries, signed with X-Hub-Signature-256: which issue, pull request, check or branch changed",
+              "carries": "App webhook deliveries, signed with X-Hub-Signature-256, of an attached installation (ADR 0087): installation and repository changes; which issue, pull request, check or branch changed",
               "from": "github",
               "kind": "data",
               "to": "rubato-server"
@@ -785,13 +785,13 @@
           "description": "The browser reads the whole picture in one payload, is told when it changed, and writes what a person does on the map.",
           "flows": [
             {
-              "carries": "Overview: map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073); behind the orchestrator flag, each lead and its workers, and who sent a message for a lead; how each companion's Claude is billed (ADR 0072, ADR 0076); behind the context graph flag, each graph source with its head, age and counts (ADR 0084)",
+              "carries": "Your tenants and roles (/api/me); Overview of one tenant (ADR 0087): map, issues with derived progress, findings, companions with what each launched agent last said it was doing, backlog, layout, open pull requests per repo, per workspace, with the list of workspaces; a pull request's detail; a plan draft with its revisions, a session log, a plan's room; behind the voice flag, a LiveKit token and an agent reply's speech (ADR 0073); behind the orchestrator flag, each lead and its workers, and who sent a message for a lead; how each companion's Claude is billed (ADR 0072, ADR 0076); behind the context graph flag, each graph source with its head, age and counts (ADR 0084)",
               "from": "rubato-server",
               "kind": "data",
               "to": "web"
             },
             {
-              "carries": "WebEvent Changed over /ws/web: fetch the overview again; Updated: fetch one draft, log or room",
+              "carries": "WebEvent over /ws/web?t={tenant}, only the tenant's (ADR 0089); Changed: fetch the overview again; Updated: fetch one draft, log or room",
               "from": "rubato-server",
               "kind": "control",
               "to": "web"
@@ -803,7 +803,7 @@
               "to": "rubato-server"
             },
             {
-              "carries": "LaunchRequest: start a session on your own companion, or your own lead agent behind the orchestrator flag (ADR 0072); propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan",
+              "carries": "LaunchRequest: start a session on your own companion, or your own lead agent behind the orchestrator flag (ADR 0072); propose or withdraw the map draft; map reload; login and logout; accept a plan or merge a pull request as yourself; approve a plan draft as yourself; call your agent into a room or ask its owner to; import a plan; as a tenant admin, invite a login, change a role, remove a member; as an operator, create a tenant, attach or detach an installation, name its first admin (ADR 0088)",
               "from": "web",
               "kind": "control",
               "to": "rubato-server"

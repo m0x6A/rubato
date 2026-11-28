@@ -88,7 +88,9 @@ async fn a_changed_bundle_is_the_next_revision_and_an_unchanged_one_is_not_store
         "m0x6A",
     )
     .await;
-    let latest = latest_drafts(&app).await.unwrap();
+    let latest = latest_drafts(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     assert_eq!(latest.len(), 1);
     assert_eq!(latest[0].summary.rev, 1, "unchanged bundles store nothing");
     intake::on_draft(
@@ -97,7 +99,9 @@ async fn a_changed_bundle_is_the_next_revision_and_an_unchanged_one_is_not_store
         "m0x6A",
     )
     .await;
-    let latest = latest_drafts(&app).await.unwrap();
+    let latest = latest_drafts(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     assert_eq!(
         latest[0].summary.rev, 2,
         "an edited design note is a new revision"
@@ -112,7 +116,9 @@ async fn another_persons_bundle_is_not_stored_and_is_a_finding_input() {
     let (app, reader, _tmp) = harness().await;
     intake::on_draft(&app, &bundle(&plan_text("one"), "d\n"), "m0x6A").await;
     intake::on_draft(&app, &bundle(&plan_text("theirs"), "d\n"), "alice").await;
-    let latest = latest_drafts(&app).await.unwrap();
+    let latest = latest_drafts(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     assert_eq!(latest[0].summary.rev, 1);
     assert_eq!(
         latest[0].conflict.as_ref().map(|c| c.0.as_str()),
@@ -128,10 +134,17 @@ async fn a_bundle_refused_on_the_machine_and_a_plan_that_does_not_parse() {
     big.files.clear();
     big.refused = Some(DraftRefusal::TooLarge);
     intake::on_draft(&app, &big, "m0x6A").await;
-    assert!(latest_drafts(&app).await.unwrap().is_empty());
+    assert!(
+        latest_drafts(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(refused(&reader, "too_large"), 1);
     intake::on_draft(&app, &bundle("---\ntitle: no issue\n---\n", "d\n"), "m0x6A").await;
-    let latest = latest_drafts(&app).await.unwrap();
+    let latest = latest_drafts(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     assert!(latest[0].plan.is_none());
     assert!(
         latest[0].summary.parse_error.is_some(),
@@ -144,19 +157,29 @@ async fn everyone_reads_a_draft_and_its_revisions() {
     let (app, reader, _tmp) = harness().await;
     intake::on_draft(&app, &bundle(&plan_text("one"), "d\n"), "m0x6A").await;
     intake::on_draft(&app, &bundle(&plan_text("two"), "d\n"), "m0x6A").await;
-    let id = latest_drafts(&app).await.unwrap()[0].summary.draft_id;
-    let view = handlers::draft(State(app.clone()), CurrentUser("alice".into()), Path(id))
+    let id = latest_drafts(&app, &crate::kernel::tenancy::TenantId::default_tenant())
         .await
-        .unwrap()
-        .0;
+        .unwrap()[0]
+        .summary
+        .draft_id;
+    let view = handlers::draft(
+        State(app.clone()),
+        crate::kernel::tenancy::default_scope(),
+        CurrentUser("alice".into()),
+        Path(id.into()),
+    )
+    .await
+    .unwrap()
+    .0;
     assert_eq!(
         view.revisions.iter().map(|r| r.rev).collect::<Vec<_>>(),
         [1, 2]
     );
     let r1 = handlers::revision(
         State(app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser("alice".into()),
-        Path((id, 1)),
+        Path((id, 1).into()),
     )
     .await
     .unwrap()
@@ -164,15 +187,17 @@ async fn everyone_reads_a_draft_and_its_revisions() {
     assert!(r1.files[0].text.contains("| one |"));
     let missing = handlers::revision(
         State(app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser("alice".into()),
-        Path((id, 9)),
+        Path((id, 9).into()),
     )
     .await;
     assert_eq!(missing.err().map(|e| e.0), Some(StatusCode::NOT_FOUND));
     let unknown = handlers::draft(
         State(app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser("alice".into()),
-        Path(Uuid::new_v4()),
+        Path(Uuid::new_v4().into()),
     )
     .await;
     assert_eq!(unknown.err().map(|e| e.0), Some(StatusCode::NOT_FOUND));

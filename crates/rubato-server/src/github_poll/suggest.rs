@@ -3,6 +3,7 @@
 //! map, title and body always give the same suggestion. A person confirms it; nothing here pins.
 
 use crate::kernel::github::OpenIssueInfo;
+use crate::kernel::tenancy::WsKey;
 use rubato_protocol::{MapRef, PinSuggestion, SystemMap, parse_map_placement};
 
 /// Lowest score shown (design A6).
@@ -31,15 +32,15 @@ pub struct Placement {
 }
 
 /// The `Map:` line that speaks to workspace `ws`: unqualified, or naming `ws` (ADR 0046).
-pub fn line_for(body: &str, ws: &str) -> Option<MapRef> {
+pub fn line_for(body: &str, ws: &WsKey) -> Option<MapRef> {
     parse_map_placement(body)
-        .filter(|p| p.workspace.as_deref().is_none_or(|w| w == ws))
+        .filter(|p| p.workspace.as_deref().is_none_or(|w| w == ws.ws()))
         .map(|p| p.target)
 }
 
 /// Read the `Map:` line for workspace `ws` and, when nothing places the issue there, suggest a
 /// place on that workspace's map.
-pub fn place(map: &SystemMap, issue: &OpenIssueInfo, ws: &str) -> Placement {
+pub fn place(map: &SystemMap, issue: &OpenIssueInfo, ws: &WsKey) -> Placement {
     match line_for(&issue.body, ws) {
         Some(target) if trusted(&issue.author_association) => Placement {
             pin: Some(target),
@@ -294,7 +295,7 @@ mod tests {
             let p = place(
                 &m,
                 &info("Map: seam web-server", who),
-                rubato_protocol::DEFAULT_WORKSPACE,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             );
             assert_eq!(p.pin, Some(MapRef::seam("web-server")), "{who}");
             assert_eq!(p.suggestion, None);
@@ -303,7 +304,7 @@ mod tests {
             let p = place(
                 &m,
                 &info("Map: seam web-server", who),
-                rubato_protocol::DEFAULT_WORKSPACE,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             );
             assert_eq!(p.pin, None, "{who} does not place an issue");
             assert_eq!(p.untrusted_line, Some(MapRef::seam("web-server")));
@@ -317,14 +318,14 @@ mod tests {
         let p = place(
             &m,
             &info("Map: node billing", "NONE"),
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         );
         assert_eq!((p.pin, p.suggestion), (None, None));
         // No line: scored.
         let p = place(
             &m,
             &info("rubato-server is slow", "NONE"),
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         );
         assert_eq!(
             p.suggestion.map(|s| s.target),

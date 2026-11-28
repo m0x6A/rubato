@@ -73,7 +73,7 @@ async fn harness_with(configure: impl FnOnce(&mut Config)) -> Harness {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let router = app::router(app.clone());
+    let router = app::router_before_tenants(app.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     Harness {
         url: format!("http://{addr}"),
@@ -667,7 +667,7 @@ async fn decisions_count_only_from_members() {
         url: "c1".into(),
     };
     sqlx::query(
-        "INSERT OR REPLACE INTO decisions (repo, number, comment_id, record) VALUES (?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO decisions (tenant_id, repo, number, comment_id, record) VALUES ('default', ?, ?, ?, ?)",
     )
     .bind("m0x6A/rubato")
     .bind(71_i64)
@@ -905,6 +905,7 @@ async fn the_overview_carries_live_agent_lines_and_nothing_else() {
     let now = chrono::Utc::now();
     rubato_server::agent_reports::record(
         &h.app.db,
+        &rubato_server::kernel::tenancy::TenantId::default_tenant(),
         c,
         live,
         "designing the seam",
@@ -913,9 +914,17 @@ async fn the_overview_carries_live_agent_lines_and_nothing_else() {
     )
     .await
     .unwrap();
-    rubato_server::agent_reports::record(&h.app.db, c, gone, "ended", &[], now)
-        .await
-        .unwrap();
+    rubato_server::agent_reports::record(
+        &h.app.db,
+        &rubato_server::kernel::tenancy::TenantId::default_tenant(),
+        c,
+        gone,
+        "ended",
+        &[],
+        now,
+    )
+    .await
+    .unwrap();
     let mut s: rubato_protocol::SessionState = serde_json::from_value(serde_json::json!({
         "session_id": "s", "companion_id": c, "user": "m0x6A", "cwd": "/w",
         "status": "idle", "source": "launch", "last_seen": now,
@@ -1684,7 +1693,11 @@ async fn unauthenticated_requests_without_dev_user_are_401() {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app::router(app)).await.unwrap() });
+    tokio::spawn(async move {
+        axum::serve(listener, app::router_before_tenants(app))
+            .await
+            .unwrap()
+    });
     let r = reqwest::get(format!("http://{addr}{}", overview_routes::OVERVIEW))
         .await
         .unwrap();
@@ -1726,7 +1739,7 @@ type Ws =
 impl Harness {
     async fn web_ws(&self) -> Ws {
         let req = format!(
-            "ws://{}{}",
+            "ws://{}{}?t=default",
             self.url.trim_start_matches("http://"),
             web_routes::WEB_WS
         )
@@ -2468,7 +2481,11 @@ async fn first_tick_reloads_then_polls() {
     );
     map::warm(&warm).await.unwrap();
     assert!(
-        warm.default_map().await.is_some(),
+        warm.map_of(&rubato_server::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE
+        ))
+        .await
+        .is_some(),
         "warm_map loads the stored map"
     );
     h.github.with(|g| g.calls.clear());
@@ -2615,7 +2632,12 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         "a finished issue's plan is not a finding: {:?}",
         ov.findings
     );
-    let rows = rubato_server::plans::all(&h.app.db).await.unwrap();
+    let rows = rubato_server::plans::all(
+        &h.app.db,
+        &rubato_server::kernel::tenancy::TenantId::default_tenant(),
+    )
+    .await
+    .unwrap();
     assert!(
         rows.iter()
             .any(|p| p.issue.number == 32 && p.parse_error.is_some()),
@@ -2671,9 +2693,11 @@ async fn poll_makes_the_same_github_calls_per_issue() {
         .into_iter()
         .map(|(m, a)| format!("{m} {a}"))
         .collect();
+    // The permission read comes first, once for the pass, before any tenant's part of it
+    // (plan 345); the coverage call follows the open-issues listing as before.
     let mut as_installation: Vec<&str> = expected.to_vec();
-    as_installation.insert(1, "installation_repos ");
-    as_installation.insert(2, "installation ");
+    as_installation.insert(0, "installation ");
+    as_installation.insert(2, "installation_repos ");
     // #32's pull request is stored as merged by now: final, not looked up again (S5).
     as_installation.retain(|c| *c != "pull_for_branch m0x6A/rubato issue/32-bad");
     assert_eq!(
@@ -2930,7 +2954,7 @@ async fn issues_of_repos_the_map_does_not_name_are_not_pinned_or_launched() {
     );
 
     // An old pin row for a repo the map does not name, and a connected companion.
-    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'elsewhere/secret', 9, 'node', 'web', 'm0x6A', '2026-11-01T00:00:00Z')")
+    sqlx::query("INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'default', 'elsewhere/secret', 9, 'node', 'web', 'm0x6A', '2026-11-01T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -2962,7 +2986,7 @@ async fn issues_of_repos_the_map_does_not_name_are_not_pinned_or_launched() {
 async fn old_mismatched_pin_still_listed() {
     let h = harness().await;
     // A pin stored before the kind check: a part's id kept as a seam.
-    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'm0x6A/rubato', 5, 'seam', 'rubato-server', 'm0x6A', '2026-11-01T00:00:00Z')")
+    sqlx::query("INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'default', 'm0x6A/rubato', 5, 'seam', 'rubato-server', 'm0x6A', '2026-11-01T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -3008,7 +3032,7 @@ async fn app_harness(as_app: bool) -> (String, App, tempfile::TempDir) {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let router = app::router(app.clone());
+    let router = app::router_before_tenants(app.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (format!("http://{addr}"), app, tmp)
 }
@@ -3055,7 +3079,7 @@ async fn statuses(url: &str, cookie: &str) -> [u16; 3] {
         .status()
         .as_u16();
     let mut req = format!(
-        "ws://{}{}",
+        "ws://{}{}?t=default",
         url.trim_start_matches("http://"),
         web_routes::WEB_WS
     )
@@ -3070,39 +3094,97 @@ async fn statuses(url: &str, cookie: &str) -> [u16; 3] {
     [read, write, ws]
 }
 
+/// ADR 0088: `login`, GitHub user `id`, is a member of tenant `default`, as an invite makes
+/// them. The tenant is made on first use; the adapter `main` installs is installed here.
+async fn invite(app: &App, login: &str, id: i64) {
+    use rubato_server::tenants;
+    app.set_admission(Arc::new(rubato_server::admin::Admission));
+    sqlx::query(
+        "INSERT INTO users (login, github_id, created_at) VALUES (?, ?, ?) \
+         ON CONFLICT(login) DO UPDATE SET github_id = excluded.github_id",
+    )
+    .bind(login)
+    .bind(id)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let now = chrono::Utc::now();
+    let mut tx = app.db.begin().await.unwrap();
+    let _ = tenants::create_tenant(&mut tx, "default", "Default", "test", now)
+        .await
+        .unwrap();
+    let _ = tenants::add_member(
+        &mut tx,
+        "default",
+        id,
+        login,
+        rubato_protocol::Role::Member,
+        "test",
+        now,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+}
+
+/// ADR 0088 (superseding ADR 0022's team record): a session reaches a tenant only while its
+/// person is a member of it, read on every request. Anyone else gets the answer for a tenant
+/// that does not exist, the browser socket (`/ws/web?t=`) included (design §6.1).
 #[tokio::test]
-async fn session_needs_a_fresh_team_record_when_the_app_is_configured() {
+async fn a_session_reaches_a_tenant_only_while_its_person_is_a_member() {
     let (url, app, _tmp) = app_harness(true).await;
-    // A session from before the gate, one whose record is 8 days old, and a fresh one.
-    let before_the_gate = session_cookie(&app, "old-timer", None).await;
-    let stale = session_cookie(&app, "lapsed", Some(8)).await;
-    let fresh = session_cookie(&app, "m0x6A", Some(1)).await;
-    assert_eq!(statuses(&url, &before_the_gate).await, [401, 401, 401]);
-    assert_eq!(statuses(&url, &stale).await, [401, 401, 401]);
-    assert_eq!(statuses(&url, &fresh).await, [200, 201, 101]);
+    invite(&app, "m0x6A", 100).await;
+    invite(&app, "leaver", 101).await;
+    sqlx::query("INSERT INTO users (login, github_id, created_at) VALUES ('outsider', 102, ?)")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let member = session_cookie(&app, "m0x6A", Some(1)).await;
+    let leaver = session_cookie(&app, "leaver", Some(1)).await;
+    let outsider = session_cookie(&app, "outsider", Some(1)).await;
+    let never_seen = session_cookie(&app, "no-user-row", None).await;
+    assert_eq!(statuses(&url, &member).await, [200, 201, 101]);
+    assert_eq!(statuses(&url, &leaver).await, [200, 201, 101]);
+    assert_eq!(statuses(&url, &outsider).await, [404, 404, 404]);
+    assert_eq!(statuses(&url, &never_seen).await, [404, 404, 404]);
     assert_eq!(
         statuses(&url, "rubato_session=forged.sig").await,
         [401, 401, 401]
     );
-    println!("checked 4 sessions on 3 entry points");
+    // Removed: the same session is refused from the next request on.
+    let mut tx = app.db.begin().await.unwrap();
+    rubato_server::tenants::remove_member(&mut tx, "default", 101)
+        .await
+        .unwrap()
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(statuses(&url, &leaver).await, [404, 404, 404]);
+    assert_eq!(statuses(&url, &member).await, [200, 201, 101]);
+    println!("checked 6 sessions on 3 entry points");
 }
 
 #[tokio::test]
-async fn without_the_app_login_stays_open() {
-    // Not a GitHub App (a personal token or none): a session needs no team record, as before.
+async fn without_the_app_the_same_invite_rule_holds() {
+    // Not a GitHub App (a personal token or none): still nobody reaches a tenant uninvited.
     let (url, app, _tmp) = app_harness(false).await;
+    invite(&app, "invited", 7).await;
     let plain = session_cookie(&app, "anyone", None).await;
-    assert_eq!(statuses(&url, &plain).await, [200, 201, 101]);
+    let invited = session_cookie(&app, "invited", None).await;
+    assert_eq!(statuses(&url, &plain).await, [404, 404, 404]);
+    assert_eq!(statuses(&url, &invited).await, [200, 201, 101]);
     assert!(
-        !app.github.can_write(),
+        !app.github.as_person().can_write(),
         "and such a server cannot propose map changes"
     );
 }
 
-/// #169 (ADR 0064): without the App a session still ends on the server, after the cookie's 30 days.
+/// #169 (ADR 0064): a session ends on the server after the cookie's 30 days, member or not.
 #[tokio::test]
 async fn a_session_ends_after_thirty_days() {
     let (url, app, _tmp) = app_harness(false).await;
+    invite(&app, "anyone", 7).await;
     let cookie_created = |days_ago: i64| {
         let app = app.clone();
         async move {
@@ -3190,7 +3272,7 @@ async fn layout_put_is_in_overview_and_notifies() {
     );
 
     // A row for a part the map no longer has is not served, and the next write removes it.
-    sqlx::query("INSERT INTO map_layout (workspace_id, node_id, x, y, updated_by, updated_at) VALUES ('default', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+    sqlx::query("INSERT INTO map_layout (tenant_id, workspace_id, node_id, x, y, updated_by, updated_at) VALUES ('default', 'default', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -3319,7 +3401,7 @@ async fn grouped_layout_is_its_own_arrangement() {
     assert_eq!(h.overview("m0x6A").await.layout, served);
 
     // Rows for a part or repo the map no longer has are not served, and the next write drops them.
-    sqlx::query("INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at) VALUES ('default', 'part', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z'), ('default', 'box', 'acme/gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+    sqlx::query("INSERT INTO map_layout_grouped (tenant_id, workspace_id, kind, id, x, y, updated_by, updated_at) VALUES ('default', 'default', 'part', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z'), ('default', 'default', 'box', 'acme/gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -3335,7 +3417,7 @@ async fn grouped_layout_is_its_own_arrangement() {
 
     // A clear answers only with rows for parts and repos there are now, so its Undo is never
     // refused for a stale row.
-    sqlx::query("INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at) VALUES ('default', 'part', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z'), ('default', 'box', 'acme/gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
+    sqlx::query("INSERT INTO map_layout_grouped (tenant_id, workspace_id, kind, id, x, y, updated_by, updated_at) VALUES ('default', 'default', 'part', 'gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z'), ('default', 'default', 'box', 'acme/gone', 1, 1, 'm0x6A', '2026-11-01T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -4069,7 +4151,7 @@ async fn discard_is_409_while_proposing() {
     )
     .await;
     // A proposal exists (written as the propose route writes it).
-    sqlx::query("INSERT INTO map_proposal (workspace_id, branch, base_sha, file_hash, last_seq, state, state_since, proposed_by) VALUES ('default', 'map/draft-1', 'a', 'b', 1, 'opening', '2026-11-11T00:00:00Z', 'm0x6A')")
+    sqlx::query("INSERT INTO map_proposal (tenant_id, workspace_id, branch, base_sha, file_hash, last_seq, state, state_since, proposed_by) VALUES ('default', 'default', 'map/draft-1', 'a', 'b', 1, 'opening', '2026-11-11T00:00:00Z', 'm0x6A')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -5633,7 +5715,12 @@ async fn the_poll_reads_the_plan_from_the_branch_approved_in_rubato() {
             "{tick} tick: the bottom of the stack and the newer comment both name {bottom}"
         );
     }
-    let approval = rubato_server::approve::approvals(&h.app).await.unwrap();
+    let approval = rubato_server::approve::approvals(
+        &h.app,
+        &rubato_server::kernel::tenancy::TenantId::default_tenant(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         approval.counted.len(),
         2,
@@ -6027,11 +6114,32 @@ async fn login_keeps_the_token_and_refresh_is_single_flight_with_compare_and_del
     })
     .await;
 
-    // The callback: the token from the exchange is kept, as an App with expiring tokens.
     let no_redirects = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
+    // ADR 0088: nobody has invited GitHub user 7, so the callback makes no session and keeps
+    // nothing of the login.
+    h.app
+        .set_admission(Arc::new(rubato_server::admin::Admission));
+    let r = no_redirects
+        .get(format!("{}/auth/github/callback?code=c0&state=s0", h.url))
+        .header("cookie", "rubato_oauth_state=s0")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    assert!(r.text().await.unwrap().contains("not been invited"));
+    for table in ["web_sessions", "user_tokens", "users"] {
+        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&h.app.db)
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "{table}: a refused login leaves nothing");
+    }
+    invite(&h.app, "teammate", 7).await;
+
+    // The callback: the token from the exchange is kept, as an App with expiring tokens.
     let r = no_redirects
         .get(format!("{}/auth/github/callback?code=c1&state=s1", h.url))
         .header("cookie", "rubato_oauth_state=s1")
@@ -7614,10 +7722,10 @@ async fn approval_rows(db: &sqlx::SqlitePool) -> Vec<String> {
 /// so a `Launch` result and a `HandoffReport` reach `approve` instead of stopping at a gate.
 async fn seed_guard(h: &Harness, companion_id: Uuid) {
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 122, '{}', ?)")
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, 'm0x6A', 'm0x6A/rubato', 122, '{}', ?)")
         .bind(GUARD_LAUNCH).bind(companion_id.to_string()).bind(&now)
         .execute(&h.app.db).await.unwrap();
-    sqlx::query("INSERT INTO rubato_approvals (id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at) VALUES (?, 'm0x6A/rubato', 122, 'issue/122-plan-in-rubato', ?, 3, 'abc1234', 'def5678', 'alice', ?, 0, 'ok', ?)")
+    sqlx::query("INSERT INTO rubato_approvals (tenant_id, id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at) VALUES ('default', ?, 'm0x6A/rubato', 122, 'issue/122-plan-in-rubato', ?, 3, 'abc1234', 'def5678', 'alice', ?, 0, 'ok', ?)")
         .bind(GUARD_APPROVAL).bind(Uuid::from_u128(77).to_string()).bind(&now).bind(&now)
         .execute(&h.app.db).await.unwrap();
 }
@@ -7653,7 +7761,7 @@ async fn replay_every_fixture(
             acked += 1;
         }
         if tamper && name == "companion_draft.json" {
-            sqlx::query("INSERT INTO plan_approvals (login, repo, number, sha, branch, state, created_at) VALUES ('mallory', 'm0x6A/rubato', 122, 'abc1234', 'issue/122-plan-in-rubato', 'posted', '2026-11-16T00:00:00Z')")
+            sqlx::query("INSERT INTO plan_approvals (tenant_id, login, repo, number, sha, branch, state, created_at) VALUES ('default', 'mallory', 'm0x6A/rubato', 122, 'abc1234', 'issue/122-plan-in-rubato', 'posted', '2026-11-16T00:00:00Z')")
                 .execute(&h.app.db).await.unwrap();
         }
     }
@@ -7806,25 +7914,10 @@ mod context_graph_copy {
             .unwrap();
         // A source that was never built is not announced and cannot be served.
         store
-            .begin_build(source_key::TEAM, kind::source::TEAM)
+            .begin_build(&source_key::team("default"), kind::source::TEAM)
             .await
             .unwrap();
         h
-    }
-
-    /// `login`'s access to the App's installation was last checked `days` ago.
-    async fn team_record(h: &Harness, login: &str, days: i64) {
-        let at = chrono::Utc::now() - chrono::Duration::days(days);
-        sqlx::query(
-            "INSERT INTO web_sessions (id, login, created_at, team_checked_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(Uuid::new_v4().to_string())
-        .bind(login)
-        .bind(at.to_rfc3339())
-        .bind(at.to_rfc3339())
-        .execute(&h.app.db)
-        .await
-        .unwrap();
     }
 
     async fn snapshot(h: &Harness, token: Option<&str>, source: &str) -> reqwest::Response {
@@ -7847,22 +7940,12 @@ mod context_graph_copy {
     }
 
     #[tokio::test]
-    async fn a_pairing_reads_the_graph_only_while_its_owner_is_on_the_team() {
+    async fn a_pairing_reads_a_source_with_its_token_and_only_while_it_is_not_revoked() {
+        // Whose sources a pairing reads is its owner's tenants' (ADR 0087):
+        // tests/tenant_paths.rs, where there are two tenants to tell apart.
         let h = server(true).await;
         let (companion_id, token) = h.pair("m0x6A").await;
         let key = source_key::repo(REPO);
-
-        // No team record at all: a pairing alone does not open the graph.
-        let r = snapshot(&h, Some(&token), &key).await;
-        assert_eq!(r.status(), 403);
-        assert_eq!(reason(r).await, "team_record_stale");
-
-        // Checked eight days ago: over the seven of ADR 0022.
-        team_record(&h, "m0x6A", 8).await;
-        assert_eq!(snapshot(&h, Some(&token), &key).await.status(), 403);
-
-        // Checked today, whatever the case GitHub gave the login in: the snapshot, whole.
-        team_record(&h, "M0X6a", 0).await;
         let r = snapshot(&h, Some(&token), &key).await;
         assert_eq!(r.status(), 200);
         assert_eq!(r.headers()["content-type"], "application/gzip");
@@ -7871,10 +7954,6 @@ mod context_graph_copy {
         assert_eq!(snap.header.head_sha.as_deref(), Some("b35788b"));
         assert_eq!(snap.nodes[0].id, id::file(REPO, "src/lib.rs"));
 
-        // Someone else's fresh record is not this owner's.
-        let (_, alice) = h.pair("alice").await;
-        assert_eq!(snapshot(&h, Some(&alice), &key).await.status(), 403);
-
         // Not a source, and one never built: 404, each with its reason.
         let r = snapshot(&h, Some(&token), "repo/m0x6A/none").await;
         assert_eq!(
@@ -7882,12 +7961,14 @@ mod context_graph_copy {
             (404, "unknown_source")
         );
         assert_eq!(
-            snapshot(&h, Some(&token), source_key::TEAM).await.status(),
+            snapshot(&h, Some(&token), &source_key::team("default"))
+                .await
+                .status(),
             404
         );
         assert_eq!(snapshot(&h, Some(&token), "").await.status(), 404);
 
-        // Revoked: 401, at once, fresh record or not.
+        // Revoked: 401, at once.
         let r = h
             .http
             .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
@@ -7978,7 +8059,7 @@ mod context_graph_copy {
     }
 
     #[tokio::test]
-    async fn a_companion_that_keeps_a_copy_is_told_what_to_hold_when_its_owner_may_read() {
+    async fn a_companion_that_keeps_a_copy_is_told_what_to_hold() {
         let h = server(true).await;
         let (companion_id, token) = h.pair("m0x6A").await;
         let mut ws = h.connect(&token).await;
@@ -7991,9 +8072,6 @@ mod context_graph_copy {
             "{capabilities:?}"
         );
 
-        // The owner has no fresh team record: nothing is announced.
-        assert!(!context_graph::announce_to(&h.app, companion_id).await);
-        team_record(&h, "m0x6A", 0).await;
         assert!(context_graph::announce_to(&h.app, companion_id).await);
         let Some(Ok(Message::Text(t))) = ws.next().await else {
             panic!("no message")
@@ -8058,8 +8136,14 @@ fn a_full_list_of_graph_sources_is_a_small_message() {
     let bytes = serde_json::to_string(&ServerMessage::GraphSources(full))
         .unwrap()
         .len();
-    println!("a list of 64 sources with the longest names GitHub allows is {bytes} bytes");
-    assert!(bytes < 32 * 1024, "{bytes}");
+    println!(
+        "a list of {} sources with the longest names GitHub allows is {bytes} bytes",
+        rubato_protocol::limits::GRAPH_SOURCES_MAX
+    );
+    // 256 sources since tenants (design 345 §6.4): about 105 KiB at the very worst, still one
+    // small message beside a websocket's megabytes.
+    assert!(bytes < 128 * 1024, "{bytes}");
     // The fixture that makes the cap fail on purpose.
-    assert_eq!(list(65).check(), Err(65));
+    let over = rubato_protocol::limits::GRAPH_SOURCES_MAX + 1;
+    assert_eq!(list(over).check(), Err(over));
 }

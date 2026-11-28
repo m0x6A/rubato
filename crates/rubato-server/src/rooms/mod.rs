@@ -21,6 +21,7 @@ mod turns;
 #[cfg(test)]
 mod tests;
 
+pub use agents::{leave_person, leave_repos};
 pub use callin::{UNKNOWN_AGENT, UNKNOWN_REQUEST, answer, call_in, dismiss, sweep_agents};
 pub use handlers::{
     PostRefused, PostSource, Posted, agents_present, has_plan, message, post, post_as, room,

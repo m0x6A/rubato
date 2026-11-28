@@ -36,6 +36,7 @@ pub mod session;
 pub mod session_log;
 pub mod session_message;
 pub mod telemetry_relay;
+pub mod tenant;
 pub mod traffic;
 pub mod voice;
 pub mod web_link;
@@ -127,6 +128,10 @@ pub use session_message::{
     LaunchMessages, MessageRefusal, ROOM_TURN_PREAMBLE, RoomTurnMode, SessionMessage,
     SessionMessageKind, SessionMessageOutcome, SessionMessageRequest, SessionMessageResult,
     SessionMessageState, SessionMessageView, room_turn_text,
+};
+pub use tenant::{
+    AccountType, AdminInstallation, AdminTenant, InstallationState, InviteRequest, MemberView,
+    NewTenant, PurgeReport, Role, RoleChange, TenancyRefusal, TenantInfo, is_tenant_id,
 };
 pub use traffic::{
     DiscrepancyKey, DismissRequest, GhostEdge, GhostPart, LastSeen, ObservedTraffic, SeamTraffic,

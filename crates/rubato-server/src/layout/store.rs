@@ -2,6 +2,7 @@
 //! ADR 0068), per workspace (ADR 0047).
 
 use crate::kernel::db::ts;
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::layout::{MapLayout, Position};
@@ -18,11 +19,14 @@ fn position(r: &sqlx::sqlite::SqliteRow) -> Position {
     }
 }
 
-async fn read_flat(conn: &mut SqliteConnection, ws: &str) -> Result<BTreeMap<String, Position>> {
-    let rows = sqlx::query("SELECT node_id, x, y FROM map_layout WHERE workspace_id = ?")
-        .bind(ws)
-        .fetch_all(conn)
-        .await?;
+async fn read_flat(conn: &mut SqliteConnection, ws: &WsKey) -> Result<BTreeMap<String, Position>> {
+    let rows = sqlx::query(
+        "SELECT node_id, x, y FROM map_layout WHERE tenant_id = ? AND workspace_id = ?",
+    )
+    .bind(ws.tenant.as_str())
+    .bind(ws.ws())
+    .fetch_all(conn)
+    .await?;
     Ok(rows
         .iter()
         .map(|r| (r.get::<String, _>("node_id"), position(r)))
@@ -30,11 +34,14 @@ async fn read_flat(conn: &mut SqliteConnection, ws: &str) -> Result<BTreeMap<Str
 }
 
 /// The grouping's parts and boxes.
-async fn read_grouped(conn: &mut SqliteConnection, ws: &str) -> Result<MapLayout> {
-    let rows = sqlx::query("SELECT kind, id, x, y FROM map_layout_grouped WHERE workspace_id = ?")
-        .bind(ws)
-        .fetch_all(conn)
-        .await?;
+async fn read_grouped(conn: &mut SqliteConnection, ws: &WsKey) -> Result<MapLayout> {
+    let rows = sqlx::query(
+        "SELECT kind, id, x, y FROM map_layout_grouped WHERE tenant_id = ? AND workspace_id = ?",
+    )
+    .bind(ws.tenant.as_str())
+    .bind(ws.ws())
+    .fetch_all(conn)
+    .await?;
     let mut out = MapLayout::default();
     for r in &rows {
         let id: String = r.get("id");
@@ -48,7 +55,7 @@ async fn read_grouped(conn: &mut SqliteConnection, ws: &str) -> Result<MapLayout
 
 /// Every stored position of both arrangements, including rows for parts or repos the map no
 /// longer has; the reader filters.
-pub async fn all(db: &SqlitePool, ws: &str) -> Result<MapLayout> {
+pub async fn all(db: &SqlitePool, ws: &WsKey) -> Result<MapLayout> {
     let mut conn = db.acquire().await?;
     let mut out = read_grouped(&mut conn, ws).await?;
     out.positions = read_flat(&mut conn, ws).await?;
@@ -65,7 +72,7 @@ pub struct Known<'a> {
 /// are not in `known`.
 pub async fn put(
     db: &SqlitePool,
-    ws: &str,
+    ws: &WsKey,
     moved: &MapLayout,
     known: &Known<'_>,
     by: &str,
@@ -74,11 +81,12 @@ pub async fn put(
     let mut tx = db.begin().await?;
     for (id, p) in &moved.positions {
         sqlx::query(
-            "INSERT INTO map_layout (workspace_id, node_id, x, y, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT (workspace_id, node_id) DO UPDATE SET x = excluded.x, y = excluded.y,
+            "INSERT INTO map_layout (tenant_id, workspace_id, node_id, x, y, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (tenant_id, workspace_id, node_id) DO UPDATE SET x = excluded.x, y = excluded.y,
                  updated_by = excluded.updated_by, updated_at = excluded.updated_at",
         )
-        .bind(ws)
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .bind(id)
         .bind(p.x)
         .bind(p.y)
@@ -94,11 +102,12 @@ pub async fn put(
         .chain(moved.boxes.iter().map(|(id, p)| (BOX, id, p)));
     for (kind, id, p) in grouped {
         sqlx::query(
-            "INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (workspace_id, kind, id) DO UPDATE SET x = excluded.x, y = excluded.y,
+            "INSERT INTO map_layout_grouped (tenant_id, workspace_id, kind, id, x, y, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (tenant_id, workspace_id, kind, id) DO UPDATE SET x = excluded.x, y = excluded.y,
                  updated_by = excluded.updated_by, updated_at = excluded.updated_at",
         )
-        .bind(ws)
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .bind(kind)
         .bind(id)
         .bind(p.x)
@@ -108,25 +117,33 @@ pub async fn put(
         .execute(&mut *tx)
         .await?;
     }
-    let stored: Vec<String> =
-        sqlx::query_scalar("SELECT node_id FROM map_layout WHERE workspace_id = ?")
-            .bind(ws)
-            .fetch_all(&mut *tx)
-            .await?;
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT node_id FROM map_layout WHERE tenant_id = ? AND workspace_id = ?",
+    )
+    .bind(ws.tenant.as_str())
+    .bind(ws.ws())
+    .fetch_all(&mut *tx)
+    .await?;
     for id in stored
         .iter()
         .filter(|id| !known.parts.contains(&id.as_str()))
     {
-        sqlx::query("DELETE FROM map_layout WHERE workspace_id = ? AND node_id = ?")
-            .bind(ws)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    let stored = sqlx::query("SELECT kind, id FROM map_layout_grouped WHERE workspace_id = ?")
-        .bind(ws)
-        .fetch_all(&mut *tx)
+        sqlx::query(
+            "DELETE FROM map_layout WHERE tenant_id = ? AND workspace_id = ? AND node_id = ?",
+        )
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
+        .bind(id)
+        .execute(&mut *tx)
         .await?;
+    }
+    let stored = sqlx::query(
+        "SELECT kind, id FROM map_layout_grouped WHERE tenant_id = ? AND workspace_id = ?",
+    )
+    .bind(ws.tenant.as_str())
+    .bind(ws.ws())
+    .fetch_all(&mut *tx)
+    .await?;
     for r in &stored {
         let (kind, id): (String, String) = (r.get("kind"), r.get("id"));
         let keep = if kind == PART {
@@ -136,9 +153,10 @@ pub async fn put(
         };
         if !keep {
             sqlx::query(
-                "DELETE FROM map_layout_grouped WHERE workspace_id = ? AND kind = ? AND id = ?",
+                "DELETE FROM map_layout_grouped WHERE tenant_id = ? AND workspace_id = ? AND kind = ? AND id = ?",
             )
-            .bind(ws)
+            .bind(ws.tenant.as_str())
+        .bind(ws.ws())
             .bind(&kind)
             .bind(&id)
             .execute(&mut *tx)
@@ -152,14 +170,15 @@ pub async fn put(
 /// Remove every flat position and return what was removed. The grouping stays.
 /// Both clears read, then delete, so they take the write lock first (`BEGIN IMMEDIATE`): a
 /// deferred transaction whose read went stale under another commit fails at once (#272).
-pub async fn clear(db: &SqlitePool, ws: &str) -> Result<MapLayout> {
+pub async fn clear(db: &SqlitePool, ws: &WsKey) -> Result<MapLayout> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let removed = MapLayout {
         positions: read_flat(&mut tx, ws).await?,
         ..Default::default()
     };
-    sqlx::query("DELETE FROM map_layout WHERE workspace_id = ?")
-        .bind(ws)
+    sqlx::query("DELETE FROM map_layout WHERE tenant_id = ? AND workspace_id = ?")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -167,11 +186,12 @@ pub async fn clear(db: &SqlitePool, ws: &str) -> Result<MapLayout> {
 }
 
 /// Remove the By repo grouping, parts and boxes, and return what was removed. The flat map stays.
-pub async fn clear_grouped(db: &SqlitePool, ws: &str) -> Result<MapLayout> {
+pub async fn clear_grouped(db: &SqlitePool, ws: &WsKey) -> Result<MapLayout> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let removed = read_grouped(&mut tx, ws).await?;
-    sqlx::query("DELETE FROM map_layout_grouped WHERE workspace_id = ?")
-        .bind(ws)
+    sqlx::query("DELETE FROM map_layout_grouped WHERE tenant_id = ? AND workspace_id = ?")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -185,18 +205,18 @@ mod tests {
 
     async fn seed(db: &SqlitePool, ws: &str) {
         sqlx::query(
-            "INSERT INTO map_layout_grouped (workspace_id, kind, id, x, y, updated_by, updated_at)
-             VALUES (?, 'part', 'web', 1, 2, 't', '2026-11-24T00:00:00Z')
-             ON CONFLICT (workspace_id, kind, id) DO NOTHING",
+            "INSERT INTO map_layout_grouped (tenant_id, workspace_id, kind, id, x, y, updated_by, updated_at)
+             VALUES ('default', ?, 'part', 'web', 1, 2, 't', '2026-11-24T00:00:00Z')
+             ON CONFLICT (tenant_id, workspace_id, kind, id) DO NOTHING",
         )
         .bind(ws)
         .execute(db)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO map_layout (workspace_id, node_id, x, y, updated_by, updated_at)
-             VALUES (?, 'web', 1, 2, 't', '2026-11-24T00:00:00Z')
-             ON CONFLICT (workspace_id, node_id) DO NOTHING",
+            "INSERT INTO map_layout (tenant_id, workspace_id, node_id, x, y, updated_by, updated_at)
+             VALUES ('default', ?, 'web', 1, 2, 't', '2026-11-24T00:00:00Z')
+             ON CONFLICT (tenant_id, workspace_id, node_id) DO NOTHING",
         )
         .bind(ws)
         .execute(db)
@@ -233,11 +253,14 @@ mod tests {
         let mut failures = Vec::new();
         for _ in 0..rounds {
             seed(&db, "default").await;
-            if let Err(e) = clear_grouped(&db, "default").await {
+            if let Err(e) =
+                clear_grouped(&db, &crate::kernel::tenancy::WsKey::of_default("default")).await
+            {
                 failures.push(format!("clear_grouped: {e:#}"));
             }
             seed(&db, "default").await;
-            if let Err(e) = clear(&db, "default").await {
+            if let Err(e) = clear(&db, &crate::kernel::tenancy::WsKey::of_default("default")).await
+            {
                 failures.push(format!("clear: {e:#}"));
             }
         }

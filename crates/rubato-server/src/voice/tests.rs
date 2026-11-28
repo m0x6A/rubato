@@ -116,7 +116,7 @@ async fn harness_with(voice: Option<VoiceConfig>, transcript: &str) -> H {
     let text = include_str!("../../../../docs/design/rubato-map.yml");
     let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -192,7 +192,7 @@ async fn agent_in(h: &H) -> (Uuid, Uuid) {
         role: Default::default(),
         lead_launch_id: None,
     };
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, ?, ?, ?, ?, ?)")
         .bind(id.to_string())
         .bind(companion.to_string())
         .bind(OWNER)
@@ -239,6 +239,7 @@ async fn say(h: &H, user: &str, id: Uuid, to: Option<&str>, audio: Vec<u8>) -> S
     );
     utterance(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(user.into()),
         Query(UtteranceQuery {
             repo: REPO.into(),
@@ -256,7 +257,14 @@ async fn say(h: &H, user: &str, id: Uuid, to: Option<&str>, audio: Vec<u8>) -> S
 }
 
 async fn hear(h: &H, id: Uuid) -> Result<(StatusCode, Vec<u8>), (StatusCode, String)> {
-    match speech(State(h.app.clone()), CurrentUser("carol".into()), Path(id)).await {
+    match speech(
+        State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
+        CurrentUser("carol".into()),
+        Path(id.into()),
+    )
+    .await
+    {
         Ok(res) => {
             let res = res.into_response();
             let status = res.status();
@@ -286,8 +294,9 @@ fn rejected(h: &H, route: &str, why: &str) -> u64 {
 async fn turns(h: &H, launch: Uuid) -> Vec<(Uuid, String)> {
     session_messages::list(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(OWNER.into()),
-        Path(launch),
+        Path(launch.into()),
     )
     .await
     .unwrap()

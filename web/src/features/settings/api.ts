@@ -1,16 +1,16 @@
 import type { NewWorkspace, SettingsRefusal, SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
 import { ApiError, failureText, request } from "../../shared/api.ts";
-import { scoped } from "../../shared/workspace.ts";
+import { inTenant, scoped, workspacePath } from "../../shared/workspace.ts";
 
 export const settingsApi = {
   /** The settings of this page's workspace. */
   get: () => request<WorkspaceSettings>("GET", scoped("/api/settings")),
   /** Every traffic adapter's field list: what the form is drawn from. */
-  sources: () => request<SourceFields[]>("GET", "/api/traffic/sources"),
+  sources: () => request<SourceFields[]>("GET", inTenant("/api/traffic/sources")),
   update: (u: WorkspaceSettingsUpdate) => request<WorkspaceSettings>("PUT", scoped("/api/settings"), u),
-  create: (n: NewWorkspace) => request<WorkspaceSettings>("POST", "/api/workspaces", n),
+  create: (n: NewWorkspace) => request<WorkspaceSettings>("POST", inTenant("/api/workspaces"), n),
   /** Always by id: a workspace is never deleted through the unprefixed routes. */
-  remove: (id: string) => request<void>("DELETE", `/api/w/${encodeURIComponent(id)}`),
+  remove: (id: string) => request<void>("DELETE", workspacePath(id)),
 };
 
 /** The server's refusal of a settings write, when the failure carries one. */

@@ -9,12 +9,14 @@
 
 use super::seed::{entry_of, registry_of};
 use super::store::{self, Row};
-use crate::auth::{self, CurrentUser, TokenError};
+use crate::auth::CurrentUser;
 use crate::kernel::config::is_local;
 use crate::kernel::db::{parse_ts, ts};
 use crate::kernel::http::{Ws, internal};
 use crate::kernel::secrets;
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
+use crate::kernel::tenancy::{AdminScope, TenantId};
 use crate::kernel::workspaces::{self, WorkspaceEntry};
 use crate::{map, map_draft, traffic};
 use axum::Json;
@@ -180,7 +182,7 @@ pub async fn settings(
     ws: Ws,
     _user: CurrentUser,
 ) -> Result<Json<WorkspaceSettings>, StatusCode> {
-    let row = store::get(&app.db, ws.as_str())
+    let row = store::get(&app.db, ws.key())
         .await
         .map_err(|e| internal(SLICE, e))?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -349,45 +351,34 @@ fn traffic_change(
     Ok((Some(want.source.clone()), Some(fields_json), sealed))
 }
 
-/// The member's own GitHub token (ADR 0030), for the reads that decide whether they may point a
-/// workspace at a map. The local stand-in has one person and no tokens.
-async fn member_token(app: &App, user: &str) -> Result<String, Refusal> {
-    if app.github.acts_without_token() {
-        return Ok(String::new());
+/// A repository a workspace of `tenant` may use: one that an installation attached to that
+/// tenant covers (ADR 0087, superseding ADR 0075's read with the member's own token). The same
+/// answer for a repository of another tenant and one nobody covers.
+fn covered(app: &App, tenant: &TenantId, user: &str, repo: &str) -> Result<(), Refusal> {
+    if app.github.tenant_of(repo).as_ref() == Some(tenant) {
+        return Ok(());
     }
-    match auth::access_token(app, user).await {
-        Ok(t) => Ok(t),
-        Err(TokenError::NotStored | TokenError::Rejected) => Err(Refusal::unprocessable(
-            reason::REPO_UNREADABLE,
-            "Rubato holds no GitHub token for you, so it cannot tell which repos you can read; log in again",
-        )),
-        Err(TokenError::Failed(e)) => {
-            tracing::warn!(login = user, error = %format!("{e:#}"), "token unavailable");
-            Err(Refusal::unprocessable(
-                reason::REPO_UNREADABLE,
-                "your GitHub token could not be used just now; try again",
-            ))
-        }
-    }
+    tracing::info!(login = user, rubato.tenant = %tenant, rubato.repo = repo, "the repository is not the tenant's");
+    Err(Refusal::unprocessable(
+        reason::REPO_UNREADABLE,
+        format!(
+            "{repo} is not covered by a GitHub App installation of this tenant, so a workspace cannot use it"
+        ),
+    ))
 }
 
-async fn readable(app: &App, token: &str, user: &str, repo: &str) -> Result<(), Refusal> {
-    app.github.repo_as(token, repo).await.map(|_| ()).map_err(|e| {
-        tracing::info!(login = user, rubato.repo = repo, error = %format!("{e:#}"), "the member cannot read the repo");
-        Refusal::unprocessable(
-            reason::REPO_UNREADABLE,
-            format!("you cannot read {repo} on GitHub, so a workspace cannot use it"),
-        )
-    })
-}
-
-/// The three checks of a new map source or a moved ref (ADR 0075), in an order that tells a
-/// member nothing about a repo they cannot read: their token reads the map repo; the map loads
-/// and validates fresh at that ref; their token reads every repo the map names.
-async fn vet(app: &App, user: &str, entry: &WorkspaceEntry) -> Result<LoadedMap, Refusal> {
-    let token = member_token(app, user).await?;
+/// The three checks of a new map source or a moved ref (ADR 0075, ADR 0087), in an order that
+/// tells an admin nothing about a repository outside their tenant: an installation of the
+/// tenant covers the map repo; the map loads and validates fresh at that ref; an installation
+/// of the tenant covers every repo the map names.
+async fn vet(
+    app: &App,
+    tenant: &TenantId,
+    user: &str,
+    entry: &WorkspaceEntry,
+) -> Result<LoadedMap, Refusal> {
     if entry.map_file.is_none() {
-        readable(app, &token, user, &entry.map_repo).await?;
+        covered(app, tenant, user, &entry.map_repo)?;
     }
     let loaded = map::fetch_and_validate(app, entry).await.map_err(|e| {
         Refusal::unprocessable(
@@ -400,7 +391,7 @@ async fn vet(app: &App, user: &str, entry: &WorkspaceEntry) -> Result<LoadedMap,
     })?;
     for repo in loaded.map.repos_named() {
         if !repo.eq_ignore_ascii_case(&entry.map_repo) || entry.map_file.is_some() {
-            readable(app, &token, user, repo).await?;
+            covered(app, tenant, user, repo)?;
         }
     }
     Ok(loaded)
@@ -411,17 +402,19 @@ fn same_map(a: &WorkspaceEntry, repo: &str, path: &str, map_ref: &str) -> bool {
 }
 
 /// The change record (ADR 0075): who, which workspace, which keys. Never a value.
-fn record(ws: &str, user: &str, keys: &[String]) {
+fn record(ws: &WsKey, user: &str, keys: &[String]) {
     let keys = keys.join(",");
     let span = tracing::info_span!(
         span::WORKSPACE_CONFIG_CHANGED,
-        rubato.workspace = ws,
+        rubato.tenant = %ws.tenant,
+        rubato.workspace = ws.ws(),
         rubato.user = user,
         rubato.workspace.changed_keys = %keys
     );
     let _entered = span.enter();
     tracing::info!(
-        rubato.workspace = ws,
+        rubato.tenant = %ws.tenant,
+        rubato.workspace = ws.ws(),
         rubato.user = user,
         keys = %keys,
         "workspace config changed"
@@ -444,9 +437,11 @@ async fn report_again(app: &App) {
 }
 
 /// `PUT /api/settings`, per workspace: the settings as they should be, at the revision read.
+/// An admin's to change (ADR 0088).
 pub async fn update(
     State(app): State<App>,
     ws: Ws,
+    _admin: AdminScope,
     CurrentUser(user): CurrentUser,
     Json(req): Json<WorkspaceSettingsUpdate>,
 ) -> Result<Json<WorkspaceSettings>, Stop> {
@@ -457,7 +452,7 @@ pub async fn update(
     }
     let lock = app.slots.get::<WriteLock>();
     let _held = lock.0.lock().await;
-    let row = store::get(&app.db, ws.as_str())
+    let row = store::get(&app.db, ws.key())
         .await
         .map_err(failed)?
         .ok_or(Stop::from(StatusCode::NOT_FOUND))?;
@@ -523,7 +518,7 @@ pub async fn update(
                 "this workspace's map is a file on the server, so its ref cannot move",
             )));
         }
-        if map_draft::is_open(&app.db, ws.as_str())
+        if map_draft::is_open(&app.db, ws.key())
             .await
             .map_err(failed)?
         {
@@ -532,7 +527,7 @@ pub async fn update(
                 "the map draft is open: discard it, or merge or withdraw its proposal, before the map's ref moves",
             )));
         }
-        let (entries, _) = app.workspace_entries();
+        let entries = app.workspaces_of(ws.key().tenant());
         if let Some(other) = entries.iter().find(|o| {
             o.id != row.workspace_id && same_map(o, &next.map_repo, &next.map_path, &next.map_ref)
         }) {
@@ -541,7 +536,11 @@ pub async fn update(
                 format!("workspace {} already shows that map at that ref", other.id),
             )));
         }
-        loaded = Some(vet(&app, &user, &entry).await.map_err(refuse)?);
+        loaded = Some(
+            vet(&app, ws.key().tenant(), &user, &entry)
+                .await
+                .map_err(refuse)?,
+        );
     }
     if keys.is_empty() {
         return Ok(Json(wire(&app, &row)));
@@ -552,25 +551,25 @@ pub async fn update(
         .await
         .map_err(failed)?
     {
-        let now = store::get(&app.db, ws.as_str())
+        let now = store::get(&app.db, ws.key())
             .await
             .map_err(failed)?
             .unwrap_or(row);
         return Err(refuse(stale(&now)));
     }
     next.revision = row.revision + 1;
-    record(ws.as_str(), &user, &keys);
+    record(ws.key(), &user, &keys);
     swap(&app).await.map_err(failed)?;
     if let Some(loaded) = loaded {
         // The registry holds the new revision now, so a poll's load of the old ref is dropped
         // and this one applies.
         let entry = entry_of(&app, &next).map_err(failed)?;
         map::apply(&app, &entry, loaded).await.map_err(failed)?;
-        app.notify_ws("map", ws.as_str());
+        app.notify_ws("map", ws.key());
     }
-    app.notify_ws(changed::SETTINGS, ws.as_str());
+    app.notify_ws(changed::SETTINGS, ws.key());
     if next.name != row.name {
-        app.notify(changed::WORKSPACES);
+        app.notify_in(ws.key().tenant(), changed::WORKSPACES);
     }
     Ok(Json(wire(&app, &next)))
 }
@@ -604,9 +603,11 @@ fn clean_source(req: &NewWorkspace) -> Result<(String, String, String), Refusal>
     Ok((repo.to_owned(), path.to_owned(), clean_ref(&req.map_ref)?))
 }
 
-/// `POST /api/workspaces`: a new workspace on a map the member can read.
+/// `POST /api/workspaces`, per tenant: a new workspace on a map in one of the tenant's
+/// repositories. An admin's to create (ADR 0088).
 pub async fn create(
     State(app): State<App>,
+    AdminScope(scope): AdminScope,
     CurrentUser(user): CurrentUser,
     Json(req): Json<NewWorkspace>,
 ) -> Result<(StatusCode, Json<WorkspaceSettings>), Stop> {
@@ -622,14 +623,15 @@ pub async fn create(
             "a workspace id is 1 to 32 of a-z, 0-9 and -",
         )));
     }
-    let (mut entries, _) = app.workspace_entries();
+    let key = scope.ws(req.id.clone());
+    let mut entries = app.workspaces_of(scope.tenant());
     if entries.iter().any(|w| w.id == req.id) {
         return Err(refuse(Refusal::conflict(
             reason::DUPLICATE,
             format!("there is a workspace {} already", req.id),
         )));
     }
-    if let Some(table) = workspaces::id_has_rows(&app.db, &req.id)
+    if let Some(table) = workspaces::id_has_rows(&app.db, &key)
         .await
         .map_err(failed)?
     {
@@ -654,6 +656,7 @@ pub async fn create(
         )));
     }
     let row = Row {
+        tenant_id: scope.tenant().as_str().to_owned(),
         workspace_id: req.id.clone(),
         position: 0,
         revision: 1,
@@ -678,25 +681,29 @@ pub async fn create(
             e.to_string(),
         )));
     }
-    let loaded = vet(&app, &user, &entry).await.map_err(refuse)?;
+    let loaded = vet(&app, scope.tenant(), &user, &entry)
+        .await
+        .map_err(refuse)?;
     let row = store::create(&app.db, &row).await.map_err(failed)?;
     record(
-        &row.workspace_id,
+        &row.key(),
         &user,
         &["created", "name", "map_repo", "map_path", "map_ref"].map(String::from),
     );
     swap(&app).await.map_err(failed)?;
     map::apply(&app, &entry, loaded).await.map_err(failed)?;
-    app.notify(changed::WORKSPACES);
+    app.notify_in(scope.tenant(), changed::WORKSPACES);
     report_again(&app).await;
     Ok((StatusCode::CREATED, Json(wire(&app, &row))))
 }
 
-/// `DELETE /api/w/{ws}`: the workspace leaves the list. Every row of it is kept and counted as
-/// an orphan; `default` stays.
+/// `DELETE /api/t/{tenant}/w/{ws}`: the workspace leaves the list. Every row of it is kept and
+/// counted as an orphan. Workspace `default` of tenant `default` stays: it keeps every row from
+/// before workspaces. An admin's to delete (ADR 0088).
 pub async fn delete(
     State(app): State<App>,
     ws: Ws,
+    _admin: AdminScope,
     CurrentUser(user): CurrentUser,
 ) -> Result<StatusCode, Stop> {
     let refuse = |r: Refusal| r.answer(&app, routes::WORKSPACE, &user);
@@ -705,19 +712,19 @@ pub async fn delete(
     }
     let lock = app.slots.get::<WriteLock>();
     let _held = lock.0.lock().await;
-    if ws.as_str() == DEFAULT_WORKSPACE {
+    if ws.key() == &WsKey::of_default(DEFAULT_WORKSPACE) {
         return Err(refuse(Refusal::conflict(
             reason::DEFAULT_KEPT,
-            "the workspace default cannot be deleted: it keeps every row from before workspaces and serves unprefixed routes",
+            "the workspace default cannot be deleted: it keeps every row from before workspaces",
         )));
     }
-    if !store::delete(&app.db, ws.as_str()).await.map_err(failed)? {
+    if !store::delete(&app.db, ws.key()).await.map_err(failed)? {
         return Err(StatusCode::NOT_FOUND.into());
     }
-    record(ws.as_str(), &user, &["deleted".to_owned()]);
+    record(ws.key(), &user, &["deleted".to_owned()]);
     swap(&app).await.map_err(failed)?;
-    map::forget(&app, ws.as_str()).await;
-    app.notify(changed::WORKSPACES);
+    map::forget(&app, ws.key()).await;
+    app.notify_in(ws.key().tenant(), changed::WORKSPACES);
     report_again(&app).await;
     Ok(StatusCode::NO_CONTENT)
 }

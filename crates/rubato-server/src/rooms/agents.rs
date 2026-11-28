@@ -2,11 +2,12 @@
 //! when; and the requests to call someone else's agent in.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use rubato_protocol::{LeftReason, RequestState, RoomAgent, RoomKey, RoomRequest, agent_handle};
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 /// One stay of an agent in a room.
@@ -102,12 +103,17 @@ fn agent(r: &SqliteRow) -> Result<AgentRow> {
 const AGENT_COLUMNS: &str = "id, repo, number, branch, launch_id, owner, called_by, joined_at, left_at, left_reason, last_turn_at, fork_session_id";
 
 /// The agent joins: its row, or None when the owner's agent is in this room already.
-pub async fn join(db: &SqlitePool, room: &RoomKey, a: &RoomAgent) -> Result<Option<AgentRow>> {
+pub async fn join(
+    db: &SqlitePool,
+    t: &TenantId,
+    room: &RoomKey,
+    a: &RoomAgent,
+) -> Result<Option<AgentRow>> {
     let id = Uuid::new_v4();
     let n = sqlx::query(
-        "INSERT OR IGNORE INTO room_agents (id, repo, number, branch, launch_id, owner, called_by, joined_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO room_agents (tenant_id, id, repo, number, branch, launch_id, owner, called_by, joined_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(id.to_string())
+    .bind(t.as_str()).bind(id.to_string())
     .bind(&room.repo)
     .bind(room.number as i64)
     .bind(&room.branch)
@@ -121,16 +127,18 @@ pub async fn join(db: &SqlitePool, room: &RoomKey, a: &RoomAgent) -> Result<Opti
     if n == 0 {
         return Ok(None);
     }
-    Ok(agents_in(db, room).await?.into_iter().find(|r| r.id == id))
+    Ok(agents_in(db, t, room)
+        .await?
+        .into_iter()
+        .find(|r| r.id == id))
 }
 
 /// Every stay in the room, present ones first, then the latest to leave.
-pub async fn agents_in(db: &SqlitePool, room: &RoomKey) -> Result<Vec<AgentRow>> {
+pub async fn agents_in(db: &SqlitePool, t: &TenantId, room: &RoomKey) -> Result<Vec<AgentRow>> {
     let rows = sqlx::query(&format!(
-        "SELECT {AGENT_COLUMNS} FROM room_agents WHERE repo = ? AND number = ? AND branch = ? \
-         ORDER BY left_at IS NOT NULL, left_at DESC, joined_at"
+        "SELECT {AGENT_COLUMNS} FROM room_agents WHERE tenant_id = ? AND repo = ? AND number = ? AND branch = ? ORDER BY left_at IS NOT NULL, left_at DESC, joined_at"
     ))
-    .bind(&room.repo)
+    .bind(t.as_str()).bind(&room.repo)
     .bind(room.number as i64)
     .bind(&room.branch)
     .fetch_all(db)
@@ -139,10 +147,11 @@ pub async fn agents_in(db: &SqlitePool, room: &RoomKey) -> Result<Vec<AgentRow>>
 }
 
 /// Every agent in some room now.
-pub async fn present_everywhere(db: &SqlitePool) -> Result<Vec<AgentRow>> {
+pub async fn present_everywhere(db: &SqlitePool, t: &TenantId) -> Result<Vec<AgentRow>> {
     let rows = sqlx::query(&format!(
-        "SELECT {AGENT_COLUMNS} FROM room_agents WHERE left_at IS NULL"
+        "SELECT {AGENT_COLUMNS} FROM room_agents WHERE tenant_id = ? AND left_at IS NULL"
     ))
+    .bind(t.as_str())
     .fetch_all(db)
     .await?;
     rows.iter().map(agent).collect()
@@ -151,25 +160,27 @@ pub async fn present_everywhere(db: &SqlitePool) -> Result<Vec<AgentRow>> {
 /// The agent leaves. False when it had left already.
 pub async fn leave(
     db: &SqlitePool,
+    t: &TenantId,
     id: Uuid,
     reason: LeftReason,
     at: DateTime<Utc>,
 ) -> Result<bool> {
     let n = sqlx::query(
-        "UPDATE room_agents SET left_at = ?, left_reason = ? WHERE id = ? AND left_at IS NULL",
+        "UPDATE room_agents SET left_at = ?, left_reason = ? WHERE tenant_id = ? AND id = ? AND left_at IS NULL",
     )
     .bind(ts(at))
     .bind(reason_name(reason))
-    .bind(id.to_string())
+    .bind(t.as_str()).bind(id.to_string())
     .execute(db)
     .await?
     .rows_affected();
     Ok(n == 1)
 }
 
-pub async fn addressed(db: &SqlitePool, id: Uuid, at: DateTime<Utc>) -> Result<()> {
-    sqlx::query("UPDATE room_agents SET last_turn_at = ? WHERE id = ?")
+pub async fn addressed(db: &SqlitePool, t: &TenantId, id: Uuid, at: DateTime<Utc>) -> Result<()> {
+    sqlx::query("UPDATE room_agents SET last_turn_at = ? WHERE tenant_id = ? AND id = ?")
         .bind(ts(at))
+        .bind(t.as_str())
         .bind(id.to_string())
         .execute(db)
         .await?;
@@ -179,15 +190,18 @@ pub async fn addressed(db: &SqlitePool, id: Uuid, at: DateTime<Utc>) -> Result<(
 /// The fork a building-time turn ran in, for the launch's latest stay in the room.
 pub async fn set_fork_session(
     db: &SqlitePool,
+    t: &TenantId,
     room: &RoomKey,
     launch_id: Uuid,
     fork_session_id: &str,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE room_agents SET fork_session_id = ? WHERE id = (SELECT id FROM room_agents \
-         WHERE repo = ? AND number = ? AND branch = ? AND launch_id = ? ORDER BY joined_at DESC LIMIT 1)",
+        "UPDATE room_agents SET fork_session_id = ? WHERE tenant_id = ? AND id = (SELECT id FROM room_agents \
+         WHERE tenant_id = ? AND repo = ? AND number = ? AND branch = ? AND launch_id = ? ORDER BY joined_at DESC LIMIT 1)",
     )
     .bind(fork_session_id)
+    .bind(t.as_str())
+    .bind(t.as_str())
     .bind(&room.repo)
     .bind(room.number as i64)
     .bind(&room.branch)
@@ -215,11 +229,16 @@ fn request(r: &SqliteRow) -> Result<(RoomKey, RoomRequest)> {
 const REQUEST_COLUMNS: &str =
     "id, repo, number, branch, owner, launch_id, requested_by, at, state, answered_at";
 
-pub async fn add_request(db: &SqlitePool, room: &RoomKey, q: &RoomRequest) -> Result<()> {
+pub async fn add_request(
+    db: &SqlitePool,
+    t: &TenantId,
+    room: &RoomKey,
+    q: &RoomRequest,
+) -> Result<()> {
     sqlx::query(&format!(
-        "INSERT INTO room_requests ({REQUEST_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO room_requests (tenant_id, {REQUEST_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ))
-    .bind(q.id.to_string())
+    .bind(t.as_str()).bind(q.id.to_string())
     .bind(&room.repo)
     .bind(room.number as i64)
     .bind(&room.branch)
@@ -234,10 +253,15 @@ pub async fn add_request(db: &SqlitePool, room: &RoomKey, q: &RoomRequest) -> Re
     Ok(())
 }
 
-pub async fn request_of(db: &SqlitePool, id: Uuid) -> Result<Option<(RoomKey, RoomRequest)>> {
+pub async fn request_of(
+    db: &SqlitePool,
+    t: &TenantId,
+    id: Uuid,
+) -> Result<Option<(RoomKey, RoomRequest)>> {
     let r = sqlx::query(&format!(
-        "SELECT {REQUEST_COLUMNS} FROM room_requests WHERE id = ?"
+        "SELECT {REQUEST_COLUMNS} FROM room_requests WHERE tenant_id = ? AND id = ?"
     ))
+    .bind(t.as_str())
     .bind(id.to_string())
     .fetch_optional(db)
     .await?;
@@ -245,12 +269,15 @@ pub async fn request_of(db: &SqlitePool, id: Uuid) -> Result<Option<(RoomKey, Ro
 }
 
 /// The room's requests, pending ones first, then the newest.
-pub async fn requests_in(db: &SqlitePool, room: &RoomKey) -> Result<Vec<RoomRequest>> {
+pub async fn requests_in(
+    db: &SqlitePool,
+    t: &TenantId,
+    room: &RoomKey,
+) -> Result<Vec<RoomRequest>> {
     let rows = sqlx::query(&format!(
-        "SELECT {REQUEST_COLUMNS} FROM room_requests WHERE repo = ? AND number = ? AND branch = ? \
-         ORDER BY state <> 'pending', at DESC"
+        "SELECT {REQUEST_COLUMNS} FROM room_requests WHERE tenant_id = ? AND repo = ? AND number = ? AND branch = ? ORDER BY state <> 'pending', at DESC"
     ))
-    .bind(&room.repo)
+    .bind(t.as_str()).bind(&room.repo)
     .bind(room.number as i64)
     .bind(&room.branch)
     .fetch_all(db)
@@ -258,19 +285,85 @@ pub async fn requests_in(db: &SqlitePool, room: &RoomKey) -> Result<Vec<RoomRequ
     rows.iter().map(|r| request(r).map(|(_, q)| q)).collect()
 }
 
+/// The repositories of a detached installation (design §3.3): every agent still in one of their
+/// rooms is dismissed and every pending request withdrawn, inside the caller's transaction.
+/// Returns (agents, requests).
+pub async fn leave_repos(
+    conn: &mut SqliteConnection,
+    t: &TenantId,
+    repos: &[String],
+    at: DateTime<Utc>,
+) -> Result<(u64, u64)> {
+    let (mut agents, mut requests) = (0, 0);
+    for repo in repos {
+        agents += sqlx::query(
+            "UPDATE room_agents SET left_at = ?, left_reason = ? WHERE tenant_id = ? AND repo = ? COLLATE NOCASE AND left_at IS NULL",
+        )
+        .bind(ts(at))
+        .bind(reason_name(LeftReason::Dismissed))
+        .bind(t.as_str()).bind(repo)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        requests += sqlx::query(
+            "UPDATE room_requests SET state = ?, answered_at = ? WHERE tenant_id = ? AND repo = ? COLLATE NOCASE AND state = 'pending'",
+        )
+        .bind(state_name(RequestState::Withdrawn))
+        .bind(ts(at))
+        .bind(t.as_str()).bind(repo)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    }
+    Ok((agents, requests))
+}
+
+/// A person left the tenant (design §4.6): their agents leave its rooms and their pending
+/// call-in requests are withdrawn, inside the caller's transaction. Returns how many of each.
+pub async fn leave_person(
+    conn: &mut SqliteConnection,
+    t: &TenantId,
+    login: &str,
+    at: DateTime<Utc>,
+) -> Result<(u64, u64)> {
+    let agents = sqlx::query(
+        "UPDATE room_agents SET left_at = ?, left_reason = ? WHERE tenant_id = ? AND lower(owner) = lower(?) AND left_at IS NULL",
+    )
+    .bind(ts(at))
+    .bind(reason_name(LeftReason::Dismissed))
+    .bind(t.as_str())
+    .bind(login)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    let requests = sqlx::query(
+        "UPDATE room_requests SET state = ?, answered_at = ? WHERE tenant_id = ? AND (lower(owner) = lower(?) OR lower(requested_by) = lower(?)) AND state = 'pending'",
+    )
+    .bind(state_name(RequestState::Withdrawn))
+    .bind(ts(at))
+    .bind(t.as_str())
+    .bind(login)
+    .bind(login)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    Ok((agents, requests))
+}
+
 /// Answer a pending request. False when it was answered already.
 pub async fn answer(
     db: &SqlitePool,
+    t: &TenantId,
     id: Uuid,
     to: RequestState,
     at: DateTime<Utc>,
 ) -> Result<bool> {
     let n = sqlx::query(
-        "UPDATE room_requests SET state = ?, answered_at = ? WHERE id = ? AND state = 'pending'",
+        "UPDATE room_requests SET state = ?, answered_at = ? WHERE tenant_id = ? AND id = ? AND state = 'pending'",
     )
     .bind(state_name(to))
     .bind(ts(at))
-    .bind(id.to_string())
+    .bind(t.as_str()).bind(id.to_string())
     .execute(db)
     .await?
     .rows_affected();

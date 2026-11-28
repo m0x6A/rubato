@@ -127,6 +127,7 @@ pub async fn token(
 /// room as the caller, marked `spoken`. 201 when posted, 200 for a repeat of the same id.
 pub async fn utterance(
     State(app): State<App>,
+    scope: crate::kernel::tenancy::TenantScope,
     CurrentUser(user): CurrentUser,
     Query(q): Query<UtteranceQuery>,
     headers: HeaderMap,
@@ -186,7 +187,10 @@ pub async fn utterance(
         }
     };
     // A repeat of a posted utterance answers the message, with no second transcription.
-    if let Some((room, m)) = rooms::message(&app, q.id).await.map_err(internal)? {
+    if let Some((room, m)) = rooms::message(&app, scope.tenant(), q.id)
+        .await
+        .map_err(internal)?
+    {
         if room == key && m.author.eq_ignore_ascii_case(&user) {
             return Ok((StatusCode::OK, Json(m)));
         }
@@ -262,12 +266,25 @@ pub async fn utterance(
     }
 }
 
+/// The `{message_id}` of the speech route. Named, because the path also carries `{tenant}`.
+#[derive(serde::Deserialize)]
+pub struct MessageParam {
+    message_id: Uuid,
+}
+
+impl From<Uuid> for MessageParam {
+    fn from(message_id: Uuid) -> Self {
+        Self { message_id }
+    }
+}
+
 /// `GET /api/room/voice/speech/{message_id}`: the speech of an agent's reply to a spoken turn.
 /// Replies to typed turns, and people's messages, are never sent to the provider.
 pub async fn speech(
     State(app): State<App>,
+    scope: crate::kernel::tenancy::TenantScope,
     CurrentUser(user): CurrentUser,
-    Path(message_id): Path<Uuid>,
+    Path(MessageParam { message_id }): Path<MessageParam>,
 ) -> Result<Response, Refused> {
     let route = routes::VOICE_SPEECH;
     voice_on(&app, route, &user)?;
@@ -282,7 +299,10 @@ pub async fn speech(
     };
     let not_spoken =
         |app: &App| refuse(app, route, StatusCode::NOT_FOUND, reason::NOT_SPOKEN, &user);
-    let Some((room, m)) = rooms::message(&app, message_id).await.map_err(internal)? else {
+    let Some((room, m)) = rooms::message(&app, scope.tenant(), message_id)
+        .await
+        .map_err(internal)?
+    else {
         return Err(not_spoken(&app));
     };
     let Some(turn_id) = m.turn_id.filter(|_| m.author_kind == RoomAuthorKind::Agent) else {

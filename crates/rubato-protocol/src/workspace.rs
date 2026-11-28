@@ -1,19 +1,19 @@
-//! Workspaces (ADRs 0044, 0049): one server holds one or more, each one map and the view state
-//! kept for it. Map-scoped routes are served under `/api/w/{ws}`; unprefixed, they mean the
-//! workspace with id `default`.
+//! Workspaces (ADRs 0044, 0049, 0089): a tenant holds one or more, each one map and the view
+//! state kept for it. Map-scoped routes are served under `/api/t/{tenant}/w/{ws}`; a workspace id
+//! is unique inside its tenant.
 
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// The id of the workspace that keeps every row from before workspaces, and that unprefixed
-/// routes serve (ADR 0044).
+/// The id of the workspace that keeps every row from before workspaces (ADR 0044). No tenant
+/// needs one (plan 345, Decision 12).
 pub const DEFAULT_WORKSPACE: &str = "default";
 
 /// One workspace as the switcher shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceInfo {
-    /// `[a-z0-9-]{1,32}`: in URLs (`?w=`, `/api/w/{id}`), rows and the `rubato.workspace` attribute.
+    /// `[a-z0-9-]{1,32}`: in URLs (`?w=`, `/api/t/{tenant}/w/{id}`), rows and the `rubato.workspace` attribute.
     pub id: String,
     /// What people call it: the entry's `name`, else the map's.
     pub name: String,
@@ -34,16 +34,19 @@ pub fn is_workspace_id(s: &str) -> bool {
 }
 
 pub mod routes {
-    /// `GET`: the configured workspaces, in switcher order.
+    /// `GET`: the tenant's workspaces, in switcher order. A tenant route: served under
+    /// [`crate::tenant::routes::in_tenant`].
     pub const WORKSPACES: &str = "/api/workspaces";
-    /// Map-scoped routes are also served under this prefix plus the workspace id.
-    pub const SCOPE_PREFIX: &str = "/api/w";
 
-    /// A map-scoped route for one workspace: `/api/overview` in `shop` is
-    /// `/api/w/shop/overview`. A path outside `/api/` is returned unchanged.
-    pub fn scoped(workspace: &str, route: &str) -> String {
+    /// A map-scoped route for one workspace of one tenant (ADR 0089): `/api/overview` in
+    /// workspace `shop` of tenant `acme` is `/api/t/acme/w/shop/overview`. A path outside
+    /// `/api/` is returned unchanged.
+    pub fn scoped(tenant: &str, workspace: &str, route: &str) -> String {
         match route.strip_prefix("/api/") {
-            Some(rest) => format!("{SCOPE_PREFIX}/{workspace}/{rest}"),
+            Some(rest) => format!(
+                "{}/{tenant}/w/{workspace}/{rest}",
+                crate::tenant::routes::TENANT_PREFIX
+            ),
             None => route.to_string(),
         }
     }
@@ -66,13 +69,13 @@ mod tests {
     #[test]
     fn scoped_routes() {
         assert_eq!(
-            routes::scoped("shop", "/api/overview"),
-            "/api/w/shop/overview"
+            routes::scoped("acme", "shop", "/api/overview"),
+            "/api/t/acme/w/shop/overview"
         );
         assert_eq!(
-            routes::scoped("shop", "/api/map/draft/ops"),
-            "/api/w/shop/map/draft/ops"
+            routes::scoped("acme", "shop", "/api/map/draft/ops"),
+            "/api/t/acme/w/shop/map/draft/ops"
         );
-        assert_eq!(routes::scoped("shop", "/ws/web"), "/ws/web");
+        assert_eq!(routes::scoped("acme", "shop", "/ws/web"), "/ws/web");
     }
 }

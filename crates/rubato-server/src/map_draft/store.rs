@@ -3,6 +3,7 @@
 
 use super::apply;
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::SystemMap;
@@ -55,9 +56,10 @@ fn parse_state(s: &str) -> ProposalState {
     }
 }
 
-async fn live(conn: &mut SqliteConnection, ws: &str) -> Result<Vec<DraftOp>> {
-    let rows = sqlx::query("SELECT seq, op_id, op, author, created_at FROM map_draft_ops WHERE workspace_id = ? AND discarded_at IS NULL ORDER BY seq")
-        .bind(ws)
+async fn live(conn: &mut SqliteConnection, ws: &WsKey) -> Result<Vec<DraftOp>> {
+    let rows = sqlx::query("SELECT seq, op_id, op, author, created_at FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND discarded_at IS NULL ORDER BY seq")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .fetch_all(conn)
         .await?;
     rows.iter()
@@ -74,9 +76,10 @@ async fn live(conn: &mut SqliteConnection, ws: &str) -> Result<Vec<DraftOp>> {
         .collect()
 }
 
-async fn proposal_of(conn: &mut SqliteConnection, ws: &str) -> Result<Option<ProposalRow>> {
-    let row = sqlx::query("SELECT * FROM map_proposal WHERE workspace_id = ?")
-        .bind(ws)
+async fn proposal_of(conn: &mut SqliteConnection, ws: &WsKey) -> Result<Option<ProposalRow>> {
+    let row = sqlx::query("SELECT * FROM map_proposal WHERE tenant_id = ? AND workspace_id = ?")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .fetch_optional(conn)
         .await?;
     Ok(row.map(|r| ProposalRow {
@@ -92,26 +95,31 @@ async fn proposal_of(conn: &mut SqliteConnection, ws: &str) -> Result<Option<Pro
     }))
 }
 
-pub async fn proposal(db: &SqlitePool, ws: &str) -> Result<Option<ProposalRow>> {
+pub async fn proposal(db: &SqlitePool, ws: &WsKey) -> Result<Option<ProposalRow>> {
     proposal_of(&mut *db.acquire().await?, ws).await
 }
 
 /// The live operations, each checked against `base` with the ones before it.
-pub async fn ops(db: &SqlitePool, ws: &str, base: &SystemMap) -> Result<(Vec<DraftOp>, SystemMap)> {
+pub async fn ops(
+    db: &SqlitePool,
+    ws: &WsKey,
+    base: &SystemMap,
+) -> Result<(Vec<DraftOp>, SystemMap)> {
     let mut ops = live(&mut *db.acquire().await?, ws).await?;
     let preview = apply::replay(base, &mut ops);
     Ok((ops, preview))
 }
 
 /// The draft as every browser sees it.
-pub async fn snapshot(db: &SqlitePool, ws: &str, base: &SystemMap) -> Result<MapDraft> {
+pub async fn snapshot(db: &SqlitePool, ws: &WsKey, base: &SystemMap) -> Result<MapDraft> {
     let mut conn = db.acquire().await?;
     let mut ops = live(&mut conn, ws).await?;
     let preview = apply::replay(base, &mut ops);
     let discarded: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM map_draft_ops WHERE workspace_id = ? AND discarded_at IS NOT NULL",
+        "SELECT COUNT(*) FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND discarded_at IS NOT NULL",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .fetch_one(&mut *conn)
     .await?;
     Ok(MapDraft {
@@ -138,7 +146,7 @@ pub enum Appended {
 /// operations that conflict cannot both land.
 pub async fn append(
     db: &SqlitePool,
-    ws: &str,
+    ws: &WsKey,
     base: &SystemMap,
     req: &DraftOpRequest,
     author: &str,
@@ -149,10 +157,14 @@ pub async fn append(
     if proposal_of(&mut tx, ws).await?.is_some() {
         return Ok(Appended::Frozen);
     }
-    let known: Option<i64> = sqlx::query_scalar("SELECT seq FROM map_draft_ops WHERE op_id = ?")
-        .bind(req.op_id.to_string())
-        .fetch_optional(&mut *tx)
-        .await?;
+    let known: Option<i64> = sqlx::query_scalar(
+        "SELECT seq FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND op_id = ?",
+    )
+    .bind(ws.tenant.as_str())
+    .bind(ws.ws())
+    .bind(req.op_id.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
     if known.is_some() {
         return Ok(Appended::Duplicate);
     }
@@ -165,14 +177,16 @@ pub async fn append(
         return Ok(Appended::Invalid(why));
     }
     // A discarded draft can be restored only until the next operation is written.
-    sqlx::query("DELETE FROM map_draft_ops WHERE workspace_id = ? AND discarded_at IS NOT NULL")
-        .bind(ws)
+    sqlx::query("DELETE FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND discarded_at IS NOT NULL")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .execute(&mut *tx)
         .await?;
     let seq = sqlx::query(
-        "INSERT INTO map_draft_ops (workspace_id, op_id, op, author, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO map_draft_ops (tenant_id, workspace_id, op_id, op, author, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .bind(req.op_id.to_string())
     .bind(serde_json::to_string(&req.op)?)
     .bind(author)
@@ -193,15 +207,16 @@ pub enum Changed {
 }
 
 /// Take one operation out of the draft, anyone's.
-pub async fn remove_op(db: &SqlitePool, ws: &str, seq: u64) -> Result<Changed> {
+pub async fn remove_op(db: &SqlitePool, ws: &WsKey, seq: u64) -> Result<Changed> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     if proposal_of(&mut tx, ws).await?.is_some() {
         return Ok(Changed::Frozen);
     }
     let r = sqlx::query(
-        "DELETE FROM map_draft_ops WHERE workspace_id = ? AND seq = ? AND discarded_at IS NULL",
+        "DELETE FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND seq = ? AND discarded_at IS NULL",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .bind(seq as i64)
     .execute(&mut *tx)
     .await?;
@@ -214,21 +229,25 @@ pub async fn remove_op(db: &SqlitePool, ws: &str, seq: u64) -> Result<Changed> {
 }
 
 /// Empty the draft for everyone, keeping the operations so it can be undone.
-pub async fn discard(db: &SqlitePool, ws: &str, at: DateTime<Utc>) -> Result<Changed> {
+pub async fn discard(db: &SqlitePool, ws: &WsKey, at: DateTime<Utc>) -> Result<Changed> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     if proposal_of(&mut tx, ws).await?.is_some() {
         return Ok(Changed::Frozen);
     }
     // An older discarded draft gives way to this one.
-    sqlx::query("DELETE FROM map_draft_ops WHERE workspace_id = ? AND discarded_at IS NOT NULL")
-        .bind(ws)
+    sqlx::query("DELETE FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND discarded_at IS NOT NULL")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .execute(&mut *tx)
         .await?;
-    let r = sqlx::query("UPDATE map_draft_ops SET discarded_at = ? WHERE workspace_id = ?")
-        .bind(ts(at))
-        .bind(ws)
-        .execute(&mut *tx)
-        .await?;
+    let r = sqlx::query(
+        "UPDATE map_draft_ops SET discarded_at = ? WHERE tenant_id = ? AND workspace_id = ?",
+    )
+    .bind(ts(at))
+    .bind(ws.tenant.as_str())
+    .bind(ws.ws())
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(match r.rows_affected() {
         0 => Changed::Nothing,
@@ -237,20 +256,22 @@ pub async fn discard(db: &SqlitePool, ws: &str, at: DateTime<Utc>) -> Result<Cha
 }
 
 /// Undo a discard: every operation comes back, with its author and its place.
-pub async fn restore(db: &SqlitePool, ws: &str) -> Result<Changed> {
+pub async fn restore(db: &SqlitePool, ws: &WsKey) -> Result<Changed> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let live: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM map_draft_ops WHERE workspace_id = ? AND discarded_at IS NULL",
+        "SELECT COUNT(*) FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND discarded_at IS NULL",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .fetch_one(&mut *tx)
     .await?;
     if live > 0 {
         return Ok(Changed::Nothing);
     }
     let r =
-        sqlx::query("UPDATE map_draft_ops SET discarded_at = NULL WHERE workspace_id = ? AND discarded_at IS NOT NULL")
-            .bind(ws)
+        sqlx::query("UPDATE map_draft_ops SET discarded_at = NULL WHERE tenant_id = ? AND workspace_id = ? AND discarded_at IS NOT NULL")
+            .bind(ws.tenant.as_str())
+        .bind(ws.ws())
             .execute(&mut *tx)
             .await?;
     tx.commit().await?;
@@ -265,7 +286,7 @@ pub async fn restore(db: &SqlitePool, ws: &str) -> Result<Changed> {
 /// `Err(existing)` when a proposal is already there.
 pub async fn start_proposal(
     db: &SqlitePool,
-    ws: &str,
+    ws: &WsKey,
     branch: &str,
     base_sha: &str,
     file_hash: &str,
@@ -277,8 +298,9 @@ pub async fn start_proposal(
         return Ok(Err(existing));
     }
     let last_seq = live(&mut tx, ws).await?.last().map(|o| o.seq).unwrap_or(0);
-    sqlx::query("INSERT INTO map_proposal (workspace_id, branch, base_sha, file_hash, last_seq, state, state_since, proposed_by) VALUES (?, ?, ?, ?, ?, 'opening', ?, ?)")
-        .bind(ws)
+    sqlx::query("INSERT INTO map_proposal (tenant_id, workspace_id, branch, base_sha, file_hash, last_seq, state, state_since, proposed_by) VALUES (?, ?, ?, ?, ?, ?, 'opening', ?, ?)")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .bind(branch)
         .bind(base_sha)
         .bind(file_hash)
@@ -295,42 +317,46 @@ pub async fn start_proposal(
 /// Move the proposal to `state`, with the pull request when it is known.
 pub async fn set_state(
     db: &SqlitePool,
-    ws: &str,
+    ws: &WsKey,
     state: ProposalState,
     at: DateTime<Utc>,
     pr: Option<(u64, &str)>,
 ) -> Result<()> {
-    sqlx::query("UPDATE map_proposal SET state = ?, state_since = ?, pr_number = COALESCE(?, pr_number), pr_url = COALESCE(?, pr_url) WHERE workspace_id = ?")
+    sqlx::query("UPDATE map_proposal SET state = ?, state_since = ?, pr_number = COALESCE(?, pr_number), pr_url = COALESCE(?, pr_url) WHERE tenant_id = ? AND workspace_id = ?")
         .bind(state_name(state))
         .bind(ts(at))
         .bind(pr.map(|(n, _)| n as i64))
         .bind(pr.map(|(_, u)| u))
-        .bind(ws)
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .execute(db)
         .await?;
     Ok(())
 }
 
 /// The proposal is over without a merge: the draft is editable again, every operation kept.
-pub async fn drop_proposal(db: &SqlitePool, ws: &str) -> Result<()> {
-    sqlx::query("DELETE FROM map_proposal WHERE workspace_id = ?")
-        .bind(ws)
+pub async fn drop_proposal(db: &SqlitePool, ws: &WsKey) -> Result<()> {
+    sqlx::query("DELETE FROM map_proposal WHERE tenant_id = ? AND workspace_id = ?")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .execute(db)
         .await?;
     Ok(())
 }
 
 /// The merged proposal is in the loaded map: its operations and the proposal go.
-pub async fn clear_merged(db: &SqlitePool, ws: &str, last_seq: u64) -> Result<()> {
+pub async fn clear_merged(db: &SqlitePool, ws: &WsKey, last_seq: u64) -> Result<()> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     // Only this workspace's operations: `seq` is shared, so another draft's older ones stay.
-    sqlx::query("DELETE FROM map_draft_ops WHERE workspace_id = ? AND seq <= ?")
-        .bind(ws)
+    sqlx::query("DELETE FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND seq <= ?")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .bind(last_seq as i64)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM map_proposal WHERE workspace_id = ?")
-        .bind(ws)
+    sqlx::query("DELETE FROM map_proposal WHERE tenant_id = ? AND workspace_id = ?")
+        .bind(ws.tenant.as_str())
+        .bind(ws.ws())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -338,11 +364,12 @@ pub async fn clear_merged(db: &SqlitePool, ws: &str, last_seq: u64) -> Result<()
 }
 
 /// How many live operations the draft holds.
-pub async fn live_count(db: &SqlitePool, ws: &str) -> Result<u64> {
+pub async fn live_count(db: &SqlitePool, ws: &WsKey) -> Result<u64> {
     let n: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM map_draft_ops WHERE workspace_id = ? AND discarded_at IS NULL",
+        "SELECT COUNT(*) FROM map_draft_ops WHERE tenant_id = ? AND workspace_id = ? AND discarded_at IS NULL",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .fetch_one(db)
     .await?;
     Ok(n as u64)
@@ -350,6 +377,6 @@ pub async fn live_count(db: &SqlitePool, ws: &str) -> Result<u64> {
 
 /// Whether the workspace's draft is open (ADR 0075): it holds a live operation, or a proposal
 /// exists. While it is, the map's ref cannot move under it.
-pub async fn is_open(db: &SqlitePool, ws: &str) -> Result<bool> {
+pub async fn is_open(db: &SqlitePool, ws: &WsKey) -> Result<bool> {
     Ok(live_count(db, ws).await? > 0 || proposal(db, ws).await?.is_some())
 }

@@ -22,9 +22,9 @@ The binaries are `target/release/rubato-server` and `target/release/rubato-compa
 ## 2. GitHub credentials for the server
 
 The server is a **GitHub App** (ADR 0022). One registration does three things: it logs people
-in, it is the identity the server reads and writes GitHub with, and it decides who is on the
-team: a person gets a session only if their GitHub account can access the repositories the App
-is installed on.
+in, and it is the identity the server reads and writes GitHub with. Who gets in is not GitHub's
+to say: a person gets a session only when someone invited them to a tenant, or when they are an
+operator of the server (ADR 0087, ADR 0088; "Tenants and who gets in" below).
 
 1. Register a GitHub App at <https://github.com/settings/apps/new> (an existing OAuth app
    cannot be converted; this is a new registration with its own client id).
@@ -65,7 +65,8 @@ export GITHUB_CLIENT_ID=...            # the App's client id, from step 2
 export GITHUB_CLIENT_SECRET=...
 export RUBATO_GITHUB_APP_ID=...
 export RUBATO_GITHUB_APP_PRIVATE_KEY_FILE=/path/to/the-app.private-key.pem
-export RUBATO_GITHUB_APP_INSTALLATION_ID=...   # from step 3
+export RUBATO_GITHUB_APP_INSTALLATION_ID=...   # from step 3; read once, to make tenant `default`
+export RUBATO_OPERATORS=...            # your GitHub user id: gh api user --jq .id
 # Optional: lets people accept a plan from Rubato, posted as themselves (ADR 0030). Keep it
 # secret and stable: rotating it makes every stored token unreadable (everyone logs in again).
 # The App must have "Expire user authorization tokens" on (the default).
@@ -89,8 +90,12 @@ belong together the server stops at start with `github app check failed` and say
 Open <http://127.0.0.1:8080> and log in with GitHub. The map appears, and the Issues tab lists
 every open issue of the map's repositories under "Not pinned".
 
-A session lasts as long as its team check is at most seven days old, and never more than 30
-days (in every mode); after that, or after the first start as an App, the browser sends you through login once more. The private key can
+The first start makes one tenant, `default`, with the installation above and nobody in it. You
+are let in because you are an operator: the page says you are in no tenant and opens
+**Operator**. Type your own login under "login of a new admin" on the `default` row and press
+*Name admin*; reload, and the map is there. From then on **Members** is where people are invited.
+
+A session lasts 30 days at most; a person removed from their last tenant is logged out at once. The private key can
 also be given inline as `RUBATO_GITHUB_APP_PRIVATE_KEY` (newlines as `\n`).
 
 Editing the map: "Edit map" opens the team's shared draft. "Propose map change…" opens one pull
@@ -127,9 +132,8 @@ flag on the server needs the GitHub App unless it is local, and refuses to start
 `RUBATO_OPEN_LOGIN` (ADR 0086). Each paired companion keeps a copy and serves five read-only
 `graph_*` tools from it to the sessions it launches. A session you start by hand gets the same
 tools once you run, once per machine, `claude mcp add --scope user rubato-graph -- rubato-companion mcp`;
-`rubato-companion status` says what the copy holds. A companion is sent the graph only while its
-owner has logged in to Rubato within the last 7 days (the team record of ADR 0022), so the owner
-of a headless companion logs in at least once a week.
+`rubato-companion status` says what the copy holds. A companion is sent only the sources of
+the tenants its owner is a member of, for as long as they are one (ADR 0087).
 
 Observed traffic on the map's seams (ADR 0039) comes from one of two sources, never both;
 setting both is a startup error. Either way the server fetches every `RUBATO_TRAFFIC_FETCH_SECS`
@@ -248,6 +252,62 @@ rewrites goes stale after three fetch intervals and the overview says `stale`, n
 report with more than 2 000 edges, a window outside 60 s to 24 h or a name over 200 bytes is
 rejected whole (log line `traffic report rejected`) and the previous one kept. Unset, the
 overview says `not_configured`.
+
+### Tenants and who gets in (ADR 0087, ADR 0088)
+
+A **tenant** is a team on this server: it owns GitHub App installations (each one account or
+organisation), the workspaces whose maps name those installations' repositories, and its
+members. Tenants see nothing of each other. A person may be in several and switches between
+them in the header.
+
+- **Operators** (`RUBATO_OPERATORS`, GitHub user ids) create tenants, attach installations,
+  name a tenant's first admin, detach and purge. They see names and counts on the **Operator**
+  page, never a tenant's data, unless they are also invited to it.
+- **Admins** of a tenant invite people by GitHub login on **Members**, change roles, remove
+  people, and create, configure and delete workspaces.
+- **Members** do everything else.
+
+The invite is the only gate. An invited person reads, as the App, every open issue, pull
+request, plan, room and context graph source of the tenant's repositories, private ones
+included, whatever their own access on GitHub; approving a plan and merging use their own
+GitHub account. Invite accordingly.
+
+A second team: install the App on their account or organisation (the App must allow
+installation on any account), then on **Operator** create a tenant with the login of its first
+admin and attach the new installation to it. Removing a team: its admin deletes the workspaces,
+the operator detaches the installation (its rows are kept, hidden), purges it (the page shows
+the row counts first) and deletes the tenant.
+
+### Run a demo on the internet (ADR 0090)
+
+Everything above is one machine. To let people outside reach it, the server must be behind
+TLS, and it refuses to start otherwise. `deploy/README.md`, "On the internet", has the stack
+(Caddy with a certificate by ACME) and the settings; in short:
+
+1. A host with a DNS name and ports 80 and 443 open. Copy `deploy/compose.yaml` and
+   `deploy/Caddyfile` to it and set the `.env` lines that section lists. The server names
+   any secret that is missing and does not start.
+2. In the App's settings on GitHub: callback URL `https://<domain>/auth/github/callback`;
+   "Where can this GitHub App be installed?" *Any account*, so each team installs it on its own;
+   webhook URL `https://<domain>/webhooks/github` with the secret in
+   `RUBATO_GITHUB_WEBHOOK_SECRET`.
+3. Start the stack, then check the host from outside:
+
+   ```sh
+   pnpm deploy:probe https://<domain>
+   ```
+
+   It checks that https answers with `Strict-Transport-Security`, that plain http is redirected,
+   that nothing answers without a session, that the paths of before tenants are gone, that a
+   burst on the pairing path is answered 429, and that the app's own port is closed. It spends
+   the pairing bucket of the address it runs from for about half a minute.
+4. Log in as the operator, name yourself admin of `default` or create the first tenant, and
+   invite people.
+5. A visitor pairs a companion with `rubato-companion pair --server https://<domain>`; no
+   `--insecure`. One without tmux runs it headless (ADR 0062).
+
+On a demo keep voice and the lead agent off (they are off unless set), and decide about backups
+before real teams put plans in it: the stack keeps one copy of the database.
 
 ## 4. Install the skill on your machine
 

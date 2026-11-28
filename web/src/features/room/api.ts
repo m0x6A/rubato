@@ -1,5 +1,6 @@
 import type { CallInRequest, CallInResponse, DismissAgentRequest, RequestAnswerBody, RoomMessage, RoomPostRequest, RoomView } from "../../protocol.ts";
 import { ApiError, failureText, request } from "../../shared/api.ts";
+import { inTenant } from "../../shared/workspace.ts";
 
 /** Which room: a plan's, by issue and branch (ADR 0057). */
 export interface RoomKey {
@@ -8,17 +9,17 @@ export interface RoomKey {
   branch: string;
 }
 
-/** Team routes: a room is a plan's, not one workspace's, so the paths are never `scoped()`. */
+/** Tenant routes: a room is a plan's, not one workspace's, so the paths are `inTenant()`, never `scoped()`. */
 export const roomApi = {
-  get: (k: RoomKey) => request<RoomView>("GET", `/api/room?${new URLSearchParams({ repo: k.repo, number: String(k.number), branch: k.branch }).toString()}`),
+  get: (k: RoomKey) => request<RoomView>("GET", inTenant("/api/room") + `?${new URLSearchParams({ repo: k.repo, number: String(k.number), branch: k.branch }).toString()}`),
   /** The new message, 201. */
-  post: (req: RoomPostRequest) => request<RoomMessage | undefined>("POST", "/api/room/messages", req),
+  post: (req: RoomPostRequest) => request<RoomMessage | undefined>("POST", inTenant("/api/room/messages"), req),
   /** The owner's own launch joins at once; anyone else's call is a request (PR 11). */
-  callIn: (req: CallInRequest) => request<CallInResponse>("POST", "/api/room/agents", req),
+  callIn: (req: CallInRequest) => request<CallInResponse>("POST", inTenant("/api/room/agents"), req),
   /** Its owner, or whoever called it in. */
-  dismiss: (req: DismissAgentRequest) => request<unknown>("DELETE", "/api/room/agents", req),
+  dismiss: (req: DismissAgentRequest) => request<unknown>("DELETE", inTenant("/api/room/agents"), req),
   /** The owner accepts or declines; the asker withdraws. */
-  answer: (requestId: string, body: RequestAnswerBody) => request<unknown>("POST", `/api/room/requests/${encodeURIComponent(requestId)}`, body),
+  answer: (requestId: string, body: RequestAnswerBody) => request<unknown>("POST", inTenant(`/api/room/requests/${encodeURIComponent(requestId)}`), body),
 };
 
 /** What the server said: a refusal's `{ "reason": … }`, else an `{ "error": … }`; null when nothing readable. */

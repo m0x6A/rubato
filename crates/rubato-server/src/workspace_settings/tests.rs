@@ -14,6 +14,7 @@ const HEADER: &str = "Authorization=Bearer s3cret-token";
 
 fn entry(id: &str, path: &str, map_ref: &str) -> WorkspaceEntry {
     WorkspaceEntry {
+        tenant: crate::kernel::tenancy::TenantId::default_tenant(),
         id: id.into(),
         name: Some(format!("{id} app")),
         map_repo: "m0x6A/rubato".into(),

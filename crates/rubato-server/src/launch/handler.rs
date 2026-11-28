@@ -7,6 +7,7 @@ use super::store;
 use crate::auth::CurrentUser;
 use crate::kernel::http::internal;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::WsKey;
 use crate::{github_poll, pairing, pins, plan_drafts, plans};
 use axum::Json;
 use axum::extract::State;
@@ -30,6 +31,7 @@ const SLICE: &str = "launch";
 /// the write, record the cap hit, and answer 409 whether or not the write worked.
 async fn refuse_past_attempt_limit(
     db: &SqlitePool,
+    t: &crate::kernel::tenancy::TenantId,
     issue: &IssueRef,
     attempt: u32,
     attempt_limit: u32,
@@ -43,7 +45,7 @@ async fn refuse_past_attempt_limit(
         at: Utc::now(),
     };
     tracing::warn!(rubato.issue = %hit.issue, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", event::CAP_HIT);
-    if let Err(e) = store::store_cap_hit(db, &hit, hit.at).await {
+    if let Err(e) = store::store_cap_hit(db, t, &hit, hit.at).await {
         tracing::error!(slice = SLICE, rubato.issue = %hit.issue, error = %e, "storing cap hit");
     }
     (
@@ -59,7 +61,7 @@ pub async fn launch(
     CurrentUser(user): CurrentUser,
     Json(req): Json<LaunchRequest>,
 ) -> Result<Json<LaunchResponse>, (StatusCode, String)> {
-    start(&app, ws.as_str(), &user, req, None, None)
+    start(&app, ws.key(), &user, req, None, None)
         .await
         .map(Json)
 }
@@ -68,13 +70,14 @@ pub async fn launch(
 /// rendered prompt (Import's rewrite, ADR 0058).
 pub async fn start(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     user: &str,
     req: LaunchRequest,
     note: Option<&str>,
     // The owner's lead agent that asked for this worker (ADR 0072); `None` from the web.
     lead_launch_id: Option<Uuid>,
 ) -> Result<LaunchResponse, (StatusCode, String)> {
+    let t = ws.tenant();
     // A lead only while the orchestrator flag is on (ADR 0072); a lead never starts a lead.
     if req.role == LaunchRole::Lead && (!app.config.orchestrator || lead_launch_id.is_some()) {
         app.reject(routes::LAUNCH, fleet_reason::ORCHESTRATOR_OFF, user);
@@ -150,18 +153,18 @@ pub async fn start(
         .filter(|p| p.issue == req.issue)
         .map(|p| p.target.id().to_owned())
         .collect();
-    let meta = github_poll::issue_meta(&app.db, &req.issue)
+    let meta = github_poll::issue_meta(&app.db, t, &req.issue)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .unwrap_or_default();
-    let plan_row = plans::all(&app.db)
+    let plan_row = plans::all(&app.db, t)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
         .find(|p| p.issue == req.issue);
     // A draft of the caller's on this issue decides the branch (ADR 0053, plan 122 §D5), so
     // editing the title never orphans it. A teammate's draft stays theirs: taking it over is Import.
-    let mine: Vec<plan_drafts::LatestDraft> = plan_drafts::latest_drafts(app)
+    let mine: Vec<plan_drafts::LatestDraft> = plan_drafts::latest_drafts(app, t)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         .into_iter()
@@ -193,7 +196,7 @@ pub async fn start(
             if branch_plan.is_none()
                 && app.announced(companion.companion_id, capability::DRAFT_RESTORE) =>
         {
-            plan_drafts::restore_of(app, d.summary.draft_id)
+            plan_drafts::restore_of(app, t, d.summary.draft_id)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?
         }
@@ -217,19 +220,13 @@ pub async fn start(
     } else {
         pins
     };
-    let attempt = store::launch_count(&app.db, &req.issue)
+    let attempt = store::launch_count(&app.db, t, &req.issue)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         + 1;
     // The request, then the plan's front matter, then the workspace's defaults, then the
     // built-in ones (ADR 0075): never a server-wide setting.
-    let defaults = app
-        .workspace_entries()
-        .0
-        .into_iter()
-        .find(|w| w.id == ws)
-        .map(|w| w.settings)
-        .unwrap_or_default();
+    let defaults = app.workspace(ws).map(|w| w.settings).unwrap_or_default();
     let spend_cap = req
         .spend_cap_usd
         .or(plan.as_ref().and_then(|p| p.spend_cap_usd))
@@ -241,8 +238,9 @@ pub async fn start(
         .or(defaults.default_attempt_limit)
         .unwrap_or(crate::kernel::config::BUILT_IN_ATTEMPT_LIMIT);
     if attempt > attempt_limit {
-        let refusal = refuse_past_attempt_limit(&app.db, &req.issue, attempt, attempt_limit).await;
-        app.notify("cap hit");
+        let refusal =
+            refuse_past_attempt_limit(&app.db, t, &req.issue, attempt, attempt_limit).await;
+        app.notify_in(t, "cap hit");
         return Err(refusal);
     }
     let plan_path = map
@@ -319,7 +317,7 @@ pub async fn start(
         ));
     }
     tracing::info!(launch_id = %command.id, rubato.issue = %command.issue, rubato.user = %user, companion = %companion.companion_id, planning = command.planning.name(), "{}", span::LAUNCH);
-    app.notify("launch");
+    app.notify_in(t, "launch");
     Ok(LaunchResponse {
         command,
         companion_id: companion.companion_id,
@@ -338,7 +336,14 @@ mod tests {
         let db = SqlitePool::connect("sqlite::memory:").await.unwrap();
         let issue = IssueRef::new("m0x6A/rubato", 30);
 
-        let (status, body) = refuse_past_attempt_limit(&db, &issue, 4, 3).await;
+        let (status, body) = refuse_past_attempt_limit(
+            &db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
+            &issue,
+            4,
+            3,
+        )
+        .await;
 
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body, "attempt limit 3 reached for m0x6A/rubato#30");

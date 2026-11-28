@@ -1,6 +1,7 @@
 //! Table `plan_approvals`.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{ApproveState, IssueRef};
@@ -39,14 +40,15 @@ fn intent(r: &sqlx::sqlite::SqliteRow) -> Intent {
 
 pub async fn find(
     db: &SqlitePool,
+    t: &TenantId,
     login: &str,
     issue: &IssueRef,
     sha: &str,
 ) -> Result<Option<Intent>> {
     Ok(sqlx::query(
-        "SELECT * FROM plan_approvals WHERE login = ? AND repo = ? AND number = ? AND sha = ?",
+        "SELECT * FROM plan_approvals WHERE tenant_id = ? AND login = ? AND repo = ? AND number = ? AND sha = ?",
     )
-    .bind(login)
+    .bind(t.as_str()).bind(login)
     .bind(&issue.repo)
     .bind(issue.number as i64)
     .bind(sha)
@@ -58,15 +60,16 @@ pub async fn find(
 /// Insert an `opening` row. False when one exists already: another request got there first.
 pub async fn open(
     db: &SqlitePool,
+    t: &TenantId,
     login: &str,
     issue: &IssueRef,
     sha: &str,
     branch: &str,
 ) -> Result<bool> {
     Ok(sqlx::query(
-        "INSERT OR IGNORE INTO plan_approvals (login, repo, number, sha, branch, state, created_at) VALUES (?, ?, ?, ?, ?, 'opening', ?)",
+        "INSERT OR IGNORE INTO plan_approvals (tenant_id, login, repo, number, sha, branch, state, created_at) VALUES (?, ?, ?, ?, ?, ?, 'opening', ?)",
     )
-    .bind(login)
+    .bind(t.as_str()).bind(login)
     .bind(&issue.repo)
     .bind(issue.number as i64)
     .bind(sha)
@@ -78,11 +81,17 @@ pub async fn open(
         == 1)
 }
 
-pub async fn posted(db: &SqlitePool, i: &Intent, comment_id: u64, comment_url: &str) -> Result<()> {
-    sqlx::query("UPDATE plan_approvals SET state = 'posted', comment_id = ?, comment_url = ? WHERE login = ? AND repo = ? AND number = ? AND sha = ?")
+pub async fn posted(
+    db: &SqlitePool,
+    t: &TenantId,
+    i: &Intent,
+    comment_id: u64,
+    comment_url: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE plan_approvals SET state = 'posted', comment_id = ?, comment_url = ? WHERE tenant_id = ? AND login = ? AND repo = ? AND number = ? AND sha = ?")
         .bind(comment_id as i64)
         .bind(comment_url)
-        .bind(&i.login)
+        .bind(t.as_str()).bind(&i.login)
         .bind(&i.issue.repo)
         .bind(i.issue.number as i64)
         .bind(&i.sha)
@@ -91,11 +100,17 @@ pub async fn posted(db: &SqlitePool, i: &Intent, comment_id: u64, comment_url: &
     Ok(())
 }
 
-pub async fn forget(db: &SqlitePool, login: &str, issue: &IssueRef, sha: &str) -> Result<()> {
+pub async fn forget(
+    db: &SqlitePool,
+    t: &TenantId,
+    login: &str,
+    issue: &IssueRef,
+    sha: &str,
+) -> Result<()> {
     sqlx::query(
-        "DELETE FROM plan_approvals WHERE login = ? AND repo = ? AND number = ? AND sha = ?",
+        "DELETE FROM plan_approvals WHERE tenant_id = ? AND login = ? AND repo = ? AND number = ? AND sha = ?",
     )
-    .bind(login)
+    .bind(t.as_str()).bind(login)
     .bind(&issue.repo)
     .bind(issue.number as i64)
     .bind(sha)
@@ -104,9 +119,10 @@ pub async fn forget(db: &SqlitePool, login: &str, issue: &IssueRef, sha: &str) -
     Ok(())
 }
 
-pub async fn opening(db: &SqlitePool) -> Result<Vec<Intent>> {
+pub async fn opening(db: &SqlitePool, t: &TenantId) -> Result<Vec<Intent>> {
     Ok(
-        sqlx::query("SELECT * FROM plan_approvals WHERE state = 'opening'")
+        sqlx::query("SELECT * FROM plan_approvals WHERE tenant_id = ? AND state = 'opening'")
+            .bind(t.as_str())
             .fetch_all(db)
             .await?
             .iter()

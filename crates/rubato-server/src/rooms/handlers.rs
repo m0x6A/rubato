@@ -34,8 +34,9 @@ fn refuse(app: &App, status: StatusCode, why: &str, user: &str) -> Refused {
 
 /// A plan file or a draft on that branch of the issue: the room has a plan to be about.
 pub async fn has_plan(app: &App, room: &RoomKey) -> Result<bool> {
+    let t = &app.repo_tenant(&room.repo)?;
     let issue = IssueRef::new(room.repo.clone(), room.number);
-    if plans::all(&app.db)
+    if plans::all(&app.db, t)
         .await?
         .iter()
         .any(|p| p.issue == issue && p.branch == room.branch)
@@ -55,14 +56,17 @@ pub async fn room(
     super::callin::sweep_room(&app, &key)
         .await
         .map_err(internal)?;
-    let messages = store::messages(&app.db, &key).await.map_err(internal)?;
-    let agents = agents::agents_in(&app.db, &key)
+    let t = &app.repo_tenant(&key.repo).map_err(internal)?;
+    let messages = store::messages(&app.db, t, &key).await.map_err(internal)?;
+    let agents = agents::agents_in(&app.db, t, &key)
         .await
         .map_err(internal)?
         .into_iter()
         .map(|a| a.agent)
         .collect();
-    let requests = agents::requests_in(&app.db, &key).await.map_err(internal)?;
+    let requests = agents::requests_in(&app.db, t, &key)
+        .await
+        .map_err(internal)?;
     Ok(Json(RoomView {
         repo: key.repo,
         number: key.number,
@@ -154,6 +158,7 @@ pub async fn post_as(
     if text.chars().count() as u64 > app.config.limits.room_message_max_chars {
         return Err(PostRefused::TooLong);
     }
+    let t = &app.repo_tenant(&key.repo).map_err(PostRefused::Internal)?;
     if !has_plan(app, key).await.map_err(PostRefused::Internal)? {
         return Err(PostRefused::NoPlan);
     }
@@ -168,7 +173,7 @@ pub async fn post_as(
     super::callin::sweep_room(app, key)
         .await
         .map_err(PostRefused::Internal)?;
-    let present = agents::agents_in(&app.db, key)
+    let present = agents::agents_in(&app.db, t, key)
         .await
         .map_err(PostRefused::Internal)?;
     let addressed = turns::person_turns(text, &present);
@@ -188,7 +193,7 @@ pub async fn post_as(
         spoken,
     };
     // Stored already (the same utterance id racing itself): no second turn.
-    if !store::insert(&app.db, key, &m)
+    if !store::insert(&app.db, t, key, &m)
         .await
         .map_err(PostRefused::Internal)?
     {
@@ -211,11 +216,14 @@ pub async fn post_as(
         spoken,
         "room message posted"
     );
-    app.notify_resource(WebResource::Room {
-        repo: key.repo.clone(),
-        number: key.number,
-        branch: key.branch.clone(),
-    });
+    app.notify_resource(
+        t,
+        WebResource::Room {
+            repo: key.repo.clone(),
+            number: key.number,
+            branch: key.branch.clone(),
+        },
+    );
     Ok(Posted {
         message: m,
         new: true,
@@ -230,7 +238,8 @@ async fn repeat_of(
     key: &RoomKey,
     id: Uuid,
 ) -> Result<Option<Posted>, PostRefused> {
-    match store::by_id(&app.db, id)
+    let t = &app.repo_tenant(&key.repo).map_err(PostRefused::Internal)?;
+    match store::by_id(&app.db, t, id)
         .await
         .map_err(PostRefused::Internal)?
     {
@@ -246,19 +255,25 @@ async fn repeat_of(
 }
 
 /// A message of a room by id, with its room (ADR 0073: the speech of an agent's reply).
-pub async fn message(app: &App, id: Uuid) -> Result<Option<(RoomKey, RoomMessage)>> {
-    store::by_id(&app.db, id).await
+pub async fn message(
+    app: &App,
+    t: &crate::kernel::tenancy::TenantId,
+    id: Uuid,
+) -> Result<Option<(RoomKey, RoomMessage)>> {
+    store::by_id(&app.db, t, id).await
 }
 
 /// Whether turn `turn_id` in `room` was made by a person's spoken message (ADR 0073).
 pub async fn turn_was_spoken(app: &App, room: &RoomKey, turn_id: Uuid) -> Result<bool> {
-    store::turn_was_spoken(&app.db, room, turn_id).await
+    let t = &app.repo_tenant(&room.repo)?;
+    store::turn_was_spoken(&app.db, t, room, turn_id).await
 }
 
 /// The handles of the agents present in `room` now, after the idle sweep.
 pub async fn agents_present(app: &App, room: &RoomKey) -> Result<Vec<String>> {
     super::callin::sweep_room(app, room).await?;
-    Ok(agents::agents_in(&app.db, room)
+    let t = &app.repo_tenant(&room.repo)?;
+    Ok(agents::agents_in(&app.db, t, room)
         .await?
         .into_iter()
         .filter(|a| a.present())

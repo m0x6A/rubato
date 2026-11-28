@@ -101,7 +101,7 @@ async fn harness(secret: bool, load_map: bool) -> Harness {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let router = app::router(app.clone());
+    let router = app::router_before_tenants(app.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     Harness {
         url: format!("http://{addr}"),

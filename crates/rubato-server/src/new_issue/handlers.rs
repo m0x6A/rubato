@@ -82,7 +82,7 @@ pub async fn create(
         ));
     }
     let map = app
-        .map_of(ws.as_str())
+        .map_of(ws.key())
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".to_owned()))?;
     if let Err((_, msg)) = pins::check_target(&map.map, &map.version, &req.target) {
@@ -99,14 +99,26 @@ pub async fn create(
             format!("{} is not a repo the map names", req.repo),
         ));
     }
-    if !app.github.can_write() {
+    // ADR 0087: only through the installation that covers the repository, in its tenant.
+    if app.github.tenant_of(&req.repo).is_none() {
+        return Err(refuse(
+            reason::CANNOT_WRITE,
+            StatusCode::CONFLICT,
+            format!(
+                "No installation of the GitHub App attached to a tenant covers {}.",
+                req.repo
+            ),
+        ));
+    }
+    let gh = app.github.within(ws.key().tenant(), &req.repo);
+    if !gh.can_write() {
         return Err(refuse(
             reason::CANNOT_WRITE,
             StatusCode::CONFLICT,
             "This Rubato cannot write to GitHub: it runs on a personal token or none, and only a GitHub App installation can open issues.".into(),
         ));
     }
-    if !app.github.can_create_issues() {
+    if !gh.can_create_issues() {
         return Err(refuse(
             reason::NO_ISSUE_PERMISSION,
             StatusCode::CONFLICT,
@@ -117,7 +129,7 @@ pub async fn create(
     // At most once per request id: a second submit answers with what the first got.
     if !store::begin(
         &app.db,
-        ws.as_str(),
+        ws.key(),
         &req.request_id,
         &req.repo,
         &req.target,
@@ -128,7 +140,7 @@ pub async fn create(
     .await
     .map_err(|e| (internal(SLICE, e), String::new()))?
     {
-        let c = store::get(&app.db, &req.request_id)
+        let c = store::get(&app.db, ws.key(), &req.request_id)
             .await
             .map_err(|e| (internal(SLICE, e), String::new()))?
             .ok_or((StatusCode::CONFLICT, "request id in use".to_owned()))?;
@@ -136,17 +148,13 @@ pub async fn create(
     }
 
     let body = render_issue(&req, &user);
-    match app
-        .github
-        .create_issue(&req.repo, req.title.trim(), &body)
-        .await
-    {
+    match gh.create_issue(&req.repo, req.title.trim(), &body).await {
         Ok((number, url)) => {
             let issue = rubato_protocol::IssueRef::new(req.repo.clone(), number);
-            store::created(&app.db, &req.request_id, number, &url)
+            store::created(&app.db, ws.key(), &req.request_id, number, &url)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?;
-            pins::pin_created(&app, ws.as_str(), &issue, &req.target, &user)
+            pins::pin_created(&app, ws.key(), &issue, &req.target, &user)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?;
             count(&app, "created");
@@ -157,7 +165,7 @@ pub async fn create(
                 target = req.target.id(),
                 "issue created"
             );
-            app.notify("issue");
+            app.notify_in(ws.key().tenant(), "issue");
             Ok((
                 StatusCode::CREATED,
                 Json(NewIssueResponse {
@@ -169,7 +177,7 @@ pub async fn create(
             ))
         }
         Err(e) => {
-            let refused = !app.github.can_create_issues();
+            let refused = !gh.can_create_issues();
             tracing::warn!(
                 step = "create",
                 rubato.repo = %req.repo,
@@ -180,14 +188,14 @@ pub async fn create(
             );
             if refused {
                 // GitHub said no (403): nothing was created, so the row fails now.
-                store::failed(&app.db, &req.request_id, &format!("{e:#}"))
+                store::failed(&app.db, ws.key(), &req.request_id, &format!("{e:#}"))
                     .await
                     .map_err(|e| (internal(SLICE, e), String::new()))?;
                 count(&app, "failed");
                 app.reject(routes::ISSUES, reason::FAILED, &user);
             }
             // Otherwise it may exist: the row stays opening for the listing to find.
-            let c = store::get(&app.db, &req.request_id)
+            let c = store::get(&app.db, ws.key(), &req.request_id)
                 .await
                 .map_err(|e| (internal(SLICE, e), String::new()))?
                 .ok_or((StatusCode::INTERNAL_SERVER_ERROR, String::new()))?;

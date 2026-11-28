@@ -45,7 +45,7 @@ async fn harness() -> H {
     let text = include_str!("../../../../docs/design/rubato-map.yml");
     let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -112,7 +112,9 @@ async fn view(
     let (owner, name) = repo.split_once('/').unwrap();
     pull_view(
         State(h.app.clone()),
-        Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+        Ws(crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        )),
         CurrentUser(login.into()),
         Path(PullPath {
             owner: owner.into(),
@@ -284,7 +286,12 @@ async fn a_repo_outside_the_map_or_the_installation_is_not_found() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     // An installation that does not cover the repo.
     h.github.with(|g| g.installation = Some(vec![]));
-    crate::github_poll::check_coverage(&h.app, &[REPO.to_owned()].into()).await;
+    crate::github_poll::check_coverage(
+        &h.app,
+        &crate::kernel::tenancy::TenantId::default_tenant(),
+        &[REPO.to_owned()].into(),
+    )
+    .await;
     let (s, v) = view(&h, "m0x6A", REPO, 5).await.unwrap_err();
     assert_eq!(
         (s, v["reason"].as_str()),
@@ -315,7 +322,7 @@ async fn an_unreadable_plan_closes_the_gate() {
 #[tokio::test]
 async fn the_plan_is_read_at_the_plan_rows_path() {
     let h = harness().await;
-    sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, approval_sha, head_sha, fetched_at) VALUES (?, 82, 'issue/82-a', 'docs/plans/82-a.md', NULL, 'x', 'abc1234', 's', '2026-11-15T00:00:00Z')")
+    sqlx::query("INSERT INTO plans (tenant_id, repo, number, branch, path, plan, parse_error, approval_sha, head_sha, fetched_at) VALUES ('default', ?, 82, 'issue/82-a', 'docs/plans/82-a.md', NULL, 'x', 'abc1234', 's', '2026-11-15T00:00:00Z')")
         .bind(REPO)
         .execute(&h.app.db)
         .await

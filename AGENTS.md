@@ -63,7 +63,7 @@ schema/
 actions/plan-check/        # GitHub Action: fail a PR whose plan names an unknown node or lacks an O-row per seam
 features/                  # the app's user scenarios in Gherkin, one <capability>.feature each, ids @<capability>.<slug> (ADR 0069)
 e2e/                       # end to end: run.ts (server + companion), scenarios.ts (scenario check and coverage report)
-deploy/                    # the stack on the apps host as code: compose.yaml (app; livekit behind the voice profile, #315), livekit.yaml, check.ts
+deploy/                    # the stack on the apps host as code: compose.yaml (app; livekit behind the voice profile, #315; caddy behind the public profile, ADR 0090), livekit.yaml, Caddyfile, check.ts (the files), probe.ts (a live host from outside)
 observability/
   alerts/                  # alert rules for the "never silent" list, each with a test that fires it
   dashboards/              # issue → node → session → cost; map with drift findings
@@ -95,12 +95,12 @@ capability.
 Each deployable's block appears here with the PR that slices it:
 
 <!-- slices: rubato-server -->
-`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, map-scoped routes also under
-`/api/w/{ws}`, 404 for unknown `/api`, `/ws`, `/auth` paths), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073); slices:
+`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, built from one table of tenant routes that the cross-tenant sweep also reads: tenant routes under `/api/t/{tenant}` and map-scoped ones under
+`/api/t/{tenant}/w/{ws}`, ADR 0089; 404 for unknown `/api`, `/ws`, `/auth` paths, the paths of before tenants among them), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
+(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `purge` (a tenant's rows of repositories that left it, counted then deleted, ADR 0087), `limits` (the layer outside every route: the client address behind a trusted proxy, token buckets on the anonymous paths and on writes, the request timeout and the bound on requests at once, ADR 0090), `AppState` with a map per tenant's workspace and each companion's latest sessions, signer, `http::internal`, `http::Ws` and `http::check_repos` (a tenant route refuses a repository that is not its tenant's, ADR 0089), GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth`, companion intake and the context graph reach tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, `WsKey`, `TenantScope` and `AdminScope`, ADR 0087, 0088, 0089); slices:
 
 ```text
-auth            GitHub login, team record, CurrentUser, tokens  users, web_sessions, user_tokens
+auth            GitHub login (invited people and operators only, ADR 0088), CurrentUser, tokens  users, web_sessions, user_tokens
 pairing         device-code pairing, the caller's pairings      pairing_codes, pairings
 companion_link  companion websocket, envelopes, acks            companion_events, session_snapshots, stale_events
 pins            pin an issue to a node or seam, Map: lines      pins, map_line_pins
@@ -123,14 +123,16 @@ rooms           a plan's room: messages, seam notices, agents called in, turns  
 voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
 telemetry_relay  the web's own spans, rewritten and forwarded over OTLP (ADR 0082)   (none; token buckets in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
-context_graph   the context graph's sources, each replaced whole, and their status (ADR 0084)   (none in the main database; its own file rubato-graph.db: sources, nodes, edges, nodes_fts)
+context_graph   the context graph's sources, each replaced whole, and their status (ADR 0084); a workspace and a team source per tenant, sent to its members' companions only (ADR 0087)   (none in the main database; its own file rubato-graph.db: sources, nodes, edges, nodes_fts)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 agent_reports   what each launched agent last said it is doing  agent_reports
 plan_status     plan status pushed to each launched session      (none)
 overview        derived progress, findings, gauges              (none)
-web_link        websocket fan-out to browsers                   (none)
+web_link        websocket fan-out to browsers, one tenant per socket (`/ws/web?t=`), membership read again on a timer   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
 workspace_settings  each workspace's settings: seeded once, read and changed at runtime, create and delete (ADR 0075)  workspace_settings
+tenants         who belongs to which tenant, its installations and repositories, the seed, the membership layer that grants a `TenantScope` (ADR 0087, 0088)  tenants, tenant_installations, tenant_members, tenant_repos
+admin           people and tenants across slices: the admission adapter, the identity guard, an installation's life after it is attached; the members routes of a tenant's admins with the removal cascade; the operator's routes: tenants, installations, attach, detach, purge (ADR 0087, 0088)  (none)
 ```
 <!-- /slices -->
 <!-- slices: rubato-companion -->
@@ -157,8 +159,8 @@ graph          this machine's copy of the context graph: fetch, check, apply; th
 <!-- /slices -->
 <!-- slices: web -->
 `web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, the panel's size, selection, handlers);
-`shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's workspace and
-`scoped()` for map-scoped paths; `format.ts`; `dnd.ts` the dragged issue;
+`shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's tenant and workspace,
+`inTenant()` for tenant paths and `scoped()` for map-scoped ones, ADR 0089; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
 its retired parts, for every reader that draws or offers ids, ADR 0077; `traffic.ts` `nothingObserved`, a fresh report with nothing in it; `trace.ts` the web's own client spans and their post to the relay, ADR 0082; `finished.ts` the issues the
 default views show and the Done views show, read from the server's `finished`; `panel.ts` the
@@ -168,7 +170,7 @@ browsers have no `crypto.randomUUID`, issue #304);
 `features/features.test.ts`:
 
 ```text
-live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
+live        the overview and every event, over /ws/web?t=<tenant>  GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
 chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout, DELETE /api/layout/grouped; POST, DELETE /api/traffic/dismissals
@@ -184,8 +186,10 @@ plans       the plans board: proposed and open, Done on request, a plan read in 
 repos       connected repos, what each provides, their open pull requests and issues, loose sessions, how fresh each context graph source is  (none)
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
 room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
-workspaces  which application the map shows, the switcher       (none; map calls go under /api/w/{ws})
-settings    Configure workspace: name, map ref, traffic source from the adapter's field list and how it is doing, launch defaults, create, delete  GET, PUT /api/settings; GET /api/traffic/sources; POST /api/workspaces; DELETE /api/w/{ws}
+workspaces  which application the map shows, the switcher       (none; map calls go under /api/t/{tenant}/w/{ws})
+tenants     which tenant the page shows, the switcher; a tenant's members: invite by GitHub login, roles, remove (ADR 0087, 0088)  GET, POST /api/t/{tenant}/members; PUT, DELETE /api/t/{tenant}/members/:github_id
+admin       the operator's page: tenants, the App's installations, attach, detach, purge, name an admin  GET /api/admin/installations; GET, POST /api/admin/tenants; DELETE /api/admin/tenants/:tenant; POST, DELETE /api/admin/tenants/:tenant/installations/:id; POST /api/admin/installations/:id/purge; POST /api/admin/tenants/:tenant/admins
+settings    Configure workspace: name, map ref, traffic source from the adapter's field list and how it is doing, launch defaults, create, delete  GET, PUT /api/settings; GET /api/traffic/sources; POST /api/workspaces; DELETE /api/t/{tenant}/w/{ws}
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->
@@ -196,7 +200,7 @@ modules, each with the types and `routes` its seam uses (every type re-exported 
 ```text
 agent      AgentReport, PlanStatus, DraftStatus, BranchStatus, AgentLine (ADR 0071; capability agent_mcp)
 approve    ApproveRequest, ApproveResponse, DraftApproveRequest, DraftApproveResponse, reasons; PLAN_APPROVE, PLAN_DRAFT_APPROVE
-auth       Me; ME, LOGIN, CALLBACK, LOGOUT
+auth       Me (with tenants and operator); ME, LOGIN, CALLBACK, LOGOUT
 pairing    device-code requests, PairingInfo, PairApproveRequest; PAIR_START, PAIR_POLL, COMPANION_WS, PAIRINGS, PAIR_APPROVE
 session    SessionState, Heartbeat, StaleSession, StateSource, TmuxLocation
 hook       HookEvent
@@ -218,9 +222,10 @@ room       RoomMessage (with spoken), RoomAgent, RoomRequest, RoomView, RoomKey,
 telemetry_relay  the web span relay's limits (ADR 0082); TELEMETRY_TRACES
 traffic    TrafficReport (with SeenEdge, ADR 0083), ObservedTraffic (with LastSeen), SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
-web_link   WebEvent; WEB_WS
-workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, SCOPE_PREFIX, scoped
+web_link   WebEvent (with its tenant); WEB_WS, CLOSE_NOT_A_MEMBER
+workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, scoped (tenant, workspace, route)
 workspace_settings  WorkspaceSettings, TrafficSourceSettings, SecretState, SourceFields, SourceField, WorkspaceSettingsUpdate, TrafficSourceUpdate, SecretUpdate, NewWorkspace, SettingsRefusal, reasons; SETTINGS, WORKSPACE, TRAFFIC_SOURCES
+tenant     TenantInfo, Role, MemberView, InviteRequest, RoleChange, AccountType, InstallationState, AdminInstallation, NewTenant, AdminTenant, PurgeReport, TenancyRefusal, is_tenant_id, reasons; TENANT_PREFIX, in_tenant, MEMBERS, MEMBER, ADMIN_* (ADR 0087, 0088, 0089)
 ```
 
 The seam is the JSON Schema under `schema/protocol/`, not these Rust paths (ADR 0015).
@@ -311,6 +316,12 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - A GitHub App webhook that has stopped delivering while the catch-up poll finds changes, or a delivery not applied for 5 minutes (`GitHubWebhooksSilent`, `GitHubWebhooksStuck`, ADR 0074).
 - A context graph source that no tick has found current for three regeneration intervals, while its flag is on (`ContextGraphStale`, ADR 0084).
 - A companion whose copy of the context graph has been behind the announced list for three intervals (`ContextGraphCopyBehind`, ADR 0086).
+- A request inside one tenant that names another tenant's repository (`TenantCrossAccess`, ADR 0087).
+- A companion that keeps sending for launches of a person who left the launch's tenant (`CompanionRefusedNotMember`, ADR 0087).
+- An attached GitHub App installation suspended for 15 minutes (`InstallationSuspended`, ADR 0087).
+- A route that refused more than 50 requests as rate limited in 10 minutes (`RateLimited`, ADR 0090).
+- More than 100 webhook deliveries an hour from installations attached to no tenant (`WebhookUnattachedHigh`, ADR 0087).
+- A companion's list of context graph sources cut at the cap, so its copy matches a list that is not whole (`ContextGraphSourcesCut`, ADR 0087).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

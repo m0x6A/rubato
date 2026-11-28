@@ -41,6 +41,13 @@ const REQUIRED = [
   // Issue #322 (ADR 0084, ADR 0086).
   "ContextGraphStale",
   "ContextGraphCopyBehind",
+  // Issue #345 (ADR 0087, ADR 0090).
+  "TenantCrossAccess",
+  "CompanionRefusedNotMember",
+  "InstallationSuspended",
+  "RateLimited",
+  "WebhookUnattachedHigh",
+  "ContextGraphSourcesCut",
 ];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */
@@ -101,6 +108,14 @@ const INTERACTIVE_MAP: [string, string][] = [
   ["Voice", "rubato_voice_join_failed_total"],
   // Issue #134 (ADR 0072): the O-row of seam companion-server names this panel.
   ["Fleet requests by action and outcome", "rubato_fleet_requests_total"],
+  // Issue #345 (ADR 0087, ADR 0090): the row "Tenants and the public surface" its O-rows name.
+  ["Requests and refusals by tenant", "rubato_web_tenant_requests_total"],
+  ["Requests and refusals by tenant", "rubato_web_rejected_total"],
+  ["GitHub budget by installation", "rubato_github_rate_limit_remaining"],
+  ["GitHub budget by installation", "rubato_github_installations_suspended"],
+  ["Companion refusals", "rubato_companion_refused_total"],
+  ["Graph sources per companion", "rubato_graph_snapshots_total"],
+  ["Graph sources per companion", "rubato_graph_sources_truncated_total"],
 ];
 
 type Panel = { id?: number; title: string; type?: string; targets?: { expr?: string }[] };

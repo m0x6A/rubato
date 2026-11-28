@@ -4,9 +4,7 @@
 //! and read back from both.
 
 use futures_util::StreamExt;
-use rubato_protocol::{
-    IssueRef, MapRef, Overview, PinRequest, WebEvent, WorkspaceInfo, workspace::routes::scoped,
-};
+use rubato_protocol::{IssueRef, MapRef, Overview, PinRequest, WebEvent, WorkspaceInfo};
 use rubato_server::kernel::config::Config;
 use rubato_server::kernel::db;
 use rubato_server::kernel::github::FakeGitHub;
@@ -27,6 +25,11 @@ seams:
   - { id: storefront-server, from: storefront, to: rubato-server, owner: rubato-server }
 "#;
 
+/// A map-scoped path in a workspace of tenant `default` (ADR 0089).
+fn scoped(ws: &str, path: &str) -> String {
+    rubato_protocol::workspace::routes::scoped("default", ws, path)
+}
+
 struct H {
     url: String,
     app: App,
@@ -44,6 +47,7 @@ async fn two_workspaces() -> H {
     let mut cfg = Config::for_tests(db_url, "m0x6A");
     cfg.workspaces = vec![
         WorkspaceEntry {
+            tenant: rubato_server::kernel::tenancy::TenantId::default_tenant(),
             id: "default".into(),
             name: Some("Rubato".into()),
             map_repo: "m0x6A/rubato".into(),
@@ -53,6 +57,7 @@ async fn two_workspaces() -> H {
             settings: Default::default(),
         },
         WorkspaceEntry {
+            tenant: rubato_server::kernel::tenancy::TenantId::default_tenant(),
             id: "shop".into(),
             name: None,
             map_repo: "acme/shop-map".into(),
@@ -68,7 +73,7 @@ async fn two_workspaces() -> H {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let router = app::router(app.clone());
+    let router = app::router_before_tenants(app.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     H {
         url: format!("http://{addr}"),
@@ -86,7 +91,7 @@ impl H {
     }
 
     async fn overview(&self, ws: Option<&str>) -> Overview {
-        let path = ws.map_or("/api/overview".to_string(), |w| scoped(w, "/api/overview"));
+        let path = scoped(ws.unwrap_or("default"), "/api/overview");
         self.req(reqwest::Method::GET, &path)
             .send()
             .await
@@ -236,7 +241,10 @@ async fn a_pin_and_a_draft_op_in_one_workspace_stay_there() {
 #[tokio::test]
 async fn a_layout_change_tells_browsers_which_workspace_changed() {
     let h = two_workspaces().await;
-    let ws_url = format!("ws://{}/ws/web", h.url.trim_start_matches("http://"));
+    let ws_url = format!(
+        "ws://{}/ws/web?t=default",
+        h.url.trim_start_matches("http://")
+    );
     let mut req =
         tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(ws_url)
             .unwrap();
@@ -304,6 +312,7 @@ async fn shared_auth() -> H {
         let file = tmp.path().join(format!("{id}.yml"));
         std::fs::write(&file, yaml).unwrap();
         entries.push(WorkspaceEntry {
+            tenant: rubato_server::kernel::tenancy::TenantId::default_tenant(),
             id: id.into(),
             name: None,
             map_repo: format!("acme/{id}-map"),
@@ -322,7 +331,7 @@ async fn shared_auth() -> H {
             "issue": { "repo": "acme/auth", "number": n }, "path": format!("docs/plans/{n}.md"),
             "affected_parts": [{ "node": part, "status": "affected", "change": "x" }], "o_rows": []
         });
-        sqlx::query("INSERT INTO plans (repo, number, branch, path, plan, parse_error, fetched_at, approval_sha) VALUES ('acme/auth', ?, ?, ?, ?, NULL, '2026-11-14T08:00:00Z', ?)")
+        sqlx::query("INSERT INTO plans (tenant_id, repo, number, branch, path, plan, parse_error, fetched_at, approval_sha) VALUES ('default', 'acme/auth', ?, ?, ?, ?, NULL, '2026-11-14T08:00:00Z', ?)")
             .bind(n).bind(format!("issue/{n}-x")).bind(format!("docs/plans/{n}.md")).bind(plan.to_string()).bind(SHA)
             .execute(&app.db).await.unwrap();
     }
@@ -330,7 +339,7 @@ async fn shared_auth() -> H {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let router = app::router(app.clone());
+    let router = app::router_before_tenants(app.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     H {
         url: format!("http://{addr}"),
@@ -447,5 +456,57 @@ async fn an_issue_pinned_in_another_workspace_says_so() {
             .issues
             .iter()
             .any(|i| i.issue.number == 8)
+    );
+}
+
+/// Plan 345, design §11.3 (the backlog gap): a workspace's backlog is the open issues of the
+/// repositories its own map names. Before, every workspace listed every open issue.
+#[tokio::test]
+async fn a_workspaces_backlog_holds_only_its_own_maps_repositories() {
+    let h = two_workspaces().await;
+    for (repo, number) in [("m0x6A/rubato", 900), ("acme/shop", 901)] {
+        sqlx::query(
+            "INSERT INTO open_issues (tenant_id, repo, number, title, url, labels, updated_at) VALUES ('default', ?, ?, 't', 'u', '[]', '2026-11-28T00:00:00+00:00')",
+        )
+        .bind(repo)
+        .bind(number)
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO backlog_repos (tenant_id, repo, listed_at) VALUES ('default', ?, '2026-11-28T00:00:00+00:00')",
+        )
+        .bind(repo)
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    }
+    let listed = |o: &Overview| {
+        (
+            o.backlog
+                .issues
+                .iter()
+                .map(|i| i.issue.to_string())
+                .collect::<Vec<_>>(),
+            o.backlog
+                .repos
+                .iter()
+                .map(|r| r.repo.clone())
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(
+        listed(&h.overview(None).await),
+        (
+            vec!["m0x6A/rubato#900".to_owned()],
+            vec!["m0x6A/rubato".to_owned()]
+        )
+    );
+    assert_eq!(
+        listed(&h.overview(Some("shop")).await),
+        (
+            vec!["acme/shop#901".to_owned()],
+            vec!["acme/shop".to_owned()]
+        )
     );
 }

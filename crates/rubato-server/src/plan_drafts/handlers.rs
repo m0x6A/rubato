@@ -30,15 +30,42 @@ fn not_found(app: &App, route: &str, user: &str) -> Refused {
     )
 }
 
+/// The `{draft_id}` of a draft route. Named, because the path also carries `{tenant}`.
+#[derive(serde::Deserialize)]
+pub struct DraftParam {
+    draft_id: Uuid,
+}
+
+impl From<Uuid> for DraftParam {
+    fn from(draft_id: Uuid) -> Self {
+        Self { draft_id }
+    }
+}
+
+/// The `{draft_id}` and `{rev}` of the revision route.
+#[derive(serde::Deserialize)]
+pub struct RevisionParam {
+    draft_id: Uuid,
+    rev: u32,
+}
+
+impl From<(Uuid, u32)> for RevisionParam {
+    fn from((draft_id, rev): (Uuid, u32)) -> Self {
+        Self { draft_id, rev }
+    }
+}
+
 pub async fn draft(
     State(app): State<App>,
+    scope: crate::kernel::tenancy::TenantScope,
     CurrentUser(user): CurrentUser,
-    Path(draft_id): Path<Uuid>,
+    Path(DraftParam { draft_id }): Path<DraftParam>,
 ) -> Result<Json<DraftView>, Refused> {
-    let Some(d) = store::get(&app.db, draft_id).await.map_err(internal)? else {
+    let t = scope.tenant();
+    let Some(d) = store::get(&app.db, t, draft_id).await.map_err(internal)? else {
         return Err(not_found(&app, routes::DRAFT, &user));
     };
-    let revisions = store::revisions(&app.db, draft_id)
+    let revisions = store::revisions(&app.db, t, draft_id)
         .await
         .map_err(internal)?
         .into_iter()
@@ -57,10 +84,12 @@ pub async fn draft(
 
 pub async fn revision(
     State(app): State<App>,
+    scope: crate::kernel::tenancy::TenantScope,
     CurrentUser(user): CurrentUser,
-    Path((draft_id, rev)): Path<(Uuid, u32)>,
+    Path(RevisionParam { draft_id, rev }): Path<RevisionParam>,
 ) -> Result<Json<DraftRevision>, Refused> {
-    let Some(r) = store::revision_of(&app.db, draft_id, rev)
+    let t = scope.tenant();
+    let Some(r) = store::revision_of(&app.db, t, draft_id, rev)
         .await
         .map_err(internal)?
     else {

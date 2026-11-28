@@ -28,6 +28,7 @@ pub async fn enqueue(
         return Ok(None);
     };
     let row = MessageRow {
+        tenant: target.tenant.clone(),
         id: Uuid::new_v4(),
         launch_id,
         session_id: target.session_id.clone(),
@@ -54,7 +55,7 @@ pub async fn enqueue(
         "session message queued"
     );
     dispatch::dispatch(app, launch_id).await;
-    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     Ok(Some(row.id))
 }
 
@@ -86,6 +87,7 @@ pub async fn enqueue_chat_via(
         return Ok(Err(ChatRefused::UnknownLaunch));
     };
     let row = MessageRow {
+        tenant: target.tenant.clone(),
         id: Uuid::new_v4(),
         launch_id,
         session_id: target.session_id.clone(),
@@ -114,7 +116,7 @@ pub async fn enqueue_chat_via(
         "session message queued for a lead"
     );
     dispatch::dispatch(app, launch_id).await;
-    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     Ok(Ok(row.id))
 }
 

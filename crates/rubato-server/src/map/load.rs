@@ -3,6 +3,7 @@
 
 use super::store;
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use crate::kernel::workspaces::WorkspaceEntry;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -17,16 +18,36 @@ use tracing::Instrument as _;
 /// and keeps its last good map.
 pub async fn reload(app: &App) -> Result<Arc<LoadedMap>> {
     let (entries, _) = app.workspace_entries();
-    let mut default = None;
+    // The answer is the first team's workspace `default` when the server holds it, as before
+    // tenants; no tenant needs one (plan 345, Decision 12), so otherwise the first workspace's.
+    let (mut default, mut first) = (None, None);
     for w in &entries {
         let got = reload_ws(app, w).await;
-        if w.id == rubato_protocol::DEFAULT_WORKSPACE {
+        if let Err(e) = &got {
+            tracing::error!(rubato.tenant = %w.tenant, rubato.workspace = %w.id, error = %format!("{e:#}"), "workspace map load failed");
+        }
+        if w.key() == crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE)
+        {
             default = Some(got);
-        } else if let Err(e) = got {
-            tracing::error!(rubato.workspace = %w.id, error = %format!("{e:#}"), "workspace map load failed");
+        } else if first.is_none() {
+            first = Some(got);
         }
     }
-    default.unwrap_or_else(|| Err(anyhow::anyhow!("no workspace default configured")))
+    default
+        .or(first)
+        .unwrap_or_else(|| Err(anyhow::anyhow!("no workspace configured")))
+}
+
+/// The GitHub client a workspace's map is read through: the installation that covers the map
+/// repository in the workspace's own tenant (ADR 0087, design §5.2). A map repository that is
+/// another tenant's, or nobody's, is an error, never a read.
+fn client(app: &App, w: &WorkspaceEntry) -> Result<crate::kernel::github::Client> {
+    app.github.for_repo(&w.tenant, &w.map_repo).ok_or_else(|| {
+        crate::kernel::github::NotCovered {
+            repo: w.map_repo.clone(),
+        }
+        .into()
+    })
 }
 
 /// Fetch, validate and cache one workspace's map. Falls back to the cached copy when GitHub fails.
@@ -36,13 +57,12 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
         return load_from_file(app, w, file).await;
     }
     let fetched = async {
-        let sha = app
-            .github
+        let github = client(app, cfg)?;
+        let sha = github
             .branch_sha(&cfg.map_repo, &cfg.map_ref)
             .await?
             .context("map ref not found")?;
-        let yaml = app
-            .github
+        let yaml = github
             .file(&cfg.map_repo, &cfg.map_path, &cfg.map_ref)
             .instrument(crate::kernel::github::part_read(
                 crate::kernel::github::READS_MAP,
@@ -59,11 +79,11 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
         Ok((version, yaml)) => (version, yaml, None),
         Err(e) => {
             app.metrics.map_load_failures.add(1, &ws_attr(w));
-            if let Some(m) = app.map_of(&w.id).await {
+            if let Some(m) = app.map_of(&w.key()).await {
                 tracing::warn!(error = %e, "map fetch failed; keeping cached version {}", m.version);
                 return Ok(m);
             }
-            if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.id).await? {
+            if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.key()).await? {
                 tracing::warn!(error = %e, %loaded_at, "map fetch failed; using the database copy {version}");
                 (version, yaml, Some((loaded_at, e)))
             } else {
@@ -86,15 +106,12 @@ pub async fn reload_ws(app: &App, w: &WorkspaceEntry) -> Result<Arc<LoadedMap>> 
     };
     still_current(app, w)?;
     if stored_at.is_none() {
-        store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
+        store::store_map(&app.db, &w.key(), &version, &loaded.yaml, loaded.loaded_at).await?;
     }
-    let loaded = app.set_map(&w.id, loaded).await;
+    let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
-        &[
-            KeyValue::new(attr::MAP_VERSION, version.clone()),
-            KeyValue::new(attr::WORKSPACE, w.id.clone()),
-        ],
+        &with_ws(w, KeyValue::new(attr::MAP_VERSION, version.clone())),
     );
     record_loaded_at(app, w, loaded.loaded_at);
     tracing::info!(rubato.workspace = %w.id, version = %version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
@@ -130,13 +147,12 @@ pub async fn fetch_and_validate(app: &App, w: &WorkspaceEntry) -> Result<LoadedM
             (file_version(&yaml), yaml)
         }
         None => {
-            let sha = app
-                .github
+            let github = client(app, w)?;
+            let sha = github
                 .branch_sha(&w.map_repo, &w.map_ref)
                 .await?
                 .context("map ref not found")?;
-            let yaml = app
-                .github
+            let yaml = github
                 .file(&w.map_repo, &w.map_path, &w.map_ref)
                 .instrument(crate::kernel::github::part_read(
                     crate::kernel::github::READS_MAP,
@@ -161,19 +177,16 @@ pub async fn apply(app: &App, w: &WorkspaceEntry, loaded: LoadedMap) -> Result<A
     still_current(app, w)?;
     store::store_map(
         &app.db,
-        &w.id,
+        &w.key(),
         &loaded.version,
         &loaded.yaml,
         loaded.loaded_at,
     )
     .await?;
-    let loaded = app.set_map(&w.id, loaded).await;
+    let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
-        &[
-            KeyValue::new(attr::MAP_VERSION, loaded.version.clone()),
-            KeyValue::new(attr::WORKSPACE, w.id.clone()),
-        ],
+        &with_ws(w, KeyValue::new(attr::MAP_VERSION, loaded.version.clone())),
     );
     record_loaded_at(app, w, loaded.loaded_at);
     tracing::info!(rubato.workspace = %w.id, version = %loaded.version, nodes = loaded.map.nodes.len(), seams = loaded.map.seams.len(), "map loaded");
@@ -182,7 +195,7 @@ pub async fn apply(app: &App, w: &WorkspaceEntry, loaded: LoadedMap) -> Result<A
 
 /// A deleted workspace's map leaves memory (ADR 0075). Its cached row is kept, like every row
 /// of a deleted workspace.
-pub async fn forget(app: &App, ws: &str) {
+pub async fn forget(app: &App, ws: &WsKey) {
     app.maps.write().await.remove(ws);
 }
 
@@ -219,14 +232,11 @@ async fn load_from_file(
         yaml,
     };
     still_current(app, w)?;
-    store::store_map(&app.db, &w.id, &version, &loaded.yaml, loaded.loaded_at).await?;
-    let loaded = app.set_map(&w.id, loaded).await;
+    store::store_map(&app.db, &w.key(), &version, &loaded.yaml, loaded.loaded_at).await?;
+    let loaded = app.set_map(&w.key(), loaded).await;
     app.metrics.map_loaded.record(
         1,
-        &[
-            KeyValue::new(attr::MAP_VERSION, version.clone()),
-            KeyValue::new(attr::WORKSPACE, w.id.clone()),
-        ],
+        &with_ws(w, KeyValue::new(attr::MAP_VERSION, version.clone())),
     );
     record_loaded_at(app, w, loaded.loaded_at);
     tracing::info!(rubato.workspace = %w.id, version = %version, file = %file.display(), "map loaded from file");
@@ -263,10 +273,10 @@ fn parse(app: &App, w: &WorkspaceEntry, yaml: &str, count: bool) -> Result<Syste
 pub async fn warm(app: &App) -> Result<()> {
     let (entries, _) = app.workspace_entries();
     for w in &entries {
-        if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.id).await? {
+        if let Some((version, yaml, loaded_at)) = store::load_map(&app.db, &w.key()).await? {
             let map: SystemMap = serde_yaml_ng::from_str(&yaml)?;
             app.set_map(
-                &w.id,
+                &w.key(),
                 LoadedMap {
                     map,
                     version,
@@ -290,8 +300,15 @@ fn record_loaded_at(app: &App, w: &WorkspaceEntry, at: DateTime<Utc>) {
         .record(u64::try_from(at.timestamp()).unwrap_or(0), &ws_attr(w));
 }
 
-fn ws_attr(w: &WorkspaceEntry) -> [KeyValue; 1] {
-    [KeyValue::new(attr::WORKSPACE, w.id.clone())]
+/// `first`, then the workspace's own labels.
+fn with_ws(w: &WorkspaceEntry, first: KeyValue) -> Vec<KeyValue> {
+    let mut all = vec![first];
+    all.extend(ws_attr(w));
+    all
+}
+
+fn ws_attr(w: &WorkspaceEntry) -> Vec<KeyValue> {
+    crate::kernel::tenancy::ws_attrs(&w.key())
 }
 
 #[cfg(test)]
@@ -351,7 +368,12 @@ mod tests {
         let e = reload(&a).await.unwrap_err();
         assert!(format!("{e:#}").contains("\"web-server\""), "{e:#}");
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
-        let kept = a.default_map().await.unwrap();
+        let kept = a
+            .map_of(&crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            ))
+            .await
+            .unwrap();
         assert_eq!(kept.version, good.version);
         assert_eq!(kept.map.name, "flows-fixture");
     }
@@ -385,7 +407,12 @@ mod tests {
         assert!(e.contains("scenario \"off-flow\" step 1"), "{e}");
         assert!(e.contains("name one with carries"), "{e}");
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
-        let kept = a.default_map().await.unwrap();
+        let kept = a
+            .map_of(&crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            ))
+            .await
+            .unwrap();
         assert_eq!(kept.map.name, "scenarios-fixture");
     }
 
@@ -531,7 +558,7 @@ mod tests {
         let stored_at = Utc::now() - chrono::Duration::hours(3);
         store::store_map(
             &a.db,
-            rubato_protocol::DEFAULT_WORKSPACE,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
             "sha-old",
             MAP,
             stored_at,
@@ -548,10 +575,13 @@ mod tests {
         assert_eq!(only(&reader, metric::MAP_LOADED_AT).value, at);
         assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1);
         // The stored row keeps its time.
-        let (_, _, row_at) = store::load_map(&a.db, rubato_protocol::DEFAULT_WORKSPACE)
-            .await
-            .unwrap()
-            .unwrap();
+        let (_, _, row_at) = store::load_map(
+            &a.db,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(row_at.timestamp(), stored_at.timestamp());
     }
 
@@ -571,7 +601,7 @@ mod tests {
             let (a, reader) = failing_github_over(&tmp.path().join(format!("{n}.db"))).await;
             store::store_map(
                 &a.db,
-                rubato_protocol::DEFAULT_WORKSPACE,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 "sha-bad",
                 yaml,
                 Utc::now(),
@@ -587,7 +617,13 @@ mod tests {
             assert!(e.contains("the database copy sha-bad is unusable"), "{e}");
             assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, 1, "{yaml}");
             assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
-            assert!(a.default_map().await.is_none());
+            assert!(
+                a.map_of(&crate::kernel::tenancy::WsKey::of_default(
+                    rubato_protocol::DEFAULT_WORKSPACE
+                ))
+                .await
+                .is_none()
+            );
         }
     }
 
@@ -629,12 +665,21 @@ mod tests {
             assert_eq!(only(&reader, metric::MAP_LOAD_FAILURES).value, n as u64 + 1);
             assert!(reader.points(metric::MAP_LOADED_AT).is_empty());
             assert!(
-                store::load_map(&a.db, rubato_protocol::DEFAULT_WORKSPACE)
-                    .await
-                    .unwrap()
-                    .is_none()
+                store::load_map(
+                    &a.db,
+                    &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE)
+                )
+                .await
+                .unwrap()
+                .is_none()
             );
-            assert!(a.default_map().await.is_none());
+            assert!(
+                a.map_of(&crate::kernel::tenancy::WsKey::of_default(
+                    rubato_protocol::DEFAULT_WORKSPACE
+                ))
+                .await
+                .is_none()
+            );
         }
     }
 
@@ -660,9 +705,17 @@ mod tests {
         });
         let e = reload_ws(&a, &old).await.unwrap_err().to_string();
         assert!(e.contains("changed meanwhile"), "{e}");
-        assert!(a.map_of("default").await.is_none(), "not applied");
         assert!(
-            store::load_map(&a.db, "default").await.unwrap().is_none(),
+            a.map_of(&crate::kernel::tenancy::WsKey::of_default("default"))
+                .await
+                .is_none(),
+            "not applied"
+        );
+        assert!(
+            store::load_map(&a.db, &crate::kernel::tenancy::WsKey::of_default("default"))
+                .await
+                .unwrap()
+                .is_none(),
             "not cached"
         );
         assert!(

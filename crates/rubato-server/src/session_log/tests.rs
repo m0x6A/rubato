@@ -37,7 +37,7 @@ async fn harness(caps: &[&str]) -> H {
     );
     Arc::get_mut(&mut app).unwrap().metrics = metrics;
     let (launch, companion) = (Uuid::new_v4(), Uuid::new_v4());
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 122, '{}', ?)")
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, 'm0x6A', 'm0x6A/rubato', 122, '{}', ?)")
         .bind(launch.to_string())
         .bind(companion.to_string())
         .bind(ts(Utc::now()))
@@ -78,8 +78,9 @@ fn hook(
 async fn entries(h: &H) -> Vec<rubato_protocol::SessionLogEntry> {
     handlers::log(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser("alice".into()),
-        Path(h.launch),
+        Path(h.launch.into()),
     )
     .await
     .unwrap()

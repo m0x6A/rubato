@@ -58,5 +58,7 @@ url = "2"
 # The OpenAI-compatible speech stub in kernel/speech.rs reads multipart forms (plan 146).
 axum = { version = "0.8", features = ["multipart"] }
 opentelemetry_sdk = { version = "=0.33.0", features = ["testing"] }
+# The tenant scoping check parses every query the server sends (plan 345 design §11.1).
+sqlparser = { version = "0.64.0", features = ["visitor"] }
 tempfile = "3"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }

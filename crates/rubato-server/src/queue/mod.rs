@@ -6,4 +6,6 @@ mod handlers;
 mod store;
 
 pub use handlers::{add, record_depth, remove, reorder};
-pub use store::{all, launch_not_started, launch_started};
+pub use store::{
+    all, drop_companions, drop_companions_in, drop_repos, launch_not_started, launch_started,
+};

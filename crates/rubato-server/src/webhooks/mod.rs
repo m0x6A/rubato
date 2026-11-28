@@ -34,6 +34,7 @@ pub async fn pending(app: &App) -> Vec<Pending> {
     match store::pending(&app.db, PASS_MAX_ROWS).await {
         Ok(rows) => rows
             .into_iter()
+            .filter(|r| !event::is_installation_event(&r.event))
             .filter_map(|r| {
                 let target = event::target(
                     &r.event,
@@ -52,6 +53,63 @@ pub async fn pending(app: &App) -> Vec<Pending> {
             Vec::new()
         }
     }
+}
+
+/// What an accepted `installation` or `installation_repositories` delivery says (design §5.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+    Suspended,
+    Unsuspended,
+    Deleted,
+    Repositories,
+}
+
+/// One pending delivery about an installation itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallationChange {
+    pub delivery_id: String,
+    pub installation: u64,
+    pub change: Change,
+}
+
+/// The pending deliveries about installations, oldest first. The poll loop applies each to the
+/// installation's tenant and settles it with [`settle`]. A row that names no installation, or an
+/// action this server does not act on, is settled here.
+pub async fn installation_changes(app: &App) -> Vec<InstallationChange> {
+    let rows = match store::pending(&app.db, PASS_MAX_ROWS).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!(error = %format!("{e:#}"), "reading pending webhook deliveries failed");
+            return Vec::new();
+        }
+    };
+    let (mut out, mut stray) = (Vec::new(), Vec::new());
+    for r in rows
+        .into_iter()
+        .filter(|r| event::is_installation_event(&r.event))
+    {
+        let change = match (r.event.as_str(), r.action.as_deref()) {
+            ("installation", Some("suspend")) => Some(Change::Suspended),
+            ("installation", Some("unsuspend")) => Some(Change::Unsuspended),
+            ("installation", Some("deleted")) => Some(Change::Deleted),
+            ("installation_repositories", _) => Some(Change::Repositories),
+            _ => None,
+        };
+        match (r.installation, change) {
+            (Some(installation), Some(change)) => out.push(InstallationChange {
+                delivery_id: r.delivery_id,
+                installation,
+                change,
+            }),
+            _ => stray.push(r.delivery_id),
+        }
+    }
+    if !stray.is_empty()
+        && let Err(e) = store::mark(&app.db, &stray, app.clock.now().timestamp()).await
+    {
+        tracing::error!(error = %format!("{e:#}"), "marking webhook deliveries failed");
+    }
+    out
 }
 
 /// Settle a pass (D9): `done` rows are marked; each `failed` row gets one more attempt, and at

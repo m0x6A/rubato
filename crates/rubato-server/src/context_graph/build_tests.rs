@@ -56,7 +56,7 @@ fn map_naming(repos: &[&str]) -> SystemMap {
 
 async fn set_map(app: &App, repos: &[&str]) {
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map: map_naming(repos),
             version: "v".into(),
@@ -196,7 +196,9 @@ async fn a_failed_build_keeps_the_last_good_rows_and_says_why() {
         "{:?}",
         row.error
     );
-    let shown = overview(&app).await.unwrap();
+    let shown = overview(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     assert!(shown.sources[0].error.is_some());
 
     // GitHub refusing the head call is a failure of its own kind.
@@ -243,7 +245,7 @@ async fn repositories_build_one_after_the_other_and_an_uncovered_one_is_not_aske
             tarball(&fixture_files()),
         );
     });
-    sqlx::query("INSERT INTO uncovered_repos (repo, seen_at) VALUES ('m0x6A/private', '2026-11-26T17:00:00Z')")
+    sqlx::query("INSERT INTO uncovered_repos (tenant_id, repo, seen_at) VALUES ('default', 'm0x6A/private', '2026-11-26T17:00:00Z')")
         .execute(&app.db)
         .await
         .unwrap();
@@ -368,7 +370,9 @@ async fn a_server_whose_map_loads_after_the_first_tick_still_builds_soon() {
         .maps
         .write()
         .await
-        .remove(rubato_protocol::DEFAULT_WORKSPACE)
+        .remove(&crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        ))
         .unwrap();
     let (stop, shutdown) = tokio::sync::watch::channel(false);
     // An interval far longer than the test: only the no-map retry can build in time.
@@ -379,10 +383,10 @@ async fn a_server_whose_map_loads_after_the_first_tick_still_builds_soon() {
         0,
         "no map, nothing to ask for"
     );
-    app.maps
-        .write()
-        .await
-        .insert(rubato_protocol::DEFAULT_WORKSPACE.to_owned(), loaded);
+    app.maps.write().await.insert(
+        crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        loaded,
+    );
     until("the build after the map loaded", || {
         calls(&github, "tarball") == 1
     })
@@ -425,7 +429,7 @@ fn a_sources_age_rises_from_its_last_current_check_also_when_it_was_never_built(
                 "repo/m0x6A/rubato".to_owned(),
                 (Some(at("2026-11-26T17:00:00Z")), 10, 3),
             ),
-            ("team".to_owned(), (None, 0, 0)),
+            ("team/default".to_owned(), (None, 0, 0)),
         ]
         .into(),
     };
@@ -434,7 +438,7 @@ fn a_sources_age_rises_from_its_last_current_check_also_when_it_was_never_built(
         observed.ages(first_seen, at("2026-11-26T17:45:00Z")),
         [
             ("repo/m0x6A/rubato".to_owned(), 2700),
-            ("team".to_owned(), 6300)
+            ("team/default".to_owned(), 6300)
         ]
     );
     // No tick since: the same stored time, a larger age. That is what the alert reads.

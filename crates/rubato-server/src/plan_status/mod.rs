@@ -98,7 +98,7 @@ fn takers(app: &App) -> Vec<(Uuid, Uuid)> {
 /// Every poll tick: derive each live launch's status from its own workspace's overview and send
 /// what changed since the last one sent on that companion's socket (`welcome` for a socket not
 /// sent on yet, `change` otherwise).
-pub async fn on_tick(app: &App, built: &[(String, Vec<IssueSummary>)]) {
+pub async fn on_tick(app: &App, built: &[(crate::kernel::tenancy::WsKey, Vec<IssueSummary>)]) {
     let now = Utc::now();
     let pushes = app.slots.get::<Pushes>();
     let companions = takers(app);
@@ -110,7 +110,7 @@ pub async fn on_tick(app: &App, built: &[(String, Vec<IssueSummary>)]) {
             .filter(|s| s.companion_id == *c && s.status != SessionStatus::Ended)
         {
             let Some(l) = s.launch_id else { continue };
-            let target = match launch::launch_target(&app.db, l).await {
+            let target = match launch::acting_target(app, l).await {
                 Ok(Some(t)) if t.companion_id == *c => t,
                 Ok(_) => continue,
                 Err(e) => {
@@ -120,7 +120,7 @@ pub async fn on_tick(app: &App, built: &[(String, Vec<IssueSummary>)]) {
             };
             let Some(summary) = built
                 .iter()
-                .find(|(ws, _)| *ws == target.workspace)
+                .find(|(ws, _)| launch::ws_key(app, &target).as_ref() == Some(ws))
                 .and_then(|(_, issues)| issues.iter().find(|i| i.issue == target.issue))
             else {
                 count(app, "change", "no_summary");

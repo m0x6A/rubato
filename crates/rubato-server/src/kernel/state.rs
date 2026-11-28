@@ -2,10 +2,11 @@
 //! notify sender. In the kernel because four or more slices need it (design §9).
 
 use crate::kernel::config::Config;
-use crate::kernel::github::GitHubApi;
+use crate::kernel::github::{GitHubApi, GitHubApps};
 use crate::kernel::signer::Signer;
 use crate::kernel::speech::Speech;
 use crate::kernel::telemetry::Metrics;
+use crate::kernel::tenancy::{TenantId, WsKey};
 use chrono::{DateTime, Utc};
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
@@ -90,7 +91,8 @@ impl Clock {
 pub struct AppState {
     pub db: SqlitePool,
     pub config: Arc<Config>,
-    pub github: Arc<dyn GitHubApi>,
+    /// One client per attached installation, routed by tenant (ADR 0087, design §5.1).
+    pub github: GitHubApps,
     /// Companions with a websocket open right now.
     pub companions: Mutex<HashMap<Uuid, CompanionConn>>,
     /// What each companion announced in its last Hello (ADR 0051), kept after it disconnects so
@@ -104,13 +106,13 @@ pub struct AppState {
     workspaces: tokio::sync::watch::Sender<crate::kernel::workspaces::Registry>,
     /// The loaded map of each workspace, by workspace id (ADR 0044). A workspace whose map has
     /// never loaded has no entry.
-    pub maps: RwLock<BTreeMap<String, Arc<LoadedMap>>>,
+    pub maps: RwLock<BTreeMap<WsKey, Arc<LoadedMap>>>,
     pub metrics: Metrics,
     pub signer: Signer,
     /// Each workspace's latest traffic report and source state, by workspace id (ADR 0075). A
     /// workspace with no entry has no source. The traffic slice writes it; the overview reads
     /// its own workspace's with `traffic_of`.
-    pub traffic: RwLock<BTreeMap<String, TrafficLatest>>,
+    pub traffic: RwLock<BTreeMap<WsKey, TrafficLatest>>,
     pub clock: Clock,
     /// Each companion's latest session snapshot, by the pairing's companion id: what
     /// `session_snapshots` holds, kept in memory for slices that may not name `companion_link`
@@ -131,6 +133,12 @@ pub struct AppState {
     /// The speech adapter while voice is on with a provider configured (ADR 0073). Tests swap it
     /// for a counting or blocking fake with `set_speech`.
     speech: std::sync::RwLock<Option<Arc<dyn Speech>>>,
+    /// Who a login is across tenants (ADR 0087, 0088): the composition root installs the
+    /// tenancy adapter with `set_admission`; until then nobody is in a tenant.
+    admission: std::sync::RwLock<Arc<dyn crate::kernel::admission::Admission>>,
+    /// The token buckets and the bound on concurrent requests of `kernel::limits::guard`
+    /// (ADR 0090). Per server, so one test's requests never spend another's tokens.
+    pub limiter: crate::kernel::limits::Limiter,
 }
 
 /// One value per type, made on first use: lets a slice keep in-memory state on the `App`
@@ -152,19 +160,24 @@ impl Slots {
 pub type App = Arc<AppState>;
 
 impl AppState {
+    /// A server with one GitHub context: a personal token, local repositories or the fake.
     pub fn new(db: SqlitePool, config: Config, github: Arc<dyn GitHubApi>) -> App {
+        Self::with_github(db, config, GitHubApps::one(github))
+    }
+
+    pub fn with_github(db: SqlitePool, config: Config, github: GitHubApps) -> App {
         let (web_tx, _) = broadcast::channel(256);
         let signer = Signer::new(config.session_secret.as_bytes());
         // Before the traffic task runs: a source the environment configures is configured for
         // every workspace held now, the state the seed will copy (ADR 0075, Decision 7).
-        let traffic: BTreeMap<String, TrafficLatest> = if config.traffic_configured() {
+        let traffic: BTreeMap<WsKey, TrafficLatest> = if config.traffic_configured() {
             config
                 .workspace_entries()
                 .0
                 .into_iter()
                 .map(|w| {
                     (
-                        w.id,
+                        w.key(),
                         TrafficLatest {
                             report: None,
                             source: SourceStatus::Configured {
@@ -188,6 +201,8 @@ impl AppState {
             .map(crate::kernel::speech::from_config);
         Arc::new(Self {
             speech: std::sync::RwLock::new(speech),
+            admission: std::sync::RwLock::new(Arc::new(crate::kernel::admission::Unwired)),
+            limiter: Default::default(),
             db,
             config: Arc::new(config),
             github,
@@ -239,6 +254,80 @@ impl AppState {
         (r.entries.clone(), r.source)
     }
 
+    /// The tenant a repository is live in, for work that acts for no person (the poll, companion
+    /// intake, housekeeping): a repository belongs to at most one tenant (ADR 0087). An error
+    /// when no attached installation covers it, so nothing is read or written for it (design
+    /// §3.1). A request acts for the tenant of its `TenantScope`, never for this one.
+    pub fn repo_tenant(&self, repo: &str) -> anyhow::Result<TenantId> {
+        self.github.tenant_of(repo).ok_or_else(|| {
+            crate::kernel::github::NotCovered {
+                repo: repo.to_owned(),
+            }
+            .into()
+        })
+    }
+
+    /// Whether a companion's session shows in a tenant (design §3.1, the Companion class):
+    /// session snapshots carry no tenant, so a read for a tenant keeps only the sessions whose
+    /// repository is live in it. A session in no repository shows only on a server with one
+    /// GitHub context, where everything is tenant `default`'s.
+    pub fn session_in(&self, tenant: &TenantId, s: &SessionState) -> bool {
+        match s
+            .issue
+            .as_ref()
+            .map(|i| i.repo.as_str())
+            .or(s.repo.as_deref())
+        {
+            Some(repo) => self.github.tenant_of(repo).as_ref() == Some(tenant),
+            None => {
+                !self.github.routes_by_installation()
+                    && tenant.as_str() == crate::kernel::tenancy::DEFAULT_TENANT
+            }
+        }
+    }
+
+    /// Every tenant this server reads for: those with a live installation, in id order. With one
+    /// GitHub context, tenant `default`.
+    pub fn tenants(&self) -> Vec<TenantId> {
+        let mut out: Vec<TenantId> = self.github.live().into_iter().map(|l| l.tenant).collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Whether a tenant holds this workspace now.
+    pub fn holds_workspace(&self, key: &WsKey) -> bool {
+        self.workspaces
+            .borrow()
+            .entries
+            .iter()
+            .any(|w| w.id == key.ws && w.tenant == key.tenant)
+    }
+
+    /// One tenant's workspaces, in switcher order.
+    pub fn workspaces_of(
+        &self,
+        tenant: &TenantId,
+    ) -> Vec<crate::kernel::workspaces::WorkspaceEntry> {
+        self.workspaces
+            .borrow()
+            .entries
+            .iter()
+            .filter(|w| &w.tenant == tenant)
+            .cloned()
+            .collect()
+    }
+
+    /// One workspace's entry, if its tenant holds it.
+    pub fn workspace(&self, key: &WsKey) -> Option<crate::kernel::workspaces::WorkspaceEntry> {
+        self.workspaces
+            .borrow()
+            .entries
+            .iter()
+            .find(|w| w.id == key.ws && w.tenant == key.tenant)
+            .cloned()
+    }
+
     /// Replace the registry: the composition root at start, and slice `workspace_settings` on a
     /// change (ADR 0075). Every reader of `workspace_entries` sees it at once, and a task that
     /// subscribed is woken.
@@ -254,7 +343,7 @@ impl AppState {
     }
 
     /// One workspace's latest traffic report and source state; not configured when it has none.
-    pub async fn traffic_of(&self, ws: &str) -> TrafficLatest {
+    pub async fn traffic_of(&self, ws: &WsKey) -> TrafficLatest {
         self.traffic
             .read()
             .await
@@ -266,6 +355,16 @@ impl AppState {
     /// The speech adapter, if one is configured (ADR 0073).
     pub fn speech(&self) -> Option<Arc<dyn Speech>> {
         self.speech.read().unwrap().clone()
+    }
+
+    /// Install the admission adapter (the composition root, at start; tests that need it).
+    pub fn set_admission(&self, a: Arc<dyn crate::kernel::admission::Admission>) {
+        *self.admission.write().unwrap() = a;
+    }
+
+    /// The admission adapter, to call without holding the lock across an await.
+    pub fn admission(&self) -> Arc<dyn crate::kernel::admission::Admission> {
+        self.admission.read().unwrap().clone()
     }
 
     /// Replace the speech adapter: tests use a counting or blocking fake.
@@ -291,22 +390,15 @@ impl AppState {
 
     /// The loaded map of workspace `default`: what every route served before workspaces, and
     /// what unprefixed routes serve (ADR 0049).
-    pub async fn default_map(&self) -> Option<Arc<LoadedMap>> {
-        self.map_of(rubato_protocol::DEFAULT_WORKSPACE).await
-    }
-
     /// A shared pointer to the loaded map, not a copy (#171): a reload swaps the pointer, and a
     /// reader holding the old one keeps a consistent map.
-    pub async fn map_of(&self, ws: &str) -> Option<Arc<LoadedMap>> {
+    pub async fn map_of(&self, ws: &WsKey) -> Option<Arc<LoadedMap>> {
         self.maps.read().await.get(ws).cloned()
     }
 
-    pub async fn set_map(&self, ws: &str, map: LoadedMap) -> Arc<LoadedMap> {
+    pub async fn set_map(&self, ws: &WsKey, map: LoadedMap) -> Arc<LoadedMap> {
         let map = Arc::new(map);
-        self.maps
-            .write()
-            .await
-            .insert(ws.to_string(), Arc::clone(&map));
+        self.maps.write().await.insert(ws.clone(), Arc::clone(&map));
         map
     }
 
@@ -320,6 +412,21 @@ impl AppState {
                 .into_iter()
                 .map(|r| r.to_ascii_lowercase()),
         );
+        out
+    }
+
+    /// Every distinct repo the loaded maps of one tenant's workspaces name, each once, in order.
+    pub async fn repos_named_in(&self, tenant: &TenantId) -> Vec<String> {
+        let maps = self.maps.read().await;
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for (_, m) in maps.iter().filter(|(k, _)| k.tenant() == tenant) {
+            for r in m.map.repos_named() {
+                if seen.insert(r.to_ascii_lowercase()) {
+                    out.push(r.to_string());
+                }
+            }
+        }
         out
     }
 
@@ -341,30 +448,50 @@ impl AppState {
     /// Tell every browser something changed; they refetch the overview. One `info` line per
     /// change says why and to how many, so a change that reached nobody can be told from one
     /// that was never sent.
+    ///
+    /// For what concerns every tenant (a poll tick, a companion coming or going): it names no
+    /// tenant and no resource, so it tells another tenant nothing but that something changed.
+    /// A change of one tenant's data uses [`Self::notify_in`].
     pub fn notify(&self, reason: &str) {
         let subscribers = self.web_tx.receiver_count();
         tracing::info!(reason, rubato.subscribers = subscribers, "web fan-out");
         let _ = self.web_tx.send(WebEvent::Changed {
             at: Utc::now(),
             reason: reason.to_owned(),
+            tenant: None,
+            workspace: None,
+        });
+    }
+
+    /// Tell the browsers of one tenant that something of theirs changed (ADR 0087, design
+    /// §6.1): no other tenant's socket is sent it.
+    pub fn notify_in(&self, tenant: &TenantId, reason: &str) {
+        let subscribers = self.web_tx.receiver_count();
+        tracing::info!(reason, rubato.tenant = %tenant, rubato.subscribers = subscribers, "web fan-out");
+        let _ = self.web_tx.send(WebEvent::Changed {
+            at: Utc::now(),
+            reason: reason.to_owned(),
+            tenant: Some(tenant.to_string()),
             workspace: None,
         });
     }
 
     /// Tell every browser one workspace's map, layout or draft changed (ADR 0049): only clients
     /// of that workspace refetch. Changes that show in other workspaces too use `notify`.
-    pub fn notify_ws(&self, reason: &str, ws: &str) {
+    pub fn notify_ws(&self, reason: &str, ws: &WsKey) {
         let subscribers = self.web_tx.receiver_count();
         tracing::info!(
             reason,
-            rubato.workspace = ws,
+            rubato.tenant = %ws.tenant,
+            rubato.workspace = ws.ws(),
             rubato.subscribers = subscribers,
             "web fan-out"
         );
         let _ = self.web_tx.send(WebEvent::Changed {
             at: Utc::now(),
             reason: reason.to_owned(),
-            workspace: Some(ws.to_owned()),
+            tenant: Some(ws.tenant.to_string()),
+            workspace: Some(ws.ws().to_owned()),
         });
     }
 
@@ -381,6 +508,28 @@ impl AppState {
             rubato.route = route,
             rubato.reason = reason,
             rubato.user = user,
+            "web write rejected"
+        );
+    }
+
+    /// [`Self::reject`] for a refusal inside a tenant the caller is a member of (ADR 0087): the
+    /// count also says which tenant, so `TenantCrossAccess` names where the line was tested.
+    /// Never with a tenant id taken from a request that was not admitted to it: that would let
+    /// anyone mint label values.
+    pub fn reject_in(&self, tenant: &TenantId, route: &str, reason: &str, user: &str) {
+        self.metrics.web_rejected.add(
+            1,
+            &[
+                KeyValue::new(attr::ROUTE, route.to_owned()),
+                KeyValue::new(attr::DROP_REASON, reason.to_owned()),
+                KeyValue::new(attr::TENANT, tenant.to_string()),
+            ],
+        );
+        tracing::info!(
+            rubato.route = route,
+            rubato.reason = reason,
+            rubato.user = user,
+            rubato.tenant = %tenant,
             "web write rejected"
         );
     }
@@ -464,11 +613,12 @@ impl AppState {
 
     /// Tell browsers one resource the overview does not carry changed: only a view showing it
     /// refetches it (plan 122).
-    pub fn notify_resource(&self, resource: WebResource) {
+    pub fn notify_resource(&self, tenant: &TenantId, resource: WebResource) {
         let subscribers = self.web_tx.receiver_count();
-        tracing::info!(?resource, rubato.subscribers = subscribers, "web fan-out");
+        tracing::info!(?resource, rubato.tenant = %tenant, rubato.subscribers = subscribers, "web fan-out");
         let _ = self.web_tx.send(WebEvent::Updated {
             at: Utc::now(),
+            tenant: Some(tenant.to_string()),
             resource,
         });
     }
@@ -506,18 +656,43 @@ mod tests {
         );
         let pool = crate::kernel::db::connect(&cfg.database_url).await.unwrap();
         let app = AppState::new(pool, cfg, Arc::new(FakeGitHub::new()));
-        let set = app.set_map("default", loaded("v1")).await;
+        let set = app
+            .set_map(
+                &crate::kernel::tenancy::WsKey::of_default("default"),
+                loaded("v1"),
+            )
+            .await;
         let (a, b) = (
-            app.map_of("default").await.unwrap(),
-            app.default_map().await.unwrap(),
+            app.map_of(&crate::kernel::tenancy::WsKey::of_default("default"))
+                .await
+                .unwrap(),
+            app.map_of(&crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            ))
+            .await
+            .unwrap(),
         );
         assert!(
             Arc::ptr_eq(&a, &b) && Arc::ptr_eq(&a, &set),
             "a read copied the map"
         );
-        app.set_map("default", loaded("v2")).await;
+        app.set_map(
+            &crate::kernel::tenancy::WsKey::of_default("default"),
+            loaded("v2"),
+        )
+        .await;
         assert_eq!((a.version.as_str(), a.yaml.as_str()), ("v1", "# v1"));
-        assert_eq!(app.map_of("default").await.unwrap().version, "v2");
-        assert!(app.map_of("other").await.is_none());
+        assert_eq!(
+            app.map_of(&crate::kernel::tenancy::WsKey::of_default("default"))
+                .await
+                .unwrap()
+                .version,
+            "v2"
+        );
+        assert!(
+            app.map_of(&crate::kernel::tenancy::WsKey::of_default("other"))
+                .await
+                .is_none()
+        );
     }
 }

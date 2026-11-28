@@ -45,6 +45,7 @@ struct H {
 
 fn entry(id: &str, repo: &str, path: &str) -> WorkspaceEntry {
     WorkspaceEntry {
+        tenant: crate::kernel::tenancy::TenantId::default_tenant(),
         id: id.into(),
         name: None,
         map_repo: repo.into(),
@@ -137,7 +138,35 @@ async fn harness(configure: impl FnOnce(&mut Config)) -> H {
         g.unreadable.insert((USER.into(), "secret/code".into()));
     });
     let (reader, metrics) = metric_reader::start();
-    let mut app = AppState::new(pool, cfg, github.clone());
+    // ADR 0087: tenant `default` holds installation 34, which covers every repository here but
+    // the two under `secret/`: those are another tenant's (installation 99).
+    let client = github.clone();
+    let apps = crate::kernel::github::GitHubApps::installations(
+        github.clone(),
+        Box::new(move |_| Ok(client.clone() as crate::kernel::github::Client)),
+    );
+    let tenant = |t: &str| crate::kernel::github::Attached {
+        tenant: crate::kernel::tenancy::TenantId::parse(t).unwrap(),
+        suspended: false,
+    };
+    apps.set_routes(crate::kernel::github::Routes {
+        installations: [(34, tenant("default")), (99, tenant("other"))].into(),
+        repos: [
+            ("m0x6a/rubato", 34),
+            ("acme/shop-map", 34),
+            ("acme/shop", 34),
+            ("acme/blog-map", 34),
+            ("acme/blog", 34),
+            ("acme/leaky-map", 34),
+            ("acme/filed-map", 34),
+            ("acme/filed", 34),
+            ("secret/map", 99),
+            ("secret/code", 99),
+        ]
+        .map(|(r, i)| (r.to_owned(), i))
+        .into(),
+    });
+    let mut app = AppState::with_github(pool, cfg, apps);
     Arc::get_mut(&mut app).unwrap().metrics = metrics;
     start(&app).await.unwrap();
     map::reload(&app).await.unwrap();
@@ -174,6 +203,9 @@ async fn harness(configure: impl FnOnce(&mut Config)) -> H {
         .merge(scoped)
         .route("/api/workspaces", get(map::workspaces).post(super::create))
         .route("/api/traffic/sources", get(super::sources))
+        .layer(axum::middleware::from_fn(
+            crate::kernel::tenancy::test_scope,
+        ))
         .with_state(app.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     H {
@@ -410,12 +442,12 @@ fn table() -> Vec<Case> {
             reason::MAP_INVALID,
         ),
         post(
-            "a map repo the member cannot read",
+            "a map repo of another tenant",
             new_ws("hidden", "secret/map"),
             reason::REPO_UNREADABLE,
         ),
         post(
-            "a named repo the member cannot read",
+            "a map that names a repository of another tenant",
             new_ws("leaky", "acme/leaky-map"),
             reason::REPO_UNREADABLE,
         ),
@@ -487,11 +519,11 @@ async fn server(kind: Server, local: bool) -> H {
         }
     })
     .await;
-    sqlx::query("INSERT INTO map_draft_ops (op_id, op, author, created_at, workspace_id) VALUES ('op-1', '{}', 'm0x6A', '2026-11-16T00:00:00Z', 'default')")
+    sqlx::query("INSERT INTO map_draft_ops (tenant_id, op_id, op, author, created_at, workspace_id) VALUES ('default', 'op-1', '{}', 'm0x6A', '2026-11-16T00:00:00Z', 'default')")
         .execute(&h.app.db)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO map_cache (workspace_id, version, yaml, loaded_at) VALUES ('gone', 'v', 'x', '2026-11-16T00:00:00Z')")
+    sqlx::query("INSERT INTO map_cache (tenant_id, workspace_id, version, yaml, loaded_at) VALUES ('default', 'gone', 'v', 'x', '2026-11-16T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -729,10 +761,21 @@ async fn a_stale_edit_answers_409() {
 #[tokio::test]
 async fn a_ref_change_reloads_only_that_workspace() {
     let h = harness(|_| {}).await;
-    let default_before = h.app.map_of("default").await.unwrap();
+    let default_before = h
+        .app
+        .map_of(&crate::kernel::tenancy::WsKey::of_default("default"))
+        .await
+        .unwrap();
     let (entries, _) = h.app.workspace_entries();
     let old = entries.iter().find(|w| w.id == "shop").unwrap().clone();
-    assert_eq!(h.app.map_of("shop").await.unwrap().version, "sha-shop");
+    assert_eq!(
+        h.app
+            .map_of(&crate::kernel::tenancy::WsKey::of_default("shop"))
+            .await
+            .unwrap()
+            .version,
+        "sha-shop"
+    );
     let mut events = h.app.web_tx.subscribe();
 
     let mut u = h.unchanged("shop").await;
@@ -740,12 +783,20 @@ async fn a_ref_change_reloads_only_that_workspace() {
     let s = h.put_ok("shop", &u).await;
     assert_eq!((s.map_ref.as_str(), s.revision), ("next", 2));
 
-    let shop = h.app.map_of("shop").await.unwrap();
+    let shop = h
+        .app
+        .map_of(&crate::kernel::tenancy::WsKey::of_default("shop"))
+        .await
+        .unwrap();
     assert_eq!(
         (shop.version.as_str(), shop.map.name.as_str()),
         ("sha-shop-next", "shop next")
     );
-    let default_after = h.app.map_of("default").await.unwrap();
+    let default_after = h
+        .app
+        .map_of(&crate::kernel::tenancy::WsKey::of_default("default"))
+        .await
+        .unwrap();
     assert!(
         Arc::ptr_eq(&default_before, &default_after),
         "default's map was reloaded"
@@ -778,7 +829,8 @@ async fn a_ref_change_reloads_only_that_workspace() {
         "only shop: {seen:?}"
     );
 
-    // The member's own token read the map repo and the repo the map names (ADR 0030).
+    // ADR 0087: what a workspace may use is what the tenant's installations cover; nothing is
+    // read with the member's own token any more.
     let reads: Vec<String> = h
         .github
         .calls()
@@ -786,12 +838,19 @@ async fn a_ref_change_reloads_only_that_workspace() {
         .filter(|(m, _)| *m == "repo_as")
         .map(|(_, a)| a)
         .collect();
-    assert_eq!(reads, ["m0x6A acme/shop-map", "m0x6A acme/shop"]);
+    assert!(reads.is_empty(), "{reads:?}");
 
     // A poll's reload of the old ref that finishes afterwards is dropped.
     let e = map::reload_ws(&h.app, &old).await.unwrap_err().to_string();
     assert!(e.contains("changed meanwhile"), "{e}");
-    assert_eq!(h.app.map_of("shop").await.unwrap().version, "sha-shop-next");
+    assert_eq!(
+        h.app
+            .map_of(&crate::kernel::tenancy::WsKey::of_default("shop"))
+            .await
+            .unwrap()
+            .version,
+        "sha-shop-next"
+    );
     println!(
         "checked the reload, {} events, {} token reads and a dropped load",
         seen.len(),
@@ -846,7 +905,7 @@ async fn create_and_delete() {
     assert_eq!(status, 200);
 
     // A pin in the new workspace, then the delete: the pin and the cached map are kept.
-    sqlx::query("INSERT INTO pins (workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('blog', 'acme/blog', 1, 'node', 'storefront', 'm0x6A', '2026-11-16T00:00:00Z')")
+    sqlx::query("INSERT INTO pins (tenant_id, workspace_id, repo, number, kind, target, pinned_by, pinned_at) VALUES ('default', 'blog', 'acme/blog', 1, 'node', 'storefront', 'm0x6A', '2026-11-16T00:00:00Z')")
         .execute(&h.app.db)
         .await
         .unwrap();
@@ -870,14 +929,24 @@ async fn create_and_delete() {
         Some(2),
         "the pin and the cached map"
     );
-    assert!(h.app.map_of("blog").await.is_none());
+    assert!(
+        h.app
+            .map_of(&crate::kernel::tenancy::WsKey::of_default("blog"))
+            .await
+            .is_none()
+    );
     let (status, body) = h.send(Method::GET, "/api/w/blog/settings", None).await;
     assert_eq!(status, 404, "{body}");
     assert!(body.contains("unknown_workspace"), "{body}");
 
     // A map load that was in flight does not bring it back.
     assert!(map::reload_ws(&h.app, &blog).await.is_err());
-    assert!(h.app.map_of("blog").await.is_none());
+    assert!(
+        h.app
+            .map_of(&crate::kernel::tenancy::WsKey::of_default("blog"))
+            .await
+            .is_none()
+    );
 
     // Its id cannot be created again while its rows remain.
     let (status, body) = h

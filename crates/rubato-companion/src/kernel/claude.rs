@@ -512,18 +512,26 @@ impl Claude {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
+    /// A child `sh` writes the stand-in, so this process never holds it open for writing: a
+    /// fork in a concurrent test would otherwise carry that descriptor until its own exec, and
+    /// running the stand-in in that window fails with ETXTBSY ("Text file busy").
     fn standin(dir: &std::path::Path, body: &str) -> String {
         let p = dir.join("claude");
-        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf '%s' \"$1\" > \"$2\" && chmod +x \"$2\"")
+            .arg("sh")
+            .arg(format!("#!/bin/sh\n{body}\n"))
+            .arg(&p)
+            .status()
+            .unwrap();
+        assert!(status.success());
         p.display().to_string()
     }
 
-    /// `spawn` for a stand-in just written. Another test thread that forks while the stand-in is
-    /// open for writing holds that descriptor until its own exec, and an exec of the stand-in in
-    /// that window fails with ETXTBSY ("Text file busy"). Retry that one error briefly.
+    /// `spawn` for a stand-in just written. [`standin`] keeps this process from holding it open;
+    /// should an exec still meet ETXTBSY ("Text file busy"), retry that one error briefly.
     fn spawn_standin(
         make: impl Fn() -> TurnRequest,
     ) -> (
@@ -634,12 +642,22 @@ echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"
             .trim()
             .parse()
             .unwrap();
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &child.to_string()])
-            .status()
-            .unwrap()
-            .success();
-        assert!(!alive, "the turn's child outlived the kill");
+        // The group was sent SIGKILL; the orphaned child still answers `kill -0` until whoever
+        // inherited it has reaped it, so give that a moment instead of asking once.
+        let alive = || {
+            std::process::Command::new("kill")
+                .args(["-0", &child.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        let mut waited = 0;
+        while alive() && waited < 100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            waited += 1;
+        }
+        assert!(!alive(), "the turn's child outlived the kill");
     }
 
     #[tokio::test]
@@ -648,7 +666,7 @@ echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"
         let p = standin(dir.path(), "sleep 30");
         let mut r = req(p.clone(), dir.path());
         r.max_quiet = Duration::from_millis(200);
-        let (_t, _p, end) = spawn(r).unwrap();
+        let (_t, _p, end) = spawn_standin(|| r.clone());
         assert_eq!(end.await.unwrap().killed, Some(KillReason::Quiet));
 
         let chatty = standin(
@@ -657,7 +675,7 @@ echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"
         );
         let mut r = req(chatty, dir.path());
         r.max_total = Duration::from_millis(300);
-        let (_t, _p, end) = spawn(r).unwrap();
+        let (_t, _p, end) = spawn_standin(|| r.clone());
         assert_eq!(end.await.unwrap().killed, Some(KillReason::Timeout));
     }
 

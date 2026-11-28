@@ -107,7 +107,7 @@ async fn harness(cutover: Option<DateTime<Utc>>) -> H {
     let text = include_str!("../../../../docs/design/rubato-map.yml");
     let map: SystemMap = serde_yaml_ng::from_str(text).unwrap();
     app.set_map(
-        rubato_protocol::DEFAULT_WORKSPACE,
+        &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
         LoadedMap {
             map,
             version: "v".into(),
@@ -138,7 +138,9 @@ type Pressed = Result<(StatusCode, DraftApproveResponse), (StatusCode, Value)>;
 async fn press_on(h: &H, user: &str, branch: &str, sha: &str, rev: Option<u32>) -> Pressed {
     approve_draft(
         State(h.app.clone()),
-        Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+        Ws(crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        )),
         CurrentUser(user.into()),
         Json(DraftApproveRequest {
             repo: "m0x6A/rubato".into(),
@@ -179,7 +181,13 @@ fn rejected(h: &H, route: &str, why: &str) -> u64 {
 }
 
 async fn rows(h: &H) -> usize {
-    records::all(&h.app.db).await.unwrap().len()
+    records::all(
+        &h.app.db,
+        &crate::kernel::tenancy::TenantId::default_tenant(),
+    )
+    .await
+    .unwrap()
+    .len()
 }
 
 fn session(user: &str, branch: &str, status: SessionStatus) -> SessionState {
@@ -445,7 +453,12 @@ async fn self_approval_is_recorded_and_a_second_press_answers_the_first() {
     assert_eq!((status, again.created), (StatusCode::OK, false));
     assert_eq!(again.approval_id, first.approval_id);
     assert_eq!(again.approved_by, OWNER);
-    let stored = records::all(&h.app.db).await.unwrap();
+    let stored = records::all(
+        &h.app.db,
+        &crate::kernel::tenancy::TenantId::default_tenant(),
+    )
+    .await
+    .unwrap();
     assert_eq!(stored.len(), 1);
     assert_eq!(
         (stored[0].draft_id, stored[0].rev, stored[0].branch.as_str()),
@@ -465,7 +478,9 @@ async fn accept_plan_refuses_after_the_cutover_and_posts_nothing() {
     let accept = |h: &H| {
         approve(
             State(h.app.clone()),
-            Ws(rubato_protocol::DEFAULT_WORKSPACE.into()),
+            Ws(crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            )),
             CurrentUser("teammate".into()),
             Json(ApproveRequest {
                 issue: IssueRef::new("m0x6A/rubato", 71),
@@ -543,7 +558,9 @@ async fn comments_after_the_cutover_are_seen_counted_once_and_never_newest() {
     github_poll::poll_comments(&h.app, &i71).await.unwrap();
     assert_eq!(read.newest_approval.and_then(|a| a.comment_id), Some(1));
     assert_eq!(counter(&h), 1, "counted once, on the first read");
-    let list = approvals(&h.app).await.unwrap();
+    let list = approvals(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     assert_eq!(
         list.counted
             .iter()
@@ -567,7 +584,9 @@ async fn comments_after_the_cutover_are_seen_counted_once_and_never_newest() {
     let read = github_poll::poll_comments(&h.app, &i71).await.unwrap();
     assert_eq!(read.newest_approval.and_then(|a| a.comment_id), Some(2));
     assert_eq!(counter(&h), 0);
-    let list = approvals(&h.app).await.unwrap();
+    let list = approvals(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     assert_eq!((list.counted.len(), list.ignored.len()), (2, 0));
     assert_eq!(
         github_poll::approved_branches(&list.counted)
@@ -684,7 +703,9 @@ async fn a_revision_that_changes_only_the_design_note_is_a_new_version_to_approv
     assert_eq!(rev.info.plan_sha, first.plan_sha, "with the same plan");
 
     // Before it is approved, the first approval is for an earlier version.
-    let list = approvals(&h.app).await.unwrap();
+    let list = approvals(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     let (rec, target) = list
         .counted
         .iter()
@@ -708,7 +729,9 @@ async fn a_revision_that_changes_only_the_design_note_is_a_new_version_to_approv
     assert_eq!(second.bundle_hash, b.bundle_hash);
     assert_eq!(rows(&h).await, 2);
     // The new approval is current: its target is the plan's hash again.
-    let list = approvals(&h.app).await.unwrap();
+    let list = approvals(&h.app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     let (rec, target) = list
         .counted
         .iter()

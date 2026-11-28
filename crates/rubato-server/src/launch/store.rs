@@ -1,6 +1,9 @@
 //! Tables `launches` and `cap_hits`. `issues_with_live_cap_hit` reads both.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{CapHit, CapKind, IssueRef, LaunchCommand, LaunchResult, LaunchRole};
@@ -11,13 +14,13 @@ use uuid::Uuid;
 /// `ws` is the workspace the launch was started from (ADR 0047).
 pub async fn store_launch(
     db: &SqlitePool,
-    ws: &str,
+    ws: &WsKey,
     companion_id: Uuid,
     cmd: &LaunchCommand,
 ) -> Result<()> {
     // `role` and `lead_launch_id` as columns too (ADR 0072): the fleet reads them by index.
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at, role, lead_launch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(ws).bind(cmd.id.to_string()).bind(companion_id.to_string()).bind(&cmd.user).bind(&cmd.issue.repo).bind(cmd.issue.number as i64).bind(serde_json::to_string(cmd)?).bind(ts(Utc::now()))
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at, role, lead_launch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(ws.tenant.as_str()).bind(ws.ws()).bind(cmd.id.to_string()).bind(companion_id.to_string()).bind(&cmd.user).bind(&cmd.issue.repo).bind(cmd.issue.number as i64).bind(serde_json::to_string(cmd)?).bind(ts(Utc::now()))
         .bind((!cmd.role.is_worker()).then(|| cmd.role.name()))
         .bind(cmd.lead_launch_id.map(|l| l.to_string()))
         .execute(db).await?;
@@ -36,6 +39,9 @@ pub struct LaunchTarget {
     /// The branch and plan path the launch was sent with.
     pub branch: Option<String>,
     pub plan_path: Option<String>,
+    /// The tenant the launch belongs to (ADR 0087): its issue's repository's, as the launch
+    /// was made.
+    pub tenant: TenantId,
     /// The workspace the launch was started from (ADR 0047): whose map its parts are checked
     /// against (ADR 0071).
     pub workspace: String,
@@ -45,10 +51,32 @@ pub struct LaunchTarget {
     pub lead_launch_id: Option<Uuid>,
 }
 
+/// The launch with this id, for work that acts in its tenant for its owner with no request of
+/// theirs: what its companion sends for it, and what Rubato pushes to it (design §6.3). A launch
+/// whose owner is no longer a member of its tenant answers `None`, as one that does not exist;
+/// that is logged and counted on `rubato.companion.refused`.
+pub async fn acting_target(app: &App, launch_id: Uuid) -> Result<Option<LaunchTarget>> {
+    let Some(t) = launch_target(&app.db, launch_id).await? else {
+        return Ok(None);
+    };
+    if app.admission().is_member(app, &t.tenant, &t.user).await? {
+        return Ok(Some(t));
+    }
+    tracing::warn!(rubato.launch_id = %launch_id, rubato.tenant = %t.tenant, rubato.user = %t.user, reason = "not_member", "companion refused: the launch's owner is no longer a member of its tenant");
+    app.metrics.companion_refused.add(
+        1,
+        &[opentelemetry::KeyValue::new(
+            rubato_protocol::otel::attr::DROP_REASON,
+            "not_member",
+        )],
+    );
+    Ok(None)
+}
+
 /// The launch with this id, if Rubato started it.
 pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<LaunchTarget>> {
     let row = sqlx::query(
-        "SELECT companion_id, user, repo, number, command, workspace_id, role, lead_launch_id FROM launches WHERE id = ?",
+        "SELECT tenant_id, companion_id, user, repo, number, command, workspace_id, role, lead_launch_id FROM launches WHERE id = ?",
     )
     .bind(launch_id.to_string())
     .fetch_optional(db)
@@ -63,6 +91,7 @@ pub async fn launch_target(db: &SqlitePool, launch_id: Uuid) -> Result<Option<La
         session_id: command.as_ref().map(|c| c.session_id.to_string()),
         branch: command.as_ref().map(|c| c.branch.clone()),
         plan_path: command.and_then(|c| c.plan_path),
+        tenant: TenantId::stored(r.get("tenant_id")),
         workspace: r.get("workspace_id"),
         role: role_of(r.get("role")),
         lead_launch_id: r
@@ -118,11 +147,11 @@ pub async fn companion_launched(
 }
 
 /// Issues with at least one launch that started.
-pub async fn launched_issues(db: &SqlitePool) -> Result<HashSet<IssueRef>> {
+pub async fn launched_issues(db: &SqlitePool, t: &TenantId) -> Result<HashSet<IssueRef>> {
     let rows = sqlx::query(
-        "SELECT repo, number FROM launches WHERE result LIKE '%\"outcome\":\"started\"%'",
+        "SELECT repo, number FROM launches WHERE tenant_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
     )
-    .fetch_all(db)
+    .bind(t.as_str()).fetch_all(db)
     .await?;
     Ok(rows
         .iter()
@@ -131,11 +160,15 @@ pub async fn launched_issues(db: &SqlitePool) -> Result<HashSet<IssueRef>> {
 }
 
 /// Issues with a started launch from workspace `ws` (ADR 0045: launched there, so it belongs).
-pub async fn launched_issues_in(db: &SqlitePool, ws: &str) -> Result<HashSet<IssueRef>> {
+pub async fn launched_issues_in(
+    db: &SqlitePool,
+    t: &TenantId,
+    ws: &WsKey,
+) -> Result<HashSet<IssueRef>> {
     let rows = sqlx::query(
-        "SELECT repo, number FROM launches WHERE workspace_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
+        "SELECT repo, number FROM launches WHERE tenant_id = ? AND workspace_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
     )
-    .bind(ws)
+    .bind(t.as_str()).bind(ws.ws())
     .fetch_all(db)
     .await?;
     Ok(rows
@@ -144,18 +177,22 @@ pub async fn launched_issues_in(db: &SqlitePool, ws: &str) -> Result<HashSet<Iss
         .collect())
 }
 
-pub async fn launch_count(db: &SqlitePool, issue: &IssueRef) -> Result<u32> {
-    let r = sqlx::query("SELECT COUNT(*) AS n FROM launches WHERE repo = ? AND number = ? AND (result IS NULL OR result LIKE '%\"outcome\":\"started\"%')").bind(&issue.repo).bind(issue.number as i64).fetch_one(db).await?;
+pub async fn launch_count(db: &SqlitePool, t: &TenantId, issue: &IssueRef) -> Result<u32> {
+    let r = sqlx::query("SELECT COUNT(*) AS n FROM launches WHERE tenant_id = ? AND repo = ? AND number = ? AND (result IS NULL OR result LIKE '%\"outcome\":\"started\"%')").bind(t.as_str()).bind(&issue.repo).bind(issue.number as i64).fetch_one(db).await?;
     Ok(r.get::<i64, _>("n") as u32)
 }
 
 /// The map version each started launch of this workspace carried, compared with that
 /// workspace's map only (`MapVersionMismatch`).
-pub async fn launch_map_versions(db: &SqlitePool, ws: &str) -> Result<Vec<(IssueRef, String)>> {
+pub async fn launch_map_versions(
+    db: &SqlitePool,
+    t: &TenantId,
+    ws: &WsKey,
+) -> Result<Vec<(IssueRef, String)>> {
     let rows = sqlx::query(
-        "SELECT repo, number, command FROM launches WHERE workspace_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
+        "SELECT repo, number, command FROM launches WHERE tenant_id = ? AND workspace_id = ? AND result LIKE '%\"outcome\":\"started\"%'",
     )
-    .bind(ws)
+    .bind(t.as_str()).bind(ws.ws())
     .fetch_all(db)
     .await?;
     Ok(rows
@@ -172,14 +209,22 @@ pub async fn launch_map_versions(db: &SqlitePool, ws: &str) -> Result<Vec<(Issue
 
 /// `at` is when the server received the hit, on its own clock, so it compares with `launches.created_at`
 /// whatever the companion clock says; the companion's own time stays in the payload.
-pub async fn store_cap_hit(db: &SqlitePool, hit: &CapHit, at: DateTime<Utc>) -> Result<()> {
-    sqlx::query("INSERT INTO cap_hits (repo, number, payload, at) VALUES (?, ?, ?, ?)")
-        .bind(&hit.issue.repo)
-        .bind(hit.issue.number as i64)
-        .bind(serde_json::to_string(hit)?)
-        .bind(ts(at))
-        .execute(db)
-        .await?;
+pub async fn store_cap_hit(
+    db: &SqlitePool,
+    t: &TenantId,
+    hit: &CapHit,
+    at: DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO cap_hits (tenant_id, repo, number, payload, at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(t.as_str())
+    .bind(&hit.issue.repo)
+    .bind(hit.issue.number as i64)
+    .bind(serde_json::to_string(hit)?)
+    .bind(ts(at))
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -201,8 +246,11 @@ struct LaunchRow {
 /// Both rules use the server's own records, never the companion's clock (#44). When hits of
 /// both kinds are live the issue reads as `Spend`, the kind that blocks whatever the sessions
 /// say; so does a payload that does not parse.
-pub async fn issues_with_live_cap_hit(db: &SqlitePool) -> Result<HashMap<IssueRef, CapKind>> {
-    let rows = sqlx::query("SELECT repo, number, created_at, command, (result LIKE '%\"outcome\":\"started\"%') AS started FROM launches").fetch_all(db).await?;
+pub async fn issues_with_live_cap_hit(
+    db: &SqlitePool,
+    t: &TenantId,
+) -> Result<HashMap<IssueRef, CapKind>> {
+    let rows = sqlx::query("SELECT repo, number, created_at, command, (result LIKE '%\"outcome\":\"started\"%') AS started FROM launches WHERE tenant_id = ?").bind(t.as_str()).fetch_all(db).await?;
     let mut launches: HashMap<IssueRef, Vec<LaunchRow>> = HashMap::new();
     for r in &rows {
         let issue = IssueRef::new(r.get::<String, _>("repo"), r.get::<i64, _>("number") as u64);
@@ -214,7 +262,8 @@ pub async fn issues_with_live_cap_hit(db: &SqlitePool) -> Result<HashMap<IssueRe
             started: r.get::<Option<bool>, _>("started").unwrap_or(false),
         });
     }
-    let rows = sqlx::query("SELECT repo, number, payload, at FROM cap_hits")
+    let rows = sqlx::query("SELECT repo, number, payload, at FROM cap_hits WHERE tenant_id = ?")
+        .bind(t.as_str())
         .fetch_all(db)
         .await?;
     let mut live = HashMap::new();
@@ -298,11 +347,11 @@ const ROW_COLUMNS: &str =
     "id, companion_id, repo, number, command, role, lead_launch_id, result, created_at";
 
 /// The workers lead `lead` asked for, newest first (index `launches_by_lead`).
-pub async fn workers_of(db: &SqlitePool, lead: Uuid) -> Result<Vec<FleetLaunch>> {
+pub async fn workers_of(db: &SqlitePool, t: &TenantId, lead: Uuid) -> Result<Vec<FleetLaunch>> {
     let rows = sqlx::query(&format!(
-        "SELECT {ROW_COLUMNS} FROM launches WHERE lead_launch_id = ? ORDER BY created_at DESC"
+        "SELECT {ROW_COLUMNS} FROM launches WHERE tenant_id = ? AND lead_launch_id = ? ORDER BY created_at DESC"
     ))
-    .bind(lead.to_string())
+    .bind(t.as_str()).bind(lead.to_string())
     .fetch_all(db)
     .await?;
     rows.iter().map(launch_row).collect()
@@ -312,16 +361,17 @@ pub async fn workers_of(db: &SqlitePool, lead: Uuid) -> Result<Vec<FleetLaunch>>
 /// `launches_by_user`).
 pub async fn launches_of(
     db: &SqlitePool,
+    t: &TenantId,
     user: &str,
-    ws: &str,
+    ws: &WsKey,
     since: DateTime<Utc>,
     limit: u32,
 ) -> Result<Vec<FleetLaunch>> {
     let rows = sqlx::query(&format!(
-        "SELECT {ROW_COLUMNS} FROM launches WHERE user = ? AND workspace_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?"
+        "SELECT {ROW_COLUMNS} FROM launches WHERE tenant_id = ? AND user = ? AND workspace_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?"
     ))
-    .bind(user)
-    .bind(ws)
+    .bind(t.as_str()).bind(user)
+    .bind(ws.ws())
     .bind(ts(since))
     .bind(i64::from(limit))
     .fetch_all(db)
@@ -346,11 +396,13 @@ pub async fn launches_by_id(db: &SqlitePool, user: &str, ids: &[Uuid]) -> Result
 /// Whether anyone but `user` launched `issue` since `since`: a lead may not take it (ADR 0072).
 pub async fn launched_by_another(
     db: &SqlitePool,
+    t: &TenantId,
     issue: &IssueRef,
     user: &str,
     since: DateTime<Utc>,
 ) -> Result<bool> {
-    let r = sqlx::query("SELECT EXISTS (SELECT 1 FROM launches WHERE repo = ? COLLATE NOCASE AND number = ? AND user <> ? COLLATE NOCASE AND created_at >= ?) AS yes")
+    let r = sqlx::query("SELECT EXISTS (SELECT 1 FROM launches WHERE tenant_id = ? AND repo = ? COLLATE NOCASE AND number = ? AND user <> ? COLLATE NOCASE AND created_at >= ?) AS yes")
+        .bind(t.as_str())
         .bind(&issue.repo)
         .bind(issue.number as i64)
         .bind(user)

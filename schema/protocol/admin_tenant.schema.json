@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AdminTenant",
+  "description": "A tenant on the operator page: names and counts, never its data (Assumption A5).",
+  "type": "object",
+  "properties": {
+    "admins": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "id": {
+      "type": "string"
+    },
+    "installations": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0
+      }
+    },
+    "members": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "name": {
+      "type": "string"
+    },
+    "workspaces": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "installations",
+    "members",
+    "admins",
+    "workspaces"
+  ]
+}

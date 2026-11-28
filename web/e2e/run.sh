@@ -93,10 +93,10 @@ done
 curl -sf http://127.0.0.1:18090/api/health > /dev/null || { echo "server did not start"; cat "$TMP/server.log"; exit 1; }
 # The first poll tick loads the map and lists the open issues.
 for _ in $(seq 1 50); do
-  curl -sf http://127.0.0.1:18090/api/overview 2>/dev/null | grep -q '"number":902' && break
+  curl -sf http://127.0.0.1:18090/api/t/default/w/default/overview 2>/dev/null | grep -q '"number":902' && break
   sleep 0.2
 done
-curl -sf http://127.0.0.1:18090/api/overview | grep -q '"number":902' || { echo "the backlog was not listed"; cat "$TMP/server.log"; exit 1; }
+curl -sf http://127.0.0.1:18090/api/t/default/w/default/overview | grep -q '"number":902' || { echo "the backlog was not listed"; cat "$TMP/server.log"; exit 1; }
 
 # Server 2: as a GitHub App, against the stand-in.
 command -v openssl > /dev/null || { echo "openssl is needed to make the App key" >&2; exit 2; }
@@ -114,6 +114,7 @@ RUBATO_BIND=127.0.0.1:18091 RUBATO_PUBLIC_URL=http://127.0.0.1:18091 \
   GITHUB_CLIENT_ID=Iv1.e2e GITHUB_CLIENT_SECRET=e2e-secret \
   RUBATO_TOKEN_KEY=0707070707070707070707070707070707070707070707070707070707070707 \
   RUBATO_GITHUB_APP_ID=12 RUBATO_GITHUB_APP_PRIVATE_KEY_FILE="$TMP/app.pem" RUBATO_GITHUB_APP_INSTALLATION_ID=34 \
+  RUBATO_OPERATORS=1001 \
   RUBATO_MAP_REPO=m0x6A/rubato RUBATO_MAP_FILE="$ROOT/docs/design/rubato-map.yml" \
   RUBATO_WEB_DIST="$PWD/dist" RUBATO_GITHUB_POLL_SECS=5 RUST_LOG=info \
   "$BIN" > "$TMP/app-server.log" 2>&1 &
@@ -123,6 +124,18 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 curl -sf http://127.0.0.1:18091/api/health > /dev/null || { echo "the App server did not start"; cat "$TMP/app-server.log" "$TMP/github.log"; exit 1; }
+# ADR 0088: only invited people and operators log in. The seed made tenant `default` with
+# installation 34 and no admin. The stand-in's `member` (GitHub user 1001) is the operator here
+# (RUBATO_OPERATORS=1001): it logs in through the stand-in, as a browser would, and names itself
+# the tenant's admin on the operator's route. `outsider` (1002) is invited nowhere; the members
+# page invites and removes `newcomer` through the API (e2e/tenants.spec.ts).
+APP=http://127.0.0.1:18091
+JAR="$TMP/operator.cookies"
+STATE=$(curl -s -c "$JAR" -o /dev/null -w '%{redirect_url}' "$APP/auth/github/login" | sed -n 's/.*[?&]state=\([^&]*\).*/\1/p')
+curl -s -b "$JAR" -c "$JAR" -o /dev/null "$APP/auth/github/callback?code=code-member&state=$STATE"
+NAMED=$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+  -d '{"login":"member"}' "$APP/api/admin/tenants/default/admins")
+[ "$NAMED" = 204 ] || { echo "the operator could not name the e2e tenant's admin: HTTP $NAMED"; cat "$TMP/app-server.log" "$TMP/github.log"; exit 1; }
 # Its first poll tick lists the open issues as the installation.
 for _ in $(seq 1 50); do
   curl -s http://127.0.0.1:18092/_standin/calls | grep -q '/repos/m0x6A/rubato/issues' && break

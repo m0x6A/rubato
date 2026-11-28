@@ -304,7 +304,11 @@ async fn tick(mode: Mode, timeout: Option<Duration>) -> (Outcome, SourceStatus, 
     }
     let mut f = Fetcher::new(PrometheusSource::new(c), Utc::now());
     let outcome = f.tick(&app, Utc::now()).await;
-    let latest = app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE).await;
+    let latest = app
+        .traffic_of(&crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        ))
+        .await;
     (outcome, latest.source, latest.report.is_some())
 }
 
@@ -380,9 +384,11 @@ async fn a_bad_source_config_makes_the_state_failing() {
         let app = app.clone();
         async move {
             failing(
-                &app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE)
-                    .await
-                    .source,
+                &app.traffic_of(&crate::kernel::tenancy::WsKey::of_default(
+                    rubato_protocol::DEFAULT_WORKSPACE,
+                ))
+                .await
+                .source,
             )
         }
     })
@@ -587,7 +593,12 @@ async fn each_workspace_reads_its_own_source() {
     let supervisor = tokio::spawn(super::run(app.clone(), rx));
     let reported = |ws: &'static str| {
         let app = app.clone();
-        async move { app.traffic_of(ws).await.report.map(|_| ()) }
+        async move {
+            app.traffic_of(&crate::kernel::tenancy::WsKey::of_default(ws))
+                .await
+                .report
+                .map(|_| ())
+        }
     };
     eventually(|| reported("default")).await;
     eventually(|| reported("shop")).await;
@@ -596,17 +607,22 @@ async fn each_workspace_reads_its_own_source() {
         "each queried its own"
     );
     let gens = app.slots.get::<super::Generations>();
-    let (before_default, before_shop) = (gens.of("default"), gens.of("shop"));
+    // A task's generation is kept under its tenant and workspace.
+    let (before_default, before_shop) = (gens.of("default/default"), gens.of("default/shop"));
 
     // shop moves to another Prometheus: only shop's task restarts.
     set_source(&app, "shop", &[("url", &url_c)], 2);
     eventually(|| async { (seen(&fake_c) >= 2).then_some(()) }).await;
-    assert_eq!(gens.of("default"), before_default, "default untouched");
-    assert_ne!(gens.of("shop"), before_shop, "shop restarted");
+    assert_eq!(
+        gens.of("default/default"),
+        before_default,
+        "default untouched"
+    );
+    assert_ne!(gens.of("default/shop"), before_shop, "shop restarted");
     // A fetcher of shop's cancelled generation writes nothing.
     let stale = super::Fetcher::new(PrometheusSource::new(config(&url_b, &[])), Utc::now())
         .feeding(
-            super::Targets::One("shop".into()),
+            super::Targets::One(crate::kernel::tenancy::WsKey::of_default("shop")),
             60,
             Some((gens.clone(), before_shop.unwrap())),
         );
@@ -624,7 +640,9 @@ async fn each_workspace_reads_its_own_source() {
         let app = app.clone();
         async move {
             matches!(
-                app.traffic_of("shop").await.source,
+                app.traffic_of(&crate::kernel::tenancy::WsKey::of_default("shop"))
+                    .await
+                    .source,
                 SourceStatus::NotConfigured
             )
             .then_some(())
@@ -750,7 +768,11 @@ async fn the_lookback_runs_on_the_first_tick_and_every_tenth() {
         vec![3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 6],
         "first tick, then the eleventh"
     );
-    let latest = app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE).await;
+    let latest = app
+        .traffic_of(&crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        ))
+        .await;
     let report = latest.report.unwrap();
     assert_eq!(report.lookback_secs, Some(604_800));
     assert_eq!(report.seen.len(), 5);
@@ -773,7 +795,11 @@ async fn a_hanging_lookback_leaves_the_window_fresh_and_claims_nothing() {
         "{:?}",
         started.elapsed()
     );
-    let latest = app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE).await;
+    let latest = app
+        .traffic_of(&crate::kernel::tenancy::WsKey::of_default(
+            rubato_protocol::DEFAULT_WORKSPACE,
+        ))
+        .await;
     assert_eq!(failing(&latest.source), None);
     let report = latest.report.expect("the window's report was written");
     assert_eq!(report.lookback_secs, None, "no answer, no claim");
@@ -791,10 +817,12 @@ async fn a_failing_lookback_keeps_the_previous_answer() {
     let report = |app: &App| {
         let app = app.clone();
         async move {
-            app.traffic_of(rubato_protocol::DEFAULT_WORKSPACE)
-                .await
-                .report
-                .unwrap()
+            app.traffic_of(&crate::kernel::tenancy::WsKey::of_default(
+                rubato_protocol::DEFAULT_WORKSPACE,
+            ))
+            .await
+            .report
+            .unwrap()
         }
     };
     assert_eq!(

@@ -37,6 +37,7 @@ struct Instruments {
     builds: Counter<u64>,
     truncated: Counter<u64>,
     snapshots: Counter<u64>,
+    sources_truncated: Counter<u64>,
     observed: std::sync::Arc<Mutex<Observed>>,
 }
 
@@ -88,6 +89,7 @@ fn instruments() -> &'static Instruments {
             builds: m.u64_counter(metric::GRAPH_BUILDS).build(),
             truncated: m.u64_counter(metric::GRAPH_TRUNCATED).build(),
             snapshots: m.u64_counter(metric::GRAPH_SNAPSHOTS).build(),
+            sources_truncated: m.u64_counter(metric::GRAPH_SOURCES_TRUNCATED).build(),
             observed,
         }
     })
@@ -110,6 +112,11 @@ pub(super) fn snapshot(outcome: &'static str) {
     instruments()
         .snapshots
         .add(1, &[KeyValue::new(attr::OUTCOME, outcome)]);
+}
+
+/// A companion's list of sources was cut at `GRAPH_SOURCES_MAX`.
+pub(super) fn sources_truncated() {
+    instruments().sources_truncated.add(1, &[]);
 }
 
 /// A cap cut a source.

@@ -33,7 +33,7 @@ async function animationsAfter(page: Page, act: string): Promise<{ running: numb
 }
 
 async function setUp(page: Page): Promise<void> {
-  const pin = await page.request.post("/api/pins", { data: { issue: { repo: "m0x6A/rubato", number: 901 }, target: { kind: "node", id: "rubato-server" } } });
+  const pin = await page.request.post("/api/t/default/w/default/pins", { data: { issue: { repo: "m0x6A/rubato", number: 901 }, target: { kind: "node", id: "rubato-server" } } });
   expect([200, 201, 409]).toContain(pin.status());
   await page.goto("/");
   await expect(page.getByTestId("seam-web-server")).toBeVisible();

@@ -6,6 +6,7 @@ use crate::auth::CurrentUser;
 use crate::kernel::db::{parse_ts, ts};
 use crate::kernel::http::{Ws, internal};
 use crate::kernel::state::App;
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -34,11 +35,12 @@ fn row(r: &sqlx::sqlite::SqliteRow) -> Result<TrafficDismissal> {
 
 /// Every dismissal in the workspace, oldest first. A row that no longer reads as a key (an
 /// older format) is skipped and logged, never fatal.
-pub async fn list(db: &SqlitePool, ws: &str) -> Result<Vec<TrafficDismissal>> {
+pub async fn list(db: &SqlitePool, ws: &WsKey) -> Result<Vec<TrafficDismissal>> {
     let rows = sqlx::query(
-        "SELECT id, target_key, author, created_at FROM traffic_dismissals WHERE workspace_id = ? ORDER BY id",
+        "SELECT id, target_key, author, created_at FROM traffic_dismissals WHERE tenant_id = ? AND workspace_id = ? ORDER BY id",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .fetch_all(db)
     .await?;
     Ok(rows
@@ -60,7 +62,7 @@ pub enum Added {
 /// Dismiss `key` for the workspace as `by`, once: the same key again answers the first row.
 pub async fn add(
     db: &SqlitePool,
-    ws: &str,
+    ws: &WsKey,
     key: &DiscrepancyKey,
     by: &str,
     at: DateTime<Utc>,
@@ -68,27 +70,31 @@ pub async fn add(
     let text = serde_json::to_string(key)?;
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let existing = sqlx::query(
-        "SELECT id, target_key, author, created_at FROM traffic_dismissals WHERE workspace_id = ? AND target_key = ?",
+        "SELECT id, target_key, author, created_at FROM traffic_dismissals WHERE tenant_id = ? AND workspace_id = ? AND target_key = ?",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .bind(&text)
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(r) = existing {
         return Ok(Added::Existing(row(&r)?));
     }
-    let n: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM traffic_dismissals WHERE workspace_id = ?")
-            .bind(ws)
-            .fetch_one(&mut *tx)
-            .await?;
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM traffic_dismissals WHERE tenant_id = ? AND workspace_id = ?",
+    )
+    .bind(ws.tenant.as_str())
+    .bind(ws.ws())
+    .fetch_one(&mut *tx)
+    .await?;
     if usize::try_from(n).unwrap_or(usize::MAX) >= MAX_DISMISSALS {
         return Ok(Added::Full);
     }
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO traffic_dismissals (workspace_id, target_key, author, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+        "INSERT INTO traffic_dismissals (tenant_id, workspace_id, target_key, author, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .bind(&text)
     .bind(by)
     .bind(ts(at))
@@ -104,11 +110,12 @@ pub async fn add(
 }
 
 /// Undo: the dismissal's row, if it is in this workspace.
-pub async fn remove(db: &SqlitePool, ws: &str, id: i64) -> Result<Option<TrafficDismissal>> {
+pub async fn remove(db: &SqlitePool, ws: &WsKey, id: i64) -> Result<Option<TrafficDismissal>> {
     let r = sqlx::query(
-        "DELETE FROM traffic_dismissals WHERE workspace_id = ? AND id = ? RETURNING id, target_key, author, created_at",
+        "DELETE FROM traffic_dismissals WHERE tenant_id = ? AND workspace_id = ? AND id = ? RETURNING id, target_key, author, created_at",
     )
-    .bind(ws)
+    .bind(ws.tenant.as_str())
+        .bind(ws.ws())
     .bind(id)
     .fetch_optional(db)
     .await?;
@@ -138,7 +145,7 @@ pub async fn dismiss(
     Json(req): Json<DismissRequest>,
 ) -> Result<(StatusCode, Json<TrafficDismissal>), (StatusCode, String)> {
     let map = app
-        .map_of(ws.as_str())
+        .map_of(ws.key())
         .await
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no map loaded".into()))?;
     if !known(&map.map, &req.target) {
@@ -148,13 +155,13 @@ pub async fn dismiss(
             format!("that discrepancy names nothing map {} has", map.version),
         ));
     }
-    let added = add(&app.db, ws.as_str(), &req.target, &user, Utc::now())
+    let added = add(&app.db, ws.key(), &req.target, &user, Utc::now())
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?;
     match added {
         Added::New(d) => {
             tracing::info!(rubato.user = %user, rubato.workspace = ws.as_str(), target = %serde_json::to_string(&d.target).unwrap_or_default(), "traffic dismissal added");
-            app.notify_ws("traffic", ws.as_str());
+            app.notify_ws("traffic", ws.key());
             Ok((StatusCode::CREATED, Json(d)))
         }
         Added::Existing(d) => Ok((StatusCode::OK, Json(d))),
@@ -182,13 +189,13 @@ pub async fn undismiss(
     CurrentUser(user): CurrentUser,
     Path(IdParam { id }): Path<IdParam>,
 ) -> Result<StatusCode, StatusCode> {
-    match remove(&app.db, ws.as_str(), id)
+    match remove(&app.db, ws.key(), id)
         .await
         .map_err(|e| internal(SLICE, e))?
     {
         Some(d) => {
             tracing::info!(rubato.user = %user, rubato.workspace = ws.as_str(), target = %serde_json::to_string(&d.target).unwrap_or_default(), "traffic dismissal removed");
-            app.notify_ws("traffic", ws.as_str());
+            app.notify_ws("traffic", ws.key());
             Ok(StatusCode::NO_CONTENT)
         }
         None => Err(StatusCode::NOT_FOUND),

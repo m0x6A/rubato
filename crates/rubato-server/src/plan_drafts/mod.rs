@@ -11,6 +11,7 @@ mod store;
 mod tests;
 
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{DraftRestore, DraftSummary, IssueRef, Plan};
@@ -27,10 +28,11 @@ pub async fn on_branch(
     issue: &IssueRef,
     branch: &str,
 ) -> Result<Option<(DraftRow, Option<RevisionRow>)>> {
-    let Some(d) = store::find(&app.db, issue, branch).await? else {
+    let t = &app.repo_tenant(&issue.repo)?;
+    let Some(d) = store::find(&app.db, t, issue, branch).await? else {
         return Ok(None);
     };
-    let latest = store::latest(&app.db, d.id).await?;
+    let latest = store::latest(&app.db, t, d.id).await?;
     Ok(Some((d, latest)))
 }
 
@@ -47,8 +49,8 @@ pub struct LatestDraft {
 }
 
 /// A draft's newest settled revision as a launch carries it (ADR 0053, plan 122 §D5).
-pub async fn restore_of(app: &App, draft_id: Uuid) -> Result<Option<DraftRestore>> {
-    Ok(store::latest(&app.db, draft_id)
+pub async fn restore_of(app: &App, t: &TenantId, draft_id: Uuid) -> Result<Option<DraftRestore>> {
+    Ok(store::latest(&app.db, t, draft_id)
         .await?
         .map(|r| DraftRestore {
             draft_id,
@@ -78,11 +80,13 @@ pub enum ImportRefused {
 /// Make the imported bundle a new draft owned by the importer, its files revision 1 (ADR 0058).
 pub async fn import(
     app: &App,
+    t: &TenantId,
     b: ImportedBundle,
 ) -> Result<std::result::Result<(Uuid, u32), ImportRefused>> {
     let now = app.clock.now();
     let Some(draft_id) = store::create_imported(
         &app.db,
+        t,
         &b.issue,
         &b.branch,
         &b.owner,
@@ -124,18 +128,18 @@ pub async fn import(
         files: b.files,
         plan,
     };
-    let n = store::insert_revision(&app.db, draft_id, &rev)
+    let n = store::insert_revision(&app.db, t, draft_id, &rev)
         .await?
         .unwrap_or(1);
-    app.notify("draft");
+    app.notify_in(t, "draft");
     Ok(Ok((draft_id, n)))
 }
 
 /// Every draft with at least one revision.
-pub async fn latest_drafts(app: &App) -> Result<Vec<LatestDraft>> {
+pub async fn latest_drafts(app: &App, t: &TenantId) -> Result<Vec<LatestDraft>> {
     let mut out = Vec::new();
-    for d in store::all(&app.db).await? {
-        let Some(r) = store::latest(&app.db, d.id).await? else {
+    for d in store::all(&app.db, t).await? {
+        let Some(r) = store::latest(&app.db, t, d.id).await? else {
             continue;
         };
         out.push(LatestDraft {

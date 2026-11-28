@@ -7,6 +7,7 @@ use super::cache::{Cache, Key, Outcome};
 use crate::auth::{self, TokenError};
 use crate::kernel::github::{PullFull, RepoAccess, ReviewInfo, summarize_check_runs};
 use crate::kernel::state::{App, LoadedMap};
+use crate::kernel::tenancy::WsKey;
 use crate::{github_poll, overview, plans};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -66,15 +67,16 @@ pub type ViewCache = Cache<Option<Fetched>>;
 /// the cache and replaces its entry.
 pub async fn gather(
     app: &App,
-    ws: &str,
+    ws: &WsKey,
     map: &LoadedMap,
     repo: &str,
     number: u64,
     login: &str,
     fresh: bool,
 ) -> Result<Gathered> {
+    let t = ws.tenant();
     let cache = app.slots.get::<ViewCache>();
-    let key: Key = (ws.to_owned(), repo.to_owned(), number);
+    let key: Key = (ws.to_string(), repo.to_owned(), number);
     let (fetched, outcome) = cache
         .get(key, fresh, || fetch(app, map, repo, number))
         .await?;
@@ -115,7 +117,7 @@ pub async fn gather(
         }
     };
     let gate = plan_gate(signal, &head, approval);
-    let stacked_above = github_poll::repo_pulls(&app.db)
+    let stacked_above = github_poll::repo_pulls(&app.db, t)
         .await?
         .iter()
         .filter(|r| r.repo.eq_ignore_ascii_case(repo))
@@ -182,7 +184,8 @@ fn fold(runs: &[CheckRun]) -> ChecksStatus {
 
 /// The installation's reads. `None` when GitHub has no such pull request.
 async fn fetch(app: &App, map: &LoadedMap, repo: &str, number: u64) -> Result<Option<Fetched>> {
-    let gh = &app.github;
+    let t = &app.repo_tenant(repo)?;
+    let gh = app.github.within(t, repo);
     let Some(pull) = gh.pull(repo, number).await? else {
         return Ok(None);
     };
@@ -203,7 +206,7 @@ async fn fetch(app: &App, map: &LoadedMap, repo: &str, number: u64) -> Result<Op
         Some(n) => {
             let issue = IssueRef::new(repo.to_owned(), n);
             // The plan row's path when Rubato holds one (plan 82 Decision 10).
-            let path = plans::all(&app.db)
+            let path = plans::all(&app.db, t)
                 .await?
                 .into_iter()
                 .find(|p| p.issue == issue)
@@ -258,7 +261,7 @@ async fn person(
             return None;
         }
     };
-    match app.github.repo_as(&token, repo).await {
+    match app.github.as_person().repo_as(&token, repo).await {
         Ok(a) => {
             cache.keep_person(login, repo, a.clone());
             Some(to_person(a))

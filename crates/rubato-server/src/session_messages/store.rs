@@ -2,6 +2,7 @@
 //! statement that picks and marks), so two dispatches or a late result cannot move a row twice.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{IssueRef, SessionMessageKind, SessionMessageState, SessionMessageView};
@@ -13,6 +14,8 @@ use uuid::Uuid;
 /// One stored message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageRow {
+    /// The tenant of the launch it is for (ADR 0087).
+    pub tenant: TenantId,
     pub id: Uuid,
     pub launch_id: Uuid,
     pub session_id: Option<String>,
@@ -52,6 +55,7 @@ impl MessageRow {
 fn row(r: &SqliteRow) -> Result<MessageRow> {
     let opt_ts = |c: &str| r.get::<Option<String>, _>(c).map(|s| parse_ts(&s));
     Ok(MessageRow {
+        tenant: TenantId::stored(r.get("tenant_id")),
         id: r.get::<String, _>("id").parse()?,
         launch_id: r.get::<String, _>("launch_id").parse()?,
         session_id: r.get("session_id"),
@@ -73,16 +77,17 @@ fn row(r: &SqliteRow) -> Result<MessageRow> {
     })
 }
 
-const COLUMNS: &str = "id, launch_id, session_id, companion_id, owner, repo, number, kind, body, author, priority, state, created_at, pushed_at, outcome_at, detail, via_launch";
+/// Every column but the tenant, in insert order.
+const REST: &str = "id, launch_id, session_id, companion_id, owner, repo, number, kind, body, author, priority, state, created_at, pushed_at, outcome_at, detail, via_launch";
+const COLUMNS: &str = "tenant_id, id, launch_id, session_id, companion_id, owner, repo, number, kind, body, author, priority, state, created_at, pushed_at, outcome_at, detail, via_launch";
 
 /// Whether a `plan_approved` for this approval is queued, in flight, typed, or of unknown
 /// outcome (ADR 0055): a later launch must not get a second one. A refused or failed one is not.
-pub async fn plan_approved_open(db: &SqlitePool, approval_id: Uuid) -> Result<bool> {
+pub async fn plan_approved_open(db: &SqlitePool, t: &TenantId, approval_id: Uuid) -> Result<bool> {
     Ok(sqlx::query(
-        "SELECT 1 FROM session_messages WHERE kind = 'plan_approved' AND json_extract(body, '$.approval_id') = ? \
-         AND state IN ('queued', 'sent', 'delivered', 'delivery_unknown') LIMIT 1",
+        "SELECT 1 FROM session_messages WHERE tenant_id = ? AND kind = 'plan_approved' AND json_extract(body, '$.approval_id') = ? AND state IN ('queued', 'sent', 'delivered', 'delivery_unknown') LIMIT 1",
     )
-    .bind(approval_id.to_string())
+    .bind(t.as_str()).bind(approval_id.to_string())
     .fetch_optional(db)
     .await?
     .is_some())
@@ -90,8 +95,9 @@ pub async fn plan_approved_open(db: &SqlitePool, approval_id: Uuid) -> Result<bo
 
 pub async fn insert(db: &SqlitePool, m: &MessageRow) -> Result<()> {
     sqlx::query(&format!(
-        "INSERT INTO session_messages ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO session_messages (tenant_id, {REST}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ))
+    .bind(m.tenant.as_str())
     .bind(m.id.to_string())
     .bind(m.launch_id.to_string())
     .bind(&m.session_id)
@@ -114,6 +120,8 @@ pub async fn insert(db: &SqlitePool, m: &MessageRow) -> Result<()> {
     Ok(())
 }
 
+/// A message by its own id, whatever its tenant: the companion's answer and a hook name it by
+/// id alone. The row says its tenant and its companion, and the caller checks the companion.
 pub async fn get(db: &SqlitePool, id: Uuid) -> Result<Option<MessageRow>> {
     let r = sqlx::query(&format!(
         "SELECT {COLUMNS} FROM session_messages WHERE id = ?"
@@ -125,11 +133,11 @@ pub async fn get(db: &SqlitePool, id: Uuid) -> Result<Option<MessageRow>> {
 }
 
 /// The launch's messages, oldest first.
-pub async fn for_launch(db: &SqlitePool, launch_id: Uuid) -> Result<Vec<MessageRow>> {
+pub async fn for_launch(db: &SqlitePool, t: &TenantId, launch_id: Uuid) -> Result<Vec<MessageRow>> {
     let rows = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM session_messages WHERE launch_id = ? ORDER BY created_at, id"
+        "SELECT {COLUMNS} FROM session_messages WHERE tenant_id = ? AND launch_id = ? ORDER BY created_at, id"
     ))
-    .bind(launch_id.to_string())
+    .bind(t.as_str()).bind(launch_id.to_string())
     .fetch_all(db)
     .await?;
     rows.iter().map(row).collect()
@@ -142,6 +150,7 @@ pub async fn for_launch(db: &SqlitePool, launch_id: Uuid) -> Result<Vec<MessageR
 /// type it, and without `room_turns` so is a `room_turn`; the chat behind it still goes.
 pub async fn take_next(
     db: &SqlitePool,
+    t: &TenantId,
     launch_id: Uuid,
     now: DateTime<Utc>,
     plan_handoff: bool,
@@ -150,16 +159,19 @@ pub async fn take_next(
     let l = launch_id.to_string();
     let r = sqlx::query(&format!(
         "UPDATE session_messages SET state = 'sent', pushed_at = ? \
-         WHERE id = (SELECT id FROM session_messages WHERE launch_id = ? AND state = 'queued' \
+         WHERE tenant_id = ? AND id = (SELECT id FROM session_messages WHERE tenant_id = ? AND launch_id = ? AND state = 'queued' \
                        AND (kind <> 'plan_approved' OR ?) AND (kind <> 'room_turn' OR ?) \
                      ORDER BY priority, created_at, id LIMIT 1) \
-           AND NOT EXISTS (SELECT 1 FROM session_messages WHERE launch_id = ? AND state = 'sent') \
+           AND NOT EXISTS (SELECT 1 FROM session_messages WHERE tenant_id = ? AND launch_id = ? AND state = 'sent') \
          RETURNING {COLUMNS}"
     ))
     .bind(ts(now))
+    .bind(t.as_str())
+    .bind(t.as_str())
     .bind(&l)
     .bind(plan_handoff)
     .bind(room_turns)
+    .bind(t.as_str())
     .bind(&l)
     .fetch_optional(db)
     .await?;
@@ -167,11 +179,14 @@ pub async fn take_next(
 }
 
 /// When each approval's `plan_approved` was typed into its session (`delivered`), by approval.
-pub async fn plan_approved_delivered(db: &SqlitePool) -> Result<HashMap<Uuid, DateTime<Utc>>> {
+pub async fn plan_approved_delivered(
+    db: &SqlitePool,
+    t: &TenantId,
+) -> Result<HashMap<Uuid, DateTime<Utc>>> {
     let rows = sqlx::query(
-        "SELECT body, outcome_at FROM session_messages WHERE kind = 'plan_approved' AND state = 'delivered'",
+        "SELECT body, outcome_at FROM session_messages WHERE tenant_id = ? AND kind = 'plan_approved' AND state = 'delivered'",
     )
-    .fetch_all(db)
+    .bind(t.as_str()).fetch_all(db)
     .await?;
     let mut out = HashMap::new();
     for r in rows {
@@ -191,9 +206,9 @@ pub async fn plan_approved_delivered(db: &SqlitePool) -> Result<HashMap<Uuid, Da
 }
 
 /// A pushed row whose push did not reach a socket goes back to the queue.
-pub async fn unsend(db: &SqlitePool, id: Uuid) -> Result<bool> {
-    let n = sqlx::query("UPDATE session_messages SET state = 'queued', pushed_at = NULL WHERE id = ? AND state = 'sent'")
-        .bind(id.to_string())
+pub async fn unsend(db: &SqlitePool, t: &TenantId, id: Uuid) -> Result<bool> {
+    let n = sqlx::query("UPDATE session_messages SET state = 'queued', pushed_at = NULL WHERE tenant_id = ? AND id = ? AND state = 'sent'")
+        .bind(t.as_str()).bind(id.to_string())
         .execute(db)
         .await?
         .rows_affected();
@@ -273,11 +288,15 @@ pub async fn requeue(db: &SqlitePool, id: Uuid, companion_id: Uuid) -> Result<bo
 }
 
 /// `sent` rows pushed before `before`, for the sweep.
-pub async fn sent_before(db: &SqlitePool, before: DateTime<Utc>) -> Result<Vec<MessageRow>> {
+pub async fn sent_before(
+    db: &SqlitePool,
+    t: &TenantId,
+    before: DateTime<Utc>,
+) -> Result<Vec<MessageRow>> {
     let rows = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM session_messages WHERE state = 'sent' AND pushed_at < ?"
+        "SELECT {COLUMNS} FROM session_messages WHERE tenant_id = ? AND state = 'sent' AND pushed_at < ?"
     ))
-    .bind(ts(before))
+    .bind(t.as_str()).bind(ts(before))
     .fetch_all(db)
     .await?;
     rows.iter().map(row).collect()
@@ -286,14 +305,15 @@ pub async fn sent_before(db: &SqlitePool, before: DateTime<Utc>) -> Result<Vec<M
 /// A pushed row with no answer: never pushed again.
 pub async fn mark_unknown(
     db: &SqlitePool,
+    t: &TenantId,
     id: Uuid,
     why: &str,
     now: DateTime<Utc>,
 ) -> Result<bool> {
-    let n = sqlx::query("UPDATE session_messages SET state = 'delivery_unknown', outcome_at = ?, detail = ? WHERE id = ? AND state = 'sent'")
+    let n = sqlx::query("UPDATE session_messages SET state = 'delivery_unknown', outcome_at = ?, detail = ? WHERE tenant_id = ? AND id = ? AND state = 'sent'")
         .bind(ts(now))
         .bind(why)
-        .bind(id.to_string())
+        .bind(t.as_str()).bind(id.to_string())
         .execute(db)
         .await?
         .rows_affected();
@@ -301,9 +321,15 @@ pub async fn mark_unknown(
 }
 
 /// The launch's session changed (a `/clear`): its unsettled rows follow it.
-pub async fn move_session(db: &SqlitePool, launch_id: Uuid, session_id: &str) -> Result<u64> {
-    Ok(sqlx::query("UPDATE session_messages SET session_id = ? WHERE launch_id = ? AND state IN ('queued', 'sent') AND (session_id IS NULL OR session_id <> ?)")
+pub async fn move_session(
+    db: &SqlitePool,
+    companion_id: Uuid,
+    launch_id: Uuid,
+    session_id: &str,
+) -> Result<u64> {
+    Ok(sqlx::query("UPDATE session_messages SET session_id = ? WHERE companion_id = ? AND launch_id = ? AND state IN ('queued', 'sent') AND (session_id IS NULL OR session_id <> ?)")
         .bind(session_id)
+        .bind(companion_id.to_string())
         .bind(launch_id.to_string())
         .bind(session_id)
         .execute(db)
@@ -312,10 +338,11 @@ pub async fn move_session(db: &SqlitePool, launch_id: Uuid, session_id: &str) ->
 }
 
 /// Every queued row, for the queue-age gauge.
-pub async fn queued(db: &SqlitePool) -> Result<Vec<MessageRow>> {
+pub async fn queued(db: &SqlitePool, t: &TenantId) -> Result<Vec<MessageRow>> {
     let rows = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM session_messages WHERE state = 'queued'"
+        "SELECT {COLUMNS} FROM session_messages WHERE tenant_id = ? AND state = 'queued'"
     ))
+    .bind(t.as_str())
     .fetch_all(db)
     .await?;
     rows.iter().map(row).collect()

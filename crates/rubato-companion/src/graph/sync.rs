@@ -14,7 +14,22 @@ use std::time::Duration;
 use tracing::Instrument;
 
 /// A failed fetch is tried again on the next announce, and after this long without one.
+/// The longest wait between passes, and the wait while nothing failed.
 const RETRY: Duration = Duration::from_secs(300);
+/// The wait after a first failed pass; doubled for each failed pass after it, up to [`RETRY`].
+const FIRST_RETRY: Duration = Duration::from_secs(5);
+
+/// How long to wait for the next pass after `failures` failed passes in a row. One refused or
+/// failed fetch must not leave the copy behind for five minutes: the server announces again
+/// only when a source changes.
+fn retry_after(failures: u32) -> Duration {
+    match failures {
+        0 => RETRY,
+        n => FIRST_RETRY
+            .saturating_mul(2u32.saturating_pow(n - 1))
+            .min(RETRY),
+    }
+}
 
 /// What one pass over the announced list did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -27,6 +42,16 @@ pub struct Pass {
     pub removed: Vec<String>,
     /// The server said the pairing is gone: the copy was deleted.
     pub deleted_copy: bool,
+    /// The copy's file could not be opened: nothing was compared.
+    pub not_opened: bool,
+}
+
+impl Pass {
+    /// Something the announced list names is still not in the copy, for a reason that another
+    /// try may clear.
+    pub fn failed(&self) -> bool {
+        self.not_opened || !self.kept.is_empty()
+    }
 }
 
 struct Instruments {
@@ -146,6 +171,7 @@ pub async fn pass(graph: &Graph, now: DateTime<Utc>) -> Pass {
         Ok(store) => store,
         Err(e) => {
             tracing::warn!(error = %e, rubato.reason = "apply", "context graph copy not opened");
+            pass.not_opened = true;
             return pass;
         }
     };
@@ -272,19 +298,41 @@ pub async fn pass(graph: &Graph, now: DateTime<Utc>) -> Pass {
     pass
 }
 
-/// The sync task: a pass on every announce, and one every five minutes for what failed.
+/// The sync task: a pass on every announce; after a pass that failed, another after 5 s, then
+/// 10 s, doubling up to five minutes; and one every five minutes all the same.
 pub async fn run(
     graph: Graph,
     companion_id: uuid::Uuid,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     observe_behind(&graph, companion_id);
+    let mut failures = 0u32;
     loop {
         tokio::select! {
             _ = graph.0.wake.notified() => {}
-            _ = tokio::time::sleep(RETRY) => {}
+            _ = tokio::time::sleep(retry_after(failures)) => {}
             _ = shutdown.changed() => return Ok(()),
         }
-        pass(&graph, Utc::now()).await;
+        failures = if pass(&graph, Utc::now()).await.failed() {
+            failures.saturating_add(1)
+        } else {
+            0
+        };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failed pass is tried again after 5 s, then twice as long each time, never longer than
+    /// the five minutes a pass waits anyway.
+    #[test]
+    fn a_failed_pass_is_retried_soon_and_then_ever_later() {
+        assert_eq!(retry_after(0), RETRY);
+        let waits: Vec<u64> = (1..=9).map(|n| retry_after(n).as_secs()).collect();
+        assert_eq!(waits, [5, 10, 20, 40, 80, 160, 300, 300, 300]);
+        assert_eq!(retry_after(u32::MAX), RETRY);
+        println!("checked {} waits", waits.len() + 2);
     }
 }

@@ -26,8 +26,8 @@ pub async fn insert(
     let refreshed = d.ignored.is_some().then_some(now);
     let r = sqlx::query(
         "INSERT OR IGNORE INTO webhook_deliveries \
-         (delivery_id, body_sha256, event, action, repo, issue_number, branch, received_at, outcome, refreshed_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (delivery_id, body_sha256, event, action, repo, issue_number, branch, installation_id, received_at, outcome, refreshed_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(body_sha256)
@@ -36,6 +36,7 @@ pub async fn insert(
     .bind(&d.repo)
     .bind(d.issue_number.map(|n| n as i64))
     .bind(&d.branch)
+    .bind(d.installation.map(|i| i as i64))
     .bind(now)
     .bind(outcome)
     .bind(refreshed)
@@ -49,6 +50,8 @@ pub async fn insert(
 pub struct Pending {
     pub delivery_id: String,
     pub event: String,
+    pub action: Option<String>,
+    pub installation: Option<u64>,
     pub repo: Option<String>,
     pub issue_number: Option<u64>,
     pub branch: Option<String>,
@@ -58,7 +61,7 @@ pub struct Pending {
 /// Oldest first, at most `limit`.
 pub async fn pending(db: &SqlitePool, limit: i64) -> Result<Vec<Pending>> {
     let rows = sqlx::query(
-        "SELECT delivery_id, event, repo, issue_number, branch, attempts FROM webhook_deliveries \
+        "SELECT delivery_id, event, action, installation_id, repo, issue_number, branch, attempts FROM webhook_deliveries \
          WHERE refreshed_at IS NULL ORDER BY received_at, rowid LIMIT ?",
     )
     .bind(limit)
@@ -69,6 +72,8 @@ pub async fn pending(db: &SqlitePool, limit: i64) -> Result<Vec<Pending>> {
         .map(|r| Pending {
             delivery_id: r.get("delivery_id"),
             event: r.get("event"),
+            action: r.get("action"),
+            installation: r.get::<Option<i64>, _>("installation_id").map(|i| i as u64),
             repo: r.get("repo"),
             issue_number: r.get::<Option<i64>, _>("issue_number").map(|n| n as u64),
             branch: r.get("branch"),
@@ -155,6 +160,7 @@ mod tests {
             repo: Some("m0x6A/rubato".into()),
             issue_number: issue,
             branch: None,
+            installation: None,
             ignored,
         }
     }

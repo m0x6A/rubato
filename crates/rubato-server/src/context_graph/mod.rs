@@ -56,12 +56,43 @@ pub fn store(app: &App) -> Option<Store> {
 /// `Overview.graph`: the interval and each source with its times, or `None` while the flag is
 /// off. A graph file that cannot be read is logged and shows as no sources; it never fails the
 /// overview, which is how people see everything else.
-pub async fn overview(app: &App) -> Option<GraphOverview> {
+/// The workspace a part or seam id names (`part:<workspace>/<id>`). Tenant `default`'s keep
+/// the plain workspace id, as before tenants; another tenant's say `<tenant>/<workspace>`, so
+/// the copy of a person in two tenants never holds one id from two sources. A workspace id
+/// holds no `/`, so the two forms never meet.
+pub(crate) fn workspace_label(ws: &crate::kernel::tenancy::WsKey) -> String {
+    if ws.tenant().as_str() == crate::kernel::tenancy::DEFAULT_TENANT {
+        ws.ws().to_owned()
+    } else {
+        format!("{}/{}", ws.tenant(), ws.ws())
+    }
+}
+
+/// The tenant a source belongs to: the one its key names, or the one its repository is live
+/// in. `None` for a source of no tenant: a key of before tenants, or a repository no attached
+/// installation covers now. Nobody is sent such a source.
+pub(crate) fn source_tenant(app: &App, key: &str) -> Option<crate::kernel::tenancy::TenantId> {
+    use rubato_protocol::graph::source_key;
+    if let Some(t) = source_key::tenant_of(key) {
+        return crate::kernel::tenancy::TenantId::parse(t);
+    }
+    app.github.tenant_of(source_key::repo_of(key)?)
+}
+
+pub async fn overview(
+    app: &App,
+    tenant: &crate::kernel::tenancy::TenantId,
+) -> Option<GraphOverview> {
     let cfg = app.config.context_graph.as_ref()?;
     let sources = match store(app) {
         None => Vec::new(),
         Some(store) => match store.sources().await {
-            Ok(rows) => rows.iter().map(status).collect(),
+            // Only the tenant's own sources (design §6.2).
+            Ok(rows) => rows
+                .iter()
+                .filter(|r| source_tenant(app, &r.source).as_ref() == Some(tenant))
+                .map(status)
+                .collect(),
             Err(e) => {
                 tracing::error!(
                     slice = SLICE,

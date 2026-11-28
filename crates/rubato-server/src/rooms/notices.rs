@@ -8,6 +8,7 @@
 
 use super::store;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use crate::{github_poll, plan_drafts, plans};
 use anyhow::Result;
 use rubato_protocol::{
@@ -24,24 +25,24 @@ fn notice_text(other: &IssueRef, other_branch: &str, seam: &str) -> String {
 }
 
 /// Post the notices still missing. Returns how many were posted.
-pub async fn post_seam_notices(app: &App) -> Result<usize> {
+pub async fn post_seam_notices(app: &App, t: &TenantId) -> Result<usize> {
     // Merged, or closed on GitHub (#265): neither plan is open any more. A notice is a message
     // posted once, so a closed issue gets none even while a session still works on it.
-    let mut merged: HashSet<IssueRef> = github_poll::all_prs(&app.db)
+    let mut merged: HashSet<IssueRef> = github_poll::all_prs(&app.db, t)
         .await?
         .into_iter()
         .filter(|(_, pr)| pr.merged_at.is_some())
         .map(|(issue, _)| issue)
         .collect();
     merged.extend(
-        github_poll::all_issue_meta(&app.db)
+        github_poll::all_issue_meta(&app.db, t)
             .await?
             .into_iter()
             .filter(|(_, m)| m.github_state.as_deref() == Some("closed"))
             .map(|(issue, _)| issue),
     );
     let mut open: HashMap<IssueRef, (String, Plan)> = HashMap::new();
-    for row in plans::all(&app.db).await? {
+    for row in plans::all(&app.db, t).await? {
         if let Some(plan) = row.plan
             && !merged.contains(&row.issue)
         {
@@ -49,7 +50,7 @@ pub async fn post_seam_notices(app: &App) -> Result<usize> {
         }
     }
     let mut newest_draft: HashMap<IssueRef, plan_drafts::LatestDraft> = HashMap::new();
-    for d in plan_drafts::latest_drafts(app).await? {
+    for d in plan_drafts::latest_drafts(app, t).await? {
         if d.plan.is_none() || merged.contains(&d.issue) || open.contains_key(&d.issue) {
             continue;
         }
@@ -96,7 +97,7 @@ pub async fn post_seam_notices(app: &App) -> Result<usize> {
                     turn_id: None,
                     spoken: false,
                 };
-                if store::insert(&app.db, &room, &m).await? {
+                if store::insert(&app.db, t, &room, &m).await? {
                     posted += 1;
                     tracing::info!(
                         rubato.issue = %issue,
@@ -106,11 +107,14 @@ pub async fn post_seam_notices(app: &App) -> Result<usize> {
                         other_branch = %other_branch,
                         "seam notice posted"
                     );
-                    app.notify_resource(WebResource::Room {
-                        repo: room.repo,
-                        number: room.number,
-                        branch: room.branch,
-                    });
+                    app.notify_resource(
+                        t,
+                        WebResource::Room {
+                            repo: room.repo,
+                            number: room.number,
+                            branch: room.branch,
+                        },
+                    );
                 }
             }
         }

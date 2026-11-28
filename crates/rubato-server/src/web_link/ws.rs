@@ -2,6 +2,7 @@
 
 use crate::auth::CurrentUser;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
@@ -17,20 +18,102 @@ static WEB_CLIENTS: AtomicU64 = AtomicU64::new(0);
 /// The reason of the catch-up event a lagged client is sent.
 pub const LAGGED: &str = "lagged";
 
-pub async fn upgrade(State(app): State<App>, _user: CurrentUser, ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(move |socket| handle(app, socket))
+/// `?t=<tenant>`: the tenant the socket is for.
+#[derive(serde::Deserialize)]
+pub struct Tenant {
+    #[serde(default)]
+    t: Option<String>,
 }
 
-async fn handle(app: App, socket: WebSocket) {
+/// `GET /ws/web?t=<tenant>` (ADR 0089, design §6.1): a socket for one tenant, opened only for a
+/// member of it. A tenant that does not exist, one the person is not in, and no `t` at all
+/// answer the same 404.
+pub async fn upgrade(
+    State(app): State<App>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Query(q): axum::extract::Query<Tenant>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let tenant = q.t.as_deref().and_then(TenantId::parse);
+    let scope = match &tenant {
+        Some(t) => match crate::tenants::scope_for(&app, t, &user).await {
+            Ok(s) => s,
+            Err(e) => {
+                return axum::response::IntoResponse::into_response(crate::kernel::http::internal(
+                    "web_link", e,
+                ));
+            }
+        },
+        None => None,
+    };
+    let Some(scope) = scope else {
+        app.reject(
+            rubato_protocol::web_link::routes::WEB_WS,
+            rubato_protocol::tenant::reason::UNKNOWN_TENANT,
+            &user,
+        );
+        return crate::kernel::tenancy::unknown_tenant();
+    };
+    ws.on_upgrade(move |socket| handle(app, socket, scope))
+}
+
+/// Whether the socket's person is still a member of its tenant. A read that fails says nothing
+/// either way: the socket stays, and the next check decides.
+async fn still_member(app: &App, scope: &crate::kernel::tenancy::TenantScope) -> bool {
+    !matches!(
+        crate::tenants::scope_for(app, scope.tenant(), scope.login()).await,
+        Ok(None)
+    )
+}
+
+async fn handle(app: App, socket: WebSocket, scope: crate::kernel::tenancy::TenantScope) {
     let (mut sink, mut stream) = socket.split();
     let mut rx = app.web_tx.subscribe();
+    let mine = scope.tenant().clone();
+    // Membership is read again this often: a person removed from the tenant stops hearing of
+    // it within that long (design §6.1).
+    let mut recheck = tokio::time::interval(app.config.web_membership_check);
+    recheck.tick().await;
+    let members_changed = tokio::sync::Notify::new();
     let n = WEB_CLIENTS.fetch_add(1, Ordering::SeqCst) + 1;
     app.metrics
         .ws_clients
         .record(n, &[KeyValue::new("kind", "web")]);
     loop {
         tokio::select! {
+            // Membership is read again on a timer: a person removed from the tenant is told so
+            // with close code 4403, and hears nothing more of it.
+            // Also at once when the tenant's members changed: the event that says so reaches
+            // every socket of the tenant, the removed person's own included, and theirs ends
+            // here instead of sending it.
+            gone = async {
+                tokio::select! {
+                    _ = recheck.tick() => {}
+                    _ = members_changed.notified() => {}
+                }
+                !still_member(&app, &scope).await
+            } => {
+                if gone {
+                    tracing::info!(rubato.tenant = %mine, rubato.user = %scope.login(), "web socket closed: no longer a member");
+                    let _ = sink
+                        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                            code: rubato_protocol::web_link::routes::CLOSE_NOT_A_MEMBER,
+                            reason: "not a member".into(),
+                        })))
+                        .await;
+                    break;
+                }
+            }
             ev = rx.recv() => match ev {
+                // Another tenant's event is dropped here, before it is sent (design §6.1): the
+                // browser never sees it, whatever its own filter does.
+                Ok(ev) if ev.tenant().is_some_and(|t| t != mine.as_str()) => {}
+                Ok(WebEvent::Changed { reason, .. })
+                    if reason == rubato_protocol::web_link::changed::MEMBERS
+                        && !still_member(&app, &scope).await =>
+                {
+                    members_changed.notify_one();
+                }
                 Ok(ev) => {
                     let span = tracing::debug_span!(span::WS_FANOUT, rubato.subscribers = app.web_tx.receiver_count());
                     let text = serde_json::to_string(&ev).unwrap_or_default();
@@ -49,6 +132,7 @@ async fn handle(app: App, socket: WebSocket) {
                     let catch_up = WebEvent::Changed {
                         at: chrono::Utc::now(),
                         reason: LAGGED.into(),
+                        tenant: Some(mine.to_string()),
                         workspace: None,
                     };
                     let text = serde_json::to_string(&catch_up).unwrap_or_default();
@@ -107,7 +191,7 @@ mod tests {
             .route("/ws/web", get(upgrade))
             .with_state(app.clone());
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/web"))
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/web?t=default"))
             .await
             .unwrap();
         // Wait for the server side to subscribe.

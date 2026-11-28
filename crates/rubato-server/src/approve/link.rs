@@ -17,6 +17,7 @@ use super::records::{self, RubatoApproval};
 use crate::auth::{self, TokenError};
 use crate::kernel::github::PostError;
 use crate::kernel::state::App;
+use crate::kernel::tenancy::TenantId;
 use crate::plans::PlanRow;
 use crate::{github_poll, plan_drafts, plans, session_messages};
 use anyhow::Result;
@@ -221,19 +222,19 @@ pub fn assess(f: &LinkFacts) -> Assessment {
 }
 
 /// The facts as stored now, assessed. Empty while no cutover is configured.
-pub async fn current(app: &App) -> Result<Assessment> {
+pub async fn current(app: &App, t: &TenantId) -> Result<Assessment> {
     if app.config.comment_approvals_until.is_none() {
         return Ok(Assessment::default());
     }
-    let approvals = records::all(&app.db).await?;
-    let newest: HashMap<Uuid, String> = plan_drafts::latest_drafts(app)
+    let approvals = records::all(&app.db, t).await?;
+    let newest: HashMap<Uuid, String> = plan_drafts::latest_drafts(app, t)
         .await?
         .into_iter()
         .map(|d| (d.summary.draft_id, d.summary.plan_sha))
         .collect();
-    let plans = plans::all(&app.db).await?;
-    let links = links::all(&app.db).await?;
-    let delivered = session_messages::plan_approved_delivered(&app.db).await?;
+    let plans = plans::all(&app.db, t).await?;
+    let links = links::all(&app.db, t).await?;
+    let delivered = session_messages::plan_approved_delivered(&app.db, t).await?;
     let mut can_act = HashSet::new();
     for login in approvals
         .iter()
@@ -256,8 +257,8 @@ pub async fn current(app: &App) -> Result<Assessment> {
 }
 
 /// The findings for the overview.
-pub async fn link_findings(app: &App) -> Result<Vec<Finding>> {
-    Ok(current(app).await?.findings)
+pub async fn link_findings(app: &App, t: &TenantId) -> Result<Vec<Finding>> {
+    Ok(current(app, t).await?.findings)
 }
 
 /// The link comment's body (§D7). The login is written without `@`, so nobody is notified.
@@ -281,11 +282,11 @@ pub fn link_body(github_web: &str, a: &RubatoApproval, commit: &str, path: &str)
 /// One tick: settle `opening` links the comments pass found, post the ones due, record the
 /// three gauges. Every tick, so a handoff's link comment does not wait for the full lane; an
 /// approver with no token is asked again each tick at the cost of one database read.
-pub async fn reconcile_links(app: &App) {
-    if let Err(e) = settle_found(app).await {
+pub async fn reconcile_links(app: &App, t: &TenantId) {
+    if let Err(e) = settle_found(app, t).await {
         tracing::error!(error = %format!("{e:#}"), "settling link comments failed");
     }
-    let assessed = match current(app).await {
+    let assessed = match current(app, t).await {
         Ok(a) => a,
         Err(e) => {
             tracing::error!(error = %format!("{e:#}"), "reading approvals for link comments failed");
@@ -294,7 +295,7 @@ pub async fn reconcile_links(app: &App) {
     };
     let mut posted = 0u64;
     for d in &assessed.due {
-        if post_link(app, d).await {
+        if post_link(app, t, d).await {
             posted += 1;
         }
     }
@@ -312,14 +313,14 @@ pub async fn reconcile_links(app: &App) {
 }
 
 /// `opening` rows whose comment the comments pass found from the approver become `posted`.
-async fn settle_found(app: &App) -> Result<()> {
-    let links = links::all(&app.db).await?;
+async fn settle_found(app: &App, t: &TenantId) -> Result<()> {
+    let links = links::all(&app.db, t).await?;
     if !links.values().any(|l| l.state == LinkState::Opening) {
         return Ok(());
     }
-    let found = github_poll::link_comments(&app.db).await?;
+    let found = github_poll::link_comments(&app.db, t).await?;
     for l in links.values().filter(|l| l.state == LinkState::Opening) {
-        let Some(a) = records::get(&app.db, l.approval_id).await? else {
+        let Some(a) = records::get(&app.db, t, l.approval_id).await? else {
             continue;
         };
         if let Some(c) = found.iter().find(|c| {
@@ -327,16 +328,16 @@ async fn settle_found(app: &App) -> Result<()> {
                 && c.issue == a.issue
                 && c.author.eq_ignore_ascii_case(&a.approved_by)
         }) {
-            links::posted(&app.db, a.id, c.comment_id, &c.url, app.clock.now()).await?;
+            links::posted(&app.db, t, a.id, c.comment_id, &c.url, app.clock.now()).await?;
             tracing::info!(rubato.issue = %a.issue, rubato.approval_id = %a.id, comment_id = c.comment_id, "link comment found in the comments");
-            app.notify("link comment");
+            app.notify_in(t, "link comment");
         }
     }
     Ok(())
 }
 
 /// Post one link comment as the approver. Claimed first, so it is posted at most once.
-async fn post_link(app: &App, d: &Due) -> bool {
+async fn post_link(app: &App, t: &TenantId, d: &Due) -> bool {
     let a = &d.approval;
     let token = match auth::access_token(app, &a.approved_by).await {
         Ok(t) => t,
@@ -350,7 +351,7 @@ async fn post_link(app: &App, d: &Due) -> bool {
         }
     };
     let now = app.clock.now();
-    match links::open(&app.db, a.id, &d.commit, now).await {
+    match links::open(&app.db, t, a.id, &d.commit, now).await {
         Ok(true) => {}
         Ok(false) => return false,
         Err(e) => {
@@ -367,22 +368,23 @@ async fn post_link(app: &App, d: &Due) -> bool {
     );
     let posted = app
         .github
+        .as_person()
         .comment_as(&token, &a.issue.repo, a.issue.number, &body)
         .instrument(span.clone())
         .await;
     match posted {
         Ok(c) => {
             span.record("rubato.outcome", "posted");
-            if let Err(e) = links::posted(&app.db, a.id, c.id, &c.url, now).await {
+            if let Err(e) = links::posted(&app.db, t, a.id, c.id, &c.url, now).await {
                 tracing::error!(error = %format!("{e:#}"), "link comment: recording failed");
             }
             tracing::info!(rubato.issue = %a.issue, rubato.approval_id = %a.id, commit = %d.commit, url = %c.url, "link comment posted");
-            app.notify("link comment");
+            app.notify_in(t, "link comment");
             true
         }
         Err(PostError::Refused { status }) => {
             span.record("rubato.outcome", "refused");
-            if let Err(e) = links::forget(&app.db, a.id).await {
+            if let Err(e) = links::forget(&app.db, t, a.id).await {
                 tracing::error!(error = %format!("{e:#}"), "link comment: dropping the claim failed");
             }
             tracing::warn!(rubato.issue = %a.issue, rubato.approval_id = %a.id, status, "GitHub refused the link comment");

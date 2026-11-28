@@ -18,6 +18,12 @@ pub struct Me {
     /// A plan room's voice channel (ADR 0073); absent while `RUBATO_VOICE` is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<crate::voice::VoiceAvailability>,
+    /// The tenants this person is a member of, with their role in each (ADR 0087).
+    #[serde(default)]
+    pub tenants: Vec<crate::tenant::TenantInfo>,
+    /// Listed in `RUBATO_OPERATORS`: may use the operator page (ADR 0088).
+    #[serde(default)]
+    pub operator: bool,
 }
 
 /// Route paths for login (`/auth/*` is outside `/api`).

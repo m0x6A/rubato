@@ -215,7 +215,7 @@ async fn a_single_map_server_answers_as_before_workspaces() {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let router = app::router(app.clone());
+    let router = app::router_before_tenants(app.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
     let mut got: Value = reqwest::Client::new()

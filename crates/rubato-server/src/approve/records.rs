@@ -1,6 +1,7 @@
 //! Table `rubato_approvals`: approvals given in Rubato (ADR 0054), one per version of a draft.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::IssueRef;
@@ -71,10 +72,11 @@ fn row(r: &SqliteRow) -> Result<RubatoApproval> {
     })
 }
 
-pub async fn get(db: &SqlitePool, id: Uuid) -> Result<Option<RubatoApproval>> {
+pub async fn get(db: &SqlitePool, t: &TenantId, id: Uuid) -> Result<Option<RubatoApproval>> {
     let r = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM rubato_approvals WHERE id = ?"
+        "SELECT {COLUMNS} FROM rubato_approvals WHERE tenant_id = ? AND id = ?"
     ))
+    .bind(t.as_str())
     .bind(id.to_string())
     .fetch_optional(db)
     .await?;
@@ -85,19 +87,19 @@ pub async fn get(db: &SqlitePool, id: Uuid) -> Result<Option<RubatoApproval>> {
 /// when a row was written; a later report replaces an earlier one.
 pub async fn record_handoff(
     db: &SqlitePool,
+    t: &TenantId,
     id: Uuid,
     issue: &IssueRef,
     facts: &HandoffFacts,
 ) -> Result<bool> {
     let n = sqlx::query(
-        "UPDATE rubato_approvals SET handoff_outcome = ?, handoff_at = ?, handoff_commit = ?, handoff_adrs_left = ? \
-         WHERE id = ? AND repo = ? AND number = ?",
+        "UPDATE rubato_approvals SET handoff_outcome = ?, handoff_at = ?, handoff_commit = ?, handoff_adrs_left = ? WHERE tenant_id = ? AND id = ? AND repo = ? AND number = ?",
     )
     .bind(&facts.outcome)
     .bind(ts(facts.at))
     .bind(&facts.commit)
     .bind(serde_json::to_string(&facts.adrs_left)?)
-    .bind(id.to_string())
+    .bind(t.as_str()).bind(id.to_string())
     .bind(&issue.repo)
     .bind(issue.number as i64)
     .execute(db)
@@ -110,15 +112,16 @@ pub async fn record_handoff(
 /// a revision that changes only the design note or an ADR is a new version to approve.
 pub async fn find(
     db: &SqlitePool,
+    t: &TenantId,
     issue: &IssueRef,
     branch: &str,
     plan_sha: &str,
     bundle_hash: &str,
 ) -> Result<Option<RubatoApproval>> {
     let r = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM rubato_approvals WHERE repo = ? AND number = ? AND branch = ? AND plan_sha = ? AND bundle_hash = ?"
+        "SELECT {COLUMNS} FROM rubato_approvals WHERE tenant_id = ? AND repo = ? AND number = ? AND branch = ? AND plan_sha = ? AND bundle_hash = ?"
     ))
-    .bind(&issue.repo)
+    .bind(t.as_str()).bind(&issue.repo)
     .bind(issue.number as i64)
     .bind(branch)
     .bind(plan_sha)
@@ -130,13 +133,12 @@ pub async fn find(
 
 /// Record `a` unless this version is approved already. True when this call inserted it; two
 /// presses at once insert one row.
-pub async fn insert(db: &SqlitePool, a: &RubatoApproval) -> Result<bool> {
+pub async fn insert(db: &SqlitePool, t: &TenantId, a: &RubatoApproval) -> Result<bool> {
     let at = ts(a.approved_at);
     let r = sqlx::query(
-        "INSERT OR IGNORE INTO rubato_approvals (id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO rubato_approvals (tenant_id, id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(a.id.to_string())
+    .bind(t.as_str()).bind(a.id.to_string())
     .bind(&a.issue.repo)
     .bind(a.issue.number as i64)
     .bind(&a.branch)
@@ -155,10 +157,11 @@ pub async fn insert(db: &SqlitePool, a: &RubatoApproval) -> Result<bool> {
 }
 
 /// Every recorded approval, oldest first.
-pub async fn all(db: &SqlitePool) -> Result<Vec<RubatoApproval>> {
+pub async fn all(db: &SqlitePool, t: &TenantId) -> Result<Vec<RubatoApproval>> {
     let rows = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM rubato_approvals ORDER BY approved_at, id"
+        "SELECT {COLUMNS} FROM rubato_approvals WHERE tenant_id = ? ORDER BY approved_at, id"
     ))
+    .bind(t.as_str())
     .fetch_all(db)
     .await?;
     rows.iter().map(row).collect()

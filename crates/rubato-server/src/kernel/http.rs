@@ -2,42 +2,53 @@
 //! And the workspace a map-scoped request is for (ADR 0049): `Ws`, checked once per request.
 
 use crate::kernel::state::App;
+use crate::kernel::tenancy::{TenantScope, WsKey, unknown_tenant};
 use axum::extract::{FromRequestParts, RawPathParams, Request, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use rubato_protocol::DEFAULT_WORKSPACE;
 
-/// The workspace a map-scoped request is for: the `{ws}` of `/api/w/{ws}/…`, else `default`.
-/// Only a configured id gets here; `check_workspace` answers 404 for any other.
+/// The workspace a map-scoped request is for: the `{ws}` of `/api/t/{tenant}/w/{ws}/…` in the
+/// tenant the person acts in (ADR 0089). Only a workspace that tenant holds gets here;
+/// `check_workspace` answers 404 for any other.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ws(pub String);
+pub struct Ws(pub WsKey);
 
 impl Ws {
+    /// The workspace's id inside its tenant.
     pub fn as_str(&self) -> &str {
+        self.0.ws()
+    }
+
+    pub fn key(&self) -> &WsKey {
         &self.0
     }
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Ws {
-    type Rejection = std::convert::Infallible;
+    type Rejection = Response;
 
+    /// What `check_workspace` put on the request. A route mounted without that layer has none
+    /// and answers 404: never a default workspace.
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        Ok(parts
-            .extensions
-            .get::<Ws>()
-            .cloned()
-            .unwrap_or_else(|| Ws(DEFAULT_WORKSPACE.to_string())))
+        parts.extensions.get::<Ws>().cloned().ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                UNKNOWN_WORKSPACE,
+            )
+                .into_response()
+        })
     }
 }
 
 /// The body of the 404 answer for a workspace this server does not hold.
 pub const UNKNOWN_WORKSPACE: &str = r#"{"reason":"unknown_workspace"}"#;
 
-/// Layer on every `/api/w/{ws}/…` route: a configured `{ws}` becomes the request's `Ws`; any
-/// other is 404 `unknown_workspace`, counted on `rubato.web.rejected`. Never a fallback to
-/// `default`: a write must land where it was meant or nowhere.
+/// Layer on every `/api/t/{tenant}/w/{ws}/…` route, inside `tenants::check_tenant`: a `{ws}` the
+/// tenant holds becomes the request's `Ws`; any other is 404 `unknown_workspace`, counted on
+/// `rubato.web.rejected`. Never a fallback: a write must land where it was meant or nowhere.
 pub async fn check_workspace(
     State(app): State<App>,
     params: RawPathParams,
@@ -49,8 +60,11 @@ pub async fn check_workspace(
         .find(|(k, _)| *k == "ws")
         .map(|(_, v)| v.to_string())
         .unwrap_or_default();
-    let (entries, _) = app.workspace_entries();
-    if !entries.iter().any(|w| w.id == ws) {
+    let Some(scope) = req.extensions().get::<TenantScope>().cloned() else {
+        return unknown_tenant();
+    };
+    let key = scope.ws(ws);
+    if !app.holds_workspace(&key) {
         // The route template, not the path: the id in the URL is not a label.
         let route = req
             .extensions()
@@ -66,9 +80,118 @@ pub async fn check_workspace(
         )
             .into_response();
     }
-    tracing::Span::current().record(rubato_protocol::otel::attr::WORKSPACE, ws.as_str());
-    req.extensions_mut().insert(Ws(ws));
+    tracing::Span::current().record(rubato_protocol::otel::attr::WORKSPACE, key.ws());
+    req.extensions_mut().insert(Ws(key));
     next.run(req).await
+}
+
+/// The largest body a route takes unless it sets its own limit (ADR 0090).
+pub const DEFAULT_BODY_MAX_BYTES: usize = 1024 * 1024;
+
+/// The largest JSON body [`check_repos`] reads to look for a repository; a larger one is 413.
+/// The default limit: a tenant route with a larger cap of its own takes no JSON.
+pub const SCOPE_BODY_MAX_BYTES: usize = DEFAULT_BODY_MAX_BYTES;
+
+/// Every repository a request names where the protocol puts one: `repo`, `issue.repo` and
+/// `issues[].repo` of a JSON body.
+fn repos_in_body(v: &serde_json::Value) -> Vec<&str> {
+    fn repo(v: &serde_json::Value) -> Option<&str> {
+        v.get("repo").and_then(|r| r.as_str())
+    }
+    let mut out = Vec::new();
+    out.extend(repo(v));
+    out.extend(v.get("issue").and_then(repo));
+    if let Some(list) = v.get("issues").and_then(|i| i.as_array()) {
+        out.extend(list.iter().filter_map(repo));
+    }
+    out
+}
+
+/// Whether a `Content-Type` is one axum's `Json` extractor parses: `application/json` or any
+/// `application/*+json`, whatever its parameters and case. [`check_repos`] reads the body of
+/// exactly these, so no content type reaches a handler as JSON without having been looked at.
+pub fn is_json(content_type: &str) -> bool {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match essence.strip_prefix("application/") {
+        Some(sub) => sub == "json" || sub.ends_with("+json"),
+        None => false,
+    }
+}
+
+/// Layer on every `/api/t/{tenant}/…` route, inside `tenants::check_tenant` (design §4.2): a
+/// repository the request names, in its path (`{owner}/{repo}`), its query (`repo=`) or its JSON
+/// body, must be live in the tenant the person acts in. One that is another tenant's, or that no
+/// installation covers, answers 404 `other_tenant`, counted on `rubato.web.rejected`, before any
+/// handler runs: no handler can forget the check, and none acts for a repository's own tenant
+/// on a request made in another.
+pub async fn check_repos(
+    State(app): State<App>,
+    params: RawPathParams,
+    req: Request,
+    next: Next,
+) -> Response {
+    let Some(scope) = req.extensions().get::<TenantScope>().cloned() else {
+        return unknown_tenant();
+    };
+    let route = req
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let foreign = |repo: &str| app.github.tenant_of(repo).as_ref() != Some(scope.tenant());
+    let refuse = |repo: &str| {
+        app.reject_in(
+            scope.tenant(),
+            &route,
+            rubato_protocol::tenant::reason::OTHER_TENANT,
+            scope.login(),
+        );
+        tracing::warn!(rubato.route = %route, rubato.tenant = %scope.tenant(), rubato.user = %scope.login(), rubato.repo = %repo, "a repository outside the tenant was named");
+        crate::kernel::tenancy::other_tenant()
+    };
+    let param = |name: &str| params.iter().find(|(k, _)| *k == name).map(|(_, v)| v);
+    if let (Some(owner), Some(name)) = (param("owner"), param("repo")) {
+        let repo = format!("{owner}/{name}");
+        if foreign(&repo) {
+            return refuse(&repo);
+        }
+    }
+    let in_query: Option<String> = req.uri().query().and_then(|q| {
+        url::form_urlencoded::parse(q.as_bytes())
+            .find(|(k, _)| k == "repo")
+            .map(|(_, v)| v.into_owned())
+    });
+    if let Some(repo) = in_query.filter(|r| foreign(r)) {
+        return refuse(&repo);
+    }
+    // Whatever a handler's `Json` extractor would parse must be read here first: the two
+    // must never disagree on what is JSON.
+    let json = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(is_json);
+    if !json {
+        return next.run(req).await;
+    }
+    let (parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, SCOPE_BODY_MAX_BYTES).await {
+        Ok(b) => b,
+        Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+    };
+    // A body that is not JSON after all is the handler's to refuse.
+    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        && let Some(repo) = repos_in_body(&v).into_iter().find(|r| foreign(r))
+    {
+        return refuse(repo);
+    }
+    next.run(Request::from_parts(parts, axum::body::Body::from(bytes)))
+        .await
 }
 
 /// The body of the 403 answer for a write or websocket upgrade from another origin (ADR 0066).
@@ -205,9 +328,32 @@ fn policy_without_voice(public_url: &str) -> String {
 }
 
 /// Add `Content-Security-Policy` and `X-Content-Type-Options: nosniff` to a response.
-pub fn add_security_headers(csp: &axum::http::HeaderValue, res: &mut Response) {
+/// The value of one cookie among a request's.
+pub fn cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(';'))
+        .filter_map(|kv| kv.trim().split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| v.to_owned())
+}
+
+/// A year, with subdomains: what `Strict-Transport-Security` says over https (ADR 0090).
+pub const HSTS: &str = "max-age=31536000; includeSubDomains";
+
+pub fn add_security_headers(csp: &axum::http::HeaderValue, https: bool, res: &mut Response) {
     use axum::http::{HeaderValue, header};
     let h = res.headers_mut();
+    // Only over https: a browser ignores it over http, and a LAN on plain http must stay
+    // reachable.
+    if https {
+        h.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static(HSTS),
+        );
+    }
     h.insert(header::CONTENT_SECURITY_POLICY, csp.clone());
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,
@@ -260,6 +406,7 @@ pub fn request_span<B>(app: &App, req: &axum::http::Request<B>) -> tracing::Span
         http.route = %route,
         http.response.status_code = tracing::field::Empty,
         otel.status_code = tracing::field::Empty,
+        rubato.tenant = tracing::field::Empty,
     );
     let remote = SpanContext::new(
         TraceId::from(tp.trace_id),
@@ -285,6 +432,37 @@ pub fn record_status<B>(res: &axum::http::Response<B>, span: &tracing::Span) {
 pub fn internal(slice: &'static str, e: impl std::fmt::Display) -> StatusCode {
     tracing::error!(slice, error = %e, "request failed");
     StatusCode::INTERNAL_SERVER_ERROR
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::is_json;
+
+    /// What the repository check reads is exactly what a handler would parse as JSON.
+    #[test]
+    fn a_content_type_is_json_whenever_the_json_extractor_would_take_it() {
+        for yes in [
+            "application/json",
+            "application/json; charset=utf-8",
+            "Application/JSON",
+            " application/json ",
+            "application/x+json",
+            "application/vnd.api+json;charset=utf-8",
+            "application/problem+JSON",
+        ] {
+            assert!(is_json(yes), "{yes}");
+        }
+        for no in [
+            "text/json",
+            "application/jsonp",
+            "application/x-www-form-urlencoded",
+            "multipart/form-data; boundary=json",
+            "application/octet-stream",
+            "",
+        ] {
+            assert!(!is_json(no), "{no}");
+        }
+    }
 }
 
 #[cfg(test)]

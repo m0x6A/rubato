@@ -228,10 +228,10 @@ pub const MAX_NAME_CHARS: usize = 80;
 pub mod routes {
     /// `GET` reads, `PUT` updates one workspace's settings. Map-scoped (ADR 0049).
     pub const SETTINGS: &str = "/api/settings";
-    /// `DELETE`: remove a workspace; its rows are kept. Only under the scope prefix, never
-    /// unprefixed: `default` cannot be deleted.
-    pub const WORKSPACE: &str = "/api/w/{ws}";
-    /// `GET`: every traffic adapter's field list. Team-wide.
+    /// `DELETE`: remove a workspace of a tenant; its rows are kept (ADR 0089). The full path:
+    /// mounted as it is.
+    pub const WORKSPACE: &str = "/api/t/{tenant}/w/{ws}";
+    /// `GET`: every traffic adapter's field list. A tenant route.
     pub const TRAFFIC_SOURCES: &str = "/api/traffic/sources";
 }
 

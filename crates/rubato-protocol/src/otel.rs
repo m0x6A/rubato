@@ -40,6 +40,10 @@ pub mod attr {
     /// Retired map ids a plan names (ADR 0077): reported by the plan check, never failed.
     pub const PLAN_RETIRED_IDS: &str = "rubato.plan.retired_ids";
     pub const GITHUB_ENDPOINT: &str = "rubato.github.endpoint";
+    /// The App installation a GitHub call or gauge is made through (ADR 0087).
+    pub const GITHUB_INSTALLATION: &str = "rubato.github.installation";
+    /// The tenant a request, poll pass or gauge acts for (ADR 0087).
+    pub const TENANT: &str = "rubato.tenant";
     /// The tmux version a companion found at start (`tmux -V`, ADR 0070).
     pub const TMUX_VERSION: &str = "rubato.tmux.version";
     pub const DROP_REASON: &str = "rubato.reason";
@@ -155,8 +159,14 @@ pub mod metric {
     pub const BACKLOG_LISTED_AT: &str = "rubato.backlog.listed_at";
     /// Open issues listed per repo, recorded every poll tick.
     pub const BACKLOG_ISSUES: &str = "rubato.backlog.issues";
-    /// A web request refused by a rule, by route and reason.
+    /// A web request refused by a rule, by route and reason; with `rubato.tenant` where the
+    /// refusal happened inside a tenant the caller is in (`other_tenant`, ADR 0087).
     pub const WEB_REJECTED: &str = "rubato.web.rejected";
+    /// Requests admitted to a tenant route, by `rubato.tenant` (ADR 0087): who uses the server.
+    pub const WEB_TENANT_REQUESTS: &str = "rubato.web.tenant_requests";
+    /// Attached installations GitHub has suspended, recorded every poll pass, zeros included
+    /// (ADR 0087): nothing of their tenant's repositories is read while it lasts.
+    pub const GITHUB_INSTALLATIONS_SUSPENDED: &str = "rubato.github.installations.suspended";
     /// Repos the map or a tracked issue names that the GitHub App installation does not cover.
     pub const GITHUB_REPOS_UNCOVERED: &str = "rubato.github.repos_uncovered";
     /// Accepted writes to the shared map layout: a part moved, or the layout cleared.
@@ -246,6 +256,9 @@ pub mod metric {
     pub const SESSION_LOG_DROPPED: &str = "rubato.session_log.dropped";
     /// Draft revisions stored (ADR 0053).
     pub const DRAFTS_REVISIONS: &str = "rubato.drafts.revisions";
+    /// What a companion sent, or was to be sent, for a launch whose owner is no longer a member
+    /// of the launch's tenant, by `rubato.reason` (`not_member`) (ADR 0087, design §6.3).
+    pub const COMPANION_REFUSED: &str = "rubato.companion.refused";
     /// Draft bundles not stored, by reason (`too_large`, `owner_conflict`, `unknown_launch`).
     pub const DRAFTS_REFUSED: &str = "rubato.drafts.refused";
     /// Room turns by `rubato.outcome` (answered, failed, stopped) (ADR 0057).
@@ -345,8 +358,10 @@ pub mod metric {
     /// Server: builds a cap cut, by `rubato.graph.source` and `rubato.reason` (which cap).
     pub const GRAPH_TRUNCATED: &str = "rubato.graph.truncated";
     /// Server: snapshot requests (ADR 0086), by `rubato.outcome` (`ok`, `unauthorized`,
-    /// `stale`, `error`).
+    /// `stale`, `refused` for a source of a tenant the owner is not in, `error`).
     pub const GRAPH_SNAPSHOTS: &str = "rubato.graph.snapshots";
+    /// Server: times a companion's list of sources was cut at the cap (ADR 0087).
+    pub const GRAPH_SOURCES_TRUNCATED: &str = "rubato.graph.sources_truncated";
     /// Companion: sources fetched and applied, by `rubato.outcome` and `rubato.reason`
     /// (`http`, `hash_mismatch`, `apply`, `team_record_stale`).
     pub const GRAPH_SYNCS: &str = "rubato.graph.syncs";
@@ -375,6 +390,8 @@ pub mod span {
     /// the bytes. Draws `server-plan-file` and `server-system-map` on the service graph.
     pub const PART_READ: &str = "rubato.part.read";
     pub const GITHUB_CALL: &str = "rubato.github.call";
+    /// One tenant's part of a poll pass (ADR 0087), with `rubato.tenant`.
+    pub const POLL_TENANT_PASS: &str = "rubato.poll.tenant_pass";
     pub const WS_FANOUT: &str = "rubato.ws.fanout";
     pub const HANDOFF: &str = "rubato.handoff";
     /// An approval posted from Rubato as the person (ADR 0030).
@@ -545,6 +562,8 @@ pub fn all_names() -> Vec<&'static str> {
         attr::PLAN_O_ROWS_MISSING,
         attr::PLAN_RETIRED_IDS,
         attr::GITHUB_ENDPOINT,
+        attr::GITHUB_INSTALLATION,
+        attr::TENANT,
         attr::TMUX_VERSION,
         attr::RECONCILE_PANES,
         attr::DROP_REASON,
@@ -604,6 +623,8 @@ pub fn all_names() -> Vec<&'static str> {
         metric::BACKLOG_LISTED_AT,
         metric::BACKLOG_ISSUES,
         metric::WEB_REJECTED,
+        metric::WEB_TENANT_REQUESTS,
+        metric::GITHUB_INSTALLATIONS_SUSPENDED,
         metric::GITHUB_REPOS_UNCOVERED,
         metric::LAYOUT_WRITES,
         metric::QUEUE_DEPTH,
@@ -650,6 +671,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GRAPH_EDGES,
         metric::GRAPH_TRUNCATED,
         metric::GRAPH_SNAPSHOTS,
+        metric::GRAPH_SOURCES_TRUNCATED,
         metric::GRAPH_SYNCS,
         metric::GRAPH_COPY_BEHIND,
         metric::TELEMETRY_RELAY,
@@ -667,6 +689,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
         metric::DRAFTS_REFUSED,
+        metric::COMPANION_REFUSED,
         metric::ROOMS_AGENT_TURNS,
         metric::ROOMS_TURN_LIMIT_HITS,
         metric::HANDOFF_REPORTS,
@@ -688,6 +711,7 @@ pub fn all_names() -> Vec<&'static str> {
         span::HTTP_REQUEST,
         span::PART_READ,
         span::GITHUB_CALL,
+        span::POLL_TENANT_PASS,
         span::WS_FANOUT,
         span::HANDOFF,
         span::PLAN_APPROVE,

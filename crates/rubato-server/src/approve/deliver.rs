@@ -90,15 +90,16 @@ pub async fn on_launch_started(app: &App, launch_id: Uuid) {
 }
 
 async fn bind_waiting(app: &App, launch_id: Uuid) -> Result<()> {
-    let Some(t) = crate::launch::launch_target(&app.db, launch_id).await? else {
+    let Some(t) = crate::launch::acting_target(app, launch_id).await? else {
         return Ok(());
     };
     let Some(branch) = t.branch.as_deref() else {
         return Ok(());
     };
-    let drafts = crate::plan_drafts::latest_drafts(app).await?;
+    let tenant = app.repo_tenant(&t.issue.repo)?;
+    let drafts = crate::plan_drafts::latest_drafts(app, &tenant).await?;
     let mut waiting: Vec<RubatoApproval> = Vec::new();
-    for a in super::records::all(&app.db).await? {
+    for a in super::records::all(&app.db, &tenant).await? {
         let current_owned = drafts.iter().any(|d| {
             d.summary.draft_id == a.draft_id
                 && d.summary.plan_sha == a.plan_sha
@@ -109,7 +110,7 @@ async fn bind_waiting(app: &App, launch_id: Uuid) -> Result<()> {
             && a.branch == branch
             && current_owned
             && !handed_off
-            && !session_messages::plan_approved_open(&app.db, a.id).await?
+            && !session_messages::plan_approved_open(&app.db, &tenant, a.id).await?
         {
             waiting.push(a);
         }

@@ -128,6 +128,8 @@ pub struct Metrics {
     pub telemetry_relay: Counter<u64>,
     /// Spans the relay's rewrite dropped.
     pub telemetry_relay_dropped: Counter<u64>,
+    pub web_tenant_requests: Counter<u64>,
+    pub installations_suspended: Gauge<u64>,
     pub rate_limit_remaining: Gauge<u64>,
     pub rate_limit_limit: Gauge<u64>,
     pub plan_parse_failures: Counter<u64>,
@@ -204,6 +206,7 @@ pub struct Metrics {
     /// Draft revisions stored, and bundles not stored by reason (ADR 0053).
     pub drafts_revisions: Counter<u64>,
     pub drafts_refused: Counter<u64>,
+    pub companion_refused: Counter<u64>,
     /// `Approved:` comments first read at or after the cutover (ADR 0054).
     pub plans_comment_after_cutover: Counter<u64>,
     /// Room turns by `rubato.outcome`: answered, failed, stopped (ADR 0057).
@@ -243,6 +246,10 @@ impl Metrics {
             http_traceparent: m.u64_counter(otel::metric::HTTP_TRACEPARENT).build(),
             telemetry_relay: m.u64_counter(otel::metric::TELEMETRY_RELAY).build(),
             telemetry_relay_dropped: m.u64_counter(otel::metric::TELEMETRY_RELAY_DROPPED).build(),
+            web_tenant_requests: m.u64_counter(otel::metric::WEB_TENANT_REQUESTS).build(),
+            installations_suspended: m
+                .u64_gauge(otel::metric::GITHUB_INSTALLATIONS_SUSPENDED)
+                .build(),
             rate_limit_remaining: m
                 .u64_gauge(otel::metric::GITHUB_RATE_LIMIT_REMAINING)
                 .build(),
@@ -314,6 +321,7 @@ impl Metrics {
             session_log_dropped: m.u64_counter(otel::metric::SESSION_LOG_DROPPED).build(),
             drafts_revisions: m.u64_counter(otel::metric::DRAFTS_REVISIONS).build(),
             drafts_refused: m.u64_counter(otel::metric::DRAFTS_REFUSED).build(),
+            companion_refused: m.u64_counter(otel::metric::COMPANION_REFUSED).build(),
             plans_comment_after_cutover: m
                 .u64_counter(otel::metric::PLANS_COMMENT_AFTER_CUTOVER)
                 .build(),

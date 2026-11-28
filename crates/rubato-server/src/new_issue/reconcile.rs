@@ -83,7 +83,8 @@ pub async fn reconcile(app: &App, found: &[Found], fresh: &HashSet<String>) {
             })
             .or_insert(f);
     }
-    let mut changed = false;
+    let mut changed: std::collections::BTreeSet<crate::kernel::tenancy::TenantId> =
+        Default::default();
     let mut still = 0u64;
     for c in &rows {
         let done = if let Some(f) = by_id.get(&(c.repo.as_str(), c.request_id.as_str())) {
@@ -94,19 +95,19 @@ pub async fn reconcile(app: &App, found: &[Found], fresh: &HashSet<String>) {
             false
         };
         if done {
-            changed = true;
+            changed.insert(c.workspace.tenant().clone());
         } else {
             still += 1;
         }
     }
     app.metrics.issues_opening.record(still, &[]);
-    if changed {
-        app.notify("issue");
+    for t in &changed {
+        app.notify_in(t, "issue");
     }
 }
 
 async fn finish(app: &App, c: &store::Creation, f: &Found) -> bool {
-    match store::created(&app.db, &c.request_id, f.issue.number, &f.url).await {
+    match store::created(&app.db, &c.workspace, &c.request_id, f.issue.number, &f.url).await {
         Ok(true) => {}
         Ok(false) => return true,
         Err(e) => {
@@ -128,7 +129,7 @@ async fn finish(app: &App, c: &store::Creation, f: &Found) -> bool {
 
 async fn give_up(app: &App, c: &store::Creation) -> bool {
     let why = "GitHub did not confirm it and no listing showed it for ten minutes";
-    match store::failed(&app.db, &c.request_id, why).await {
+    match store::failed(&app.db, &c.workspace, &c.request_id, why).await {
         Ok(changed) => {
             if changed {
                 count(app, "failed");
@@ -201,7 +202,7 @@ mod tests {
         assert!(
             store::begin(
                 &app.db,
-                rubato_protocol::DEFAULT_WORKSPACE,
+                &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
                 "r-1",
                 "o/r",
                 &MapRef::node("web"),
@@ -224,11 +225,21 @@ mod tests {
             },
         ];
         reconcile(&app, &listed, &HashSet::new()).await;
-        let c = store::get(&app.db, "r-1").await.unwrap().unwrap();
+        let c = store::get(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default("default"),
+            "r-1",
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(c.number, Some(3), "the App's issue with the lowest number");
-        let pins = crate::pins::list(&app.db, rubato_protocol::DEFAULT_WORKSPACE)
-            .await
-            .unwrap();
+        let pins = crate::pins::list(
+            &app.db,
+            &crate::kernel::tenancy::WsKey::of_default(rubato_protocol::DEFAULT_WORKSPACE),
+        )
+        .await
+        .unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0].issue, IssueRef::new("o/r", 3));
         assert_eq!(pins[0].pinned_by, "teammate");

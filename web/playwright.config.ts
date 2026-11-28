@@ -13,11 +13,11 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "dev", testIgnore: /(app-login|room|sessions|shots|motion|perf|settings)\.spec\.ts/, use: { browserName: "chromium" } },
+    { name: "dev", testIgnore: /(app-login|room|sessions|shots|motion|perf|settings|tenants)\.spec\.ts/, use: { browserName: "chromium" } },
     {
       name: "app",
       // settings.spec.ts: its single-workspace test runs here, its other test in "settings".
-      testMatch: /(app-login|settings)\.spec\.ts/,
+      testMatch: /(app-login|settings|tenants)\.spec\.ts/,
       use: { browserName: "chromium", baseURL: process.env["RUBATO_E2E_APP_URL"] ?? "http://127.0.0.1:18091" },
     },
     // Issue #122: two people in a plan's room, with a companion that launches #916. Its launch

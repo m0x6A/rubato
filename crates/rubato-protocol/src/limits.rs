@@ -63,7 +63,7 @@ pub const AGENT_DOING_MAX_CHARS: usize = 200;
 pub const AGENT_PARTS_MAX: usize = 8;
 
 /// The most context graph sources one `GraphSources` names (ADR 0086).
-pub const GRAPH_SOURCES_MAX: usize = 64;
+pub const GRAPH_SOURCES_MAX: usize = 256;
 /// The largest repository tarball the server downloads for a graph source, compressed
 /// (ADR 0084). Over a cap a source is marked `truncated`; it is never a failed build.
 pub const GRAPH_TARBALL_MAX_BYTES: u64 = 256 * 1024 * 1024;

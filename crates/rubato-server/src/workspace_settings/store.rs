@@ -1,11 +1,14 @@
 //! Table `workspace_settings` (migration 0027): one row per workspace, in switcher order.
 
+use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
 use sqlx::{Row as _, Sqlite, SqlitePool, Transaction};
 
 /// One workspace's stored settings, as the table holds them.
 #[derive(Clone, PartialEq)]
 pub struct Row {
+    /// The tenant that holds the workspace (ADR 0087); the id is unique inside it.
+    pub tenant_id: String,
     pub workspace_id: String,
     pub position: i64,
     pub revision: i64,
@@ -28,6 +31,7 @@ pub struct Row {
 impl std::fmt::Debug for Row {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Row")
+            .field("tenant_id", &self.tenant_id)
             .field("workspace_id", &self.workspace_id)
             .field("revision", &self.revision)
             .field("map_repo", &self.map_repo)
@@ -51,8 +55,9 @@ pub async fn count(tx: &mut Transaction<'_, Sqlite>) -> Result<i64> {
 
 pub async fn insert(tx: &mut Transaction<'_, Sqlite>, r: &Row) -> Result<()> {
     sqlx::query(
-        "INSERT INTO workspace_settings (workspace_id, position, revision, name, map_repo, map_path, map_ref, traffic_source, traffic_fields, traffic_secrets_sealed, default_spend_cap_usd, default_attempt_limit, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO workspace_settings (tenant_id, workspace_id, position, revision, name, map_repo, map_path, map_ref, traffic_source, traffic_fields, traffic_secrets_sealed, default_spend_cap_usd, default_attempt_limit, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
+    .bind(&r.tenant_id)
     .bind(&r.workspace_id)
     .bind(r.position)
     .bind(r.revision)
@@ -74,6 +79,7 @@ pub async fn insert(tx: &mut Transaction<'_, Sqlite>, r: &Row) -> Result<()> {
 
 fn read(r: &sqlx::sqlite::SqliteRow) -> Row {
     Row {
+        tenant_id: r.get("tenant_id"),
         workspace_id: r.get("workspace_id"),
         position: r.get("position"),
         revision: r.get("revision"),
@@ -91,18 +97,27 @@ fn read(r: &sqlx::sqlite::SqliteRow) -> Row {
     }
 }
 
-/// Every row, in switcher order.
+impl Row {
+    pub fn key(&self) -> WsKey {
+        WsKey::stored(self.tenant_id.clone(), self.workspace_id.clone())
+    }
+}
+
+/// Every tenant's rows, each tenant's in switcher order: the registry, loaded whole at start
+/// and after a change. No request reads this; it acts for no tenant.
 pub async fn all(db: &SqlitePool) -> Result<Vec<Row>> {
-    let rows = sqlx::query("SELECT * FROM workspace_settings ORDER BY position, workspace_id")
-        .fetch_all(db)
-        .await?;
+    let rows =
+        sqlx::query("SELECT * FROM workspace_settings ORDER BY tenant_id, position, workspace_id")
+            .fetch_all(db)
+            .await?;
     Ok(rows.iter().map(read).collect())
 }
 
-pub async fn get(db: &SqlitePool, id: &str) -> Result<Option<Row>> {
+pub async fn get(db: &SqlitePool, id: &WsKey) -> Result<Option<Row>> {
     Ok(
-        sqlx::query("SELECT * FROM workspace_settings WHERE workspace_id = ?")
-            .bind(id)
+        sqlx::query("SELECT * FROM workspace_settings WHERE tenant_id = ? AND workspace_id = ?")
+            .bind(id.tenant.as_str())
+            .bind(id.ws())
             .fetch_optional(db)
             .await?
             .as_ref()
@@ -110,14 +125,16 @@ pub async fn get(db: &SqlitePool, id: &str) -> Result<Option<Row>> {
     )
 }
 
-/// A new workspace, last in the switcher. The unique index on the map answers a second
+/// A new workspace, last in its tenant's switcher. The unique index on the map answers a second
 /// workspace on one map with an error.
 pub async fn create(db: &SqlitePool, r: &Row) -> Result<Row> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let position: i64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(position), -1) + 1 FROM workspace_settings")
-            .fetch_one(&mut *tx)
-            .await?;
+    let position: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM workspace_settings WHERE tenant_id = ?",
+    )
+    .bind(&r.tenant_id)
+    .fetch_one(&mut *tx)
+    .await?;
     let row = Row {
         position,
         revision: 1,
@@ -133,7 +150,7 @@ pub async fn create(db: &SqlitePool, r: &Row) -> Result<Row> {
 /// source's repo and path are never written: they are fixed at insert.
 pub async fn update(db: &SqlitePool, r: &Row, read_revision: i64) -> Result<bool> {
     let done = sqlx::query(
-        "UPDATE workspace_settings SET revision = ?, name = ?, map_ref = ?, traffic_source = ?, traffic_fields = ?, traffic_secrets_sealed = ?, default_spend_cap_usd = ?, default_attempt_limit = ?, updated_by = ?, updated_at = ? WHERE workspace_id = ? AND revision = ?",
+        "UPDATE workspace_settings SET revision = ?, name = ?, map_ref = ?, traffic_source = ?, traffic_fields = ?, traffic_secrets_sealed = ?, default_spend_cap_usd = ?, default_attempt_limit = ?, updated_by = ?, updated_at = ? WHERE tenant_id = ? AND workspace_id = ? AND revision = ?",
     )
     .bind(read_revision + 1)
     .bind(&r.name)
@@ -145,6 +162,7 @@ pub async fn update(db: &SqlitePool, r: &Row, read_revision: i64) -> Result<bool
     .bind(r.default_attempt_limit)
     .bind(&r.updated_by)
     .bind(&r.updated_at)
+    .bind(&r.tenant_id)
     .bind(&r.workspace_id)
     .bind(read_revision)
     .execute(db)
@@ -153,10 +171,12 @@ pub async fn update(db: &SqlitePool, r: &Row, read_revision: i64) -> Result<bool
 }
 
 /// Remove a workspace's settings row. Every other row of the workspace is kept.
-pub async fn delete(db: &SqlitePool, id: &str) -> Result<bool> {
-    let done = sqlx::query("DELETE FROM workspace_settings WHERE workspace_id = ?")
-        .bind(id)
-        .execute(db)
-        .await?;
+pub async fn delete(db: &SqlitePool, id: &WsKey) -> Result<bool> {
+    let done =
+        sqlx::query("DELETE FROM workspace_settings WHERE tenant_id = ? AND workspace_id = ?")
+            .bind(id.tenant.as_str())
+            .bind(id.ws())
+            .execute(db)
+            .await?;
     Ok(done.rows_affected() == 1)
 }

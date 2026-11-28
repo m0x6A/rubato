@@ -29,8 +29,16 @@ pub async fn on_draft(app: &App, bundle: &DraftBundle, owner: &str) {
             refused(app, "no_plan");
             return;
         };
+        // The draft is its repository's tenant's (ADR 0087); one of a repository in no tenant
+        // is not stored.
+        let Ok(t) = app.repo_tenant(&bundle.issue.repo) else {
+            refused(app, "no_tenant");
+            tracing::warn!(rubato.issue = %bundle.issue, "draft bundle for a repository in no tenant");
+            return;
+        };
+        let t = &t;
         let now = app.clock.now();
-        let draft = match store::get_or_create(&app.db, &bundle.issue, &bundle.branch, owner, now).await {
+        let draft = match store::get_or_create(&app.db, t, &bundle.issue, &bundle.branch, owner, now).await {
             Ok(d) => d,
             Err(e) => {
                 tracing::error!(error = %format!("{e:#}"), "reading the draft failed");
@@ -40,10 +48,10 @@ pub async fn on_draft(app: &App, bundle: &DraftBundle, owner: &str) {
         if !draft.owner.eq_ignore_ascii_case(owner) {
             refused(app, "owner_conflict");
             tracing::warn!(rubato.issue = %bundle.issue, owner = %draft.owner, other = %owner, "draft bundle from someone else's session not stored");
-            if let Err(e) = store::record_conflict(&app.db, draft.id, owner, now).await {
+            if let Err(e) = store::record_conflict(&app.db, t, draft.id, owner, now).await {
                 tracing::error!(error = %format!("{e:#}"), "recording a draft conflict failed");
             }
-            app.notify("draft conflict");
+            app.notify_in(t, "draft conflict");
             return;
         }
         let (plan, parse_error) = match plans::parse_plan(&plan_file.text, &plan_file.path) {
@@ -64,12 +72,12 @@ pub async fn on_draft(app: &App, bundle: &DraftBundle, owner: &str) {
             files: bundle.files.clone(),
             plan,
         };
-        match store::insert_revision(&app.db, draft.id, &rev).await {
+        match store::insert_revision(&app.db, t, draft.id, &rev).await {
             Ok(Some(n)) => {
                 app.metrics.drafts_revisions.add(1, &[]);
                 tracing::info!(rubato.issue = %bundle.issue, rubato.branch = %bundle.branch, rubato.draft.rev = n, "draft revision stored");
-                app.notify_resource(WebResource::Draft { draft_id: draft.id });
-                app.notify("draft");
+                app.notify_resource(t, WebResource::Draft { draft_id: draft.id });
+                app.notify_in(t, "draft");
             }
             Ok(None) => tracing::debug!(rubato.issue = %bundle.issue, "draft bundle unchanged"),
             Err(e) => tracing::error!(error = %format!("{e:#}"), "storing a draft revision failed"),
