@@ -12,7 +12,7 @@ export function rackScale(repos: ConnectedRepo[]): Max {
 }
 
 /** One repo as a rack unit (issue #81, design §6): two lights (in the map, covered by the App) and four bars. */
-export function RackUnit({ repo: r, max, provides, graph, regenSecs, now }: { repo: ConnectedRepo; max: Max; provides?: RepoFeatures | undefined; graph?: GraphSourceStatus | undefined; regenSecs?: number | undefined; now?: number | undefined }) {
+export function RackUnit({ repo: r, max, provides, graph, regenSecs, now, onOpen }: { repo: ConnectedRepo; max: Max; provides?: RepoFeatures | undefined; graph?: GraphSourceStatus | undefined; regenSecs?: number | undefined; now?: number | undefined; /** Open the repo's own view; without it the name is only a name. */ onOpen?: (() => void) | undefined }) {
   const bars: [keyof Max, number, string][] = [
     ["open_issues", r.open_issues, "open issues"],
     ["plans", r.plans, r.plans === 1 ? "plan" : "plans"],
@@ -22,7 +22,13 @@ export function RackUnit({ repo: r, max, provides, graph, regenSecs, now }: { re
   return (
     <div className="rack" data-testid={`repo-${r.repo}`}>
       <div className="rack-head">
-        <span className="rack-name">{r.repo}</span>
+        {onOpen ? (
+          <button type="button" className="link rack-name" data-testid={`repo-open-${r.repo}`} onClick={onOpen}>
+            {r.repo}
+          </button>
+        ) : (
+          <span className="rack-name">{r.repo}</span>
+        )}
         <span className={r.in_map ? "rack-led on" : "rack-led off"}>in map: {r.in_map ? "yes" : <span className="warn">no</span>}</span>
         <span className={r.covered ? "rack-led on" : "rack-led off"}>app: {r.covered ? "covered" : <span className="warn">not covered</span>}</span>
       </div>
@@ -38,7 +44,7 @@ export function RackUnit({ repo: r, max, provides, graph, regenSecs, now }: { re
       </div>
       {r.unattributed > 0 && <span className="badge approval-stale">{r.unattributed} not tied to an issue</span>}
       {graph && <GraphLine name={r.repo} source={graph} regenSecs={regenSecs ?? 900} now={now} />}
-      {provides && <Provides repo={r.repo} f={provides} />}
+      {provides && <Provides repo={r.repo} f={provides} open={!onOpen} />}
     </div>
   );
 }
@@ -76,7 +82,7 @@ export function SharedGraphLines({ graph, workspace, now }: { graph: GraphOvervi
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** What the repo provides to the whole application, from the map (issue #89): folded to one line of counts. */
-function Provides({ repo, f }: { repo: string; f: RepoFeatures }) {
+function Provides({ repo, f, open = false }: { repo: string; f: RepoFeatures; open?: boolean }) {
   if (f.parts.length === 0) {
     return (
       <p className="muted provides" data-testid={`provides-${repo}`}>
@@ -85,7 +91,7 @@ function Provides({ repo, f }: { repo: string; f: RepoFeatures }) {
     );
   }
   return (
-    <details className="provides" data-testid={`provides-${repo}`}>
+    <details className="provides" data-testid={`provides-${repo}`} open={open}>
       <summary>
         {plural(f.parts.length, "part", "parts")} · owns {plural(f.owns.length, "seam", "seams")} · uses {f.uses.length} · in {plural(f.scenarios.length, "journey", "journeys")}
       </summary>
@@ -122,9 +128,38 @@ function Provides({ repo, f }: { repo: string; f: RepoFeatures }) {
   );
 }
 
+/**
+ * One repository (issue #357): what is open in it, what it provides to the application, and how
+ * fresh Rubato's copy of it is. Its pull requests and issues were folded under its rack before.
+ */
+export function RepoView({ overview, repo, onBack, onOpenIssue, onOpenPull, onPin }: { overview: Overview; repo: string; onBack: () => void; onOpenIssue?: ((i: IssueRef) => void) | undefined; onOpenPull: (number: number) => void; onPin?: ((i: IssueRef, t: MapRef) => void) | undefined }) {
+  const repos = overview.repos ?? [];
+  const r = repos.find((x) => x.repo.toLowerCase() === repo.toLowerCase());
+  return (
+    <section data-testid="repo-view" aria-label={`Repository ${repo}`}>
+      <p>
+        <button type="button" onClick={onBack}>
+          ← all repos
+        </button>
+      </p>
+      {r ? (
+        <>
+          <RackUnit repo={r} max={rackScale(repos)} provides={repoFeatures(overview.map.map, r.repo)} graph={graphOf(overview.graph, r.repo)} regenSecs={overview.graph?.regen_secs} />
+          {r.in_map ? <RepoWork overview={overview} repo={r.repo} onOpenIssue={onOpenIssue} onOpenPull={onOpenPull} onPin={onPin} /> : <p className="muted">The map names no part in this repo, so Rubato lists nothing of it.</p>}
+        </>
+      ) : (
+        <p className="warn" data-testid="repo-missing">
+          {repo} is not a repo this workspace's map names.
+        </p>
+      )}
+    </section>
+  );
+}
+
 /** Connected repos (issue #80): each repo the map names, whether the App covers it, and its
- * open issues, plans and sessions; and the sessions Rubato cannot tie to an issue. */
-export function ConnectedRepos({ overview, onOpenIssue, onPin }: { overview: Overview; onOpenIssue?: ((i: IssueRef) => void) | undefined; onPin?: ((i: IssueRef, t: MapRef) => void) | undefined }) {
+ * open issues, plans and sessions; and the sessions Rubato cannot tie to an issue. A repo's
+ * name opens its view. */
+export function ConnectedRepos({ overview, onOpenRepo }: { overview: Overview; onOpenRepo: (repo: string) => void }) {
   const repos = overview.repos ?? [];
   const max = rackScale(repos);
   const loose = (overview.unpinned_sessions ?? []).filter((s) => s.status !== "ended");
@@ -135,8 +170,7 @@ export function ConnectedRepos({ overview, onOpenIssue, onPin }: { overview: Ove
       <ul className="plain racks">
         {repos.map((r) => (
           <li key={r.repo}>
-            <RackUnit repo={r} max={max} provides={repoFeatures(overview.map.map, r.repo)} graph={graphOf(overview.graph, r.repo)} regenSecs={overview.graph?.regen_secs} />
-            {r.in_map && <RepoWork overview={overview} repo={r.repo} onOpenIssue={onOpenIssue} onPin={onPin} />}
+            <RackUnit repo={r} max={max} graph={graphOf(overview.graph, r.repo)} regenSecs={overview.graph?.regen_secs} onOpen={() => onOpenRepo(r.repo)} />
           </li>
         ))}
         {repos.length === 0 && <li className="muted">The map names no repos.</li>}

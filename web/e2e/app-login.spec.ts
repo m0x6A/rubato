@@ -98,7 +98,7 @@ test("a member merges a pull request as themselves through their token (ADR 0033
   await page.reload();
   await page.getByTestId("tab-repos").click();
   const work = page.getByTestId("repo-work-m0x6A/rubato");
-  await work.locator("summary").click();
+  await page.getByTestId("repo-open-m0x6A/rubato").click();
   await work.getByTestId("pull-row-920").getByRole("button").click();
   const view = page.getByTestId("pull-view");
   await expect(view).toContainText("Merges as the person who pressed Merge.");

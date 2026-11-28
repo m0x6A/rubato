@@ -25,6 +25,8 @@ const EVERY: Route[] = [
   { view: "issue", issue: ISSUE, section: "plan", from: "plans", sel: null },
   { view: "companions", sel: null },
   { view: "repos", sel: PART },
+  { view: "repo", repo: "m0x6A/rubato", sel: null },
+  { view: "pull", repo: "m0x6A/rubato", number: 917, sel: null },
   { view: "findings", sel: null },
   { view: "settings", sel: null },
   { view: "workspaces", sel: null },
@@ -33,7 +35,7 @@ const EVERY: Route[] = [
   { view: "not-found", fragment: "/nowhere", sel: null },
 ];
 
-const KINDS = ["map", "issues", "issue", "new-issue", "plans", "companions", "repos", "findings", "settings", "workspaces", "members", "operator", "not-found"];
+const KINDS = ["map", "issues", "issue", "new-issue", "plans", "companions", "repos", "repo", "pull", "findings", "settings", "workspaces", "members", "operator", "not-found"];
 
 /** How many of the routes survive `format` then `parse`, and which kinds they cover. */
 function roundTrips(routes: Route[]): { ok: number; kinds: Set<string> } {
@@ -79,7 +81,7 @@ describe("the view in the URL fragment (issue #357)", () => {
   });
 
   it("names nothing it cannot read", () => {
-    for (const hash of ["#/nowhere", "#issues", "#/issues/m0x6A/rubato", "#/issues/m0x6A/rubato/0", "#/issues/m0x6A/rubato/12/extra/more", "#/issues/m0x6A/rubato/12/nope", "#/plans/m0x6A/rubato/12/plan", "#/plans/x", "#/repos/extra", "#/map", "#/issues/done/more", "#/settings/nope", "#/issues/new?at=galaxy:x", "#/issues/%E0%A4%A"]) {
+    for (const hash of ["#/nowhere", "#issues", "#/issues/m0x6A/rubato", "#/issues/m0x6A/rubato/0", "#/issues/m0x6A/rubato/12/extra/more", "#/issues/m0x6A/rubato/12/nope", "#/plans/m0x6A/rubato/12/plan", "#/plans/x", "#/repos/extra", "#/repos/m0x6A/rubato/more", "#/pulls/m0x6A/rubato", "#/pulls/m0x6A/rubato/0", "#/map", "#/issues/done/more", "#/settings/nope", "#/issues/new?at=galaxy:x", "#/issues/%E0%A4%A"]) {
       expect(parseRoute(hash).view, hash).toBe("not-found");
     }
     // A selection that reads as nothing is dropped; the view still shows.
@@ -105,6 +107,10 @@ describe("the view in the URL fragment (issue #357)", () => {
     expect(parentOf({ view: "plans", list: "plans-done", sel: null })).toEqual({ view: "plans", list: "plans", sel: null });
     expect(parentOf({ view: "new-issue", at: PART, sel: PART })).toEqual({ view: "map", sel: PART });
     expect(parentOf({ view: "companions", sel: null })).toBeNull();
+    // A pull request closes to its repo, which closes to the repos.
+    expect(parentOf({ view: "pull", repo: "m0x6A/rubato", number: 917, sel: null })).toEqual({ view: "repo", repo: "m0x6A/rubato", sel: null });
+    expect(parentOf({ view: "repo", repo: "m0x6A/rubato", sel: PART })).toEqual({ view: "repos", sel: PART });
+    expect(formatRoute({ view: "pull", repo: "m0x6A/rubato", number: 917, sel: null })).toBe("#/pulls/m0x6A/rubato/917");
     expect(parentOf({ view: "settings", sel: null })).toEqual(HOME);
     expect(parentOf({ view: "findings", sel: PART })).toEqual({ view: "issues", list: "open", sel: PART });
     expect(parseRoute("#/settings/workspaces")).toEqual({ view: "workspaces", sel: null });

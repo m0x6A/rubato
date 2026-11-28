@@ -15,9 +15,12 @@ test("a pull request lists on the Repos tab, opens, and merges into the reposito
   await expect.poll(async () => JSON.stringify((await (await page.request.get("/api/t/default/w/default/overview")).json()).pulls ?? []), { timeout: 20_000 }).toContain('"number":917');
   await page.getByTestId("tab-repos").click();
   const work = page.getByTestId("repo-work-m0x6A/rubato");
-  await work.locator("summary").click();
+  await page.getByTestId("repo-open-m0x6A/rubato").click();
   await expect(work).toContainText("open pull request");
   await work.getByTestId("pull-row-917").getByRole("button").click();
+  // A pull request has a view and an address of its own; its way back is its repo.
+  await expect(page).toHaveURL(/#\/pulls\/m0x6A\/rubato\/917$/);
+  await expect(page.getByRole("button", { name: "← m0x6A/rubato" })).toBeVisible();
   const view = page.getByTestId("pull-view");
   await expect(view).toContainText("A change to merge from Rubato");
   await expect(view.getByTestId("pull-files")).toContainText("1 file");

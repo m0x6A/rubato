@@ -32,6 +32,9 @@ export type View =
   | { view: "plans"; list: PlanList }
   | { view: "companions" }
   | { view: "repos" }
+  /** One repository the map names: `owner/name`. */
+  | { view: "repo"; repo: string }
+  | { view: "pull"; repo: string; number: number }
   | { view: "findings" }
   | { view: "settings" }
   | { view: "workspaces" }
@@ -148,11 +151,21 @@ export function parseRoute(hash: string): Route {
         return { view: "workspaces", sel };
       }
       return only ? { view: "settings", sel } : notFound;
+    case "repos": {
+      if (only) {
+        return { view: "repos", sel };
+      }
+      const repo = parseIssue(a, b, "1");
+      return repo && c === undefined ? { view: "repo", repo: repo.repo, sel } : notFound;
+    }
+    case "pulls": {
+      const pull = parseIssue(a, b, c);
+      return pull && d === undefined ? { view: "pull", repo: pull.repo, number: pull.number, sel } : notFound;
+    }
     case "map":
       // The inspector is of something: with nothing selected there is nothing to show.
       return only && sel ? { view: "map", sel } : notFound;
     case "companions":
-    case "repos":
     case "findings":
     case "members":
     case "operator":
@@ -184,6 +197,12 @@ export function formatRoute(route: Route): string {
       break;
     case "workspaces":
       path = "/settings/workspaces";
+      break;
+    case "repo":
+      path = `/repos/${route.repo}`;
+      break;
+    case "pull":
+      path = `/pulls/${route.repo}/${route.number}`;
       break;
     case "plans":
       path = route.list === "plans" ? "/plans" : `/plans/${BOARD_DONE}`;
@@ -234,6 +253,10 @@ export function parentOf(route: Route): Route | null {
       return { view: "issues", list: "open", sel: route.sel };
     case "map":
       return HOME;
+    case "repo":
+      return { view: "repos", sel: route.sel };
+    case "pull":
+      return { view: "repo", repo: route.repo, sel: route.sel };
     case "plans":
       if (route.sel) {
         return { ...route, sel: null };

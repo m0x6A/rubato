@@ -60,11 +60,12 @@ test("By repo boxes each repo's parts, and the Repos tab says what each repo pro
   await page.getByRole("button", { name: "By repo" }).click();
   await expect(box).toHaveCount(0);
 
+  // What a repo provides is in the repo's own view, open to read (issue #357).
   await page.getByTestId("tab-repos").click();
+  await page.getByTestId("repo-open-m0x6A/rubato").click();
   const provides = page.getByTestId("provides-m0x6A/rubato");
   await expect(provides).toContainText(`${owned.length} parts`);
-  await provides.locator("summary").click();
-  await expect(provides).toContainText(owned[0]!.id);
+  await expect(provides.getByText(owned[0]!.id, { exact: true })).toBeVisible();
 });
 
 test("a member's Map: line places an issue without a drag; a stranger's only suggests", { tag: ["@pins.map-line-member", "@pins.map-line-stranger-suggests"] }, async ({ page }) => {
