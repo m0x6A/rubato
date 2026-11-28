@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
-import { expectMapVersion } from "./shell.ts";
+import { NOT_PINNED, expectMapVersion, showNotPinned } from "./shell.ts";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
 import { freshTraffic, ghostTraffic, quietTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
@@ -73,12 +73,13 @@ test("a member's Map: line places an issue without a drag; a stranger's only sug
   await page.goto("/");
   await expect(page.getByTestId("issue-row-912")).toContainText("Planned");
   await expect(page.getByTestId("issue-row-912")).toContainText("companion-server");
-  await expect(page.getByTestId("backlog-row-912")).toHaveCount(0);
   await expect(page.getByTestId("seam-companion-server")).toContainText("1 issue");
+  await expect(page.getByTestId("issue-row-913")).toHaveCount(0);
 
+  await showNotPinned(page);
+  await expect(page.getByTestId("backlog-row-912")).toHaveCount(0);
   const stranger = page.getByTestId("backlog-row-913");
   await expect(stranger).toBeVisible();
-  await expect(page.getByTestId("issue-row-913")).toHaveCount(0);
   const suggestion = page.getByTestId("suggestion-913");
   await expect(suggestion).toContainText("Suggested: part plan-check");
   await expect(suggestion).toContainText("from someone outside the team");
@@ -107,11 +108,13 @@ test("drag a not-pinned issue onto a part and onto a seam", { tag: ["@pins.drag-
   // The harness serves three open issues of m0x6A/rubato: #901, #902 and #903, none tracked.
   const key = (n: number) => `m0x6A/rubato#${n}`;
   await page.goto("/");
+  await expect(page.getByTestId("issue-row-901")).toBeVisible();
+  await expect(page.getByTestId("issue-row-902")).toHaveCount(0);
+  await expect(page.getByTestId("issue-row-903")).toHaveCount(0);
+  await showNotPinned(page);
   const backlog = page.getByTestId("backlog");
   await expect(backlog.getByTestId("backlog-row-902")).toContainText("Backlog: an unpinned issue");
   await expect(backlog.getByTestId("backlog-row-903")).toContainText("Backlog: another unpinned issue");
-  await expect(page.getByTestId("issue-row-902")).toHaveCount(0);
-  await expect(page.getByTestId("issue-row-903")).toHaveCount(0);
 
   // Onto a part. A pin selects the issue, so its detail opens: Planned, pinned to the part.
   await backlog.getByTestId("backlog-row-902").dragTo(page.getByTestId("node-rubato-server"));
@@ -122,6 +125,7 @@ test("drag a not-pinned issue onto a part and onto a seam", { tag: ["@pins.drag-
   await page.getByRole("button", { name: "← all issues" }).click();
   await expect(page.getByTestId("issue-row-902")).toContainText("Planned");
   await expect(page.getByTestId("issue-row-902")).toContainText("rubato-server");
+  await showNotPinned(page);
   await expect(page.getByTestId("backlog-row-902")).toHaveCount(0);
 
   // Onto a seam: the drop target is the seam's chip.
@@ -132,11 +136,12 @@ test("drag a not-pinned issue onto a part and onto a seam", { tag: ["@pins.drag-
   await page.getByRole("button", { name: "← all issues" }).click();
   await expect(page.getByTestId("issue-row-903")).toContainText("Planned");
   await expect(page.getByTestId("issue-row-903")).toContainText("web-server");
-  await expect(page.getByTestId("backlog-row-903")).toHaveCount(0);
 
   // The issue nobody dragged is still not pinned, and both targets now count their issue.
   // #901 has a plan, so it is listed with the tracked issues, as not pinned, and only there.
   await expect(page.getByTestId("issue-row-901")).toContainText("not pinned");
+  await showNotPinned(page);
+  await expect(page.getByTestId("backlog-row-903")).toHaveCount(0);
   await expect(page.getByTestId("backlog-row-901")).toHaveCount(0);
   await expect(page.getByTestId("node-rubato-server")).toContainText("planned");
   await expect(page.getByTestId("seam-web-server")).toContainText("1 issue");
@@ -924,7 +929,7 @@ test("By repo: a bundle opens on hover and on a selected part; a flow label read
 });
 
 test("By repo: issues drop on a part and on a seam inside a box, New issue here… opens, and Edit map turns the grouping off", { tag: ["@map.by-repo-bundles", "@map.by-repo", "@pins.drag-onto-part", "@pins.drag-onto-seam"] }, async ({ page }) => {
-  await page.goto("/");
+  await page.goto(NOT_PINNED);
   await byRepo(page);
   const backlog = page.getByTestId("backlog");
   await backlog.getByTestId("backlog-row-917").dragTo(page.getByTestId("node-plan-check"));
@@ -932,6 +937,7 @@ test("By repo: issues drop on a part and on a seam inside a box, New issue here�
   await expect(detail).toContainText("m0x6A/rubato#917");
   await expect(detail).toContainText("node plan-check");
   await page.getByRole("button", { name: "← all issues" }).click();
+  await showNotPinned(page);
   // Onto a seam in a bundle: the bundle opens under the dragged issue, and the drop lands on its chip.
   await backlog.getByTestId("backlog-row-918").dragTo(page.getByTestId("bundle-skill-rubato|system-map"));
   await expect(detail).toContainText("m0x6A/rubato#918");

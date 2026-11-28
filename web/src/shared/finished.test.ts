@@ -45,6 +45,7 @@ function ownRules(text: string): string[] {
 const ALLOWED: Record<string, string> = {
   "shared/finished.ts": "the helper: when it finished, and closed without a merge",
   "features/issues/IssuePanel.tsx": "labels: the pull request line and the finished note",
+  "features/issues/IssueList.tsx": "which list is shown: the route's name for the Done list, filled from finishedIssues",
   "features/pulls/PullView.tsx": "a pull request's own merge time",
   "protocol.ts": "generated types",
 };

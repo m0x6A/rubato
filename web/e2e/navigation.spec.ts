@@ -8,7 +8,7 @@ test("reloading keeps the open issue and the selected part", { tag: ["@navigatio
   await page.goto("/");
   await page.getByTestId("node-rubato-server").click();
   await expect(page.getByTestId("inspector")).toBeVisible();
-  await expect(page).toHaveURL(/#\/issues\?sel=part:rubato-server$/);
+  await expect(page).toHaveURL(/#\/map\?sel=part:rubato-server$/);
   // An issue opened beside the selection: the address names both.
   await page.goto("/#/issues/m0x6A/rubato/915?sel=part:rubato-server");
   await expect(page.getByTestId("issue-detail")).toContainText("m0x6A/rubato#915");
@@ -40,8 +40,9 @@ test("Back returns to the issue, then to the list; Forward goes on again", { tag
 test("selecting parts on the map adds no steps for Back to walk through", { tag: ["@navigation.back-returns"] }, async ({ page }) => {
   await page.goto("/#/repos");
   await expect(page.getByTestId("tab-repos")).toHaveClass(/active/);
-  await page.getByRole("button", { name: /^Issues/ }).click();
+  // The first selection opens the inspector, one step; another part takes its place.
   await page.getByTestId("node-rubato-server").click();
+  await expect(page.getByTestId("inspector")).toContainText("rubato-server");
   await page.getByTestId("node-web").click();
   await expect(page.getByTestId("inspector")).toContainText("web");
   await page.goBack();

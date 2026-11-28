@@ -56,7 +56,10 @@ export function PlanSignals({ issue }: { issue: IssueSummary }) {
 
 /** The compact badges on an issue row: reviewed, approved or approval stale; and, with several
  * workspaces (issue #89), where else it is pinned and where its plan counts when not here. */
-export function SignalBadges({ issue, here }: { issue: IssueSummary; here?: string | undefined }) {
+export function SignalBadges({ issue, here, lean = false }: { issue: IssueSummary; here?: string | undefined; /** Only what calls for something to be done: a row of the issue list (issue #357). */ lean?: boolean }) {
+  // On a row, "reviewed" and "approved" change nothing the person does next; a stale approval or
+  // one that does not fit does. The issue itself says all of it.
+  const approvalCalls = issue.approval?.version === "earlier" || issue.approval?.version === "does_not_fit";
   const fitsIn = issue.fits_in ?? [];
   const countsElsewhere = fitsIn.length > 0 && here !== undefined && !fitsIn.includes(here);
   return (
@@ -71,12 +74,12 @@ export function SignalBadges({ issue, here }: { issue: IssueSummary; here?: stri
           counts in {fitsIn.join(", ")}
         </span>
       )}
-      {issue.review && (
+      {issue.review && !lean && (
         <span className="badge reviewed" title={reviewLabel(issue.review)}>
           reviewed
         </span>
       )}
-      {issue.approval && (
+      {issue.approval && (!lean || approvalCalls) && (
         <span className={`badge ${approvalClass(issue.approval)}`} title={approvalLabel(issue.approval)}>
           {issue.approval.version === "current"
             ? "approved"

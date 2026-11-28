@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { account } from "./shell.ts";
+import { account, showNotPinned } from "./shell.ts";
 
 // These run against the second server of `e2e/run.sh`: no dev user, configured as a GitHub App
 // (ADR 0022), with `e2e/github-standin.ts` in place of github.com and api.github.com. So the
@@ -34,6 +34,7 @@ test("a team member logs in through the App and sees what the installation lists
 
   // The open issue reached the page through the App's key, an installation token and the
   // issue listing; the pull request in the same listing is left out.
+  await showNotPinned(page);
   const backlog = page.getByTestId("backlog");
   await expect(backlog.getByTestId("backlog-row-911")).toContainText("Listed as the App installation");
   await expect(backlog.getByTestId("backlog-row-912")).toHaveCount(0);
@@ -124,6 +125,7 @@ test("an account nobody invited is refused and gets no session", { tag: "@auth.n
 
 test("when the session ends mid-work the next write leads back to login, and nothing was written", { tag: "@auth.session-ends-mid-work" }, async ({ page }) => {
   await logInAs(page, "member");
+  await showNotPinned(page);
   await expect(page.getByTestId("backlog-row-911")).toBeVisible();
   // The app can also find out by itself: a poll event makes it read the overview, which now
   // answers 401, and the login page replaces the row before the drag. Hold the app's own reads
@@ -146,7 +148,7 @@ test("when the session ends mid-work the next write leads back to login, and not
   await page.unroute(/\/api\/(t\/[^/]+\/w\/[^/]+\/overview|me)(\?|$)/);
   await expect(page.getByRole("link", { name: "Log in with GitHub" })).toBeVisible();
 
-  // Logging in again brings the work back; the refused pin left the issue not pinned.
+  // Logging in again brings the work back, on the list the person was on; the refused pin left the issue not pinned.
   await page.getByRole("link", { name: "Log in with GitHub" }).click();
   await page.getByRole("link", { name: "Continue as member" }).click();
   await expect(page.getByTestId("backlog-row-911")).toBeVisible();

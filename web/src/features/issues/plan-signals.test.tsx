@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { issue, overview } from "../../../test/fixtures.ts";
 import type { ApprovalState, ReviewRecord } from "../../protocol.ts";
 import { findingText } from "../findings/index.ts";
-import { IssuePanel } from "./IssuePanel.tsx";
+import { IssuePanel } from "../../../test/IssuePanel.tsx";
 import { SignalBadges } from "./PlanSignals.tsx";
 
 const ref = { repo: "m0x6A/rubato", number: 71 };
@@ -47,11 +47,11 @@ describe("review and approval on the issue (ADR 0027)", () => {
     expect(screen.getByTestId("plan-approval")).toHaveTextContent("Approved: plan <sha>");
   });
 
-  it("badges the row: reviewed, approved or approval stale", () => {
+  it("a row badges only what calls for something: not reviewed, not approved (issue #357)", () => {
     show({ review, approval: approval("current") }, false);
     const row = screen.getByTestId("issue-row-71");
-    expect(within(row).getByText("reviewed")).toBeInTheDocument();
-    expect(within(row).getByText("approved")).toBeInTheDocument();
+    expect(within(row).queryByText("reviewed")).toBeNull();
+    expect(within(row).queryByText("approved")).toBeNull();
   });
 
   it("badges a stale approval differently from a current one", () => {

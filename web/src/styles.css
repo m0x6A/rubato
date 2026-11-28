@@ -903,3 +903,10 @@ body:has(.login) { background-color: var(--canvas); background-image: radial-gra
 .page > * { max-width: 760px; margin-left: auto; margin-right: auto; }
 .workspace-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .workspace-list li .muted { margin-right: auto; }
+
+/* The issue list (issue #357): a row says where the issue stands; what else can be done with it
+   shows when the row is pointed at or focused. An issue with no pin keeps "Pin to…" in sight: it
+   is that row's next step. Without a pointer that hovers, everything shows. */
+.row-actions { display: inline-flex; gap: 6px; opacity: 0; }
+.issue-row:hover .row-actions, .issue-row:focus-within .row-actions, .issue-row.to-pin .row-actions { opacity: 1; }
+@media (hover: none) { .row-actions { opacity: 1; } }

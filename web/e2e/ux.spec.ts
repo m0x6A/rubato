@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { showNotPinned } from "./shell.ts";
 
 // The UX walkthrough of 2026-11-26: what a person new to Rubato tripped over, made plain.
 // #915 has a plan on issue/915-voice and no test pins it, so it stays tracked and not pinned.
@@ -6,7 +7,7 @@ import { expect, test } from "@playwright/test";
 test("an issue with a plan but no pin is listed once, and counted once", { tag: ["@issues.listed-once"] }, async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("issue-row-915")).toContainText("not pinned");
-  await expect(page.getByTestId("backlog")).toBeVisible();
+  await showNotPinned(page);
   await expect(page.getByTestId("backlog-row-915")).toHaveCount(0);
   // The repo's folded list lists and counts every open issue once. (Its count is not compared with
   // the rack's: an issue just created through Rubato is tracked before the next GitHub poll lists
@@ -21,17 +22,21 @@ test("an issue with a plan but no pin is listed once, and counted once", { tag: 
 });
 
 test("Escape closes the issue, then the selection; not while typing", { tag: ["@map.escape-closes"] }, async ({ page }) => {
-  await page.goto("/");
-  await page.getByTestId("seam-companion-server").click();
-  await expect(page.getByTestId("inspector")).toBeVisible();
-  // With a seam selected, its inspector offers the new issue; the generic button steps aside.
-  await expect(page.getByTestId("new-issue-here")).toBeVisible();
-  await expect(page.getByTestId("new-issue-start")).toHaveCount(0);
-  // Typing in the filter and pressing Escape leaves everything open.
+  // Typing in a field and pressing Escape leaves everything as it is: the list, and the seam selected.
+  await page.goto("/#/issues/not-pinned?sel=seam:companion-server");
   await page.getByRole("searchbox", { name: "Filter not-pinned issues" }).fill("x");
   await page.keyboard.press("Escape");
+  // (A search field clears itself on Escape; what must not happen is the view or the selection going.)
+  await expect(page).toHaveURL(/#\/issues\/not-pinned\?sel=seam:companion-server$/);
+  await expect(page.getByTestId("backlog")).toBeVisible();
+
+  await page.goto("/");
+  await page.getByTestId("seam-companion-server").click();
+  // The inspector is the view: the issue list is not under it, and it offers the new issue.
   await expect(page.getByTestId("inspector")).toBeVisible();
-  await page.getByRole("searchbox", { name: "Filter not-pinned issues" }).fill("");
+  await expect(page.getByTestId("issue-list")).toHaveCount(0);
+  await expect(page.getByTestId("new-issue-here")).toBeVisible();
+  await expect(page.getByTestId("new-issue-start")).toHaveCount(0);
   // An issue opened from the seam closes first, and the seam stays selected.
   await page.getByTestId("inspector").getByRole("button", { name: /#912/ }).first().click();
   await expect(page.getByTestId("issue-detail")).toBeVisible();
@@ -125,4 +130,40 @@ test("two seams between the same parts keep their chips apart", { tag: ["@map.la
       return Boolean(a && b) && (a!.x + a!.width <= b!.x || b!.x + b!.width <= a!.x || a!.y + a!.height <= b!.y || b!.y + b!.height <= a!.y);
     })
     .toBe(true);
+});
+
+test("the issue list is three lists, one at a time, each with its address", { tag: ["@issues.three-lists"] }, async ({ page }) => {
+  await page.goto("/");
+  const open = page.getByTestId("issues-view-open");
+  const notPinned = page.getByTestId("issues-view-not-pinned");
+  await expect(open).toHaveAttribute("aria-pressed", "true");
+  await expect(notPinned).toHaveText(/^Not pinned \(\d+\)$/);
+  await expect(page.getByTestId("issues-view-done")).toHaveText(/^Done \(\d+\)$/);
+  await expect(page.getByTestId("issues-open")).toBeVisible();
+  await expect(page.getByTestId("backlog")).toHaveCount(0);
+
+  await notPinned.click();
+  await expect(page).toHaveURL(/#\/issues\/not-pinned$/);
+  await expect(page.getByTestId("backlog")).toBeVisible();
+  await expect(page.getByTestId("issues-open")).toHaveCount(0);
+  // Every row there offers its next step in sight.
+  const row = page.locator('[data-testid^="backlog-row-"]').first();
+  await expect(row.getByRole("button", { name: /^Pin .* to…$/ })).toBeVisible();
+
+  // A tracked row keeps its other actions out of the way until it is pointed at or focused.
+  await page.goto("/");
+  const tracked = page.getByTestId("issue-912");
+  const actions = tracked.locator(".row-actions");
+  await page.mouse.move(0, 0);
+  await expect(actions).toHaveCSS("opacity", "0");
+  await tracked.hover();
+  await expect(actions).toHaveCSS("opacity", "1");
+  // An issue with no pin keeps Pin to… in sight: it is its next step.
+  await page.mouse.move(0, 0);
+  await expect(page.getByTestId("issue-915").locator(".row-actions")).toHaveCSS("opacity", "1");
+
+  await page.getByTestId("issues-view-done").click();
+  await expect(page).toHaveURL(/#\/issues\/done$/);
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/#\/issues$/);
 });

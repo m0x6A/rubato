@@ -24,3 +24,12 @@ Feature: Issues
     Then the issue is listed with the tracked issues as not pinned
     And Not pinned does not list it a second time
     And its repository counts it once
+
+  @issues.three-lists
+  Scenario: The issue list is three lists, one at a time
+    Given tracked issues, open issues nobody pinned, and finished issues
+    When a person opens Issues
+    Then they see the open tracked issues, and the counts of Not pinned and Done
+    When they choose Not pinned
+    Then they see the open issues nobody pinned, each with Pin to…, and the address names that list
+    And an issue's other actions show when its row is pointed at or focused

@@ -7,6 +7,9 @@ import { workspaceButton } from "./shell.ts";
 /** One address per panel view, and what its view root is called. */
 const PANEL: [fragment: string, view: string][] = [
   ["#/issues", "issues"],
+  ["#/issues/not-pinned", "issues"],
+  ["#/issues/done", "issues"],
+  ["#/map?sel=part:web", "map"],
   ["#/issues/m0x6A/rubato/915", "issue"],
   ["#/issues/new", "new-issue"],
   ["#/plans", "plans"],
@@ -38,6 +41,9 @@ test("every address shows one view, with nothing stacked above it, under a top b
   for (const [fragment, view] of PANEL) {
     await page.goto(`/${fragment}`);
     await expect(page.locator(`.panel [data-view="${view}"]`), fragment).toBeVisible();
+    // The two menus arrive with who the person is and what the workspace holds.
+    await expect(workspaceButton(page), fragment).toBeVisible();
+    await expect(page.getByTestId("account-menu"), fragment).toBeVisible();
     const s = await shape(page);
     expect(s.roots, fragment).toEqual([view]);
     expect(s.strayFindings, fragment).toBe(0);
@@ -48,6 +54,8 @@ test("every address shows one view, with nothing stacked above it, under a top b
   for (const [fragment, view] of PAGES) {
     await page.goto(`/${fragment}`);
     await expect(page.locator(`main.page[data-view="${view}"]`), fragment).toBeVisible();
+    await expect(page.getByTestId("account-menu"), fragment).toBeVisible();
+    await expect(workspaceButton(page), fragment).toBeVisible();
     const s = await shape(page);
     expect(s.roots, fragment).toEqual([view]);
     expect(s.topBar, fragment).toBe(4);
