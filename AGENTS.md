@@ -176,7 +176,7 @@ auth        who is logged in, the login page, the account menu, log out   GET /a
 chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout, DELETE /api/layout/grouped; POST, DELETE /api/traffic/dismissals
 issues      the issue list as three lists (Open by default, Not pinned, Done on request); an issue: its header with the one next step, and its parts one at a time (overview, plan, room, sessions, pull request)   (none)
-companions  pair with a code, lanes (sessions, agent line, queue, headless badge), revoke  POST /api/pair/approve, DELETE /api/pairings/:id
+companions  lanes (sessions, agent line, queue, headless badge), revoke after asking; pairing with a code, a view of its own  POST /api/pair/approve, DELETE /api/pairings/:id
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
 queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
 launch      start a session through your own companion           POST /api/launch

@@ -1,4 +1,5 @@
 import { type DragEvent, useState } from "react";
+import { Confirm } from "../../shared/Confirm.tsx";
 import type { AgentLine, IssueRef, IssueSummary, Me, Overview, PairingInfo, QueuedIssue, SessionState, SessionStatus } from "../../protocol.ts";
 import { getIssueDrag, hasIssueDrag } from "../../shared/dnd.ts";
 import { issueKey, relative } from "../../shared/format.ts";
@@ -160,10 +161,18 @@ function Lane({ companion: c, own, sessions, agentLines, queue, issues, titles, 
             </span>
           )}
         </span>
+        {/* Revoking cannot be taken back from here: the machine has to be paired again. Asked once. */}
         {own && !c.revoked_at && (
-          <button type="button" onClick={() => onRevoke(c.companion_id)}>
-            revoke
-          </button>
+          <Confirm
+            ask="revoke"
+            askLabel={`Revoke ${c.hostname}`}
+            confirm={`Revoke ${c.hostname}`}
+            confirmTestId={`confirm-revoke-${c.companion_id}`}
+            keep="Keep it"
+            onConfirm={() => onRevoke(c.companion_id)}
+            explain={<span className="warn">It starts no more sessions for you until it is paired again.</span>}
+            wrap={(question) => <span className="settings-delete">{question}</span>}
+          />
         )}
       </header>
       {over === "no" && <p className="warn" role="status">{c.revoked_at ? "This companion is revoked: it takes no issues." : `This is ${c.user}'s companion: you can queue issues only on your own.`}</p>}

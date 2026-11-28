@@ -18,6 +18,7 @@ const PANEL: [fragment: string, view: string][] = [
   ["#/plans/m0x6A/rubato/915", "issue"],
   ["#/issues/m0x6A/rubato/915/plan?from=plans", "issue"],
   ["#/companions", "companions"],
+  ["#/companions/pair", "pair"],
   ["#/repos", "repos"],
   ["#/repos/m0x6A/rubato", "repo"],
   ["#/pulls/m0x6A/rubato/917", "pull"],

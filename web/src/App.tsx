@@ -38,6 +38,7 @@ function tabOf(route: Route): Tab | null {
     case "plans":
       return "plans";
     case "companions":
+    case "pair":
       return "companions";
     case "repos":
     case "repo":
@@ -763,7 +764,7 @@ export function App() {
                 void refresh();
               }}
               onShowSeam={(id) => onSelectOnMap({ kind: "seam", id })}
-              onPairCompanion={() => go({ view: "companions" })}
+              onPairCompanion={() => go({ view: "pair" })}
             />
           )}
           {overview && route.view === "plans" && (
@@ -790,7 +791,25 @@ export function App() {
               <PullView repo={route.repo} number={route.number} refreshKey={overview.generated_at} onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview", from: null })} />
             </section>
           )}
-          {overview && tab === "companions" && <CompanionsPanel overview={overview} me={me} onChanged={refresh} onQueue={onQueue} onReorder={onReorder} onUnqueue={onUnqueue} onStart={onStart} />}
+          {overview && tab === "companions" && (
+            <CompanionsPanel
+              overview={overview}
+              me={me}
+              onChanged={refresh}
+              pairing={route.view === "pair"}
+              onPair={() => go({ view: "pair" })}
+              onPairDone={(paired) => {
+                if (paired) {
+                  setNotice(`${paired} Start it with rubato-companion run; its lane shows here.`);
+                }
+                go({ view: "companions" });
+              }}
+              onQueue={onQueue}
+              onReorder={onReorder}
+              onUnqueue={onUnqueue}
+              onStart={onStart}
+            />
+          )}
           </div>
           {/* Quiet, and only when there is something: what the map and the plans disagree about has its own view. */}
           {overview && overview.findings.length > 0 && route.view !== "findings" && (

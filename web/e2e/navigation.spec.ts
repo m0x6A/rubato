@@ -125,5 +125,5 @@ test("an issue's header offers one next step for where it stands", { tag: ["@iss
   await page.goto("/#/issues/m0x6A/rubato/912");
   await expect(next).toHaveAttribute("data-next", "pair");
   await next.getByRole("button", { name: "Pair a companion" }).click();
-  await expect(page).toHaveURL(/#\/companions$/);
+  await expect(page).toHaveURL(/#\/companions\/pair$/);
 });
