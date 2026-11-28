@@ -1,4 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
+import { openSection } from "./shell.ts";
 import WebSocket from "ws";
 
 const base = process.env["RUBATO_E2E_URL"] ?? "http://127.0.0.1:18090";
@@ -27,6 +28,7 @@ async function connectCompanion(user: string): Promise<{ ws: WebSocket; companio
 async function openRoom(page: Page) {
   await page.goto("/");
   await page.getByTestId("issue-916").click();
+  await openSection(page, "room");
   await expect(page.getByTestId("room")).toBeVisible();
 }
 

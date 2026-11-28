@@ -42,3 +42,10 @@ Feature: Navigation
     Then the panel shows that one view, with nothing stacked above it
     And a page of its own (the settings, the workspaces, the members, the operator's) hides the map and keeps the top bar
     And the top bar holds the brand, the workspace menu, the live dot and the account menu
+
+  @navigation.link-opens-issue-section
+  Scenario: A link opens one part of an issue
+    Given the address of an issue's plan
+    When a person opens that address in a new page
+    Then the issue is open on its plan
+    And moving between the issue's parts adds no steps for Back

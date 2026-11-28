@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
-import { NOT_PINNED, expectMapVersion, showNotPinned } from "./shell.ts";
+import { NOT_PINNED, expectMapVersion, openSection, showNotPinned } from "./shell.ts";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
 import { freshTraffic, ghostTraffic, quietTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
@@ -410,7 +410,8 @@ test("selecting an issue with a plan paints its parts and flows", { tag: "@plans
   await expect(page.locator(".react-flow__edge.moving .react-flow__edge-path[marker-end]")).toHaveCount(1);
   await expect(page.getByTestId("legend")).toContainText("The plan of m0x6A/rubato#901.");
   await expect(page.getByRole("radio", { name: "Structure" })).toBeDisabled();
-  // The panel says what the plan says.
+  // The issue's Plan part says what the plan says.
+  await openSection(page, "plan");
   const plan = page.getByTestId("plan-inspector");
   await expect(plan).toContainText("rubato-server affected serves one more field in the overview");
   await expect(plan).toContainText("data the new overview field: rubato-server → web over web-server");

@@ -5,7 +5,7 @@ import { issueKey, relative } from "../../shared/format.ts";
 import { useWebResource } from "../live/index.ts";
 import { type RoomKey, roomApi, roomFailureText } from "./api.ts";
 import { Presence } from "./Presence.tsx";
-import { VoicePanel } from "./VoicePanel.tsx";
+import { VoicePanel, type VoiceHeld } from "./VoicePanel.tsx";
 
 /** `Limits.room_message_max_chars`'s default, for an overview that does not carry the limits. */
 export const ROOM_MAX_CHARS = 8000;
@@ -35,6 +35,8 @@ interface Props {
   canOpen?: ((issue: IssueRef) => boolean) | undefined;
   /** Show a seam on the map. */
   onShowSeam?: ((seam: string) => void) | undefined;
+  /** Told while this person is in the room's voice channel, and when they leave it. */
+  onVoice?: ((held: VoiceHeld | null) => void) | undefined;
 }
 
 /**
@@ -49,7 +51,7 @@ export function RoomSection(props: Props) {
   return room ? <Room key={`${room.repo}#${room.number}:${room.branch}`} room={room} {...props} /> : null;
 }
 
-function Room({ room, issue, me, maxChars, onOpenIssue, canOpen, onShowSeam }: Props & { room: RoomKey }) {
+function Room({ room, issue, me, maxChars, onOpenIssue, canOpen, onShowSeam, onVoice }: Props & { room: RoomKey }) {
   const heading = useId();
   // The server says `updated` for this room when a message is added.
   const { data, error, reload } = useWebResource({ kind: "room", ...room }, () => roomApi.get(room), roomFailureText);
@@ -143,7 +145,7 @@ function Room({ room, issue, me, maxChars, onOpenIssue, canOpen, onShowSeam }: P
       <p className="muted">The plan's room: the whole team reads it.</p>
       {error && <p className="warn">The room could not be read: {error}</p>}
       {data && me?.voice && (
-        <VoicePanel room={room} voice={me.voice} agents={present.map((a) => a.handle)} messages={messages} onPosted={(m) => setPosted((p) => [...p, m])} />
+        <VoicePanel room={room} voice={me.voice} agents={present.map((a) => a.handle)} messages={messages} onPosted={(m) => setPosted((p) => [...p, m])} onHeld={onVoice} />
       )}
       {data && (
         <Presence room={room} me={me} agents={data.agents ?? []} requests={data.requests ?? []} sessions={launched} planOnBranch={issue.plan?.git_ref === room.branch} acting={acting} act={act} />

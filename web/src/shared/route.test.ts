@@ -12,8 +12,11 @@ const EVERY: Route[] = [
   { view: "issues", list: "not-pinned", sel: null },
   { view: "issues", list: "done", sel: SEAM },
   { view: "map", sel: PART },
-  { view: "issue", issue: ISSUE, sel: null },
-  { view: "issue", issue: ISSUE, sel: SEAM },
+  { view: "issue", issue: ISSUE, section: "overview", sel: null },
+  { view: "issue", issue: ISSUE, section: "plan", sel: SEAM },
+  { view: "issue", issue: ISSUE, section: "room", sel: null },
+  { view: "issue", issue: ISSUE, section: "sessions", sel: null },
+  { view: "issue", issue: ISSUE, section: "pr", sel: null },
   { view: "new-issue", at: null, sel: null },
   { view: "new-issue", at: SEAM, sel: SEAM },
   { view: "plans", sel: null },
@@ -65,16 +68,16 @@ describe("the view in the URL fragment (issue #357)", () => {
   it("reads the fragments a person would paste", () => {
     expect(parseRoute("")).toEqual(HOME);
     expect(parseRoute("#/")).toEqual(HOME);
-    expect(parseRoute("#/issues/m0x6A/rubato/357")).toEqual({ view: "issue", issue: ISSUE, sel: null });
+    expect(parseRoute("#/issues/m0x6A/rubato/357")).toEqual({ view: "issue", issue: ISSUE, section: "overview", sel: null });
     expect(parseRoute("#/issues?sel=part:rubato-server")).toEqual({ view: "issues", list: "open", sel: PART });
     expect(parseRoute("#/issues/not-pinned")).toEqual({ view: "issues", list: "not-pinned", sel: null });
     expect(parseRoute("#/map?sel=seam:web-server")).toEqual({ view: "map", sel: SEAM });
     expect(parseRoute("#/issues/new?at=seam:web-server")).toEqual({ view: "new-issue", at: SEAM, sel: null });
-    expect(formatRoute({ view: "issue", issue: ISSUE, sel: SEAM })).toBe("#/issues/m0x6A/rubato/357?sel=seam:web-server");
+    expect(formatRoute({ view: "issue", issue: ISSUE, section: "overview", sel: SEAM })).toBe("#/issues/m0x6A/rubato/357?sel=seam:web-server");
   });
 
   it("names nothing it cannot read", () => {
-    for (const hash of ["#/nowhere", "#issues", "#/issues/m0x6A/rubato", "#/issues/m0x6A/rubato/0", "#/issues/m0x6A/rubato/12/extra/more", "#/plans/x", "#/repos/extra", "#/map", "#/issues/done/more", "#/settings/nope", "#/issues/new?at=galaxy:x", "#/issues/%E0%A4%A"]) {
+    for (const hash of ["#/nowhere", "#issues", "#/issues/m0x6A/rubato", "#/issues/m0x6A/rubato/0", "#/issues/m0x6A/rubato/12/extra/more", "#/issues/m0x6A/rubato/12/nope", "#/plans/m0x6A/rubato/12/plan", "#/plans/x", "#/repos/extra", "#/map", "#/issues/done/more", "#/settings/nope", "#/issues/new?at=galaxy:x", "#/issues/%E0%A4%A"]) {
       expect(parseRoute(hash).view, hash).toBe("not-found");
     }
     // A selection that reads as nothing is dropped; the view still shows.
@@ -83,9 +86,9 @@ describe("the view in the URL fragment (issue #357)", () => {
 
   it("the way up closes the view first and the selection last", () => {
     // An issue opened beside a selected part closes to that part's inspector, which closes to the list.
-    expect(parentOf({ view: "issue", issue: ISSUE, sel: PART })).toEqual({ view: "map", sel: PART });
+    expect(parentOf({ view: "issue", issue: ISSUE, section: "overview", sel: PART })).toEqual({ view: "map", sel: PART });
     expect(parentOf({ view: "map", sel: PART })).toEqual(HOME);
-    expect(parentOf({ view: "issue", issue: ISSUE, sel: null })).toEqual(HOME);
+    expect(parentOf({ view: "issue", issue: ISSUE, section: "overview", sel: null })).toEqual(HOME);
     expect(parentOf({ view: "issues", list: "open", sel: PART })).toEqual(HOME);
     expect(parentOf({ view: "issues", list: "done", sel: null })).toEqual(HOME);
     expect(parentOf(HOME)).toBeNull();
@@ -112,7 +115,14 @@ describe("the view in the URL fragment (issue #357)", () => {
     navigate({ view: "companions", sel: PART });
     expect(history.length).toBe(before + 1);
     expect(currentRoute()).toEqual({ view: "companions", sel: PART });
-    expect(sameView({ view: "issue", issue: ISSUE, sel: PART }, { view: "issue", issue: ISSUE, sel: null })).toBe(true);
+    expect(sameView({ view: "issue", issue: ISSUE, section: "overview", sel: PART }, { view: "issue", issue: ISSUE, section: "overview", sel: null })).toBe(true);
+    // Sections of one issue are one view: moving between them replaces the entry.
+    navigate({ view: "issue", issue: ISSUE, section: "overview", sel: null });
+    const inIssue = history.length;
+    navigate({ view: "issue", issue: ISSUE, section: "room", sel: null });
+    expect(location.hash).toBe("#/issues/m0x6A/rubato/357/room");
+    expect(history.length).toBe(inIssue);
+    expect(parentOf(currentRoute())).toEqual(HOME);
   });
 
   it("navigating keeps the tenant and the workspace in the query", () => {
@@ -128,7 +138,7 @@ describe("the view in the URL fragment (issue #357)", () => {
     // The login returns to the page with no fragment.
     history.replaceState(null, "", "/");
     restoreRouteAfterLogin();
-    expect(currentRoute()).toEqual({ view: "issue", issue: ISSUE, sel: null });
+    expect(currentRoute()).toEqual({ view: "issue", issue: ISSUE, section: "overview", sel: null });
     history.replaceState(null, "", "/");
     restoreRouteAfterLogin();
     expect(currentRoute()).toEqual(HOME);
@@ -140,7 +150,7 @@ describe("the view in the URL fragment (issue #357)", () => {
     history.replaceState(null, "", "/");
     restoreRouteAfterLogin();
     expect(location.search).toBe("?t=acme&w=shop");
-    expect(currentRoute()).toEqual({ view: "issue", issue: ISSUE, sel: null });
+    expect(currentRoute()).toEqual({ view: "issue", issue: ISSUE, section: "overview", sel: null });
   });
 
   it("a link to something on the page focuses it and leaves the fragment, which names the view", () => {

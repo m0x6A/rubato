@@ -37,3 +37,9 @@ export async function showNotPinned(page: Page) {
   await page.getByTestId("issues-view-not-pinned").click();
   await expect(page.getByTestId("backlog")).toBeVisible();
 }
+
+/** Show one part of the open issue: its plan, its room, its sessions or its pull request. */
+export async function openSection(page: Page, section: "overview" | "plan" | "room" | "sessions" | "pr") {
+  await page.getByTestId("issue-detail").getByTestId(section === "pr" ? "open-pull-view" : `section-${section}`).click();
+  await expect(page.locator(`[data-testid="issue-detail"] [data-section="${section}"]`)).toBeVisible();
+}

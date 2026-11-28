@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { showNotPinned } from "./shell.ts";
+import { openSection, showNotPinned } from "./shell.ts";
 
 // The UX walkthrough of 2026-11-26: what a person new to Rubato tripped over, made plain.
 // #915 has a plan on issue/915-voice and no test pins it, so it stays tracked and not pinned.
@@ -112,6 +112,7 @@ test("Accept plan gives the comment to post when Rubato cannot post it", { tag: 
   // The dev server is not a GitHub App, so it cannot comment as the person.
   await page.goto("/");
   await page.getByTestId("issue-row-914").click();
+  await openSection(page, "plan");
   const why = page.getByTestId("issue-detail").getByTestId("accept-why");
   await expect(why).toContainText("cannot comment as you");
   await expect(why).toContainText(/Instead, comment Approved: plan [0-9a-f]{10} on issue\/914-voice on the issue yourself/);

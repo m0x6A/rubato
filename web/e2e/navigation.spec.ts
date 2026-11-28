@@ -74,3 +74,56 @@ test("a link that names nothing says so and offers the list", { tag: ["@navigati
   await expect(page.getByTestId("not-found")).toContainText("m0x6A/rubato#999999 is not among the issues Rubato tracks");
   await expect(page.getByTestId("issue-row-915")).toBeVisible();
 });
+
+test("a link opens one part of an issue; its parts are one step for Back", { tag: ["@navigation.link-opens-issue-section", "@issues.parts"] }, async ({ page }) => {
+  await page.goto("/#/plans");
+  await expect(page.getByTestId("plan-columns")).toBeVisible();
+  await page.goto(`/${ISSUE_915}/plan`);
+  const detail = page.getByTestId("issue-detail");
+  await expect(detail.getByTestId("section-plan")).toHaveAttribute("aria-current", "page");
+  await expect(detail.getByTestId("where-it-fits")).toBeVisible();
+  // The other parts are there, not showing.
+  await expect(detail.locator('[data-section="overview"]')).toBeHidden();
+
+  await detail.getByTestId("section-room").click();
+  await expect(page).toHaveURL(/#\/issues\/m0x6A\/rubato\/915\/room$/);
+  await detail.getByTestId("section-sessions").click();
+  await expect(detail.getByTestId("no-sessions")).toBeVisible();
+  await detail.getByTestId("section-overview").click();
+  await expect(page).toHaveURL(/#\/issues\/m0x6A\/rubato\/915$/);
+  await expect(detail.locator('[data-section="overview"]')).toBeVisible();
+  // One step back leaves the issue, whatever parts were looked at.
+  await page.goBack();
+  await expect(page.getByTestId("plan-columns")).toBeVisible();
+
+  // An issue with no pull request has no such part; a link to it shows the overview.
+  await page.goto(`/${ISSUE_915}/pr`);
+  await expect(detail.getByTestId("open-pull-view")).toHaveCount(0);
+  await expect(detail.locator('[data-section="overview"]')).toBeVisible();
+});
+
+test("what was typed in one part of an issue is there on coming back", { tag: ["@issues.parts"] }, async ({ page }) => {
+  await page.goto(`/${ISSUE_915}/room`);
+  const box = page.getByLabel("Message to the room");
+  await box.fill("half a thought");
+  await page.getByTestId("section-plan").click();
+  await expect(box).toBeHidden();
+  await page.getByTestId("section-room").click();
+  await expect(box).toHaveValue("half a thought");
+});
+
+test("an issue's header offers one next step for where it stands", { tag: ["@issues.next-action"] }, async ({ page }) => {
+  // #915 has a plan and no pin, and the dev user has no companion here: not on the map yet.
+  await page.goto(`/${ISSUE_915}`);
+  const next = page.getByTestId("issue-next");
+  await expect(next).toHaveAttribute("data-next", "pin");
+  await expect(next).toContainText("not on the map yet");
+  await expect(next.getByTestId("next-step").getByRole("button", { name: "Pin m0x6A/rubato#915 to…" })).toBeVisible();
+  await expect(page.locator('[data-testid="issue-detail"] .issue-head').locator('.primary, [data-testid="next-step"]')).toHaveCount(1);
+
+  // #912 is pinned by its Map: line; with no companion paired, pairing one is the step.
+  await page.goto("/#/issues/m0x6A/rubato/912");
+  await expect(next).toHaveAttribute("data-next", "pair");
+  await next.getByRole("button", { name: "Pair a companion" }).click();
+  await expect(page).toHaveURL(/#\/companions$/);
+});

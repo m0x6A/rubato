@@ -16,11 +16,14 @@ import type { IssueRef, MapRef } from "../protocol.ts";
 /** Which issues the list shows: open ones Rubato tracks, open ones nobody pinned, or the finished. */
 export type IssueList = "open" | "not-pinned" | "done";
 
+/** The parts of an issue's view, one at a time; the overview is the issue's own address. */
+export type IssueSection = "overview" | "plan" | "room" | "sessions" | "pr";
+
 export type View =
   | { view: "issues"; list: IssueList }
   /** The inspector of the part or seam selected on the map. */
   | { view: "map" }
-  | { view: "issue"; issue: IssueRef }
+  | { view: "issue"; issue: IssueRef; section: IssueSection }
   | { view: "new-issue"; at: MapRef | null }
   | { view: "plans" }
   | { view: "plan"; issue: IssueRef }
@@ -42,6 +45,9 @@ const ID = /^[A-Za-z0-9._-]+$/;
 
 /** The lists of the issue view that have a path of their own; the open list is `/issues`. */
 const LISTS: Record<string, IssueList> = { "not-pinned": "not-pinned", done: "done" };
+
+/** The sections of an issue's view that have a path of their own. */
+const SECTIONS: Record<string, IssueSection> = { plan: "plan", room: "room", sessions: "sessions", pr: "pr" };
 
 function parseRef(s: string | null): MapRef | null {
   if (!s) {
@@ -87,7 +93,7 @@ export function parseRoute(hash: string): Route {
   } catch {
     return notFound;
   }
-  const [head, a, b, c, ...rest] = parts;
+  const [head, a, b, c, d, ...rest] = parts;
   if (rest.length > 0) {
     return notFound;
   }
@@ -107,16 +113,20 @@ export function parseRoute(hash: string): Route {
         return at !== null && ref === null ? notFound : { view: "new-issue", at: ref, sel };
       }
       const issue = parseIssue(a, b, c);
-      return issue ? { view: "issue", issue, sel } : notFound;
+      const section = d === undefined ? "overview" : SECTIONS[d];
+      return issue && section ? { view: "issue", issue, section, sel } : notFound;
     }
     case "plans": {
       if (only) {
         return { view: "plans", sel };
       }
       const issue = parseIssue(a, b, c);
-      return issue ? { view: "plan", issue, sel } : notFound;
+      return issue && d === undefined ? { view: "plan", issue, sel } : notFound;
     }
     case "settings":
+      if (d !== undefined || c !== undefined) {
+        return notFound;
+      }
       if (a === "workspaces" && b === undefined) {
         return { view: "workspaces", sel };
       }
@@ -144,7 +154,7 @@ export function formatRoute(route: Route): string {
       path = route.list === "open" ? "/issues" : `/issues/${route.list}`;
       break;
     case "issue":
-      path = `/issues/${route.issue.repo}/${route.issue.number}`;
+      path = `/issues/${route.issue.repo}/${route.issue.number}${route.section === "overview" ? "" : `/${route.section}`}`;
       break;
     case "plan":
       path = `/plans/${route.issue.repo}/${route.issue.number}`;
@@ -176,9 +186,13 @@ export function isPage(route: Route): boolean {
   return route.view === "settings" || route.view === "workspaces" || route.view === "members" || route.view === "operator";
 }
 
-/** Whether two routes show the same view, whatever is selected on the map. */
+/**
+ * Whether two routes show the same view, whatever is selected on the map. An issue is one view
+ * whichever of its sections shows: moving between them is not a step for Back.
+ */
 export function sameView(a: Route, b: Route): boolean {
-  return formatRoute({ ...a, sel: null }) === formatRoute({ ...b, sel: null });
+  const flat = (r: Route): Route => (r.view === "issue" ? { ...r, section: "overview", sel: null } : { ...r, sel: null });
+  return formatRoute(flat(a)) === formatRoute(flat(b));
 }
 
 /**

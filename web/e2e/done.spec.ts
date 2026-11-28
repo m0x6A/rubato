@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openSection } from "./shell.ts";
 
 // Issue #265: GitHub is the source. #930 is closed there (fixtures/issues.json, label
 // dev:closed) and its plan sits on issue/930-closed. Pinned, it is tracked; closed, it is
@@ -41,6 +42,9 @@ test("an issue closed on GitHub is listed only under Done", { tag: ["@issues.ope
   await row.getByRole("button", { name: "m0x6A/rubato#930" }).click();
   const detail = page.getByTestId("issue-detail");
   await expect(detail.getByTestId("finished-note")).toContainText("Closed on GitHub.");
+  // Nothing starts from here: the header offers no next step.
+  await expect(detail.getByTestId("issue-next")).toHaveCount(0);
+  await openSection(page, "plan");
   await expect(detail.getByTestId("where-it-fits")).toBeVisible();
   await expect(detail.getByTestId("start-session")).toHaveCount(0);
   await expect(detail.getByTestId("accept-plan")).toHaveCount(0);

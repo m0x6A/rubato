@@ -35,8 +35,13 @@ interface Props {
   messages: RoomMessage[];
   /** A message posted from speech, shown at once. */
   onPosted: (m: RoomMessage) => void;
+  /** Told when this person joins or leaves, so a control can show wherever the room is not on screen. */
+  onHeld?: ((held: VoiceHeld | null) => void) | undefined;
   deps?: Partial<VoiceDeps>;
 }
+
+/** A voice channel this person is in: where its speech goes, and the way out. */
+export type VoiceHeld = { via: string | null; leave: () => void };
 
 type Joined = { disconnect: () => Promise<void> | void; since: string };
 
@@ -46,7 +51,7 @@ type Joined = { disconnect: () => Promise<void> | void; since: string };
  * An agent's reply to a spoken question is played here, a short cut of it; the whole reply is in
  * the room. Speech goes to the provider named below, and through the agents to Anthropic.
  */
-export function VoicePanel({ room, voice, agents, messages, onPosted, deps: given }: Props) {
+export function VoicePanel({ room, voice, agents, messages, onPosted, onHeld, deps: given }: Props) {
   const deps = { ...browserDeps, ...given };
   const [joined, setJoined] = useState<Joined | null>(null);
   const [joining, setJoining] = useState(false);
@@ -109,6 +114,27 @@ export function VoicePanel({ room, voice, agents, messages, onPosted, deps: give
     await joined?.disconnect();
     setJoined(null);
   }, [joined]);
+
+  // A channel must not outlive what shows it (issue #357): when the panel goes, so do the
+  // connection and whatever was playing. No microphone stays open with no control on screen.
+  const current = useRef<Joined | null>(null);
+  current.current = joined;
+  useEffect(
+    () => () => {
+      playing.current?.pause();
+      void current.current?.disconnect();
+    },
+    [],
+  );
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  const speechVia = voice.speech ? via : null;
+  useEffect(() => {
+    onHeld?.(joined ? { via: speechVia, leave: () => void leaveRef.current() } : null);
+    return () => onHeld?.(null);
+    // onHeld is the caller's setter; only joining and leaving change what is held.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joined, speechVia]);
 
   // Play each agent reply to a spoken question once, one at a time.
   const playNext = useCallback(() => {

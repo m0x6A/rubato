@@ -2,7 +2,7 @@ import { useState } from "react";
 import { IssueList } from "../src/features/issues/IssueList.tsx";
 import { IssuePanel as IssueDetail } from "../src/features/issues/IssuePanel.tsx";
 import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from "../src/protocol.ts";
-import type { IssueList as Which } from "../src/shared/route.ts";
+import type { IssueSection, IssueList as Which } from "../src/shared/route.ts";
 
 interface Props {
   overview: Overview;
@@ -27,8 +27,9 @@ interface Props {
  */
 export function IssuePanel({ selected, selection, onSelect, onClearSelection, onQueue, ...rest }: Props) {
   const [list, setList] = useState<Which>("open");
+  const [section, setSection] = useState<IssueSection>("overview");
   if (selected) {
-    return <IssueDetail {...rest} selected={selected} onClose={() => onSelect(null)} onOpenIssue={onSelect} />;
+    return <IssueDetail {...rest} selected={selected} section={section} onSection={setSection} onClose={() => onSelect(null)} onOpenIssue={onSelect} />;
   }
   return <IssueList overview={rest.overview} me={rest.me} list={list} onList={setList} selection={selection} onClearSelection={onClearSelection} onOpen={onSelect} onPin={rest.onPin} onQueue={onQueue} />;
 }
