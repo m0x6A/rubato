@@ -314,9 +314,13 @@ pub async fn tick(app: &App) -> Tick {
         .map(|(ws, m)| (ws.clone(), m.clone()))
         .collect();
     for (ws, loaded) in &maps {
-        let key = source_key::workspace(ws.ws());
+        let key = source_key::workspace(ws.tenant().as_str(), ws.ws());
         let built = match crate::pins::list(&app.db, ws).await {
-            Ok(pins) => Ok(workspace::build(ws.ws(), &loaded.map, &pins)),
+            Ok(pins) => Ok(workspace::build(
+                &super::workspace_label(ws),
+                &loaded.map,
+                &pins,
+            )),
             Err(e) => Err(("pins", e)),
         };
         note(
@@ -334,24 +338,26 @@ pub async fn tick(app: &App) -> Tick {
         );
         wanted.insert(key);
     }
-    if !maps.is_empty() {
-        let built = team_input(app, &maps)
+    // One team source per tenant (design §6.4): a tenant's shared facts go to its members only.
+    let mut by_tenant: std::collections::BTreeMap<crate::kernel::tenancy::TenantId, Vec<_>> =
+        Default::default();
+    for m in &maps {
+        by_tenant
+            .entry(m.0.tenant().clone())
+            .or_default()
+            .push(m.clone());
+    }
+    for (t, its_maps) in &by_tenant {
+        let key = source_key::team(t.as_str());
+        let built = team_input(app, t, its_maps)
             .await
             .map(|input| team::build(&input));
         note(
             &mut tick,
-            source_key::TEAM,
-            derived(
-                app,
-                &store,
-                source_key::TEAM,
-                kind::source::TEAM,
-                None,
-                built,
-            )
-            .await,
+            &key,
+            derived(app, &store, &key, kind::source::TEAM, None, built).await,
         );
-        wanted.insert(source_key::TEAM.to_owned());
+        wanted.insert(key);
     }
     // Never on a tick with no map loaded: the list a companion is sent is the truth, and one
     // bad tick must not empty every copy.
@@ -361,10 +367,9 @@ pub async fn tick(app: &App) -> Tick {
                 continue;
             }
             if row.kind != kind::source::REPO {
-                // A workspace that is no longer held: its map and pins go with it.
-                if row.kind == kind::source::WORKSPACE
-                    && let Ok(true) = store.remove_source(&row.source).await
-                {
+                // A workspace that is no longer held, a tenant with no map left, and the keys
+                // of before tenants (`team`, `workspace/<id>`): what was built goes with them.
+                if let Ok(true) = store.remove_source(&row.source).await {
                     tracing::info!(rubato.graph.source = %row.source, "context graph source removed");
                     tick.removed.push(row.source);
                 }
@@ -495,6 +500,7 @@ async fn derived(
 /// What the team source is built from, read through the other slices' roots.
 async fn team_input(
     app: &App,
+    t: &crate::kernel::tenancy::TenantId,
     maps: &[(
         crate::kernel::tenancy::WsKey,
         std::sync::Arc<crate::kernel::state::LoadedMap>,
@@ -504,28 +510,31 @@ async fn team_input(
     for (ws, loaded) in maps {
         for name in loaded.map.repos_named() {
             match repos.iter_mut().find(|r| r.name.eq_ignore_ascii_case(name)) {
-                Some(r) => r.workspaces.push(ws.ws().to_owned()),
+                Some(r) => r.workspaces.push(super::workspace_label(ws)),
                 None => repos.push(team::RepoFact {
                     name: name.to_owned(),
-                    workspaces: vec![ws.ws().to_owned()],
+                    workspaces: vec![super::workspace_label(ws)],
                 }),
             }
         }
     }
-    let pinned = crate::pins::list_all(&app.db)
-        .await
-        .map_err(|e| ("pins", e))?
-        .into_iter()
-        .map(|p| (p.issue.repo, p.issue.number))
-        .collect();
-    // Read tenant by tenant. The team source is still one for the server; it becomes one per
-    // tenant with the graph's own scoping (plan 345, design §6.4).
+    // Only this tenant's pins, issues, plans and pull requests (design §6.4).
+    let mut pinned = BTreeSet::new();
+    for (ws, _) in maps {
+        pinned.extend(
+            crate::pins::list(&app.db, ws)
+                .await
+                .map_err(|e| ("pins", e))?
+                .into_iter()
+                .map(|p| (p.issue.repo, p.issue.number)),
+        );
+    }
     let mut input = team::Input {
         repos,
         pinned,
         ..Default::default()
     };
-    for t in &app.tenants() {
+    {
         input.issues.extend(
             crate::github_poll::all_issue_meta(&app.db, t)
                 .await

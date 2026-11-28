@@ -118,7 +118,7 @@ pub async fn overview(
         orchestrator: app.config.orchestrator,
         leads: crate::fleet::leads(&app, ws.key()).await,
         // Each context graph source and how fresh it is; absent while the flag is off (ADR 0084).
-        graph: crate::context_graph::overview(&app).await,
+        graph: crate::context_graph::overview(&app, ws.key().tenant()).await,
         generated_at: Utc::now(),
     }))
 }

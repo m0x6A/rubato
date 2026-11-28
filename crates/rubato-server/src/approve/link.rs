@@ -330,7 +330,7 @@ async fn settle_found(app: &App, t: &TenantId) -> Result<()> {
         }) {
             links::posted(&app.db, t, a.id, c.comment_id, &c.url, app.clock.now()).await?;
             tracing::info!(rubato.issue = %a.issue, rubato.approval_id = %a.id, comment_id = c.comment_id, "link comment found in the comments");
-            app.notify("link comment");
+            app.notify_in(t, "link comment");
         }
     }
     Ok(())
@@ -379,7 +379,7 @@ async fn post_link(app: &App, t: &TenantId, d: &Due) -> bool {
                 tracing::error!(error = %format!("{e:#}"), "link comment: recording failed");
             }
             tracing::info!(rubato.issue = %a.issue, rubato.approval_id = %a.id, commit = %d.commit, url = %c.url, "link comment posted");
-            app.notify("link comment");
+            app.notify_in(t, "link comment");
             true
         }
         Err(PostError::Refused { status }) => {

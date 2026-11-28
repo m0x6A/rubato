@@ -51,7 +51,7 @@ pub async fn on_draft(app: &App, bundle: &DraftBundle, owner: &str) {
             if let Err(e) = store::record_conflict(&app.db, t, draft.id, owner, now).await {
                 tracing::error!(error = %format!("{e:#}"), "recording a draft conflict failed");
             }
-            app.notify("draft conflict");
+            app.notify_in(t, "draft conflict");
             return;
         }
         let (plan, parse_error) = match plans::parse_plan(&plan_file.text, &plan_file.path) {
@@ -76,8 +76,8 @@ pub async fn on_draft(app: &App, bundle: &DraftBundle, owner: &str) {
             Ok(Some(n)) => {
                 app.metrics.drafts_revisions.add(1, &[]);
                 tracing::info!(rubato.issue = %bundle.issue, rubato.branch = %bundle.branch, rubato.draft.rev = n, "draft revision stored");
-                app.notify_resource(WebResource::Draft { draft_id: draft.id });
-                app.notify("draft");
+                app.notify_resource(t, WebResource::Draft { draft_id: draft.id });
+                app.notify_in(t, "draft");
             }
             Ok(None) => tracing::debug!(rubato.issue = %bundle.issue, "draft bundle unchanged"),
             Err(e) => tracing::error!(error = %format!("{e:#}"), "storing a draft revision failed"),

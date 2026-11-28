@@ -97,7 +97,7 @@ Each deployable's block appears here with the PR that slices it:
 <!-- slices: rubato-server -->
 `crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, built from one table of tenant routes that the cross-tenant sweep also reads: tenant routes under `/api/t/{tenant}` and map-scoped ones under
 `/api/t/{tenant}/w/{ws}`, ADR 0089; 404 for unknown `/api`, `/ws`, `/auth` paths, the paths of before tenants among them), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per tenant's workspace and each companion's latest sessions, signer, `http::internal`, `http::Ws` and `http::check_repos` (a tenant route refuses a repository that is not its tenant's, ADR 0089), GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth` reaches tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, `WsKey`, `TenantScope` and `AdminScope`, ADR 0087, 0088, 0089); slices:
+(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per tenant's workspace and each companion's latest sessions, signer, `http::internal`, `http::Ws` and `http::check_repos` (a tenant route refuses a repository that is not its tenant's, ADR 0089), GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth`, companion intake and the context graph reach tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, `WsKey`, `TenantScope` and `AdminScope`, ADR 0087, 0088, 0089); slices:
 
 ```text
 auth            GitHub login (invited people and operators only, ADR 0088), CurrentUser, tokens  users, web_sessions, user_tokens
@@ -123,12 +123,12 @@ rooms           a plan's room: messages, seam notices, agents called in, turns  
 voice           a room's voice channel: LiveKit token, utterances in, spoken replies out  (none; clips in memory)
 telemetry_relay  the web's own spans, rewritten and forwarded over OTLP (ADR 0082)   (none; token buckets in memory)
 traffic         observed calls per seam from a traffic report, dismissed discrepancies   traffic_dismissals (latest report in memory)
-context_graph   the context graph's sources, each replaced whole, and their status (ADR 0084)   (none in the main database; its own file rubato-graph.db: sources, nodes, edges, nodes_fts)
+context_graph   the context graph's sources, each replaced whole, and their status (ADR 0084); a workspace and a team source per tenant, sent to its members' companions only (ADR 0087)   (none in the main database; its own file rubato-graph.db: sources, nodes, edges, nodes_fts)
 spend_history   each issue's spend over time, from snapshots   spend_sessions, spend_points
 agent_reports   what each launched agent last said it is doing  agent_reports
 plan_status     plan status pushed to each launched session      (none)
 overview        derived progress, findings, gauges              (none)
-web_link        websocket fan-out to browsers                   (none)
+web_link        websocket fan-out to browsers, one tenant per socket (`/ws/web?t=`), membership read again on a timer   (none)
 webhooks        GitHub App webhook deliveries, verified, once   webhook_deliveries
 workspace_settings  each workspace's settings: seeded once, read and changed at runtime, create and delete (ADR 0075)  workspace_settings
 tenants         who belongs to which tenant, its installations and repositories, the seed, the membership layer that grants a `TenantScope` (ADR 0087, 0088)  tenants, tenant_installations, tenant_members, tenant_repos
@@ -170,7 +170,7 @@ browsers have no `crypto.randomUUID`, issue #304);
 `features/features.test.ts`:
 
 ```text
-live        the overview and every event, over /ws/web           GET /api/overview, /ws/web, GET /api/me (probe)
+live        the overview and every event, over /ws/web?t=<tenant>  GET /api/overview, /ws/web, GET /api/me (probe)
 auth        who is logged in, the login page                     GET /api/me, /auth/github/login
 chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout, DELETE /api/layout/grouped; POST, DELETE /api/traffic/dismissals
@@ -220,7 +220,7 @@ room       RoomMessage (with spoken), RoomAgent, RoomRequest, RoomView, RoomKey,
 telemetry_relay  the web span relay's limits (ADR 0082); TELEMETRY_TRACES
 traffic    TrafficReport (with SeenEdge, ADR 0083), ObservedTraffic (with LastSeen), SeamTraffic, UndeclaredEdge, GhostPart, GhostEdge, TrafficEnd, DiscrepancyKey, TrafficDismissal, DismissRequest, derive_traffic, limits; TRAFFIC_DISMISSALS
 voice      VoiceTokenRequest, VoiceToken, UtteranceQuery, VoiceJoinFailed, VoiceAvailability, join_reason, reasons, limits; VOICE_TOKEN, VOICE_UTTERANCE, VOICE_SPEECH, VOICE_JOIN_FAILED
-web_link   WebEvent; WEB_WS
+web_link   WebEvent (with its tenant); WEB_WS, CLOSE_NOT_A_MEMBER
 workspace  WorkspaceInfo, DEFAULT_WORKSPACE, is_workspace_id; WORKSPACES, scoped (tenant, workspace, route)
 workspace_settings  WorkspaceSettings, TrafficSourceSettings, SecretState, SourceFields, SourceField, WorkspaceSettingsUpdate, TrafficSourceUpdate, SecretUpdate, NewWorkspace, SettingsRefusal, reasons; SETTINGS, WORKSPACE, TRAFFIC_SOURCES
 tenant     TenantInfo, Role, MemberView, InviteRequest, RoleChange, AccountType, InstallationState, AdminInstallation, NewTenant, AdminTenant, is_tenant_id, reasons; TENANT_PREFIX, in_tenant, MEMBERS, MEMBER, ADMIN_* (ADR 0087, 0088, 0089)

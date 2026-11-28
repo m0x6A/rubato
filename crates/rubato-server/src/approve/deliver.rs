@@ -90,7 +90,7 @@ pub async fn on_launch_started(app: &App, launch_id: Uuid) {
 }
 
 async fn bind_waiting(app: &App, launch_id: Uuid) -> Result<()> {
-    let Some(t) = crate::launch::launch_target(&app.db, launch_id).await? else {
+    let Some(t) = crate::launch::acting_target(app, launch_id).await? else {
         return Ok(());
     };
     let Some(branch) = t.branch.as_deref() else {

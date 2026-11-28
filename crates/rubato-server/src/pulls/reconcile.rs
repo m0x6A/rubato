@@ -78,7 +78,7 @@ pub async fn reconcile(app: &App, t: &TenantId, complete: &[String]) {
                         } else {
                             tracing::info!(rubato.repo = %i.repo, rubato.pr = i.number, login = %i.login, "merge confirmed by poll");
                             cache.evict(&i.repo, i.number);
-                            app.notify("merge");
+                            app.notify_in(t, "merge");
                         }
                         continue;
                     }

@@ -50,11 +50,18 @@ fn turns(app: &App, outcome: &'static str, n: u64) {
 }
 
 pub(super) fn notify(app: &App, room: &RoomKey) {
-    app.notify_resource(WebResource::Room {
-        repo: room.repo.clone(),
-        number: room.number,
-        branch: room.branch.clone(),
-    });
+    // The room is its repository's tenant's (ADR 0087); one in no tenant has nobody to tell.
+    let Ok(t) = app.repo_tenant(&room.repo) else {
+        return;
+    };
+    app.notify_resource(
+        &t,
+        WebResource::Room {
+            repo: room.repo.clone(),
+            number: room.number,
+            branch: room.branch.clone(),
+        },
+    );
 }
 
 /// The agents a text addresses among those in the room, in the order named.
@@ -181,6 +188,13 @@ fn system(text: String, turn_id: Option<Uuid>, at: chrono::DateTime<chrono::Utc>
 
 /// Post an agent's answer to turn `t`, and make the turns it addresses, up to the limit.
 async fn post_reply(app: &App, t: &RoomTurnRef, text: &str) -> Result<bool> {
+    // An agent speaks in a room only while its owner is a member of the tenant (design §6.3).
+    if crate::launch::acting_target(app, t.launch_id)
+        .await?
+        .is_none()
+    {
+        return Ok(false);
+    }
     let room = &t.room;
     let tenant = &app.repo_tenant(&room.repo)?;
     let handle = agent_handle(&t.owner);
@@ -310,6 +324,9 @@ pub async fn on_room_reply(app: &App, companion_id: Uuid, r: &RoomReply) -> bool
     let result = async {
         let now = app.clock.now();
         let tenant = app.repo_tenant(&t.room.repo)?;
+        if crate::launch::acting_target(app, t.launch_id).await?.is_none() {
+            return Ok(false);
+        }
         if let Some(fork) = &r.fork_session_id {
             agents::set_fork_session(&app.db, &tenant, &t.room, t.launch_id, fork).await?;
         }

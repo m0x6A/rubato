@@ -1,6 +1,7 @@
 //! Tables `launches` and `cap_hits`. `issues_with_live_cap_hit` reads both.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::state::App;
 use crate::kernel::tenancy::TenantId;
 use crate::kernel::tenancy::WsKey;
 use anyhow::Result;
@@ -48,6 +49,28 @@ pub struct LaunchTarget {
     pub role: LaunchRole,
     /// The lead that asked for this worker.
     pub lead_launch_id: Option<Uuid>,
+}
+
+/// The launch with this id, for work that acts in its tenant for its owner with no request of
+/// theirs: what its companion sends for it, and what Rubato pushes to it (design §6.3). A launch
+/// whose owner is no longer a member of its tenant answers `None`, as one that does not exist;
+/// that is logged and counted on `rubato.companion.refused`.
+pub async fn acting_target(app: &App, launch_id: Uuid) -> Result<Option<LaunchTarget>> {
+    let Some(t) = launch_target(&app.db, launch_id).await? else {
+        return Ok(None);
+    };
+    if app.admission().is_member(app, &t.tenant, &t.user).await? {
+        return Ok(Some(t));
+    }
+    tracing::warn!(rubato.launch_id = %launch_id, rubato.tenant = %t.tenant, rubato.user = %t.user, reason = "not_member", "companion refused: the launch's owner is no longer a member of its tenant");
+    app.metrics.companion_refused.add(
+        1,
+        &[opentelemetry::KeyValue::new(
+            rubato_protocol::otel::attr::DROP_REASON,
+            "not_member",
+        )],
+    );
+    Ok(None)
 }
 
 /// The launch with this id, if Rubato started it.

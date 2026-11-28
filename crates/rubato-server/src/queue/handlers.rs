@@ -102,7 +102,7 @@ pub async fn add(
             ),
         ));
     }
-    app.notify("queue");
+    app.notify_in(t, "queue");
     Ok(StatusCode::CREATED)
 }
 

@@ -240,7 +240,7 @@ pub async fn start(
     if attempt > attempt_limit {
         let refusal =
             refuse_past_attempt_limit(&app.db, t, &req.issue, attempt, attempt_limit).await;
-        app.notify("cap hit");
+        app.notify_in(t, "cap hit");
         return Err(refusal);
     }
     let plan_path = map
@@ -317,7 +317,7 @@ pub async fn start(
         ));
     }
     tracing::info!(launch_id = %command.id, rubato.issue = %command.issue, rubato.user = %user, companion = %companion.companion_id, planning = command.planning.name(), "{}", span::LAUNCH);
-    app.notify("launch");
+    app.notify_in(t, "launch");
     Ok(LaunchResponse {
         command,
         companion_id: companion.companion_id,

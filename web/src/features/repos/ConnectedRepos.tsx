@@ -58,8 +58,10 @@ export function GraphLine({ name, source, regenSecs, now, label = "context graph
  * shared facts. Shown once, above the repositories. Nothing with the flag off. */
 export function SharedGraphLines({ graph, workspace, now }: { graph: GraphOverview | null | undefined; workspace: string; now?: number | undefined }) {
   const sources = graph?.sources ?? [];
-  const ws = sources.find((s) => s.source === `workspace/${workspace}`);
-  const team = sources.find((s) => s.source === "team");
+  // The server lists only this tenant's sources: its workspaces as `workspace/<tenant>/<id>` and
+  // its shared facts as `team/<tenant>` (ADR 0087).
+  const ws = sources.find((s) => s.kind === "workspace" && s.source.endsWith(`/${workspace}`));
+  const team = sources.find((s) => s.kind === "team");
   if (!graph || (!ws && !team)) {
     return null;
   }

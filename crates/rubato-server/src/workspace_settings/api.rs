@@ -569,7 +569,7 @@ pub async fn update(
     }
     app.notify_ws(changed::SETTINGS, ws.key());
     if next.name != row.name {
-        app.notify(changed::WORKSPACES);
+        app.notify_in(ws.key().tenant(), changed::WORKSPACES);
     }
     Ok(Json(wire(&app, &next)))
 }
@@ -692,7 +692,7 @@ pub async fn create(
     );
     swap(&app).await.map_err(failed)?;
     map::apply(&app, &entry, loaded).await.map_err(failed)?;
-    app.notify(changed::WORKSPACES);
+    app.notify_in(scope.tenant(), changed::WORKSPACES);
     report_again(&app).await;
     Ok((StatusCode::CREATED, Json(wire(&app, &row))))
 }
@@ -724,7 +724,7 @@ pub async fn delete(
     record(ws.key(), &user, &["deleted".to_owned()]);
     swap(&app).await.map_err(failed)?;
     map::forget(&app, ws.key()).await;
-    app.notify(changed::WORKSPACES);
+    app.notify_in(ws.key().tenant(), changed::WORKSPACES);
     report_again(&app).await;
     Ok(StatusCode::NO_CONTENT)
 }

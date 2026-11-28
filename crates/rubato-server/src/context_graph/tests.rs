@@ -67,7 +67,10 @@ async fn with_the_flag_off_there_is_no_file_and_no_graph_in_the_overview() {
     let app = app(&tmp, false).await;
     start(&app).await.unwrap();
     assert!(store(&app).is_none());
-    assert_eq!(overview(&app).await, None);
+    assert_eq!(
+        overview(&app, &crate::kernel::tenancy::TenantId::default_tenant()).await,
+        None
+    );
     assert!(!tmp.path().join("t-graph.db").exists());
 }
 
@@ -76,7 +79,9 @@ async fn with_the_flag_on_the_overview_says_how_each_source_stands() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(&tmp, true).await;
     // Before the file is open, and before any build: the interval and no sources.
-    let before = overview(&app).await.expect("the flag is on");
+    let before = overview(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .expect("the flag is on");
     assert_eq!((before.regen_secs, before.sources.len()), (900, 0));
 
     start(&app).await.unwrap();
@@ -88,13 +93,22 @@ async fn with_the_flag_on_the_overview_says_how_each_source_stands() {
         .replace_source(Some(g), build.clone(), at("2026-11-26T17:00:05Z"))
         .await
         .unwrap();
-    store.begin_build("team", kind::source::TEAM).await.unwrap();
     store
-        .record_error("team", at("2026-11-26T17:00:06Z"), "plans: not read")
+        .begin_build("team/default", kind::source::TEAM)
+        .await
+        .unwrap();
+    store
+        .record_error(
+            "team/default",
+            at("2026-11-26T17:00:06Z"),
+            "plans: not read",
+        )
         .await
         .unwrap();
 
-    let o = overview(&app).await.unwrap();
+    let o = overview(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     let json = serde_json::to_value(&o).unwrap();
     assert_eq!(
         json,
@@ -105,7 +119,7 @@ async fn with_the_flag_on_the_overview_says_how_each_source_stands() {
                   "generated_at": "2026-11-26T17:00:04Z", "checked_at": "2026-11-26T17:00:05Z",
                   "nodes": 3, "edges": 2 },
                 // Never built, and its only attempt failed: no times, the error, no rows.
-                { "source": "team", "kind": "team", "error": "plans: not read",
+                { "source": "team/default", "kind": "team", "error": "plans: not read",
                   "nodes": 0, "edges": 0 }
             ]
         })

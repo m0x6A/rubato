@@ -1,5 +1,6 @@
 import type { WebEvent } from "../../protocol.ts";
 import { ApiError, request } from "../../shared/api.ts";
+import { currentTenant } from "../../shared/workspace.ts";
 import { emitWebEvent } from "./events.ts";
 
 /**
@@ -20,7 +21,9 @@ export function subscribe(onChanged: (ev: WebEvent) => void, onState: (connected
       return;
     }
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    socket = new WebSocket(`${proto}://${location.host}/ws/web`);
+    // One socket per tenant (ADR 0089): the server sends it that tenant's events only.
+    const tenant = currentTenant();
+    socket = new WebSocket(`${proto}://${location.host}/ws/web${tenant ? `?t=${encodeURIComponent(tenant)}` : ""}`);
     socket.onopen = () => {
       delay = 1000;
       onState(true);

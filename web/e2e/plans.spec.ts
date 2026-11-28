@@ -87,7 +87,7 @@ test("the Repos tab says how fresh each repository's context graph is", { tag: "
   await expect(line).toHaveAttribute("data-state", "current", { timeout: 60_000 });
   await expect(line).toHaveText(/^context graph: [0-9a-f]{7} · checked \d+[smh] ago · [\d,]+ nodes$/);
   // The workspace's map and pins, and the team's shared facts, each once above the repositories.
-  await expect(page.getByTestId("graph-workspace/default")).toContainText(/map [0-9a-f]{7} · checked/);
+  await expect(page.getByTestId("graph-workspace/default/default")).toContainText(/map [0-9a-f]{7} · checked/);
   await expect(page.getByTestId("graph-team")).toContainText(/checked \d+[smh] ago/);
 });
 

@@ -93,7 +93,7 @@ pub fn sources() -> Vec<Build> {
         n
     };
     let workspace = build(
-        source_key::workspace(WORKSPACE),
+        source_key::workspace("default", WORKSPACE),
         kind::source::WORKSPACE,
         None,
         vec![
@@ -216,7 +216,7 @@ pub fn sources() -> Vec<Build> {
         ],
     );
     let team = build(
-        source_key::TEAM.to_owned(),
+        source_key::team("default"),
         kind::source::TEAM,
         None,
         vec![

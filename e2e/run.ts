@@ -332,7 +332,7 @@ async function main() {
   // token and holds them in its state directory, and a session started by hand reads the copy
   // through the stdio bridge.
   {
-    const want = ["repo/acme/auth", "repo/acme/pantry", "workspace/default", "team"];
+    const want = ["repo/acme/auth", "repo/acme/pantry", "workspace/default/default", "team/default"];
     const status = () => execFileSync(BIN.companion, ["status", "--workspace", `${T}/workspace.yml`, "--state-dir", `${T}/state`], { env: { ...process.env, HOME: `${T}/home` }, encoding: "utf8" });
     await waitFor("the companion's copy of the context graph", 60_000, async () => want.every((s) => status().includes(`  ${s}`))).catch(() => undefined);
     const said = status();

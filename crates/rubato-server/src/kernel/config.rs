@@ -531,6 +531,9 @@ pub struct Config {
     /// subscriber exists, since `from_env` runs before it does (design D14).
     /// A person's lead agent and its workers (`RUBATO_ORCHESTRATOR=1`, ADR 0072); off by default.
     pub orchestrator: bool,
+    /// How often an open browser socket reads its person's membership again (design §6.1).
+    /// Not read from the environment; tests shorten it.
+    pub web_membership_check: std::time::Duration,
     /// Live workers per lead (`RUBATO_FLEET_MAX`, default 4).
     pub fleet_max: u32,
     /// The context graph (`RUBATO_CONTEXT_GRAPH`, ADR 0084); `None` while it is off, the default.
@@ -682,6 +685,7 @@ impl Config {
             ),
             voice: voice_from(env, env("RUBATO_DEV_USER").is_some())?,
             orchestrator: orchestrator_on(env("RUBATO_ORCHESTRATOR").as_deref())?,
+            web_membership_check: std::time::Duration::from_secs(60),
             fleet_max: fleet_max(env("RUBATO_FLEET_MAX").as_deref(), &mut warnings),
             context_graph: context_graph_from(
                 env,
@@ -901,6 +905,7 @@ impl Config {
             github_catchup_secs: CATCHUP_SECS.1,
             voice: None,
             orchestrator: false,
+            web_membership_check: std::time::Duration::from_secs(60),
             fleet_max: rubato_protocol::fleet::limits::FLEET_MAX_DEFAULT,
             context_graph: None,
             operators: Vec::new(),

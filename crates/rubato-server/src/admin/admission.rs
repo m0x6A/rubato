@@ -21,6 +21,38 @@ impl crate::kernel::admission::Admission for Admission {
     async fn tenants_of(&self, app: &App, github_id: i64) -> Result<Vec<TenantInfo>> {
         crate::tenants::tenants_of(&app.db, github_id).await
     }
+
+    async fn is_member(
+        &self,
+        app: &App,
+        tenant: &crate::kernel::tenancy::TenantId,
+        login: &str,
+    ) -> Result<bool> {
+        Ok(crate::tenants::scope_for(app, tenant, login)
+            .await?
+            .is_some())
+    }
+
+    async fn member_of(
+        &self,
+        app: &App,
+        login: &str,
+    ) -> Result<Vec<crate::kernel::tenancy::TenantId>> {
+        use crate::kernel::tenancy::{DEFAULT_TENANT, TenantId};
+        let mut out: Vec<TenantId> = match crate::auth::github_id_of(&app.db, login).await? {
+            Some(id) => crate::tenants::tenants_of(&app.db, id)
+                .await?
+                .into_iter()
+                .map(|t| TenantId::stored(t.id))
+                .collect(),
+            None => Vec::new(),
+        };
+        // Local development: every dev login is in tenant `default`, as `scope_for` grants it.
+        if app.config.dev_user.is_some() && !out.iter().any(|t| t.as_str() == DEFAULT_TENANT) {
+            out.push(TenantId::default_tenant());
+        }
+        Ok(out)
+    }
 }
 
 /// Decision 15: a login stored with one GitHub id and now answered with another belongs to

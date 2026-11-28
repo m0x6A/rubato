@@ -248,7 +248,7 @@ pub async fn approve_draft(
         );
         let plan_path = rev.files.first().map(|f| f.path.as_str()).unwrap_or("");
         super::deliver::on_recorded(&app, &stored, &draft.owner, plan_path).await;
-        app.notify("approve");
+        app.notify_in(t, "approve");
     }
     Ok(answer(&stored, created))
 }

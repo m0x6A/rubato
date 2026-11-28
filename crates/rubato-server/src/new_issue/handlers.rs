@@ -165,7 +165,7 @@ pub async fn create(
                 target = req.target.id(),
                 "issue created"
             );
-            app.notify("issue");
+            app.notify_in(ws.key().tenant(), "issue");
             Ok((
                 StatusCode::CREATED,
                 Json(NewIssueResponse {

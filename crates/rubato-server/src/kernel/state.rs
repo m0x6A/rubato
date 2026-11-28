@@ -444,12 +444,30 @@ impl AppState {
     /// Tell every browser something changed; they refetch the overview. One `info` line per
     /// change says why and to how many, so a change that reached nobody can be told from one
     /// that was never sent.
+    ///
+    /// For what concerns every tenant (a poll tick, a companion coming or going): it names no
+    /// tenant and no resource, so it tells another tenant nothing but that something changed.
+    /// A change of one tenant's data uses [`Self::notify_in`].
     pub fn notify(&self, reason: &str) {
         let subscribers = self.web_tx.receiver_count();
         tracing::info!(reason, rubato.subscribers = subscribers, "web fan-out");
         let _ = self.web_tx.send(WebEvent::Changed {
             at: Utc::now(),
             reason: reason.to_owned(),
+            tenant: None,
+            workspace: None,
+        });
+    }
+
+    /// Tell the browsers of one tenant that something of theirs changed (ADR 0087, design
+    /// §6.1): no other tenant's socket is sent it.
+    pub fn notify_in(&self, tenant: &TenantId, reason: &str) {
+        let subscribers = self.web_tx.receiver_count();
+        tracing::info!(reason, rubato.tenant = %tenant, rubato.subscribers = subscribers, "web fan-out");
+        let _ = self.web_tx.send(WebEvent::Changed {
+            at: Utc::now(),
+            reason: reason.to_owned(),
+            tenant: Some(tenant.to_string()),
             workspace: None,
         });
     }
@@ -468,6 +486,7 @@ impl AppState {
         let _ = self.web_tx.send(WebEvent::Changed {
             at: Utc::now(),
             reason: reason.to_owned(),
+            tenant: Some(ws.tenant.to_string()),
             workspace: Some(ws.ws().to_owned()),
         });
     }
@@ -568,11 +587,12 @@ impl AppState {
 
     /// Tell browsers one resource the overview does not carry changed: only a view showing it
     /// refetches it (plan 122).
-    pub fn notify_resource(&self, resource: WebResource) {
+    pub fn notify_resource(&self, tenant: &TenantId, resource: WebResource) {
         let subscribers = self.web_tx.receiver_count();
-        tracing::info!(?resource, rubato.subscribers = subscribers, "web fan-out");
+        tracing::info!(?resource, rubato.tenant = %tenant, rubato.subscribers = subscribers, "web fan-out");
         let _ = self.web_tx.send(WebEvent::Updated {
             at: Utc::now(),
+            tenant: Some(tenant.to_string()),
             resource,
         });
     }

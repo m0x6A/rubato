@@ -611,6 +611,11 @@ export type FieldKind = ("text" | "url" | "number")
 export type WebEvent = ({
 at: string
 reason: string
+/**
+ * The tenant the change belongs to (ADR 0087). A socket is opened for one tenant and is
+ * sent only that tenant's events, and the few that concern every tenant (absent).
+ */
+tenant?: (string | null)
 type: "changed"
 /**
  * The workspace the change belongs to, for changes of one map only (layout, draft, map
@@ -620,6 +625,10 @@ workspace?: (string | null)
 } | {
 at: string
 resource: WebResource
+/**
+ * The tenant the resource belongs to (ADR 0087): never sent to another tenant's socket.
+ */
+tenant?: (string | null)
 type: "updated"
 })
 /**

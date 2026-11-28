@@ -107,11 +107,14 @@ pub async fn post_seam_notices(app: &App, t: &TenantId) -> Result<usize> {
                         other_branch = %other_branch,
                         "seam notice posted"
                     );
-                    app.notify_resource(WebResource::Room {
-                        repo: room.repo,
-                        number: room.number,
-                        branch: room.branch,
-                    });
+                    app.notify_resource(
+                        t,
+                        WebResource::Room {
+                            repo: room.repo,
+                            number: room.number,
+                            branch: room.branch,
+                        },
+                    );
                 }
             }
         }

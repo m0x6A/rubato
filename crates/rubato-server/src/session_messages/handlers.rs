@@ -155,7 +155,7 @@ pub async fn stop_as(
         return Err(no(StatusCode::CONFLICT, reason::COMPANION_OFFLINE));
     }
     tracing::info!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, rubato.user = %user, via_launch = ?via, "session stop sent");
-    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     Ok(row.view())
 }
 
@@ -269,7 +269,7 @@ pub async fn send(
     store::insert(&app.db, &row).await.map_err(internal)?;
     tracing::info!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, rubato.user = %user, "session message queued");
     dispatch::dispatch(&app, launch_id).await;
-    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     let now_row = store::get(&app.db, row.id)
         .await
         .map_err(internal)?

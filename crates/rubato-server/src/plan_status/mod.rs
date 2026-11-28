@@ -110,7 +110,7 @@ pub async fn on_tick(app: &App, built: &[(crate::kernel::tenancy::WsKey, Vec<Iss
             .filter(|s| s.companion_id == *c && s.status != SessionStatus::Ended)
         {
             let Some(l) = s.launch_id else { continue };
-            let target = match launch::launch_target(&app.db, l).await {
+            let target = match launch::acting_target(app, l).await {
                 Ok(Some(t)) if t.companion_id == *c => t,
                 Ok(_) => continue,
                 Err(e) => {

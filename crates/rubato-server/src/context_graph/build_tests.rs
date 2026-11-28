@@ -196,7 +196,9 @@ async fn a_failed_build_keeps_the_last_good_rows_and_says_why() {
         "{:?}",
         row.error
     );
-    let shown = overview(&app).await.unwrap();
+    let shown = overview(&app, &crate::kernel::tenancy::TenantId::default_tenant())
+        .await
+        .unwrap();
     assert!(shown.sources[0].error.is_some());
 
     // GitHub refusing the head call is a failure of its own kind.
@@ -427,7 +429,7 @@ fn a_sources_age_rises_from_its_last_current_check_also_when_it_was_never_built(
                 "repo/m0x6A/rubato".to_owned(),
                 (Some(at("2026-11-26T17:00:00Z")), 10, 3),
             ),
-            ("team".to_owned(), (None, 0, 0)),
+            ("team/default".to_owned(), (None, 0, 0)),
         ]
         .into(),
     };
@@ -436,7 +438,7 @@ fn a_sources_age_rises_from_its_last_current_check_also_when_it_was_never_built(
         observed.ages(first_seen, at("2026-11-26T17:45:00Z")),
         [
             ("repo/m0x6A/rubato".to_owned(), 2700),
-            ("team".to_owned(), 6300)
+            ("team/default".to_owned(), 6300)
         ]
     );
     // No tick since: the same stored time, a larger age. That is what the alert reads.

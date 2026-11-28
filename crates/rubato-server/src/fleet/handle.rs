@@ -115,7 +115,7 @@ pub async fn on_request(
         let now = app.clock.now();
         // The request is the lead launch's tenant's (ADR 0087). A lead this server never
         // launched has none: refused here, and nothing is recorded for it.
-        let t = match launch::launch_target(&app.db, req.lead_launch_id).await {
+        let t = match launch::acting_target(app, req.lead_launch_id).await {
             Ok(Some(l)) => l.tenant,
             Ok(None) => {
                 span.record("rubato.outcome", "refused");
@@ -213,7 +213,7 @@ async fn act_inner(
     req: &FleetRequest,
 ) -> anyhow::Result<Answer> {
     // Step 3: the lead is a launch of this pairing's companion.
-    let Some(lead) = launch::launch_target(&app.db, req.lead_launch_id).await? else {
+    let Some(lead) = launch::acting_target(app, req.lead_launch_id).await? else {
         return Ok(Answer::refused(
             reason::IDENTITY,
             "no such launch on this companion",

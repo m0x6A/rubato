@@ -204,6 +204,7 @@ pub struct Metrics {
     /// Draft revisions stored, and bundles not stored by reason (ADR 0053).
     pub drafts_revisions: Counter<u64>,
     pub drafts_refused: Counter<u64>,
+    pub companion_refused: Counter<u64>,
     /// `Approved:` comments first read at or after the cutover (ADR 0054).
     pub plans_comment_after_cutover: Counter<u64>,
     /// Room turns by `rubato.outcome`: answered, failed, stopped (ADR 0057).
@@ -314,6 +315,7 @@ impl Metrics {
             session_log_dropped: m.u64_counter(otel::metric::SESSION_LOG_DROPPED).build(),
             drafts_revisions: m.u64_counter(otel::metric::DRAFTS_REVISIONS).build(),
             drafts_refused: m.u64_counter(otel::metric::DRAFTS_REFUSED).build(),
+            companion_refused: m.u64_counter(otel::metric::COMPANION_REFUSED).build(),
             plans_comment_after_cutover: m
                 .u64_counter(otel::metric::PLANS_COMMENT_AFTER_CUTOVER)
                 .build(),

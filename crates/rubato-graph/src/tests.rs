@@ -686,7 +686,11 @@ mod context {
         assert!(!c.truncated);
         assert_eq!(
             store.sources_of(&c.node_ids()).await.unwrap(),
-            ["repo/m0x6A/rubato", "team", "workspace/default"]
+            [
+                "repo/m0x6A/rubato",
+                "team/default",
+                "workspace/default/default"
+            ]
         );
 
         // A directory, and a file the graph does not hold: the part still answers.

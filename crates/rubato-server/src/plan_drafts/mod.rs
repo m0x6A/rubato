@@ -131,7 +131,7 @@ pub async fn import(
     let n = store::insert_revision(&app.db, t, draft_id, &rev)
         .await?
         .unwrap_or(1);
-    app.notify("draft");
+    app.notify_in(t, "draft");
     Ok(Ok((draft_id, n)))
 }
 

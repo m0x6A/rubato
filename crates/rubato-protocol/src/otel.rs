@@ -250,6 +250,9 @@ pub mod metric {
     pub const SESSION_LOG_DROPPED: &str = "rubato.session_log.dropped";
     /// Draft revisions stored (ADR 0053).
     pub const DRAFTS_REVISIONS: &str = "rubato.drafts.revisions";
+    /// What a companion sent, or was to be sent, for a launch whose owner is no longer a member
+    /// of the launch's tenant, by `rubato.reason` (`not_member`) (ADR 0087, design §6.3).
+    pub const COMPANION_REFUSED: &str = "rubato.companion.refused";
     /// Draft bundles not stored, by reason (`too_large`, `owner_conflict`, `unknown_launch`).
     pub const DRAFTS_REFUSED: &str = "rubato.drafts.refused";
     /// Room turns by `rubato.outcome` (answered, failed, stopped) (ADR 0057).
@@ -349,8 +352,10 @@ pub mod metric {
     /// Server: builds a cap cut, by `rubato.graph.source` and `rubato.reason` (which cap).
     pub const GRAPH_TRUNCATED: &str = "rubato.graph.truncated";
     /// Server: snapshot requests (ADR 0086), by `rubato.outcome` (`ok`, `unauthorized`,
-    /// `stale`, `error`).
+    /// `stale`, `refused` for a source of a tenant the owner is not in, `error`).
     pub const GRAPH_SNAPSHOTS: &str = "rubato.graph.snapshots";
+    /// Server: times a companion's list of sources was cut at the cap (ADR 0087).
+    pub const GRAPH_SOURCES_TRUNCATED: &str = "rubato.graph.sources_truncated";
     /// Companion: sources fetched and applied, by `rubato.outcome` and `rubato.reason`
     /// (`http`, `hash_mismatch`, `apply`, `team_record_stale`).
     pub const GRAPH_SYNCS: &str = "rubato.graph.syncs";
@@ -658,6 +663,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::GRAPH_EDGES,
         metric::GRAPH_TRUNCATED,
         metric::GRAPH_SNAPSHOTS,
+        metric::GRAPH_SOURCES_TRUNCATED,
         metric::GRAPH_SYNCS,
         metric::GRAPH_COPY_BEHIND,
         metric::TELEMETRY_RELAY,
@@ -675,6 +681,7 @@ pub fn all_names() -> Vec<&'static str> {
         metric::SESSION_LOG_DROPPED,
         metric::DRAFTS_REVISIONS,
         metric::DRAFTS_REFUSED,
+        metric::COMPANION_REFUSED,
         metric::ROOMS_AGENT_TURNS,
         metric::ROOMS_TURN_LIMIT_HITS,
         metric::HANDOFF_REPORTS,

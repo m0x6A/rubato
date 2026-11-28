@@ -92,7 +92,7 @@ async fn every_graph_tool_answers_and_writes_nothing() {
     let store = rubato_graph::Store::open_path(&dir.path().join(crate::graph::COPY_FILE))
         .await
         .unwrap();
-    store.remove_source("team").await.unwrap();
+    store.remove_source("team/default").await.unwrap();
     store.close().await;
     assert!(
         contents(&dir).await != before,

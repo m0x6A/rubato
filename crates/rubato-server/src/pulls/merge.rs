@@ -192,7 +192,7 @@ pub async fn merge(
             tracing::info!(rubato.repo = %repo, rubato.pr = req.number, login, method = req.method.as_str(), rubato.outcome = "merged", "pull merged from Rubato");
             intent.state = MergeState::Merged;
             intent.merge_sha = sha;
-            app.notify("merge");
+            app.notify_in(t, "merge");
             Ok(answer(&intent))
         }
         Err(MergeError::Refused { status, message }) => {

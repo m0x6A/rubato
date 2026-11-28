@@ -172,7 +172,7 @@ pub async fn approve(
             tracing::info!(rubato.issue = %issue, login, rubato.outcome = "posted", "plan approved from Rubato");
             intent.state = ApproveState::Posted;
             intent.comment_url = Some(c.url);
-            app.notify("approve");
+            app.notify_in(t, "approve");
             Ok(answer(&intent))
         }
         Err(PostError::Refused { status }) => {

@@ -11,6 +11,10 @@ pub enum WebEvent {
     Changed {
         at: DateTime<Utc>,
         reason: String,
+        /// The tenant the change belongs to (ADR 0087). A socket is opened for one tenant and is
+        /// sent only that tenant's events, and the few that concern every tenant (absent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant: Option<String>,
         /// The workspace the change belongs to, for changes of one map only (layout, draft, map
         /// load; ADR 0049). Absent: every workspace may have changed, so every client refetches.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -20,8 +24,22 @@ pub enum WebEvent {
     /// refetches it. The overview is not refetched.
     Updated {
         at: DateTime<Utc>,
+        /// The tenant the resource belongs to (ADR 0087): never sent to another tenant's socket.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant: Option<String>,
         resource: WebResource,
     },
+}
+
+impl WebEvent {
+    /// The tenant an event belongs to; `None` for one that concerns every tenant.
+    pub fn tenant(&self) -> Option<&str> {
+        match self {
+            WebEvent::Changed { tenant, .. } | WebEvent::Updated { tenant, .. } => {
+                tenant.as_deref()
+            }
+        }
+    }
 }
 
 /// A resource a view can refetch on its own.
@@ -44,5 +62,8 @@ pub enum WebResource {
 
 /// Route path for the browser websocket.
 pub mod routes {
+    /// With `?t=<tenant>`: one socket per tenant the page shows (ADR 0089).
     pub const WEB_WS: &str = "/ws/web";
+    /// The websocket close code when the person is no longer a member of the socket's tenant.
+    pub const CLOSE_NOT_A_MEMBER: u16 = 4403;
 }

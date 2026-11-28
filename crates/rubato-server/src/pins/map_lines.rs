@@ -98,7 +98,7 @@ pub async fn apply_map_lines(
         );
     }
     if pinned > 0 {
-        app.notify("pin");
+        app.notify_in(ws.tenant(), "pin");
     }
     pinned
 }

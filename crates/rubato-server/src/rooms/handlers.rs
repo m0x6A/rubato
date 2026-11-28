@@ -216,11 +216,14 @@ pub async fn post_as(
         spoken,
         "room message posted"
     );
-    app.notify_resource(WebResource::Room {
-        repo: key.repo.clone(),
-        number: key.number,
-        branch: key.branch.clone(),
-    });
+    app.notify_resource(
+        t,
+        WebResource::Room {
+            repo: key.repo.clone(),
+            number: key.number,
+            branch: key.branch.clone(),
+        },
+    );
     Ok(Posted {
         message: m,
         new: true,

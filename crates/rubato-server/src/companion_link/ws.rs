@@ -550,7 +550,7 @@ async fn on_envelope(
             CompanionMessage::Draft(bundle) => {
                 // The launch decides the owner; a bundle for a launch of another companion, or
                 // for another issue, is not this companion's to send.
-                match launch::launch_target(&app.db, bundle.launch_id).await {
+                match launch::acting_target(app, bundle.launch_id).await {
                     Ok(Some(t)) if t.companion_id == companion_id && t.issue == bundle.issue => {
                         plan_drafts::on_draft(app, &bundle, &t.user).await;
                     }
@@ -674,7 +674,7 @@ async fn accept_report(
     companion_id: Uuid,
     r: &rubato_protocol::AgentReport,
 ) -> anyhow::Result<Accepted> {
-    let Some(target) = launch::launch_target(&app.db, r.launch_id).await? else {
+    let Some(target) = launch::acting_target(app, r.launch_id).await? else {
         return Ok(Accepted::No("not_this_companion"));
     };
     if target.companion_id != companion_id {

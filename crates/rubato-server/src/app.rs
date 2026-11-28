@@ -1750,12 +1750,12 @@ mod tests {
         let host = base.trim_start_matches("http://").to_owned();
         let evil = [("origin", "https://evil.example")];
         assert_eq!(
-            open_ws(&base, web_routes::WEB_WS, &evil).await.err(),
+            open_ws(&base, "/ws/web?t=default", &evil).await.err(),
             Some(403)
         );
         let own = format!("http://{host}");
         assert!(
-            open_ws(&base, web_routes::WEB_WS, &[("origin", own.as_str())])
+            open_ws(&base, "/ws/web?t=default", &[("origin", own.as_str())])
                 .await
                 .is_ok()
         );

@@ -241,7 +241,10 @@ async fn a_pin_and_a_draft_op_in_one_workspace_stay_there() {
 #[tokio::test]
 async fn a_layout_change_tells_browsers_which_workspace_changed() {
     let h = two_workspaces().await;
-    let ws_url = format!("ws://{}/ws/web", h.url.trim_start_matches("http://"));
+    let ws_url = format!(
+        "ws://{}/ws/web?t=default",
+        h.url.trim_start_matches("http://")
+    );
     let mut req =
         tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(ws_url)
             .unwrap();

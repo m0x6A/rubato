@@ -283,7 +283,7 @@ async fn a_snapshot_that_does_not_check_out_is_dropped_and_the_old_copy_answers(
 #[tokio::test]
 async fn a_403_keeps_the_copy_marked_and_a_401_deletes_it() {
     let server = Server::new().await;
-    let (repo, team) = (source_key::repo(REPO), source_key::TEAM.to_owned());
+    let (repo, team) = (source_key::repo(REPO), source_key::team("default"));
     let v1 = server.build(&repo, "sha1", &["a.rs"]).await;
     let answers = Arc::new(Answers::default());
     answers.set(&repo, Fetched::Body(server.body(&repo).await));
@@ -364,7 +364,7 @@ async fn a_source_the_list_no_longer_names_is_removed_but_an_empty_list_removes_
 
     // A list over the cap is not a list a server sends: ignored whole.
     graph.on_sources(GraphSources {
-        sources: (0..65)
+        sources: (0..=rubato_protocol::limits::GRAPH_SOURCES_MAX)
             .map(|i| GraphSourceInfo {
                 source: format!("repo/o/r{i}"),
                 ..a.clone()

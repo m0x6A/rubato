@@ -26,7 +26,7 @@ fn dropped(app: &App, why: &'static str) {
 /// Record the report. Returns whether it was recorded.
 pub async fn on_handoff_report(app: &App, companion_id: Uuid, r: &HandoffReport) -> bool {
     let approval_id = r.line.approval;
-    let target = match launch::launch_target(&app.db, r.launch_id).await {
+    let target = match launch::acting_target(app, r.launch_id).await {
         Ok(Some(t)) if t.companion_id == companion_id => t,
         Ok(_) => {
             dropped(app, refused::FOREIGN_LAUNCH);
@@ -83,7 +83,7 @@ pub async fn on_handoff_report(app: &App, companion_id: Uuid, r: &HandoffReport)
                 error = ?r.line.error,
                 "handoff reported"
             );
-            app.notify("handoff");
+            app.notify_in(t, "handoff");
             true
         }
         Ok(false) => false,

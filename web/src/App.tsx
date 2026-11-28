@@ -104,7 +104,7 @@ export function App() {
         return e instanceof ApiError && e.status === 401 ? null : true;
       })
       .then((inATenant) => {
-        if (inATenant === null) {
+        if (inATenant === null || gone) {
           return;
         }
         if (inATenant) {
@@ -112,14 +112,18 @@ export function App() {
         } else {
           setError("You are not in a tenant yet. Ask one of its admins for an invite.");
         }
+        // The socket is opened for the tenant just learned (ADR 0089). A change for another
+        // workspace is not ours to refetch for (ADR 0049).
+        unsubscribe = subscribe((ev) => {
+          if (concernsUs(ev)) {
+            void refresh();
+          }
+        }, setLive);
       });
-    // A change for another workspace is not ours to refetch for (ADR 0049).
-    const unsubscribe = subscribe((ev) => {
-      if (concernsUs(ev)) {
-        void refresh();
-      }
-    }, setLive);
+    let gone = false;
+    let unsubscribe = () => {};
     return () => {
+      gone = true;
       unsubscribe();
       offNeedsLogin();
     };

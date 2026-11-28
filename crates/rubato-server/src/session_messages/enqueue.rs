@@ -55,7 +55,7 @@ pub async fn enqueue(
         "session message queued"
     );
     dispatch::dispatch(app, launch_id).await;
-    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     Ok(Some(row.id))
 }
 
@@ -116,7 +116,7 @@ pub async fn enqueue_chat_via(
         "session message queued for a lead"
     );
     dispatch::dispatch(app, launch_id).await;
-    app.notify_resource(WebResource::LaunchMessages { launch_id });
+    app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     Ok(Ok(row.id))
 }
 

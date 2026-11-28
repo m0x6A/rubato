@@ -47,7 +47,7 @@ pub async fn dispatch(app: &App, launch_id: Uuid) {
     let span = tracing::info_span!(span::SESSION_MESSAGE_DISPATCH, rubato.launch_id = %launch_id);
     async move {
         let now = app.clock.now();
-        let target = match launch::launch_target(&app.db, launch_id).await {
+        let target = match launch::acting_target(app, launch_id).await {
             Ok(Some(t)) => t,
             Ok(None) => return,
             Err(e) => {
@@ -78,7 +78,7 @@ pub async fn dispatch(app: &App, launch_id: Uuid) {
         } else if let Err(e) = store::unsend(&app.db, &row.tenant, row.id).await {
             tracing::error!(error = %format!("{e:#}"), "dispatch: un-sending failed");
         }
-        app.notify_resource(WebResource::LaunchMessages { launch_id });
+        app.notify_resource(&target.tenant, WebResource::LaunchMessages { launch_id });
     }
     .instrument(span)
     .await
@@ -189,9 +189,12 @@ pub async fn on_result(app: &App, companion_id: Uuid, r: &SessionMessageResult) 
         }
         Err(e) => tracing::error!(error = %format!("{e:#}"), "settling a session message failed"),
     }
-    app.notify_resource(WebResource::LaunchMessages {
-        launch_id: row.launch_id,
-    });
+    app.notify_resource(
+        &row.tenant,
+        WebResource::LaunchMessages {
+            launch_id: row.launch_id,
+        },
+    );
 }
 
 /// `sent` rows unanswered for `ANSWER_WITHIN_SECS` while their companion stayed live become
@@ -220,9 +223,12 @@ pub async fn sweep(app: &App) -> usize {
             moved += 1;
             settled(app, &row, SessionMessageState::DeliveryUnknown.name());
             tracing::warn!(rubato.session_message.id = %row.id, rubato.issue = %row.issue, "session message delivery unknown");
-            app.notify_resource(WebResource::LaunchMessages {
-                launch_id: row.launch_id,
-            });
+            app.notify_resource(
+                &row.tenant,
+                WebResource::LaunchMessages {
+                    launch_id: row.launch_id,
+                },
+            );
         }
     }
     moved

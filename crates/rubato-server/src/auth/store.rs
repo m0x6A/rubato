@@ -64,27 +64,6 @@ pub async fn create_web_session(
     Ok(id)
 }
 
-/// Whether `login` has a team record that still counts at `now`: some web session of theirs
-/// whose access to the App's installation was checked recently enough (ADR 0022). What a
-/// credential that never expires, a pairing, is held to before it reads the context graph
-/// (ADR 0086).
-pub async fn has_fresh_team_record(
-    db: &SqlitePool,
-    login: &str,
-    now: DateTime<Utc>,
-) -> Result<bool> {
-    let newest: Option<String> = sqlx::query_scalar(
-        "SELECT MAX(team_checked_at) FROM web_sessions WHERE lower(login) = lower(?) AND team_checked_at IS NOT NULL",
-    )
-    .bind(login)
-    .fetch_one(db)
-    .await?;
-    Ok(super::team::record_is_fresh(
-        newest.map(|t| parse_ts(&t)),
-        now,
-    ))
-}
-
 /// A stored web session.
 #[derive(Debug, Clone)]
 pub struct WebSession {

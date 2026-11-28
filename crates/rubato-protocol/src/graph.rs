@@ -82,32 +82,53 @@ pub mod kind {
     }
 }
 
-/// Source keys: `repo/<owner>/<name>`, `workspace/<id>` and `team`. A key names what a source
-/// was built from; a node id never has this form.
+/// Source keys: `repo/<owner>/<name>`, `workspace/<tenant>/<id>` and `team/<tenant>` (ADR 0087).
+/// A key names what a source was built from; a node id never has this form. A workspace's and a
+/// team's key say their tenant; a repository's tenant is the one it is live in.
 pub mod source_key {
     use super::kind::source::{REPO, TEAM as TEAM_KIND, WORKSPACE};
 
-    /// The one source of the team's shared facts.
-    pub const TEAM: &str = "team";
+    /// The source of one tenant's shared facts.
+    pub fn team(tenant: &str) -> String {
+        format!("{TEAM_KIND}/{tenant}")
+    }
 
     /// The source of the repository `owner/name`.
     pub fn repo(owner_name: &str) -> String {
         format!("{REPO}/{owner_name}")
     }
 
-    /// The source of the workspace `id`.
-    pub fn workspace(id: &str) -> String {
-        format!("{WORKSPACE}/{id}")
+    /// The source of the workspace `id` of `tenant`.
+    pub fn workspace(tenant: &str, id: &str) -> String {
+        format!("{WORKSPACE}/{tenant}/{id}")
     }
 
-    /// The kind a well-formed key names, or `None` for anything else. A key this version does
-    /// not know is not an error on the wire; it is only never built or asked for here.
-    pub fn kind_of(key: &str) -> Option<&'static str> {
-        if key == TEAM {
-            return Some(TEAM_KIND);
+    /// The repository a `repo/<owner>/<name>` key names.
+    pub fn repo_of(key: &str) -> Option<&str> {
+        (kind_of(key) == Some(REPO)).then(|| &key["repo/".len()..])
+    }
+
+    /// The tenant a workspace or team key names; `None` for a repository's key, whose tenant
+    /// the key does not say, and for anything that is not a key.
+    pub fn tenant_of(key: &str) -> Option<&str> {
+        match kind_of(key)? {
+            k if k == TEAM_KIND => key.strip_prefix("team/"),
+            k if k == WORKSPACE => key.strip_prefix("workspace/")?.split_once('/').map(|p| p.0),
+            _ => None,
         }
-        if let Some(id) = key.strip_prefix("workspace/") {
-            return crate::workspace::is_workspace_id(id).then_some(WORKSPACE);
+    }
+
+    /// The kind a well-formed key names, or `None` for anything else, the keys of before
+    /// tenants (`team`, `workspace/<id>`) among them. A key this version does not know is not
+    /// an error on the wire; it is only never built or asked for here.
+    pub fn kind_of(key: &str) -> Option<&'static str> {
+        if let Some(tenant) = key.strip_prefix("team/") {
+            return crate::tenant::is_tenant_id(tenant).then_some(TEAM_KIND);
+        }
+        if let Some(rest) = key.strip_prefix("workspace/") {
+            let (tenant, id) = rest.split_once('/')?;
+            return (crate::tenant::is_tenant_id(tenant) && crate::workspace::is_workspace_id(id))
+                .then_some(WORKSPACE);
         }
         let rest = key.strip_prefix("repo/")?;
         let (owner, name) = rest.split_once('/')?;
@@ -417,7 +438,7 @@ mod tests {
         };
         assert_eq!(list(crate::limits::GRAPH_SOURCES_MAX).check(), Ok(()));
         // The fixture that makes the check fail on purpose.
-        assert_eq!(list(crate::limits::GRAPH_SOURCES_MAX + 1).check(), Err(65));
+        assert_eq!(list(crate::limits::GRAPH_SOURCES_MAX + 1).check(), Err(257));
     }
 
     #[test]
@@ -462,10 +483,15 @@ mod tests {
         let cases = [
             (source_key::repo("m0x6A/rubato"), Some(kind::source::REPO)),
             (
-                source_key::workspace("default"),
+                source_key::workspace("acme", "default"),
                 Some(kind::source::WORKSPACE),
             ),
-            (source_key::TEAM.to_owned(), Some(kind::source::TEAM)),
+            (source_key::team("acme"), Some(kind::source::TEAM)),
+            // The keys of before tenants name nothing now.
+            ("team".to_owned(), None),
+            ("workspace/default".to_owned(), None),
+            ("team/Not A Tenant".to_owned(), None),
+            ("workspace/acme/Not An Id".to_owned(), None),
             ("repo/m0x6A".to_owned(), None),
             ("repo/m0x6A/rubato/extra".to_owned(), None),
             ("repo//rubato".to_owned(), None),
@@ -476,6 +502,23 @@ mod tests {
         for (key, want) in &cases {
             assert_eq!(source_key::kind_of(key), *want, "{key}");
         }
+        assert_eq!(
+            source_key::tenant_of(&source_key::team("acme")),
+            Some("acme")
+        );
+        assert_eq!(
+            source_key::tenant_of(&source_key::workspace("acme", "main")),
+            Some("acme")
+        );
+        assert_eq!(
+            source_key::tenant_of(&source_key::repo("m0x6A/rubato")),
+            None
+        );
+        assert_eq!(
+            source_key::repo_of(&source_key::repo("m0x6A/rubato")),
+            Some("m0x6A/rubato")
+        );
+        assert_eq!(source_key::repo_of("team/acme"), None);
         println!("checked {} source keys", cases.len());
     }
 

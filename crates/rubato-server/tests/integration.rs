@@ -1739,7 +1739,7 @@ type Ws =
 impl Harness {
     async fn web_ws(&self) -> Ws {
         let req = format!(
-            "ws://{}{}",
+            "ws://{}{}?t=default",
             self.url.trim_start_matches("http://"),
             web_routes::WEB_WS
         )
@@ -3079,7 +3079,7 @@ async fn statuses(url: &str, cookie: &str) -> [u16; 3] {
         .status()
         .as_u16();
     let mut req = format!(
-        "ws://{}{}",
+        "ws://{}{}?t=default",
         url.trim_start_matches("http://"),
         web_routes::WEB_WS
     )
@@ -3130,7 +3130,7 @@ async fn invite(app: &App, login: &str, id: i64) {
 
 /// ADR 0088 (superseding ADR 0022's team record): a session reaches a tenant only while its
 /// person is a member of it, read on every request. Anyone else gets the answer for a tenant
-/// that does not exist. `/ws/web` is a person route until it carries its tenant (design §6.1).
+/// that does not exist, the browser socket (`/ws/web?t=`) included (design §6.1).
 #[tokio::test]
 async fn a_session_reaches_a_tenant_only_while_its_person_is_a_member() {
     let (url, app, _tmp) = app_harness(true).await;
@@ -3147,8 +3147,8 @@ async fn a_session_reaches_a_tenant_only_while_its_person_is_a_member() {
     let never_seen = session_cookie(&app, "no-user-row", None).await;
     assert_eq!(statuses(&url, &member).await, [200, 201, 101]);
     assert_eq!(statuses(&url, &leaver).await, [200, 201, 101]);
-    assert_eq!(statuses(&url, &outsider).await, [404, 404, 101]);
-    assert_eq!(statuses(&url, &never_seen).await, [404, 404, 101]);
+    assert_eq!(statuses(&url, &outsider).await, [404, 404, 404]);
+    assert_eq!(statuses(&url, &never_seen).await, [404, 404, 404]);
     assert_eq!(
         statuses(&url, "rubato_session=forged.sig").await,
         [401, 401, 401]
@@ -3160,7 +3160,7 @@ async fn a_session_reaches_a_tenant_only_while_its_person_is_a_member() {
         .unwrap()
         .unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(statuses(&url, &leaver).await, [404, 404, 101]);
+    assert_eq!(statuses(&url, &leaver).await, [404, 404, 404]);
     assert_eq!(statuses(&url, &member).await, [200, 201, 101]);
     println!("checked 6 sessions on 3 entry points");
 }
@@ -3172,7 +3172,7 @@ async fn without_the_app_the_same_invite_rule_holds() {
     invite(&app, "invited", 7).await;
     let plain = session_cookie(&app, "anyone", None).await;
     let invited = session_cookie(&app, "invited", None).await;
-    assert_eq!(statuses(&url, &plain).await, [404, 404, 101]);
+    assert_eq!(statuses(&url, &plain).await, [404, 404, 404]);
     assert_eq!(statuses(&url, &invited).await, [200, 201, 101]);
     assert!(
         !app.github.as_person().can_write(),
@@ -7914,25 +7914,10 @@ mod context_graph_copy {
             .unwrap();
         // A source that was never built is not announced and cannot be served.
         store
-            .begin_build(source_key::TEAM, kind::source::TEAM)
+            .begin_build(&source_key::team("default"), kind::source::TEAM)
             .await
             .unwrap();
         h
-    }
-
-    /// `login`'s access to the App's installation was last checked `days` ago.
-    async fn team_record(h: &Harness, login: &str, days: i64) {
-        let at = chrono::Utc::now() - chrono::Duration::days(days);
-        sqlx::query(
-            "INSERT INTO web_sessions (id, login, created_at, team_checked_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(Uuid::new_v4().to_string())
-        .bind(login)
-        .bind(at.to_rfc3339())
-        .bind(at.to_rfc3339())
-        .execute(&h.app.db)
-        .await
-        .unwrap();
     }
 
     async fn snapshot(h: &Harness, token: Option<&str>, source: &str) -> reqwest::Response {
@@ -7955,22 +7940,12 @@ mod context_graph_copy {
     }
 
     #[tokio::test]
-    async fn a_pairing_reads_the_graph_only_while_its_owner_is_on_the_team() {
+    async fn a_pairing_reads_a_source_with_its_token_and_only_while_it_is_not_revoked() {
+        // Whose sources a pairing reads is its owner's tenants' (ADR 0087):
+        // tests/tenant_paths.rs, where there are two tenants to tell apart.
         let h = server(true).await;
         let (companion_id, token) = h.pair("m0x6A").await;
         let key = source_key::repo(REPO);
-
-        // No team record at all: a pairing alone does not open the graph.
-        let r = snapshot(&h, Some(&token), &key).await;
-        assert_eq!(r.status(), 403);
-        assert_eq!(reason(r).await, "team_record_stale");
-
-        // Checked eight days ago: over the seven of ADR 0022.
-        team_record(&h, "m0x6A", 8).await;
-        assert_eq!(snapshot(&h, Some(&token), &key).await.status(), 403);
-
-        // Checked today, whatever the case GitHub gave the login in: the snapshot, whole.
-        team_record(&h, "M0X6a", 0).await;
         let r = snapshot(&h, Some(&token), &key).await;
         assert_eq!(r.status(), 200);
         assert_eq!(r.headers()["content-type"], "application/gzip");
@@ -7979,10 +7954,6 @@ mod context_graph_copy {
         assert_eq!(snap.header.head_sha.as_deref(), Some("b35788b"));
         assert_eq!(snap.nodes[0].id, id::file(REPO, "src/lib.rs"));
 
-        // Someone else's fresh record is not this owner's.
-        let (_, alice) = h.pair("alice").await;
-        assert_eq!(snapshot(&h, Some(&alice), &key).await.status(), 403);
-
         // Not a source, and one never built: 404, each with its reason.
         let r = snapshot(&h, Some(&token), "repo/m0x6A/none").await;
         assert_eq!(
@@ -7990,12 +7961,14 @@ mod context_graph_copy {
             (404, "unknown_source")
         );
         assert_eq!(
-            snapshot(&h, Some(&token), source_key::TEAM).await.status(),
+            snapshot(&h, Some(&token), &source_key::team("default"))
+                .await
+                .status(),
             404
         );
         assert_eq!(snapshot(&h, Some(&token), "").await.status(), 404);
 
-        // Revoked: 401, at once, fresh record or not.
+        // Revoked: 401, at once.
         let r = h
             .http
             .delete(format!("{}{}/{}", h.url, pr::PAIRINGS, companion_id))
@@ -8086,7 +8059,7 @@ mod context_graph_copy {
     }
 
     #[tokio::test]
-    async fn a_companion_that_keeps_a_copy_is_told_what_to_hold_when_its_owner_may_read() {
+    async fn a_companion_that_keeps_a_copy_is_told_what_to_hold() {
         let h = server(true).await;
         let (companion_id, token) = h.pair("m0x6A").await;
         let mut ws = h.connect(&token).await;
@@ -8099,9 +8072,6 @@ mod context_graph_copy {
             "{capabilities:?}"
         );
 
-        // The owner has no fresh team record: nothing is announced.
-        assert!(!context_graph::announce_to(&h.app, companion_id).await);
-        team_record(&h, "m0x6A", 0).await;
         assert!(context_graph::announce_to(&h.app, companion_id).await);
         let Some(Ok(Message::Text(t))) = ws.next().await else {
             panic!("no message")
@@ -8166,8 +8136,14 @@ fn a_full_list_of_graph_sources_is_a_small_message() {
     let bytes = serde_json::to_string(&ServerMessage::GraphSources(full))
         .unwrap()
         .len();
-    println!("a list of 64 sources with the longest names GitHub allows is {bytes} bytes");
-    assert!(bytes < 32 * 1024, "{bytes}");
+    println!(
+        "a list of {} sources with the longest names GitHub allows is {bytes} bytes",
+        rubato_protocol::limits::GRAPH_SOURCES_MAX
+    );
+    // 256 sources since tenants (design 345 §6.4): about 105 KiB at the very worst, still one
+    // small message beside a websocket's megabytes.
+    assert!(bytes < 128 * 1024, "{bytes}");
     // The fixture that makes the cap fail on purpose.
-    assert_eq!(list(65).check(), Err(65));
+    let over = rubato_protocol::limits::GRAPH_SOURCES_MAX + 1;
+    assert_eq!(list(over).check(), Err(over));
 }

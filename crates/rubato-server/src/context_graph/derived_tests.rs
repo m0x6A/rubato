@@ -394,9 +394,9 @@ async fn a_tick_builds_each_workspace_and_the_team_and_writes_them_only_when_the
     .unwrap();
     let store = store(&app).unwrap();
     let keys = [
-        source_key::workspace("default"),
-        source_key::workspace("shop"),
-        source_key::TEAM.to_owned(),
+        source_key::workspace("default", "default"),
+        source_key::workspace("default", "shop"),
+        source_key::team("default"),
     ];
 
     let first = tick(&app).await;
@@ -450,5 +450,11 @@ async fn a_tick_builds_each_workspace_and_the_team_and_writes_them_only_when_the
     let fourth = tick(&app).await;
     assert_eq!(fourth.removed, std::slice::from_ref(&keys[1]));
     assert!(store.source(&keys[0]).await.unwrap().is_some());
-    assert!(store.source(source_key::TEAM).await.unwrap().is_some());
+    assert!(
+        store
+            .source(&source_key::team("default"))
+            .await
+            .unwrap()
+            .is_some()
+    );
 }

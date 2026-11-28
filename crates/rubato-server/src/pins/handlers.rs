@@ -44,7 +44,7 @@ pub async fn add_pin(
     )
     .await
     .map_err(|e| (internal(SLICE, e), String::new()))?;
-    app.notify("pin");
+    app.notify_in(ws.key().tenant(), "pin");
     Ok(StatusCode::CREATED)
 }
 
@@ -57,7 +57,7 @@ pub async fn remove_pin(
     let removed = store::remove_pin(&app.db, ws.key(), &req.issue, &req.target)
         .await
         .map_err(|e| internal(SLICE, e))?;
-    app.notify("pin");
+    app.notify_in(ws.key().tenant(), "pin");
     Ok(if removed {
         StatusCode::NO_CONTENT
     } else {

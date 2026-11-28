@@ -13,6 +13,13 @@
         "reason": {
           "type": "string"
         },
+        "tenant": {
+          "description": "The tenant the change belongs to (ADR 0087). A socket is opened for one tenant and is\nsent only that tenant's events, and the few that concern every tenant (absent).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "type": {
           "type": "string",
           "const": "changed"
@@ -41,6 +48,13 @@
         },
         "resource": {
           "$ref": "#/$defs/WebResource"
+        },
+        "tenant": {
+          "description": "The tenant the resource belongs to (ADR 0087): never sent to another tenant's socket.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "type": {
           "type": "string",

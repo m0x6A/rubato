@@ -83,7 +83,8 @@ pub async fn reconcile(app: &App, found: &[Found], fresh: &HashSet<String>) {
             })
             .or_insert(f);
     }
-    let mut changed = false;
+    let mut changed: std::collections::BTreeSet<crate::kernel::tenancy::TenantId> =
+        Default::default();
     let mut still = 0u64;
     for c in &rows {
         let done = if let Some(f) = by_id.get(&(c.repo.as_str(), c.request_id.as_str())) {
@@ -94,14 +95,14 @@ pub async fn reconcile(app: &App, found: &[Found], fresh: &HashSet<String>) {
             false
         };
         if done {
-            changed = true;
+            changed.insert(c.workspace.tenant().clone());
         } else {
             still += 1;
         }
     }
     app.metrics.issues_opening.record(still, &[]);
-    if changed {
-        app.notify("issue");
+    for t in &changed {
+        app.notify_in(t, "issue");
     }
 }
 

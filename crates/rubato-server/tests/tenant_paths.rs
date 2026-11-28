@@ -11,6 +11,7 @@ use rubato_server::kernel::config::{Config, GitHubApp, TokenKey};
 use rubato_server::kernel::db;
 use rubato_server::kernel::github::{Client, FakeGitHub, GitHubApps};
 use rubato_server::kernel::state::{App, AppState};
+use rubato_server::kernel::tenancy::{TenantId, WsKey};
 use rubato_server::{admin, app, tenants, workspace_settings};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -860,4 +861,410 @@ fn the_sweep_reports_a_leak_a_served_foreign_resource_and_an_unswept_route() {
         fixture(&GET, "/api/t/{tenant}/w/{ws}/a-new-route").is_none(),
         "a route added to the table without a fixture fails the sweep"
     );
+}
+
+// ---- The browser socket is one tenant's (design §6.1) ----
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+impl H {
+    /// `GET /ws/web?t=<tenant>` as `login`: the socket, or the status of the refusal.
+    async fn socket(&self, login: &str, tenant: Option<&str>) -> Result<Socket, u16> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let q = tenant.map(|t| format!("?t={t}")).unwrap_or_default();
+        let mut req = format!("ws://{}/ws/web{q}", self.url.trim_start_matches("http://"))
+            .into_client_request()
+            .unwrap();
+        req.headers_mut()
+            .insert("cookie", self.cookie(login).await.parse().unwrap());
+        match tokio_tungstenite::connect_async(req).await {
+            Ok((ws, _)) => Ok(ws),
+            Err(tokio_tungstenite::tungstenite::Error::Http(r)) => Err(r.status().as_u16()),
+            Err(e) => panic!("{e}"),
+        }
+    }
+}
+
+/// Every text frame that arrives within `wait`.
+async fn frames(ws: &mut Socket, wait: std::time::Duration) -> Vec<String> {
+    use futures_util::StreamExt;
+    let mut out = Vec::new();
+    while let Ok(Some(Ok(m))) = tokio::time::timeout(wait, ws.next()).await {
+        if let tokio_tungstenite::tungstenite::Message::Text(t) = m {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn a_socket_is_opened_for_a_tenant_one_is_in_and_hears_only_that_tenant() {
+    let h = two_tenants().await;
+    h.with_main().await;
+    // No tenant, a tenant one is not in and one that does not exist: the same 404.
+    for (login, tenant) in [
+        ("ada", None),
+        ("ada", Some("bcorp")),
+        ("ada", Some("nosuch")),
+        ("ada", Some("NOT-A-TENANT")),
+        ("zed", Some("acme")),
+    ] {
+        assert_eq!(
+            h.socket(login, tenant).await.err(),
+            Some(404),
+            "{login} {tenant:?}"
+        );
+    }
+    let mut ada = h.socket("ada", Some("acme")).await.unwrap();
+    let mut bob = h.socket("bob", Some("bcorp")).await.unwrap();
+    for _ in 0..200 {
+        if h.app.web_tx.receiver_count() >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let acme = TenantId::parse("acme").unwrap();
+    let bcorp = TenantId::parse("bcorp").unwrap();
+    // One of every kind of event, in each tenant, and one that concerns every tenant.
+    for (t, mark) in [(&acme, "for-acme"), (&bcorp, "for-bcorp")] {
+        h.app.notify_in(t, mark);
+        h.app.notify_ws(mark, &WsKey::new(t.clone(), "main"));
+        h.app.notify_resource(
+            t,
+            rubato_protocol::WebResource::Room {
+                repo: format!("{t}/web"),
+                number: 1,
+                branch: mark.into(),
+            },
+        );
+    }
+    h.app.notify("poll");
+    let wait = std::time::Duration::from_millis(300);
+    let to_ada = frames(&mut ada, wait).await;
+    let to_bob = frames(&mut bob, wait).await;
+    assert_eq!(to_ada.len(), 4, "{to_ada:?}");
+    assert_eq!(to_bob.len(), 4, "{to_bob:?}");
+    assert!(to_ada.iter().all(|f| !f.contains("bcorp")), "{to_ada:?}");
+    assert!(to_bob.iter().all(|f| !f.contains("acme")), "{to_bob:?}");
+    println!("checked 5 refused upgrades and 7 events on 2 sockets");
+}
+
+#[tokio::test]
+async fn a_socket_closes_when_its_person_leaves_the_tenant() {
+    let h = two_tenants_with(|c| {
+        c.web_membership_check = std::time::Duration::from_millis(100);
+    })
+    .await;
+    let mut mia = h.socket("mia", Some("acme")).await.unwrap();
+    let mut ada = h.socket("ada", Some("acme")).await.unwrap();
+    let mut tx = h.app.db.begin().await.unwrap();
+    tenants::remove_member(&mut tx, "acme", 3)
+        .await
+        .unwrap()
+        .unwrap();
+    tx.commit().await.unwrap();
+    use futures_util::StreamExt;
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match mia.next().await {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(Some(f)))) => {
+                    return Some(u16::from(f.code));
+                }
+                Some(Ok(_)) => {}
+                _ => return None,
+            }
+        }
+    })
+    .await
+    .expect("the socket is closed within the check interval");
+    assert_eq!(
+        closed,
+        Some(rubato_protocol::web_link::routes::CLOSE_NOT_A_MEMBER)
+    );
+    // Nothing more reaches the removed person; a member still hears the tenant.
+    h.app.notify_in(&TenantId::parse("acme").unwrap(), "after");
+    let to_ada = frames(&mut ada, std::time::Duration::from_millis(300)).await;
+    assert_eq!(to_ada.len(), 1, "{to_ada:?}");
+    assert_eq!(h.socket("mia", Some("acme")).await.err(), Some(404));
+}
+
+// ---- A companion acts in a tenant only while its owner is a member (design §6.3) ----
+
+#[tokio::test]
+async fn a_launch_of_a_person_who_left_the_tenant_takes_nothing_from_its_companion() {
+    let h = two_tenants().await;
+    h.app.set_admission(std::sync::Arc::new(admin::Admission));
+    let launch: uuid::Uuid = "00000000-0000-0000-0000-0000000000a9".parse().unwrap();
+    sqlx::query(&format!(
+        "INSERT INTO launches (tenant_id, id, companion_id, user, repo, number, command, created_at, workspace_id) VALUES ('acme', '{launch}', '{A_COMPANION}', 'mia', 'acme/api', 1, '{{}}', '2026-11-28T00:00:00Z', 'main')"
+    ))
+    .execute(&h.app.db)
+    .await
+    .unwrap();
+    let acting = || async {
+        rubato_server::launch::acting_target(&h.app, launch)
+            .await
+            .unwrap()
+            .map(|t| t.user)
+    };
+    assert_eq!(acting().await.as_deref(), Some("mia"));
+    let mut tx = h.app.db.begin().await.unwrap();
+    tenants::remove_member(&mut tx, "acme", 3)
+        .await
+        .unwrap()
+        .unwrap();
+    tx.commit().await.unwrap();
+    // The launch still exists; what its companion sends for it, and what would be pushed to
+    // it, finds no launch to act for.
+    assert!(
+        rubato_server::launch::launch_target(&h.app.db, launch)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(acting().await, None);
+    // A member of another tenant only is no member of this one.
+    sqlx::query("UPDATE launches SET user = 'bob' WHERE id = ?")
+        .bind(launch.to_string())
+        .execute(&h.app.db)
+        .await
+        .unwrap();
+    assert_eq!(acting().await, None);
+}
+
+// ---- The context graph goes to a tenant's members only (design §6.4) ----
+
+mod graph {
+    use super::*;
+    use rubato_protocol::graph::{GraphNode, kind, routes as graph_routes, source_key};
+    use rubato_protocol::pairing::routes as pr;
+    use rubato_protocol::{
+        PairApproveRequest, PairPollRequest, PairPollResponse, PairStartRequest, PairStartResponse,
+    };
+    use rubato_server::context_graph;
+    use rubato_server::kernel::config::ContextGraphConfig;
+
+    async fn with_graph() -> H {
+        let h = two_tenants_with(|c| {
+            let dir = std::env::temp_dir().join(format!("rubato-graph-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            c.context_graph = Some(ContextGraphConfig {
+                regen_secs: 900,
+                database_url: format!("sqlite://{}/graph.db?mode=rwc", dir.display()),
+            });
+        })
+        .await;
+        context_graph::start(&h.app).await.unwrap();
+        h
+    }
+
+    /// One built source, holding one node whose name is the key itself.
+    async fn built(h: &H, key: &str) {
+        let store = context_graph::store(&h.app).unwrap();
+        let source_kind = source_key::kind_of(key).unwrap();
+        let build = rubato_graph::Build {
+            source: key.to_owned(),
+            kind: source_kind.into(),
+            head_sha: None,
+            map_version: None,
+            generator: context_graph::GENERATOR,
+            generated_at: chrono::Utc::now(),
+            truncated: false,
+            nodes: vec![GraphNode {
+                id: format!("file:{key}:x"),
+                kind: kind::node::FILE.into(),
+                name: key.to_owned(),
+                repo: None,
+                path: None,
+                line: None,
+                end_line: None,
+                summary: None,
+                detail: Default::default(),
+            }],
+            edges: vec![],
+        };
+        let g = store.begin_build(key, source_kind).await.unwrap();
+        store
+            .replace_source(Some(g), build, chrono::Utc::now())
+            .await
+            .unwrap();
+    }
+
+    impl H {
+        /// A companion paired by `login`: its pairing token.
+        async fn paired(&self, login: &str) -> String {
+            let post = |path: &'static str, body: serde_json::Value| {
+                self.http.post(format!("{}{path}", self.url)).json(&body)
+            };
+            let start: PairStartResponse = post(
+                pr::PAIR_START,
+                serde_json::to_value(PairStartRequest {
+                    companion_id: uuid::Uuid::new_v4(),
+                    hostname: "h".into(),
+                    companion_version: "t".into(),
+                })
+                .unwrap(),
+            )
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+            let approved = post(
+                pr::PAIR_APPROVE,
+                serde_json::to_value(PairApproveRequest {
+                    user_code: start.user_code.clone(),
+                })
+                .unwrap(),
+            )
+            .header("cookie", self.cookie(login).await)
+            .send()
+            .await
+            .unwrap();
+            assert_eq!(approved.status(), 200, "{login} approves");
+            let poll: PairPollResponse = post(
+                pr::PAIR_POLL,
+                serde_json::to_value(PairPollRequest {
+                    device_code: start.device_code,
+                })
+                .unwrap(),
+            )
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+            let PairPollResponse::Approved { token, .. } = poll else {
+                panic!("{poll:?}")
+            };
+            token
+        }
+
+        async fn snapshot(&self, token: &str, source: &str) -> (u16, String) {
+            let r = self
+                .http
+                .get(format!(
+                    "{}{}?source={source}",
+                    self.url,
+                    graph_routes::GRAPH_SNAPSHOT
+                ))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            let status = r.status().as_u16();
+            let reason = if status == 200 {
+                String::new()
+            } else {
+                r.json::<serde_json::Value>().await.unwrap()["reason"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            (status, reason)
+        }
+    }
+
+    const ACME: [&str; 3] = ["repo/acme/api", "workspace/acme/main", "team/acme"];
+    const BCORP: [&str; 3] = ["repo/bcorp/web", "workspace/bcorp/main", "team/bcorp"];
+
+    #[tokio::test]
+    async fn a_pairing_reads_only_the_sources_of_its_owners_tenants() {
+        let h = with_graph().await;
+        for key in ACME.iter().chain(&BCORP) {
+            built(&h, key).await;
+        }
+        // Sources of no tenant: the keys of before tenants, and a repository nobody installed.
+        let store = context_graph::store(&h.app).unwrap();
+        for (key, k) in [
+            ("team", kind::source::TEAM),
+            ("repo/stranger/repo", kind::source::REPO),
+        ] {
+            let g = store.begin_build(key, k).await.unwrap();
+            store
+                .replace_source(
+                    Some(g),
+                    rubato_graph::Build {
+                        source: key.into(),
+                        kind: k.into(),
+                        head_sha: None,
+                        map_version: None,
+                        generator: context_graph::GENERATOR,
+                        generated_at: chrono::Utc::now(),
+                        truncated: false,
+                        nodes: vec![],
+                        edges: vec![],
+                    },
+                    chrono::Utc::now(),
+                )
+                .await
+                .unwrap();
+        }
+        let (ada, bob, zed) = (
+            h.paired("ada").await,
+            h.paired("bob").await,
+            h.paired("zed").await,
+        );
+        let mut checked = 0;
+        for (token, own, other) in [(&ada, ACME, BCORP), (&bob, BCORP, ACME)] {
+            for key in own {
+                assert_eq!(h.snapshot(token, key).await.0, 200, "{key}");
+                checked += 1;
+            }
+            // Another tenant's source is answered as one that does not exist.
+            for key in other.iter().chain(&["team", "repo/stranger/repo"]) {
+                assert_eq!(
+                    h.snapshot(token, key).await,
+                    (404, "unknown_source".into()),
+                    "{key}"
+                );
+                checked += 1;
+            }
+        }
+        // In no tenant: nothing, with the answer a companion waits on.
+        assert_eq!(
+            h.snapshot(&zed, ACME[0]).await,
+            (403, "team_record_stale".into())
+        );
+        // Removed from the tenant: its sources are gone for that person's pairing at once.
+        let mia = h.paired("mia").await;
+        assert_eq!(h.snapshot(&mia, ACME[2]).await.0, 200);
+        let mut tx = h.app.db.begin().await.unwrap();
+        tenants::remove_member(&mut tx, "acme", 3)
+            .await
+            .unwrap()
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(h.snapshot(&mia, ACME[2]).await.0, 403);
+        println!("checked {} snapshot reads on 8 sources", checked + 3);
+    }
+
+    #[tokio::test]
+    async fn the_overview_shows_only_the_tenants_own_sources() {
+        let h = with_graph().await;
+        h.with_main().await;
+        for key in ACME.iter().chain(&BCORP) {
+            built(&h, key).await;
+        }
+        for (login, tenant, own) in [("ada", "acme", ACME), ("bob", "bcorp", BCORP)] {
+            let (status, body) = h
+                .call(login, GET, &scoped(tenant, "main", "/api/overview"), None)
+                .await;
+            assert_eq!(status, 200, "{body}");
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let mut shown: Vec<&str> = v["graph"]["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["source"].as_str().unwrap())
+                .collect();
+            shown.sort();
+            let mut want = own.to_vec();
+            want.sort();
+            assert_eq!(shown, want, "{tenant}");
+        }
+    }
 }
