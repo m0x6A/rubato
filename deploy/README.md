@@ -14,6 +14,26 @@ How a deploy goes is in `.claude/profiles/dockge.md`.
 `pnpm deploy:check` checks these files and `pnpm deploy:test` makes the check fail on purpose
 on `fixtures/bad/`.
 
+## The first deploy with tenants (#345)
+
+The image built from the #345 stack changes how the server starts and who gets in. In order:
+
+1. Stop the app and copy the database, `compose.yaml` and `.env` first. Migrations 0032 to
+   0037 rebuild about forty tables and are not additive: a rollback is the previous image tag
+   **and** the copied database.
+2. In `.env`, before the new image starts: `RUBATO_ALLOW_HTTP=1` on a LAN (below), and
+   `RUBATO_OPERATORS=<GitHub user id>`. The first start makes tenant `default` from
+   `RUBATO_GITHUB_APP_INSTALLATION_ID`, makes everyone with a session in the last 30 days a
+   member, and makes an operator among them its admin. With no operator the tenant has no
+   admin and nobody can invite.
+3. Copy `Caddyfile` beside `compose.yaml`, also on a LAN: the compose file names it.
+4. Start, and read the log for `tenant seeded from the server as it was` and each
+   `seed left out login` (invite those people again on **Members**). `tenant default has no
+   admin` means step 2 was missed: name one on **Operator**.
+5. Open pages must reload: the API moved under `/api/t/<tenant>/…` (ADR 0089).
+6. Rebuild each companion from the same commit before it reconnects: the context graph's
+   source keys changed, and an older companion drops the sources it no longer knows.
+
 ## On a LAN, over plain http
 
 Since ADR 0090 the server refuses to start off loopback when `RUBATO_PUBLIC_URL` is not https.
