@@ -15,6 +15,31 @@ function stubFetch(status: number, body: unknown) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("pairing a companion (N17)", () => {
+  it("someone with no companion sees how to pair one, in place of nothing; someone with one sees their lanes and a quiet way to pair another (issue #357)", () => {
+    const { unmount } = render(<CompanionsPanel overview={overview({ companions: [companion("alice", true)] })} me={me} onChanged={() => {}} onPair={() => {}} {...noQueue} />);
+    expect(screen.getByTestId("pair-companion")).toHaveTextContent("rubato-companion pair --server");
+    expect(screen.queryByTestId("pair-another")).toBeNull();
+    unmount();
+    const onPair = vi.fn();
+    render(<CompanionsPanel overview={overview({ companions: [companion("m0x6A", true)] })} me={me} onChanged={() => {}} onPair={onPair} {...noQueue} />);
+    expect(screen.queryByTestId("pair-companion")).toBeNull();
+    expect(screen.queryByTestId("pair-code")).toBeNull();
+    fireEvent.click(screen.getByTestId("pair-another"));
+    expect(onPair).toHaveBeenCalledTimes(1);
+  });
+
+  it("the pairing view says what was paired and goes back to the lanes", async () => {
+    stubFetch(200, companion("m0x6A", false));
+    const onPairDone = vi.fn();
+    render(<CompanionsPanel overview={overview({ companions: [companion("m0x6A", true)] })} me={me} onChanged={() => {}} pairing onPairDone={onPairDone} {...noQueue} />);
+    expect(screen.queryByTestId("lanes")).toBeNull();
+    fireEvent.change(screen.getByTestId("pair-code"), { target: { value: "abcd-efgh" } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(onPairDone).toHaveBeenCalledWith("Paired m0x6A-laptop as m0x6A."));
+    fireEvent.click(screen.getByRole("button", { name: "← all companions" }));
+    expect(onPairDone).toHaveBeenLastCalledWith(null);
+  });
+
   it("approving a code posts it", async () => {
     const fetchMock = stubFetch(200, companion("m0x6A", false));
     const onChanged = vi.fn();
@@ -43,11 +68,15 @@ describe("pairing a companion (N17)", () => {
     const revoked = companion("m0x6A", false, { companion_id: "33333333-3333-3333-3333-333333333333", revoked_at: new Date().toISOString() });
     render(<CompanionsPanel overview={overview({ companions: [mine, theirs, revoked] })} me={me} onChanged={onChanged} {...noQueue} />);
 
-    expect(within(screen.getByTestId("companion-alice")).queryByRole("button", { name: "revoke" })).toBeNull();
+    expect(within(screen.getByTestId("companion-alice")).queryByRole("button", { name: /revoke/i })).toBeNull();
     // One button in total: my live pairing has it, my revoked one and alice's do not.
-    const buttons = screen.getAllByRole("button", { name: "revoke" });
+    const buttons = screen.getAllByRole("button", { name: "Revoke m0x6A-laptop" });
     expect(buttons).toHaveLength(1);
     fireEvent.click(buttons[0] as HTMLElement);
+    // Asked once before it is done (issue #357): nothing is sent on the first press.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Keep it" })).toHaveFocus();
+    fireEvent.click(screen.getByTestId(`confirm-revoke-${mine.companion_id}`));
 
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];

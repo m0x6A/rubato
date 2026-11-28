@@ -42,8 +42,8 @@ describe("companion lanes (S13)", () => {
     expect(lane(MINE)).toHaveTextContent("connected");
     expect(lane(ALICE)).toHaveTextContent("alice-box alice");
     // Revoke is offered only on your own.
-    expect(within(lane(MINE)).getByRole("button", { name: "revoke" })).toBeInTheDocument();
-    expect(within(lane(ALICE)).queryByRole("button", { name: "revoke" })).toBeNull();
+    expect(within(lane(MINE)).getByRole("button", { name: "Revoke my-laptop" })).toBeInTheDocument();
+    expect(within(lane(ALICE)).queryByRole("button", { name: /revoke/i })).toBeNull();
   });
 
   it("a stale session shows unknown", () => {

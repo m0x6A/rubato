@@ -31,6 +31,8 @@ export type View =
   | { view: "new-issue"; at: MapRef | null }
   | { view: "plans"; list: PlanList }
   | { view: "companions" }
+  /** Pairing a machine: done once, so not part of the lanes. */
+  | { view: "pair" }
   | { view: "repos" }
   /** One repository the map names: `owner/name`. */
   | { view: "repo"; repo: string }
@@ -166,6 +168,10 @@ export function parseRoute(hash: string): Route {
       // The inspector is of something: with nothing selected there is nothing to show.
       return only && sel ? { view: "map", sel } : notFound;
     case "companions":
+      if (a === "pair" && b === undefined) {
+        return { view: "pair", sel };
+      }
+      return only ? { view: "companions", sel } : notFound;
     case "findings":
     case "members":
     case "operator":
@@ -200,6 +206,9 @@ export function formatRoute(route: Route): string {
       break;
     case "repo":
       path = `/repos/${route.repo}`;
+      break;
+    case "pair":
+      path = "/companions/pair";
       break;
     case "pull":
       path = `/pulls/${route.repo}/${route.number}`;
@@ -255,6 +264,8 @@ export function parentOf(route: Route): Route | null {
       return HOME;
     case "repo":
       return { view: "repos", sel: route.sel };
+    case "pair":
+      return { view: "companions", sel: route.sel };
     case "pull":
       return { view: "repo", repo: route.repo, sel: route.sel };
     case "plans":

@@ -73,12 +73,16 @@ test("pairing says how, step by step, from an issue that cannot start yet", { ta
   await expect(page.getByTestId("issue-detail")).toBeVisible();
   // map.spec.ts connects a companion as this user for a moment; while it is connected the issue
   // offers Start session instead, so the way to Companions is then its tab.
-  const none = page.getByTestId("no-companion");
-  if (await none.isVisible()) {
-    await expect(none).toContainText("connect a companion of yours");
-    await none.getByRole("button", { name: "pair one first" }).click();
+  // (#915 has no pin, so its own next step is Pin to…; #912 is pinned.)
+  await page.goto("/#/issues/m0x6A/rubato/912");
+  const next = page.getByTestId("issue-next");
+  if ((await next.getAttribute("data-next")) === "pair") {
+    await expect(next).toContainText("a companion on your machine starts sessions");
+    await next.getByRole("button", { name: "Pair a companion" }).click();
+    // Pairing is a view of its own, with its address.
+    await expect(page).toHaveURL(/#\/companions\/pair$/);
   } else {
-    await page.getByRole("button", { name: /^Companions/ }).click();
+    await page.goto("/#/companions/pair");
   }
   const panel = page.getByTestId("companions");
   await expect(panel).toContainText(`rubato-companion pair --server ${baseURL}`);

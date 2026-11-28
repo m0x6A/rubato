@@ -43,4 +43,5 @@ Feature: Companions
     When they open an issue
     Then the issue says a companion starts sessions, with a way to pair one
     When they follow it
-    Then Companions shows the command to run with this Rubato's address, where the code goes, and how to start the companion
+    Then the pairing view shows the command to run with this Rubato's address, where the code goes, and how to start the companion
+    And someone who has a companion already sees their lanes, with pairing one step away
