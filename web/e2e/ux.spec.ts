@@ -14,11 +14,11 @@ test("an issue with a plan but no pin is listed once, and counted once", { tag: 
   // it, and other tests create issues in parallel.)
   await page.getByTestId("tab-repos").click();
   const work = page.getByTestId("repo-work-m0x6A/rubato");
-  await work.locator("summary").click();
+  await page.getByTestId("repo-open-m0x6A/rubato").click();
   await expect(work.getByTestId("repo-issue-915")).toHaveCount(1);
   const ids = await work.getByTestId("repo-issues").locator("li").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-testid")));
   expect(new Set(ids).size).toBe(ids.length);
-  await expect(work.locator("summary")).toContainText(`${ids.length} open issue`);
+  await expect(work.getByTestId("repo-work-issues")).toContainText(`${ids.length} open issue`);
 });
 
 test("Escape closes the issue, then the selection; not while typing", { tag: ["@map.escape-closes"] }, async ({ page }) => {

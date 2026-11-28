@@ -1,6 +1,5 @@
-import { useState } from "react";
 import { PinMenu } from "../pins/index.ts";
-import { PullList, PullView } from "../pulls/index.ts";
+import { PullList } from "../pulls/index.ts";
 import type { IssueRef, MapRef, Overview } from "../../protocol.ts";
 import { isFinished } from "../../shared/finished.ts";
 import { relative } from "../../shared/format.ts";
@@ -22,22 +21,21 @@ export function openIssuesOf(overview: Overview, repo: string): Row[] {
   return [...tracked, ...rest].sort((a, b) => b.issue.number - a.issue.number);
 }
 
-/** A repo's open pull requests and open issues, folded under its rack unit (issue #82). */
-export function RepoWork({ overview, repo, onOpenIssue, onPin }: { overview: Overview; repo: string; onOpenIssue?: ((i: IssueRef) => void) | undefined; onPin?: ((i: IssueRef, t: MapRef) => void) | undefined }) {
-  const [open, setOpen] = useState<number | null>(null);
+/** A repo's open pull requests and open issues (issue #82), in the repo's own view (issue #357). */
+export function RepoWork({ overview, repo, onOpenIssue, onOpenPull, onPin }: { overview: Overview; repo: string; onOpenIssue?: ((i: IssueRef) => void) | undefined; onOpenPull: (number: number) => void; onPin?: ((i: IssueRef, t: MapRef) => void) | undefined }) {
   const listing = (overview.pulls ?? []).find((p) => p.repo.toLowerCase() === repo.toLowerCase());
   const pulls = listing?.pulls ?? [];
   const issues = openIssuesOf(overview, repo);
   return (
-    <details className="repo-work" data-testid={`repo-work-${repo}`}>
-      <summary>
-        {pulls.length} open pull request{pulls.length === 1 ? "" : "s"} · {issues.length} open issue{issues.length === 1 ? "" : "s"}
-      </summary>
-      <h4>Pull requests</h4>
+    <section className="repo-work" data-testid={`repo-work-${repo}`}>
+      <h3 data-testid="repo-work-pulls">
+        {pulls.length} open pull request{pulls.length === 1 ? "" : "s"}
+      </h3>
       {listing?.error && <p className="warn">The last listing failed: {listing.error}. These are from the one before.</p>}
-      <PullList pulls={pulls} truncated={listing?.truncated ?? false} onOpen={(p) => setOpen(open === p.number ? null : p.number)} />
-      {open !== null && <PullView repo={repo} number={open} refreshKey={overview.generated_at} onOpenIssue={onOpenIssue} />}
-      <h4>Issues</h4>
+      <PullList pulls={pulls} truncated={listing?.truncated ?? false} onOpen={(p) => onOpenPull(p.number)} />
+      <h3 data-testid="repo-work-issues">
+        {issues.length} open issue{issues.length === 1 ? "" : "s"}
+      </h3>
       {issues.length === 0 && <p className="muted">No open issues listed.</p>}
       <ul className="plain" data-testid="repo-issues">
         {issues.map((i) => (
@@ -72,6 +70,6 @@ export function RepoWork({ overview, repo, onOpenIssue, onPin }: { overview: Ove
           </li>
         ))}
       </ul>
-    </details>
+    </section>
   );
 }

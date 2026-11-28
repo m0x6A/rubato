@@ -3,15 +3,16 @@ Feature: Pull requests
   yourself (issue #82, ADR 0033, ADR 0034).
 
   @pulls.listed-per-repo
-  Scenario: The Repos tab lists each repository's open pull requests and issues
-    When a person opens Repos and unfolds a repository
+  Scenario: A repository lists its open pull requests and issues
+    When a person opens Repos and opens a repository
     Then its open pull requests are listed with their checks
     And its open issues are listed without their bodies
 
   @pulls.view
   Scenario: A pull request opens with its description, checks, reviews and files
     When a person opens a pull request from the list
-    Then its description shows as text, with its checks, the team's reviews and its changed files
+    Then it shows in a view of its own, with its address
+    And its description shows as text, with its checks, the team's reviews and its changed files
     And a link leads to its diff on GitHub
 
   @pulls.merge-as-yourself

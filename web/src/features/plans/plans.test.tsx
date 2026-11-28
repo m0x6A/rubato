@@ -150,7 +150,7 @@ describe("connected repos (issue #80)", () => {
       ],
       unpinned_sessions: [{ companion_id: "00000000-0000-0000-0000-000000000000", user: "m0x6A", cwd: "/w", branch: "main", repo: "m0x6A/rubato", status: "working", source: "hook", last_seen: now }],
     });
-    render(<ConnectedRepos overview={ov} />);
+    render(<ConnectedRepos overview={ov} onOpenRepo={() => {}} />);
     const row = screen.getByTestId("repo-m0x6A/rubato");
     expect(row).toHaveTextContent("covered");
     expect(row).toHaveTextContent("5");

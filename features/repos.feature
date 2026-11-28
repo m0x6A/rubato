@@ -7,10 +7,10 @@ Feature: Connected repositories
     Then the map's repository is listed as connected
 
   @repos.what-each-provides
-  Scenario: The Repos tab says which parts each repository provides
-    When a person opens Repos
-    Then each repository says how many parts it provides
-    And opening it lists them
+  Scenario: A repository says which parts it provides
+    When a person opens Repos and opens a repository
+    Then the repository says how many parts it provides
+    And lists them
 
   @repos.context-graph-age
   Scenario: The Repos tab says how fresh each repository's context graph is

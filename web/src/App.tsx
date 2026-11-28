@@ -10,7 +10,8 @@ import { NewIssueForm } from "./features/new_issue/index.ts";
 import { Discrepancies, Inspector, MapView, PlanInspector, type Take, buildGraph, mapApi } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
 import { PlansBoard, groupPlans } from "./features/plans/index.ts";
-import { ConnectedRepos } from "./features/repos/index.ts";
+import { ConnectedRepos, RepoView } from "./features/repos/index.ts";
+import { PullView } from "./features/pulls/index.ts";
 import { queueApi } from "./features/queue/index.ts";
 import { SettingsView, WorkspacesView } from "./features/settings/index.ts";
 import { WorkspaceMenu } from "./features/workspaces/index.ts";
@@ -39,6 +40,8 @@ function tabOf(route: Route): Tab | null {
     case "companions":
       return "companions";
     case "repos":
+    case "repo":
+    case "pull":
       return "repos";
     case "issue":
       // A plan read from the board is still under Plans: that is where its way back leads.
@@ -766,12 +769,26 @@ export function App() {
           {overview && route.view === "plans" && (
             <PlansBoard overview={overview} done={route.list === "plans-done"} onDone={(done) => go({ view: "plans", list: done ? "plans-done" : "plans" })} onOpen={(issue) => go({ view: "issue", issue, section: "plan", from: route.list })} />
           )}
-          {overview && tab === "repos" && (
-            <ConnectedRepos
+          {overview && route.view === "repos" && <ConnectedRepos overview={overview} onOpenRepo={(repo) => go({ view: "repo", repo })} />}
+          {overview && route.view === "repo" && (
+            <RepoView
               overview={overview}
-              onPin={onPin}
+              repo={route.repo}
+              onBack={() => go({ view: "repos" })}
               onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview", from: null })}
+              onOpenPull={(number) => go({ view: "pull", repo: route.repo, number })}
+              onPin={onPin}
             />
+          )}
+          {overview && route.view === "pull" && (
+            <section data-testid="pull-page" aria-label={`Pull request ${route.repo}#${route.number}`}>
+              <p>
+                <button type="button" onClick={() => go({ view: "repo", repo: route.repo })}>
+                  ← {route.repo}
+                </button>
+              </p>
+              <PullView repo={route.repo} number={route.number} refreshKey={overview.generated_at} onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview", from: null })} />
+            </section>
           )}
           {overview && tab === "companions" && <CompanionsPanel overview={overview} me={me} onChanged={refresh} onQueue={onQueue} onReorder={onReorder} onUnqueue={onUnqueue} onStart={onStart} />}
           </div>
