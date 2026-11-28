@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { overview } from "../../../test/fixtures.ts";
 import type { ObservedTraffic, SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
 import { forgetWorkspace, learnWorkspace } from "../../shared/workspace.ts";
+import { WorkspacesView } from "./WorkspacesView.tsx";
 import { SettingsView, sourceStatus } from "./SettingsView.tsx";
 
 /** An adapter no server has: the form must come from the list, not from what the page knows. */
@@ -72,9 +73,22 @@ function serve(stored: WorkspaceSettings, answers: { put?: Answer; post?: Answer
 
 function open(ws: string, handlers: Partial<Parameters<typeof SettingsView>[0]> = {}, traffic?: ObservedTraffic) {
   learnWorkspace(ws);
-  const props = { onClose: vi.fn(), onChanged: vi.fn(), onNotice: vi.fn(), onSwitch: vi.fn(), ...handlers };
+  const props = { onClose: vi.fn(), onChanged: vi.fn(), onNotice: vi.fn(), ...handlers };
   const view = render(<SettingsView overview={overview({ workspace: ws, ...(traffic ? { traffic } : {}) })} {...props} />);
   return { ...props, view };
+}
+
+const BOTH = [
+  { id: "default", name: "Rubato", map_repo: "m0x6A/rubato" },
+  { id: "shop", name: "Shop", map_repo: "acme/shop-map" },
+];
+
+/** The Workspaces page (its own since issue #357), while `ws` is the workspace shown. */
+function openWorkspaces(ws: string) {
+  learnWorkspace(ws);
+  const props = { onClose: vi.fn(), onChanged: vi.fn(), onNotice: vi.fn(), onSwitch: vi.fn() };
+  render(<WorkspacesView overview={overview({ workspace: ws, workspaces: BOTH })} {...props} />);
+  return props;
 }
 
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -225,9 +239,12 @@ describe("Configure workspace (issue #189)", () => {
     expect(calls.some((c) => c.method === "PUT")).toBe(false);
   });
 
+});
+
+describe("Workspaces: create and delete (issue #189, its own page since #357)", () => {
   it("creates a workspace and switches to it; a refusal stays in the form", async () => {
     const calls = serve(settings());
-    const props = open("shop");
+    const props = openWorkspaces("shop");
     fireEvent.click(await screen.findByRole("button", { name: "New workspace…" }));
     const form = screen.getByRole("form", { name: "New workspace" });
     fireEvent.change(within(form).getByLabelText("Id"), { target: { value: "blog" } });
@@ -244,7 +261,7 @@ describe("Configure workspace (issue #189)", () => {
 
   it("a refused create shows why", async () => {
     serve(settings(), { post: { status: 422, body: { reason: "repo_unreadable", message: "you cannot read secret/map on GitHub, so a workspace cannot use it" } } });
-    const props = open("shop");
+    const props = openWorkspaces("shop");
     fireEvent.click(await screen.findByRole("button", { name: "New workspace…" }));
     const form = screen.getByRole("form", { name: "New workspace" });
     fireEvent.change(within(form).getByLabelText("Id"), { target: { value: "hidden" } });
@@ -256,8 +273,10 @@ describe("Configure workspace (issue #189)", () => {
 
   it("deletes a workspace after a second press, by its id, and goes back to default", async () => {
     const calls = serve(settings());
-    const props = open("shop");
-    fireEvent.click(await screen.findByRole("button", { name: "Delete this workspace…" }));
+    const props = openWorkspaces("shop");
+    // The default workspace cannot be deleted: it is offered for no row but Shop's.
+    expect(screen.getAllByRole("button", { name: /^Delete/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Shop…" }));
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     expect(screen.getByTestId("settings-delete-confirm")).toHaveTextContent("cannot be used again");
     fireEvent.click(screen.getByRole("button", { name: "Delete shop" }));
@@ -266,11 +285,37 @@ describe("Configure workspace (issue #189)", () => {
     expect(props.onNotice).toHaveBeenCalledWith(expect.stringContaining("Workspace Shop deleted"));
   });
 
-  it("default cannot be deleted, and its calls go unprefixed", async () => {
+  it("deleting a workspace that is not the one shown stays put and refetches the list", async () => {
+    const calls = serve(settings());
+    const props = openWorkspaces("default");
+    fireEvent.click(screen.getByRole("button", { name: "Delete Shop…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete shop" }));
+    await waitFor(() => expect(props.onChanged).toHaveBeenCalled());
+    expect(props.onSwitch).not.toHaveBeenCalled();
+    expect(calls.find((c) => c.method === "DELETE")?.url).toBe("/api/w/shop");
+  });
+});
+
+describe("Workspaces with one workspace (issue #357)", () => {
+  it("lists the one shown, offers no delete, and offers a new one", () => {
+    serve(settings());
+    learnWorkspace("default");
+    const ov = overview({ workspace: "default", workspaces: [] });
+    render(<WorkspacesView overview={ov} onClose={vi.fn()} onChanged={vi.fn()} onNotice={vi.fn()} onSwitch={vi.fn()} />);
+    expect(screen.getByTestId("workspace-default")).toHaveTextContent(ov.map.map.name);
+    expect(screen.getByTestId("workspace-default")).toHaveTextContent("showing now");
+    expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "New workspace…" })).toBeInTheDocument();
+  });
+});
+
+describe("Configure workspace: the rest (issue #189)", () => {
+  it("default's calls go unprefixed, and the page offers no create or delete", async () => {
     const calls = serve(settings({ id: "default", name: null, traffic: null }));
     open("default");
     await screen.findByLabelText("Name");
-    expect(screen.queryByRole("button", { name: "Delete this workspace…" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New workspace…" })).toBeNull();
     expect(calls.find((c) => c.url.endsWith("/settings"))?.url).toBe("/api/settings");
     expect(screen.getByLabelText("Source")).toHaveValue("");
   });

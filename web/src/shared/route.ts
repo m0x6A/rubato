@@ -21,7 +21,9 @@ export type View =
   | { view: "plan"; issue: IssueRef }
   | { view: "companions" }
   | { view: "repos" }
+  | { view: "findings" }
   | { view: "settings" }
+  | { view: "workspaces" }
   | { view: "members" }
   | { view: "operator" }
   | { view: "not-found"; fragment: string };
@@ -102,9 +104,14 @@ export function parseRoute(hash: string): Route {
       const issue = parseIssue(a, b, c);
       return issue ? { view: "plan", issue, sel } : notFound;
     }
+    case "settings":
+      if (a === "workspaces" && b === undefined) {
+        return { view: "workspaces", sel };
+      }
+      return only ? { view: "settings", sel } : notFound;
     case "companions":
     case "repos":
-    case "settings":
+    case "findings":
     case "members":
     case "operator":
       return only ? { view: head, sel } : notFound;
@@ -130,6 +137,9 @@ export function formatRoute(route: Route): string {
         params.set("at", formatRef(route.at));
       }
       break;
+    case "workspaces":
+      path = "/settings/workspaces";
+      break;
     case "not-found":
       return `#${route.fragment}`;
     default:
@@ -141,6 +151,11 @@ export function formatRoute(route: Route): string {
   // The ids are plain (`ID`), so the colon reads better unescaped.
   const query = params.toString().replaceAll("%3A", ":");
   return `#${path}${query ? `?${query}` : ""}`;
+}
+
+/** The views that are a page of their own, with the map hidden: the settings, the people, the operator's. */
+export function isPage(route: Route): boolean {
+  return route.view === "settings" || route.view === "workspaces" || route.view === "members" || route.view === "operator";
 }
 
 /** Whether two routes show the same view, whatever is selected on the map. */
@@ -156,11 +171,13 @@ export function parentOf(route: Route): Route | null {
   switch (route.view) {
     case "issue":
     case "new-issue":
+    case "findings":
     case "not-found":
       return { view: "issues", sel: route.sel };
     case "plan":
       return { view: "plans", sel: route.sel };
     case "settings":
+    case "workspaces":
     case "members":
     case "operator":
       return { view: "issues", sel: route.sel };

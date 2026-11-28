@@ -5,7 +5,7 @@ Feature: Workspaces
   @workspaces.switch
   Scenario: Switching workspaces changes the map, the URL and what a reload shows
     Given a server with the workspaces "default" and "shop"
-    When a person picks "shop" in the switcher
+    When a person picks "shop" in the workspace menu
     Then the map shows the shop's parts
     And the URL names the workspace
     And a reload shows the shop again

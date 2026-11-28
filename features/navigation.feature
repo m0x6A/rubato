@@ -34,3 +34,11 @@ Feature: Navigation
     Given a visitor with no Rubato session who opened the address of the plans
     When they log in with GitHub
     Then they see the plans, not the issue list
+
+  @navigation.one-view
+  Scenario: Every address shows one view
+    Given the address of any view
+    When a person opens it
+    Then the panel shows that one view, with nothing stacked above it
+    And a page of its own (the settings, the workspaces, the members, the operator's) hides the map and keeps the top bar
+    And the top bar holds the brand, the workspace menu, the live dot and the account menu

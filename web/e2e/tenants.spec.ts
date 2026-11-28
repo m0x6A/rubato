@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { account } from "./shell.ts";
 
 // Plan 345 (ADR 0087, 0088): members and the operator's page, against the second server of
 // `e2e/run.sh`: a GitHub App with `e2e/github-standin.ts` for GitHub. `member` is an admin of
@@ -13,7 +14,7 @@ async function logIn(page: Page) {
 
 test("an admin invites a GitHub login, sees it as invited, and removes it after a second press", { tag: ["@tenants.members-list", "@tenants.invite-by-login", "@tenants.remove-member", "@tenants.refusal-in-words"] }, async ({ page }) => {
   await logIn(page);
-  await page.getByTestId("open-members").click();
+  await account(page, "open-members");
   const view = page.getByTestId("members");
   await expect(view.getByRole("heading")).toHaveText(/^Members of /);
   await expect(view.getByTestId("member-member")).toContainText("(you)");
@@ -52,7 +53,7 @@ test("an admin invites a GitHub login, sees it as invited, and removes it after 
 
 test("the operator sees tenants and the App's installations as names and counts", { tag: ["@admin.tenants-and-installations", "@admin.only-operators"] }, async ({ page }) => {
   await logIn(page);
-  await page.getByTestId("open-operator").click();
+  await account(page, "open-operator");
   const view = page.getByTestId("operator");
   const tenant = view.getByTestId("tenant-default");
   await expect(tenant).toContainText("1 member, 1 admin");

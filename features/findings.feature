@@ -12,3 +12,11 @@ Feature: Findings
     Given a plan that names an id the map does not have
     When the server reads it
     Then a finding names the plan and the unknown id
+
+  @findings.own-view
+  Scenario: Findings have a view of their own
+    Given the map and the plans disagree about something
+    When a person looks at any view
+    Then the panel says how many findings there are, quietly, and does not list them
+    When they follow that link
+    Then they see every finding, and Escape returns to the list

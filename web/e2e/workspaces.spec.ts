@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
+import { expectMapVersion, switchWorkspace, workspaceButton } from "./shell.ts";
 import { parse as parseYaml } from "yaml";
 
 // Issue #89: the e2e server holds two workspaces (e2e/run.sh). default is the team's own map;
@@ -11,23 +12,23 @@ const shop = parseYaml(readFileSync(resolve(import.meta.dirname, "fixtures/shop-
 
 test("switch workspaces: the map, the URL and a reload follow the choice", { tag: "@workspaces.switch" }, async ({ page }) => {
   await page.goto("/");
-  const select = page.getByRole("combobox", { name: "Workspace" });
-  await expect(select).toHaveValue("default");
+  const shown = workspaceButton(page);
+  await expect(shown).toContainText(/rubato/i);
   await expect(page.getByTestId(`node-${own.nodes[0]!.id}`)).toBeVisible();
 
-  await select.selectOption("shop");
-  await expect(page).toHaveURL(/\?w=shop$/);
+  await switchWorkspace(page, "shop");
+  await expect(page).toHaveURL(/\?w=shop(#|$)/);
   for (const n of shop.nodes) {
     await expect(page.getByTestId(`node-${n.id}`)).toBeVisible();
   }
   await expect(page.getByTestId(`node-${own.nodes[0]!.id}`)).toHaveCount(0);
-  await expect(page.getByText("map shop @")).toBeVisible();
+  await expectMapVersion(page, "map shop @");
 
   await page.reload();
-  await expect(select).toHaveValue("shop");
+  await expect(shown).toContainText("Shop");
   await expect(page.getByTestId("node-storefront")).toBeVisible();
 
-  await select.selectOption("default");
+  await switchWorkspace(page, "default");
   await expect(page.getByTestId(`node-${own.nodes[0]!.id}`)).toBeVisible();
   await expect(page.getByTestId("node-storefront")).toHaveCount(0);
 });

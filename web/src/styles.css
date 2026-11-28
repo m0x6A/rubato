@@ -356,10 +356,10 @@ tr.chat-row > td { padding-top: 0; }
 .pin-menu > button { padding: 2px 8px; font-size: 12px; white-space: nowrap; min-height: 24px; }
 .pin-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; width: 260px; max-width: calc(100vw - 32px); max-height: 280px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: var(--shadow); cursor: default; }
 .pin-menu-heading { padding: 6px 8px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-.pin-menu-list [role="menuitem"] { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; width: 100%; border: 0; border-radius: 4px; padding: 5px 8px; text-align: left; background: none; min-height: 24px; }
-.pin-menu-list [role="menuitem"] .id { font-family: var(--font-mono); font-size: 12px; }
-.pin-menu-list [role="menuitem"]:hover, .pin-menu-list [role="menuitem"]:focus-visible { background: var(--accent-wash); outline: none; }
-.pin-menu-list [role="menuitem"][aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.pin-menu-list [role^="menuitem"] { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; width: 100%; border: 0; border-radius: 4px; padding: 5px 8px; text-align: left; background: none; min-height: 24px; }
+.pin-menu-list [role^="menuitem"] .id { font-family: var(--font-mono); font-size: 12px; }
+.pin-menu-list [role^="menuitem"]:hover, .pin-menu-list [role^="menuitem"]:focus-visible { background: var(--accent-wash); outline: none; }
+.pin-menu-list [role^="menuitem"][aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
 /* map nodes */
 .map-node { position: relative; width: 220px; min-height: 96px; background: linear-gradient(180deg, var(--node-top), var(--node-bottom)); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px 14px; display: flex; flex-direction: column; gap: 4px; box-shadow: var(--rim), var(--shadow); }
 .map-node.contract { border-style: dashed; border-color: var(--line-strong); }
@@ -882,3 +882,24 @@ body:has(.login) { background-color: var(--canvas); background-image: radial-gra
 .members li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
 .members li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .members select, .members input { width: auto; max-width: 14rem; }
+
+/* The shell (issue #357): four things in the top bar, one view in the panel, pages of their own. */
+.brand { align-items: center; }
+.brand-name { color: inherit; text-decoration: none; font-size: 15px; }
+.brand-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.top-menu > .pin-menu > button { padding: 4px 10px; min-height: 28px; font-size: 13px; }
+.brand .pin-menu-list { left: 0; right: auto; }
+.menu-note { padding: 6px 8px; font-family: var(--font-mono); font-size: 11.5px; color: var(--chip-ink); border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.menu-group { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.menu-group:first-child, .menu-note + .menu-group { border-top: 0; margin-top: 0; padding-top: 0; }
+.pin-menu-list [role="menuitemradio"][aria-checked="true"] { font-weight: 600; }
+.view { display: flex; flex-direction: column; gap: 12px; flex: 1 0 auto; min-width: 0; }
+/* At the foot of the panel whatever the view scrolls to: quiet, and never out of sight. */
+.findings-link { position: sticky; bottom: -12px; margin: 0 -16px -12px; padding: 6px 16px; font-size: 12px; text-align: right; background: var(--panel); border-top: 1px solid var(--line); }
+.findings-link a { color: var(--warn-ink); }
+.findings-view h2 { margin: 0 0 8px; font-size: 15px; }
+.body[data-page] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.page { overflow: auto; padding: 24px 20px 48px; background: var(--panel); }
+.page > * { max-width: 760px; margin-left: auto; margin-right: auto; }
+.workspace-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.workspace-list li .muted { margin-right: auto; }

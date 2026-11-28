@@ -85,25 +85,50 @@ async function pinFromTheMenu(target: RegExp) {
   fireEvent.click(screen.getByRole("menuitem", { name: target }));
 }
 
-describe("Configure workspace in the shell (issue #189)", () => {
-  it("the header item is drawn with one workspace, opens the view in place of the tabs and closes it", async () => {
+describe("the shell (issue #357)", () => {
+  it("the top bar holds the brand, the workspace menu, the live dot and the account menu, and nothing else", async () => {
     render(<App />);
-    // One workspace: no switcher, and the item is there all the same.
-    const item = await screen.findByRole("button", { name: "Configure workspace" });
-    expect(screen.queryByRole("combobox", { name: "Workspace" })).toBeNull();
-    expect(item).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: /^Issues/ })).toBeInTheDocument();
+    await screen.findByRole("button", { name: /^Workspace / });
+    const bar = screen.getByRole("banner");
+    // The words beside the dot belong to it; they show only when the signal has stopped.
+    const items = [...bar.querySelectorAll(".brand > *, .status > *:not([data-testid=\"live-words\"])")];
+    console.log(`checked ${items.length} items in the top bar`);
+    expect(items).toHaveLength(4);
+    expect(within(bar).getByRole("link", { name: "Rubato" })).toHaveAttribute("href", "#/issues");
+    expect(within(bar).getByTestId("live-dot")).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: "Account m0x6A" })).toBeInTheDocument();
+  });
 
-    fireEvent.click(item);
-    expect(item).toHaveAttribute("aria-pressed", "true");
+  it("Configure workspace is in the workspace menu with one workspace too, opens as a page with the map hidden, and closes to where the person was (issue #189)", async () => {
+    history.replaceState(null, "", "/#/repos");
+    const { container } = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Workspace / }));
+    // One workspace: nothing to switch to, and the item is there all the same.
+    expect(screen.queryByRole("menuitemradio")).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Configure workspace…" }));
+    expect(location.hash).toBe("#/settings");
+
     const view = await screen.findByRole("region", { name: "Configure workspace" });
+    expect(screen.getByTestId("body")).toHaveAttribute("data-page", "settings");
+    // The map is hidden, not gone: it keeps its lens and positions.
+    expect(container.querySelector("section.map")).toHaveAttribute("hidden");
     expect(screen.queryByRole("button", { name: /^Issues/ })).toBeNull();
     // This stub serves no settings: the view says so instead of drawing an empty form.
     expect(await within(view).findByRole("alert")).toHaveTextContent("The settings could not be read");
 
     fireEvent.click(within(view).getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("region", { name: "Configure workspace" })).toBeNull();
-    expect(screen.getByRole("button", { name: /^Issues/ })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Configure workspace" })).toBeNull());
+    expect(location.hash).toBe("#/repos");
+    expect(screen.getByTestId("body")).not.toHaveAttribute("data-page");
+    expect(container.querySelector("section.map")).not.toHaveAttribute("hidden");
+  });
+
+  it("the live dot says nothing while live and says so in words when the signal stops", async () => {
+    render(<App />);
+    const dot = await screen.findByTestId("live-dot");
+    // The stub socket never opens: the page is not live, and must not look it.
+    expect(dot).toHaveAccessibleName("disconnected");
+    expect(await screen.findByTestId("live-words")).toHaveTextContent(/^disconnected/);
   });
 });
 
@@ -155,12 +180,14 @@ describe("the view comes from the URL (issue #357)", () => {
 });
 
 describe("open on GitHub by default (#265)", () => {
-  it("the Issues tab and the top bar count what is not finished", async () => {
+  it("the head of the issue list counts what is not finished", async () => {
     const at = (n: number, state: "designed" | "done") => ({ issue: { repo: REPO, number: n }, state, last_seen: minutesAgo(1) });
     others = [issue(1, "web", { progress: at(1, "designed") }), issue(2, "web", { progress: at(2, "done") }), issue(3, "web", { progress: at(3, "designed"), closed: true, finished: true })];
     render(<App />);
-    expect(await screen.findByRole("button", { name: "Issues (1)" })).toBeInTheDocument();
-    expect(screen.getByTestId("team-track")).toHaveTextContent("1 tracked issue");
+    // The count sits where it means something: at the head of the list, not in the nav (issue #357).
+    expect(await screen.findByTestId("team-track")).toHaveTextContent("1 tracked issue");
+    expect(screen.getByRole("button", { name: "Issues" })).toBeInTheDocument();
+    expect(screen.getByTestId("issues-view-open")).toHaveTextContent("Open (1)");
     expect(screen.getByTestId("issues-view-done")).toHaveTextContent("Done (2)");
   });
 });

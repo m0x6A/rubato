@@ -6,7 +6,7 @@ Feature: Operator
   @admin.only-operators
   Scenario: Only an operator reaches the operator's page
     Given a person who is not an operator
-    Then they see no Operator button
+    Then the account menu offers no Operator page
     And the operator's routes answer them as if they did not exist
 
   @admin.tenants-and-installations

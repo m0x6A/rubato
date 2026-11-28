@@ -4,17 +4,17 @@ Feature: Workspace settings
   as set or not set.
 
   @settings.rename
-  Scenario: A new name shows in the switcher without a reload
+  Scenario: A new name shows in the workspace menu without a reload
     Given a server with the workspaces "default" and "shop"
     When a person opens Configure workspace in "shop" and saves a new name
-    Then the switcher shows the new name
+    Then the workspace menu shows the new name
     And the page was not reloaded
 
   @settings.move-map-ref
   Scenario: Moving the map's ref loads the map at that ref
     Given the workspace "default" reads its map at "main"
     When a person saves the ref of another branch that holds the map
-    Then the header shows the map at that branch's commit
+    Then the workspace menu shows the map at that branch's commit
     And the page was not reloaded
 
   @settings.refusal-explained
@@ -27,9 +27,9 @@ Feature: Workspace settings
   @settings.single-workspace
   Scenario: A server with one workspace still offers Configure workspace
     Given a server with one workspace
-    When a member opens Configure workspace from the header
+    When a member opens Configure workspace from the workspace menu
     Then they see that workspace's settings
-    And no switcher is drawn and no workspace is created
+    And the menu offers no other workspace and no workspace is created
 
   @settings.traffic-per-workspace
   Scenario: Each workspace has its own traffic source

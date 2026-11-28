@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Confirm } from "../../shared/Confirm.tsx";
 import type { ObservedTraffic, Overview, SecretUpdate, SourceField, SourceFields, WorkspaceSettings, WorkspaceSettingsUpdate } from "../../protocol.ts";
 import { relative } from "../../shared/format.ts";
 import { nothingObserved } from "../../shared/traffic.ts";
 import { DEFAULT_WORKSPACE } from "../../shared/workspace.ts";
 import { refusalOf, refusalText, settingsApi } from "./api.ts";
-import { NewWorkspaceForm } from "./NewWorkspaceForm.tsx";
 
 interface Props {
   overview: Overview;
@@ -14,7 +12,6 @@ interface Props {
   onChanged: () => void;
   onNotice: (text: string) => void;
   /** Show another workspace: after a create, and after this one is deleted. */
-  onSwitch: (id: string) => void;
 }
 
 type SecretChoice = "keep" | "set" | "clear";
@@ -80,7 +77,7 @@ const INPUT_TYPE: Record<SourceField["kind"], string> = { text: "text", url: "ur
  * and launch defaults, set at runtime. The traffic form is drawn from the field list the
  * adapter publishes; a secret shows only as set or not set. No application setting is here.
  */
-export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch }: Props) {
+export function SettingsView({ overview, onClose, onChanged, onNotice }: Props) {
   const workspace = overview.workspace ?? DEFAULT_WORKSPACE;
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
   const [sources, setSources] = useState<SourceFields[]>([]);
@@ -91,7 +88,6 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
   const [saved, setSaved] = useState(false);
   /** A stale edit: the settings as someone else left them, offered in place of this edit. */
   const [theirs, setTheirs] = useState<WorkspaceSettings | null>(null);
-  const [creating, setCreating] = useState(false);
 
   const show = useCallback((s: WorkspaceSettings) => {
     setSettings(s);
@@ -229,21 +225,6 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
     }
   };
 
-  const remove = async () => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      await settingsApi.remove(workspace);
-      onNotice(`Workspace ${settings.name ?? workspace} deleted. Its pins, layout and drafts are kept; the id ${workspace} cannot be used again.`);
-      onSwitch(DEFAULT_WORKSPACE);
-      onClose();
-    } catch (err) {
-      setMessage(refusalText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <section className="inspector settings" data-testid="settings" aria-label="Configure workspace">
       <header>
@@ -369,7 +350,7 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
           </p>
         )}
         <p className="settings-actions">
-          <button type="submit" disabled={busy} data-testid="settings-save">
+          <button type="submit" className="primary" disabled={busy} data-testid="settings-save">
             {busy ? "Saving…" : "Save"}
           </button>
           <span role="status" className="muted">
@@ -381,46 +362,6 @@ export function SettingsView({ overview, onClose, onChanged, onNotice, onSwitch 
         </p>
       </form>
 
-      <h3>Workspaces</h3>
-      {creating ? (
-        <NewWorkspaceForm
-          onCancel={() => setCreating(false)}
-          onCreated={(made) => {
-            setCreating(false);
-            onNotice(`Workspace ${made.name ?? made.id} created.`);
-            onSwitch(made.id);
-          }}
-        />
-      ) : (
-        <p>
-          <button type="button" onClick={() => setCreating(true)} data-testid="settings-new-workspace">
-            New workspace…
-          </button>
-        </p>
-      )}
-      {workspace !== DEFAULT_WORKSPACE && (
-        <div className="settings-delete-row">
-          <Confirm
-            key={workspace}
-            ask="Delete this workspace…"
-            askTestId="settings-delete"
-            confirm={`Delete ${workspace}`}
-            keep="Keep it"
-            disabled={busy}
-            onConfirm={() => void remove()}
-            explain={
-              <p className="warn">
-                Delete workspace {settings.name ?? workspace}? It leaves the switcher for everyone. Its pins, layout and drafts are kept, and the id <span className="mono">{workspace}</span> cannot be used again.
-              </p>
-            }
-            wrap={(question) => (
-              <div className="settings-delete" data-testid="settings-delete-confirm">
-                {question}
-              </div>
-            )}
-          />
-        </div>
-      )}
     </section>
   );
 }
