@@ -14,7 +14,8 @@
     "observability:rules": "node --experimental-strip-types --test observability/rules.test.ts",
     "observability:publish": "node --experimental-strip-types observability/publish.ts",
     "deploy:check": "node --experimental-strip-types deploy/check.ts",
-    "deploy:test": "node --experimental-strip-types --test deploy/compose.test.ts",
+    "deploy:test": "node --experimental-strip-types --test deploy/compose.test.ts deploy/probe.test.ts",
+    "deploy:probe": "node --experimental-strip-types deploy/probe.ts",
     "e2e": "pnpm --filter @rubato/e2e e2e",
     "scenarios": "node --experimental-strip-types e2e/scenarios.ts"
   },

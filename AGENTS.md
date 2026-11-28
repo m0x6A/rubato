@@ -63,7 +63,7 @@ schema/
 actions/plan-check/        # GitHub Action: fail a PR whose plan names an unknown node or lacks an O-row per seam
 features/                  # the app's user scenarios in Gherkin, one <capability>.feature each, ids @<capability>.<slug> (ADR 0069)
 e2e/                       # end to end: run.ts (server + companion), scenarios.ts (scenario check and coverage report)
-deploy/                    # the stack on the apps host as code: compose.yaml (app; livekit behind the voice profile, #315), livekit.yaml, check.ts
+deploy/                    # the stack on the apps host as code: compose.yaml (app; livekit behind the voice profile, #315; caddy behind the public profile, ADR 0090), livekit.yaml, Caddyfile, check.ts (the files), probe.ts (a live host from outside)
 observability/
   alerts/                  # alert rules for the "never silent" list, each with a test that fires it
   dashboards/              # issue → node → session → cost; map with drift findings
