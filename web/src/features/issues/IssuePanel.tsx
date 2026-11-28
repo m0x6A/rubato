@@ -11,25 +11,24 @@ import type { IssueRef, IssueSummary, MapRef, Me, Overview, PinRequest } from ".
 import { setIssueDrag } from "../../shared/dnd.ts";
 import { closedUnmerged, finishedIssues, isFinished, openIssues } from "../../shared/finished.ts";
 import { STATE_LABEL, issueKey, relative } from "../../shared/format.ts";
-import { Backlog } from "./Backlog.tsx";
+import { ownConnectedCompanions } from "./own.ts";
 import { PlanSignals, SignalBadges } from "./PlanSignals.tsx";
 import { isRetired } from "../../shared/map.ts";
 
 interface Props {
   overview: Overview;
   me: Me | null;
-  selected: IssueSummary | null;
-  /** The part or seam selected on the map; the list shows the issues pinned to exactly it. */
-  selection: MapRef | null;
-  onSelect: (issue: IssueRef | null) => void;
-  onClearSelection: () => void;
+  /** The issue shown. */
+  selected: IssueSummary;
+  /** Back to the list. */
+  onClose: () => void;
+  /** Open another issue: the other plan a room's seam notice names. */
+  onOpenIssue: (issue: IssueRef) => void;
   /** `branch` resumes one of the caller's drafts on it (ADR 0053). */
   onLaunch: (issue: IssueRef, branch?: string) => void;
   /** Adds a pin; an issue may have several. The keyboard twin of dropping a row on the map. */
   onPin: (issue: IssueRef, target: MapRef) => void;
   onUnpin: (req: PinRequest) => void;
-  /** Queue an issue on one of the caller's own companions. Without it no "Queue on…" is offered. */
-  onQueue?: ((issue: IssueRef, companionId: string) => void) | undefined;
   /** Says what *Accept plan* did. */
   onNotice?: ((text: string) => void) | undefined;
   /** Show a seam on the map, from a room's seam notice. */
@@ -40,35 +39,17 @@ interface Props {
   onPairCompanion?: (() => void) | undefined;
 }
 
-/** Companions the current user may queue issues on: their own, paired, not revoked (ADR 0020). */
-export function ownLanes(overview: Overview, me: Me | null) {
-  if (!me) {
-    return [];
-  }
-  return overview.companions.filter((c) => c.user === me.login && !c.revoked_at);
-}
 
-/** Companions the current user may start sessions in: their own, paired, connected (ADR 0004). */
-export function ownConnectedCompanions(overview: Overview, me: Me | null) {
-  if (!me) {
-    return [];
-  }
-  return overview.companions.filter((c) => c.user === me.login && c.connected && !c.revoked_at);
-}
-
-const ORDER = ["blocked", "unknown", "building", "designing", "designed", "started", "in_review", "planned", "done"] as const;
-
-export function IssuePanel({ overview, me, selected, selection, onSelect, onClearSelection, onLaunch, onPin, onUnpin, onQueue, onNotice, onShowSeam, onLaunchLead, onPairCompanion }: Props) {
+export function IssuePanel({ overview, me, selected, onClose, onOpenIssue, onLaunch, onPin, onUnpin, onNotice, onShowSeam, onLaunchLead, onPairCompanion }: Props) {
   const own = ownConnectedCompanions(overview, me);
   // A lead only with the server's flag on, on a companion of yours that runs leads (ADR 0072).
   const leadOn = overview.orchestrator ? own.find((c) => c.can_lead) : undefined;
   // The name of this workspace, when there are several: what "counts in" is told apart from.
   const hereName = (overview.workspaces ?? []).find((w) => w.id === overview.workspace)?.name;
-  const lanes = onQueue ? ownLanes(overview, me) : [];
   // The list gives way to the detail, and a row that was just pinned leaves "Not pinned" with the
   // button that had focus: put focus on the detail's heading when an issue opens.
   const heading = useRef<HTMLHeadingElement>(null);
-  const openKey = selected ? issueKey(selected.issue) : null;
+  const openKey = issueKey(selected.issue);
   useEffect(() => {
     if (openKey) {
       heading.current?.focus();
@@ -77,21 +58,13 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
   // The pull request's view, opened from its line; closed again when another issue opens.
   const [pullOpen, setPullOpen] = useState(false);
   useEffect(() => setPullOpen(false), [openKey]);
-  // Open on GitHub by default; the finished ones on request, newest first (#265).
-  const [view, setView] = useState<"open" | "done">("open");
-  const pinnedHere = (i: IssueSummary) => !selection || i.pins.some((p) => p.kind === selection.kind && p.id === selection.id);
-  const open = openIssues(overview)
-    .filter(pinnedHere)
-    .sort((a, b) => ORDER.indexOf(a.progress.state) - ORDER.indexOf(b.progress.state) || a.issue.number - b.issue.number);
-  const done = finishedIssues(overview).filter(pinnedHere);
-  const issues = view === "done" ? done : open;
 
-  if (selected) {
+  {
     const key = issueKey(selected.issue);
     const finished = isFinished(selected);
     return (
       <section data-testid="issue-detail">
-        <button onClick={() => onSelect(null)}>← all issues</button>
+        <button onClick={onClose}>← all issues</button>
         <h2 style={{ marginTop: 8 }} ref={heading} tabIndex={-1}>
           {selected.url ? (
             <a href={selected.url} target="_blank" rel="noreferrer">
@@ -233,7 +206,7 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
           issue={selected}
           me={me}
           maxChars={roomLimit(overview)}
-          onOpenIssue={onSelect}
+          onOpenIssue={onOpenIssue}
           canOpen={(i) => overview.issues.some((x) => x.issue.repo === i.repo && x.issue.number === i.number)}
           onShowSeam={onShowSeam}
         />
@@ -275,78 +248,4 @@ export function IssuePanel({ overview, me, selected, selection, onSelect, onClea
       </section>
     );
   }
-
-  return (
-    <section data-testid="issue-list">
-      {selection && (
-        <p data-testid="map-filter">
-          <span className="muted">pinned to {selection.kind === "seam" ? "seam" : "part"}</span> <strong>{selection.id}</strong> <button onClick={onClearSelection}>show all</button>
-        </p>
-      )}
-      <div className="lens view-switch" role="group" aria-label="Which issues to list">
-        <button type="button" className={view === "open" ? "active" : ""} aria-pressed={view === "open"} data-testid="issues-view-open" onClick={() => setView("open")}>
-          Open ({open.length})
-        </button>
-        <button type="button" className={view === "done" ? "active" : ""} aria-pressed={view === "done"} data-testid="issues-view-done" onClick={() => setView("done")}>
-          Done ({done.length})
-        </button>
-      </div>
-      <ul className="plain" data-testid={view === "done" ? "issues-done" : "issues-open"}>
-        {issues.map((i) => (
-          <li
-            key={issueKey(i.issue)}
-            className="issue-row"
-            onClick={() => onSelect(i.issue)}
-            data-testid={`issue-${i.issue.number}`}
-            draggable={view === "open"}
-            onDragStart={view === "open" ? (e) => setIssueDrag(e, i.issue) : undefined}
-            title={view === "open" ? "Drag onto a part or a seam of the map to add a pin" : undefined}
-          >
-            {/* `issue-row-N` names the whole row for the e2e; `issue-N` is the older id on the same row. */}
-            <div className="row" data-testid={`issue-row-${i.issue.number}`}>
-              <ProgressRing state={i.progress.state} />
-              <span className="issue-main">
-                {/* A real button, so the row opens from the keyboard; its click reaches the row's handler. */}
-                <button type="button" className="link">
-                  {issueKey(i.issue)}
-                </button>{" "}
-                <span className="muted">{i.title ?? ""}</span>
-                <div className="muted">{i.pins.map((p) => p.id).join(", ") || "not pinned"}</div>
-              </span>
-              <span className="row-end">
-                <span className={`badge ${i.progress.state}`}>{STATE_LABEL[i.progress.state]}</span>
-                {closedUnmerged(i) && (
-                  <span className="badge closed" title="Closed on GitHub without a merged pull request">
-                    closed
-                  </span>
-                )}
-                <SignalBadges issue={i} here={hereName} />
-                {view === "open" && <PinMenu map={overview.map.map} issue={i.issue} pinned={i.pins} onPin={onPin} />}
-                {view === "open" && onQueue && <QueueMenu issue={i.issue} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} />}
-              </span>
-            </div>
-          </li>
-        ))}
-        {issues.length === 0 && (
-          <li className="muted" data-testid="no-tracked-issues">
-            {view === "done"
-              ? selection
-                ? `No finished issue is pinned to ${selection.kind === "seam" ? "seam" : "part"} ${selection.id}.`
-                : "Nothing finished yet."
-              : selection
-                ? `No open issue is pinned to ${selection.kind === "seam" ? "seam" : "part"} ${selection.id}.`
-                : done.length > 0
-                  ? `Nothing open on GitHub is tracked here. ${done.length} finished: see Done. Drag an issue from Not pinned onto the map to track it.`
-                  : "No tracked issues yet. Drag one from Not pinned onto a part or a seam of the map, or use its Pin to… menu."}
-          </li>
-        )}
-      </ul>
-      {view === "open" && <Backlog backlog={overview.backlog} map={overview.map.map} onPin={onPin} lanes={lanes} queue={overview.queue ?? []} onQueue={onQueue} listedAbove={new Set(open.map((i) => issueKey(i.issue)))} />}
-      {view === "open" && (overview.unpinned_sessions ?? []).length > 0 && (
-        <p className="muted">
-          {(overview.unpinned_sessions ?? []).length} session{(overview.unpinned_sessions ?? []).length === 1 ? "" : "s"} on branches outside the convention (unpinned).
-        </p>
-      )}
-    </section>
-  );
 }

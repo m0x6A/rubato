@@ -13,8 +13,13 @@
 import { useSyncExternalStore } from "react";
 import type { IssueRef, MapRef } from "../protocol.ts";
 
+/** Which issues the list shows: open ones Rubato tracks, open ones nobody pinned, or the finished. */
+export type IssueList = "open" | "not-pinned" | "done";
+
 export type View =
-  | { view: "issues" }
+  | { view: "issues"; list: IssueList }
+  /** The inspector of the part or seam selected on the map. */
+  | { view: "map" }
   | { view: "issue"; issue: IssueRef }
   | { view: "new-issue"; at: MapRef | null }
   | { view: "plans" }
@@ -31,9 +36,12 @@ export type View =
 /** A view, and the part or seam selected on the map beside it. */
 export type Route = View & { sel: MapRef | null };
 
-export const HOME: Route = { view: "issues", sel: null };
+export const HOME: Route = { view: "issues", list: "open", sel: null };
 
 const ID = /^[A-Za-z0-9._-]+$/;
+
+/** The lists of the issue view that have a path of their own; the open list is `/issues`. */
+const LISTS: Record<string, IssueList> = { "not-pinned": "not-pinned", done: "done" };
 
 function parseRef(s: string | null): MapRef | null {
   if (!s) {
@@ -87,7 +95,11 @@ export function parseRoute(hash: string): Route {
   switch (head) {
     case "issues": {
       if (only) {
-        return { view: "issues", sel };
+        return { view: "issues", list: "open", sel };
+      }
+      const named = a === undefined ? undefined : LISTS[a];
+      if (named && b === undefined) {
+        return { view: "issues", list: named, sel };
       }
       if (a === "new" && b === undefined) {
         const at = params.get("at");
@@ -109,6 +121,9 @@ export function parseRoute(hash: string): Route {
         return { view: "workspaces", sel };
       }
       return only ? { view: "settings", sel } : notFound;
+    case "map":
+      // The inspector is of something: with nothing selected there is nothing to show.
+      return only && sel ? { view: "map", sel } : notFound;
     case "companions":
     case "repos":
     case "findings":
@@ -125,6 +140,9 @@ export function formatRoute(route: Route): string {
   const params = new URLSearchParams();
   let path: string;
   switch (route.view) {
+    case "issues":
+      path = route.list === "open" ? "/issues" : `/issues/${route.list}`;
+      break;
     case "issue":
       path = `/issues/${route.issue.repo}/${route.issue.number}`;
       break;
@@ -171,16 +189,25 @@ export function parentOf(route: Route): Route | null {
   switch (route.view) {
     case "issue":
     case "new-issue":
+      // Closed, the part it was opened beside shows again: its inspector.
+      return route.sel ? { view: "map", sel: route.sel } : HOME;
     case "findings":
     case "not-found":
-      return { view: "issues", sel: route.sel };
+      return { view: "issues", list: "open", sel: route.sel };
+    case "map":
+      return HOME;
+    case "issues":
+      if (route.sel) {
+        return { ...route, sel: null };
+      }
+      return route.list === "open" ? null : HOME;
     case "plan":
       return { view: "plans", sel: route.sel };
     case "settings":
     case "workspaces":
     case "members":
     case "operator":
-      return { view: "issues", sel: route.sel };
+      return { view: "issues", list: "open", sel: route.sel };
     default:
       return route.sel ? { ...route, sel: null } : null;
   }

@@ -79,6 +79,8 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 async function pinFromTheMenu(target: RegExp) {
+  // An issue nobody pinned is under Not pinned (issue #357).
+  history.replaceState(null, "", "/#/issues/not-pinned");
   render(<App />);
   const row = await screen.findByTestId("backlog-row-902");
   fireEvent.click(within(row).getByRole("button", { name: "Pin m0x6A/rubato#902 to…" }));

@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { companion, issue, overview } from "../../../test/fixtures.ts";
-import { IssuePanel, ownConnectedCompanions } from "./IssuePanel.tsx";
+import { IssuePanel } from "../../../test/IssuePanel.tsx";
+import { ownConnectedCompanions } from "./own.ts";
 
 const me = { login: "m0x6A" };
 

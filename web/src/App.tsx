@@ -3,7 +3,7 @@ import { AccountMenu, LoginPage, authApi } from "./features/auth/index.ts";
 import { CompanionsPanel } from "./features/companions/index.ts";
 import { DraftPanel, type DraftPrefill, draftMarks, draftsApi, seamOpFor, withDraft } from "./features/drafts/index.ts";
 import { Findings } from "./features/findings/index.ts";
-import { IssuePanel, TeamTrack, ownConnectedCompanions } from "./features/issues/index.ts";
+import { IssueList, IssuePanel, TeamTrack, ownConnectedCompanions } from "./features/issues/index.ts";
 import { launchApi, launchFailureText, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe, takeForgottenWorkspace } from "./features/live/index.ts";
 import { NewIssueForm } from "./features/new_issue/index.ts";
@@ -28,8 +28,11 @@ import { HOME, type Route, type View, currentRoute, isPage, navigate, parentOf, 
 
 type Tab = "issues" | "plans" | "companions" | "repos";
 
-/** The tab a route's view sits under. An issue, a new issue and a link that names nothing sit under Issues. */
-function tabOf(route: Route): Tab {
+/**
+ * The nav entry a route's view sits under, if any. An issue, a new issue and a link that names
+ * nothing sit under Issues; the inspector and the findings are about the map, under no entry.
+ */
+function tabOf(route: Route): Tab | null {
   switch (route.view) {
     case "plans":
     case "plan":
@@ -38,8 +41,13 @@ function tabOf(route: Route): Tab {
       return "companions";
     case "repos":
       return "repos";
-    default:
+    case "issues":
+    case "issue":
+    case "new-issue":
+    case "not-found":
       return "issues";
+    default:
+      return null;
   }
 }
 
@@ -316,10 +324,13 @@ export function App() {
     [refresh, setNotice],
   );
 
-  /** A part or seam chosen on the map: the Issues tab explains it, and an open issue gives way. */
+  /** A part or seam chosen on the map: its inspector shows, and an open issue gives way. */
   const onSelectOnMap = useCallback((ref: MapRef | null) => {
     if (ref) {
-      navigate({ view: "issues", sel: ref });
+      navigate({ view: "map", sel: ref });
+    } else if (currentRoute().view === "map") {
+      // Nothing selected leaves the inspector nothing to show.
+      navigate(HOME, { replace: true });
     } else {
       selectOnly(null);
     }
@@ -618,7 +629,7 @@ export function App() {
         ) : (
         <aside className="panel">
           <nav className="tabs">
-            <button className={tab === "issues" ? "active" : ""} onClick={() => go({ view: "issues" })} title="Open issues Rubato tracks: pinned to the map, or with a plan">
+            <button className={tab === "issues" ? "active" : ""} onClick={() => go({ view: "issues", list: "open" })} title="Open issues Rubato tracks: pinned to the map, or with a plan">
               Issues
             </button>
             <button className={tab === "plans" ? "active" : ""} onClick={() => go({ view: "plans" })} data-testid="tab-plans" aria-label={overview ? `Plans (${groupPlans(overview).proposed.length} proposed)` : undefined} title="Plans waiting for approval are counted">
@@ -684,7 +695,7 @@ export function App() {
           {/* The map explains what is selected; an open issue takes the panel instead. */}
           {/* With a part or seam selected, its inspector offers "New issue here…" instead. */}
           {overview && list && !selection && <TeamTrack issues={openIssues(overview)} />}
-          {overview && list && !selection && liveMap(overview.map.map).nodes[0] && (
+          {overview && route.view === "issues" && route.list === "open" && !selection && liveMap(overview.map.map).nodes[0] && (
             <p className="new-issue-start">
               <button type="button" data-testid="new-issue-start" onClick={() => go({ view: "new-issue", at: null })}>
                 New issue…
@@ -704,7 +715,7 @@ export function App() {
               }}
             />
           )}
-          {overview && onIssues && selection && !selected && !newIssueAt && (
+          {overview && route.view === "map" && selection && (
             <Inspector
               overview={shown ?? overview}
               selection={selection}
@@ -713,19 +724,31 @@ export function App() {
               onNewIssue={(at) => go({ view: "new-issue", at })}
             />
           )}
-          {overview && onIssues && (
+          {overview && list && (
+            <IssueList
+              overview={overview}
+              me={me}
+              list={route.view === "issues" ? route.list : "open"}
+              onList={(which) => go({ view: "issues", list: which })}
+              selection={selection}
+              onClearSelection={() => selectOnly(null)}
+              onOpen={(issue) => go({ view: "issue", issue })}
+              onPin={onPin}
+              onQueue={onQueue}
+            />
+          )}
+          {overview && route.view === "issue" && selected && (
             <IssuePanel
               overview={overview}
               me={me}
               selected={selected}
-              selection={selection}
-              onSelect={(issue) => go(issue ? { view: "issue", issue } : { view: "issues" })}
-              onClearSelection={() => selectOnly(null)}
+              // "← all issues" says where it goes: the list (Escape goes up, to the part's inspector when one is selected).
+              onClose={() => go({ view: "issues", list: "open" })}
+              onOpenIssue={(issue) => go({ view: "issue", issue })}
               onLaunch={onLaunch}
               onLaunchLead={onLaunchLead}
               onPin={onPin}
               onUnpin={onUnpin}
-              onQueue={onQueue}
               onNotice={(text) => {
                 setNotice(text);
                 void refresh();

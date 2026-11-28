@@ -28,3 +28,12 @@ export async function account(page: Page, item: "open-members" | "open-operator"
   await page.getByTestId("account-menu").getByRole("button").first().click();
   await page.getByTestId(item).click();
 }
+
+/** The address of the issue list's Not pinned segment: open issues of the map's repos nobody tracks yet. */
+export const NOT_PINNED = "/#/issues/not-pinned";
+
+/** Show the Not pinned segment of the issue list. */
+export async function showNotPinned(page: Page) {
+  await page.getByTestId("issues-view-not-pinned").click();
+  await expect(page.getByTestId("backlog")).toBeVisible();
+}

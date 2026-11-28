@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { companion, issue, overview } from "../../../test/fixtures.ts";
-import { IssuePanel } from "./IssuePanel.tsx";
+import { IssuePanel } from "../../../test/IssuePanel.tsx";
 
 const me = { login: "m0x6A" };
 const MINE = "11111111-1111-1111-1111-111111111111";

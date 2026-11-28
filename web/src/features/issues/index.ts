@@ -1,3 +1,5 @@
-/** Issues: the issue list, the not-pinned backlog, the issue detail and the start-session gate. */
-export { IssuePanel, ownConnectedCompanions } from "./IssuePanel.tsx";
+/** Issues: the issue list (open, not pinned, done), the issue detail and the start-session gate. */
+export { IssueList, notPinned } from "./IssueList.tsx";
+export { IssuePanel } from "./IssuePanel.tsx";
+export { ownConnectedCompanions, ownLanes } from "./own.ts";
 export { TeamTrack } from "./visuals.tsx";
