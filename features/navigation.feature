@@ -42,6 +42,7 @@ Feature: Navigation
     Then the panel shows that one view, with nothing stacked above it
     And a page of its own (the settings, the workspaces, the members, the operator's) hides the map and keeps the top bar
     And the top bar holds the brand, the workspace menu, the live dot and the account menu
+    And the band above the map is one row: the lenses, the View menu and Edit map, with the key to the arrows one press away
 
   @navigation.link-opens-issue-section
   Scenario: A link opens one part of an issue

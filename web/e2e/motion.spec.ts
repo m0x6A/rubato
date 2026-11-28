@@ -1,4 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
+import { toggleByRepo } from "./shell.ts";
 import { addCss } from "./fixtures/css.ts";
 import { FRESH_DIRECTIONS, freshTraffic, routeOverview } from "./fixtures/traffic.ts";
 
@@ -198,7 +199,7 @@ test("must fail: with full motion the pulse animates and the canvas moves", { ta
 // Issue #144: inside a By repo box, a closed bundle draws no particles and no chevrons; opened
 // (here by selecting a part), its seams draw them as the flat map does, still under reduced motion.
 async function byRepoWithWebSelected(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "By repo" }).click();
+  await toggleByRepo(page);
   await expect(page.getByTestId("repo-box-m0x6A/rubato")).toBeVisible();
   await expect(page.getByTestId("bundle-rubato-server|web")).toBeVisible();
   await expect(page.locator('[data-flow^="web-server#"]')).toHaveCount(0);

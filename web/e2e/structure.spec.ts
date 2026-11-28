@@ -10,6 +10,7 @@ const PANEL: [fragment: string, view: string][] = [
   ["#/issues/not-pinned", "issues"],
   ["#/issues/done", "issues"],
   ["#/map?sel=part:web", "map"],
+  ["#/map/territory", "territory"],
   ["#/issues/m0x6A/rubato/915", "issue"],
   ["#/issues/new", "new-issue"],
   ["#/plans", "plans"],
@@ -73,7 +74,19 @@ test("every address shows one view, with nothing stacked above it, under a top b
     await expect(workspaceButton(page), fragment).toBeVisible();
     checked += 1;
   }
-  console.log(`checked ${checked} addresses: one view each, a top bar of four`);
+  // The band above the map is one row: the lenses, View and Edit map, with the key folded.
+  await page.goto("/#/issues");
+  const band = page.getByTestId("map-band");
+  await expect(band.getByRole("radio", { name: "Structure" })).toBeVisible();
+  for (const lens of ["Structure", "Data flow", "Control flow"]) {
+    await band.getByRole("radio", { name: new RegExp(`^${lens}`) }).click();
+    await expect(band.locator("details.map-key")).not.toHaveAttribute("open", "");
+    const rows = await band.evaluate((el) => new Set([...el.querySelectorAll(".map-band-row > *")].map((c) => Math.round(c.getBoundingClientRect().top / 20))).size);
+    expect(rows, lens).toBe(1);
+    // The row, and under it only the folded key.
+    expect((await band.boundingBox())!.height, lens).toBeLessThan(90);
+  }
+  console.log(`checked ${checked} addresses: one view each, a top bar of four; the map band in 3 lenses: one row`);
   expect(checked).toBe(PANEL.length + PAGES.length);
 });
 

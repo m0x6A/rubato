@@ -35,10 +35,10 @@ export function Discrepancies({ overview, onTake, onDismiss, onUndo, busy = fals
   // Closed by default: the summary must already say that nothing was seen, not "(0)".
   const empty = nothingObserved(t);
   return (
-    <details className="discrepancies" aria-label="Map versus territory" data-testid="discrepancies">
-      <summary>
+    <section className="discrepancies" aria-label="Map versus territory" data-testid="discrepancies">
+      <h2 data-testid="discrepancies-count">
         Map versus territory <span className="muted">({empty ? "nothing observed" : rows.length})</span>
-      </summary>
+      </h2>
       {rows.length === 0 ? (
         empty ? (
           <p className="warn" data-testid="nothing-observed">
@@ -86,6 +86,6 @@ export function Discrepancies({ overview, onTake, onDismiss, onUndo, busy = fals
           </ul>
         </details>
       )}
-    </details>
+    </section>
   );
 }

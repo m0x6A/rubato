@@ -12,6 +12,8 @@ const EVERY: Route[] = [
   { view: "issues", list: "not-pinned", sel: null },
   { view: "issues", list: "done", sel: SEAM },
   { view: "map", sel: PART },
+  { view: "territory", sel: null },
+  { view: "territory", sel: SEAM },
   { view: "issue", issue: ISSUE, section: "overview", from: null, sel: null },
   { view: "issue", issue: ISSUE, section: "plan", from: null, sel: SEAM },
   { view: "issue", issue: ISSUE, section: "room", from: null, sel: null },
@@ -36,7 +38,7 @@ const EVERY: Route[] = [
   { view: "not-found", fragment: "/nowhere", sel: null },
 ];
 
-const KINDS = ["map", "issues", "issue", "new-issue", "plans", "companions", "pair", "repos", "repo", "pull", "findings", "settings", "workspaces", "members", "operator", "not-found"];
+const KINDS = ["map", "territory", "issues", "issue", "new-issue", "plans", "companions", "pair", "repos", "repo", "pull", "findings", "settings", "workspaces", "members", "operator", "not-found"];
 
 /** How many of the routes survive `format` then `parse`, and which kinds they cover. */
 function roundTrips(routes: Route[]): { ok: number; kinds: Set<string> } {
@@ -82,7 +84,7 @@ describe("the view in the URL fragment (issue #357)", () => {
   });
 
   it("names nothing it cannot read", () => {
-    for (const hash of ["#/nowhere", "#issues", "#/issues/m0x6A/rubato", "#/issues/m0x6A/rubato/0", "#/issues/m0x6A/rubato/12/extra/more", "#/issues/m0x6A/rubato/12/nope", "#/plans/m0x6A/rubato/12/plan", "#/plans/x", "#/repos/extra", "#/companions/pair/more", "#/companions/nope", "#/repos/m0x6A/rubato/more", "#/pulls/m0x6A/rubato", "#/pulls/m0x6A/rubato/0", "#/map", "#/issues/done/more", "#/settings/nope", "#/issues/new?at=galaxy:x", "#/issues/%E0%A4%A"]) {
+    for (const hash of ["#/nowhere", "#issues", "#/issues/m0x6A/rubato", "#/issues/m0x6A/rubato/0", "#/issues/m0x6A/rubato/12/extra/more", "#/issues/m0x6A/rubato/12/nope", "#/plans/m0x6A/rubato/12/plan", "#/plans/x", "#/repos/extra", "#/map/territory/more", "#/map/nope", "#/companions/pair/more", "#/companions/nope", "#/repos/m0x6A/rubato/more", "#/pulls/m0x6A/rubato", "#/pulls/m0x6A/rubato/0", "#/map", "#/issues/done/more", "#/settings/nope", "#/issues/new?at=galaxy:x", "#/issues/%E0%A4%A"]) {
       expect(parseRoute(hash).view, hash).toBe("not-found");
     }
     // A selection that reads as nothing is dropped; the view still shows.

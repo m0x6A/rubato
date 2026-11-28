@@ -95,7 +95,7 @@ const SURFACES: { name: string; setup: (page: Page) => Promise<void> }[] = [
       await ready(page);
       await page.getByRole("radio", { name: "Traffic" }).click();
       await expect(page.getByTestId("ghost-shop/checkout")).toBeInViewport();
-      await page.getByTestId("discrepancies").locator(":scope > summary").click();
+      await page.getByTestId("to-settle").click();
       await expect(page.getByTestId("discrepancies")).toContainText("Add as a part");
     },
   },

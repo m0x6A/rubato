@@ -6,3 +6,5 @@ export { mapApi } from "./api.ts";
 export { Inspector, PlanInspector } from "./Inspector.tsx";
 export { Discrepancies } from "./Discrepancies.tsx";
 export type { Take } from "./territory.ts";
+export { discrepancies } from "./territory.ts";
+export { TrafficVitals, trafficVitals, unknownSentence } from "./traffic.tsx";

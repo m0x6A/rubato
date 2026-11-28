@@ -7,7 +7,7 @@ import { IssueList, IssuePanel, TeamTrack, ownConnectedCompanions } from "./feat
 import { launchApi, launchFailureText, launchNotice } from "./features/launch/index.ts";
 import { liveApi, subscribe, takeForgottenWorkspace } from "./features/live/index.ts";
 import { NewIssueForm } from "./features/new_issue/index.ts";
-import { Discrepancies, Inspector, MapView, PlanInspector, type Take, buildGraph, mapApi } from "./features/map/index.ts";
+import { Discrepancies, Inspector, MapView, PlanInspector, type Take, TrafficVitals, buildGraph, discrepancies, mapApi, trafficVitals, unknownSentence } from "./features/map/index.ts";
 import { pinsApi } from "./features/pins/index.ts";
 import { PlansBoard, groupPlans } from "./features/plans/index.ts";
 import { ConnectedRepos, RepoView } from "./features/repos/index.ts";
@@ -451,6 +451,8 @@ export function App() {
       return;
     }
     setEditing(true);
+    // The draft's form is in the panel; the list it was taken from gives way to it.
+    go({ view: "issues", list: "open" });
   }, []);
 
   /** Dismiss a discrepancy for the workspace as yourself (ADR 0060), with a way back. */
@@ -611,7 +613,8 @@ export function App() {
                 setAddPartFocus((n) => n + 1);
               }}
               onConfigure={() => go({ view: "settings" })}
-              trafficActions={<Discrepancies overview={overview} onTake={onTake} onDismiss={(k) => void onDismiss(k)} onUndo={(id) => void onUndismiss(id)} busy={trafficBusy} canWrite={me !== null} />}
+              toSettle={overview.traffic?.state === "fresh" ? { count: discrepancies(overview).length, onOpen: () => go({ view: "territory" }) } : undefined}
+              wantTraffic={route.view === "territory"}
             />
           ) : (
             <div className="empty">{error ?? (noTenant ? "No tenant, so no map to show." : "Loading the map…")}</div>
@@ -677,6 +680,29 @@ export function App() {
             )}
           </nav>
           <div className="view" data-view={route.view}>
+          {overview && route.view === "territory" && (
+            <section className="territory-view" aria-label="Map versus territory" data-testid="territory">
+              <p>
+                <button type="button" onClick={goUp}>
+                  ← all issues
+                </button>
+              </p>
+              {overview.traffic?.state === "fresh" ? (
+                <>
+                  <TrafficVitals traffic={overview.traffic} quietSeams={trafficVitals(overview.traffic, graph?.edges.filter((e) => e.quietFor !== undefined).length ?? 0).quietSeams} seams={graph?.edges.length ?? 0} />
+                  <Discrepancies overview={overview} onTake={onTake} onDismiss={(k) => void onDismiss(k)} onUndo={(id) => void onUndismiss(id)} busy={trafficBusy} canWrite={me !== null} />
+                </>
+              ) : (
+                <>
+                  <h2>Map versus territory</h2>
+                  {/* Unknown offers nothing: silence in the data is never read as silence on the map (ADR 0039). */}
+                  <p className="muted" data-testid="territory-unknown">
+                    {unknownSentence(overview.traffic ?? { state: "not_configured" }) ?? "No fresh traffic report."} Nothing is compared with the map until one is in.
+                  </p>
+                </>
+              )}
+            </section>
+          )}
           {overview && route.view === "findings" && (
             <section className="findings-view" aria-label="Findings">
               <p>
