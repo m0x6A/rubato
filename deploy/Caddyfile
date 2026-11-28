@@ -1,0 +1,15 @@
+# TLS for Rubato on the internet (ADR 0090, profile `public` in compose.yaml). Caddy gets and
+# renews the certificate for RUBATO_DOMAIN by ACME and redirects http to https by itself.
+#
+# It is the only thing that listens on the host's public ports; the app's own port is bound to
+# loopback there (RUBATO_APP_BIND=127.0.0.1). Caddy sets X-Forwarded-For to the address it saw
+# and drops whatever a client sent, and the app reads that header only from this network
+# (RUBATO_TRUSTED_PROXY), so rate limits count real addresses.
+{
+	email {$RUBATO_ACME_EMAIL}
+}
+
+{$RUBATO_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}

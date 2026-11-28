@@ -136,6 +136,9 @@ pub struct AppState {
     /// Who a login is across tenants (ADR 0087, 0088): the composition root installs the
     /// tenancy adapter with `set_admission`; until then nobody is in a tenant.
     admission: std::sync::RwLock<Arc<dyn crate::kernel::admission::Admission>>,
+    /// The token buckets and the bound on concurrent requests of `kernel::limits::guard`
+    /// (ADR 0090). Per server, so one test's requests never spend another's tokens.
+    pub limiter: crate::kernel::limits::Limiter,
 }
 
 /// One value per type, made on first use: lets a slice keep in-memory state on the `App`
@@ -199,6 +202,7 @@ impl AppState {
         Arc::new(Self {
             speech: std::sync::RwLock::new(speech),
             admission: std::sync::RwLock::new(Arc::new(crate::kernel::admission::Unwired)),
+            limiter: Default::default(),
             db,
             config: Arc::new(config),
             github,

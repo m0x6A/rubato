@@ -57,14 +57,47 @@ pub async fn create_pairing_code(
     user_code: &str,
     ttl_secs: i64,
     max_pending: i64,
-) -> Result<bool> {
+    client_addr: Option<&str>,
+) -> Result<Started> {
     let now = Utc::now();
+    // One address holds a few pending codes at most (ADR 0090), so one sender cannot fill the
+    // server's cap and keep everyone else from pairing. A peer the server does not know is
+    // held to the server's cap only.
+    if let Some(addr) = client_addr {
+        let held: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pairing_codes WHERE status = 'pending' AND expires_at > ? AND client_addr = ?",
+        )
+        .bind(ts(now))
+        .bind(addr)
+        .fetch_one(db)
+        .await?;
+        if held >= PENDING_PER_ADDR {
+            return Ok(Started::AddressFull);
+        }
+    }
     // The cap is checked in the insert itself, so concurrent starts cannot overshoot it (#168).
-    let r = sqlx::query("INSERT INTO pairing_codes (device_code, user_code, companion_id, hostname, companion_version, status, created_at, expires_at) SELECT ?, ?, ?, ?, ?, 'pending', ?, ? WHERE (SELECT COUNT(*) FROM pairing_codes WHERE status = 'pending' AND expires_at > ?) < ?")
-        .bind(device_code).bind(user_code).bind(req.companion_id.to_string()).bind(&req.hostname).bind(&req.companion_version).bind(ts(now)).bind(ts(now + chrono::Duration::seconds(ttl_secs)))
+    let r = sqlx::query("INSERT INTO pairing_codes (device_code, user_code, companion_id, hostname, companion_version, status, created_at, expires_at, client_addr) SELECT ?, ?, ?, ?, ?, 'pending', ?, ?, ? WHERE (SELECT COUNT(*) FROM pairing_codes WHERE status = 'pending' AND expires_at > ?) < ?")
+        .bind(device_code).bind(user_code).bind(req.companion_id.to_string()).bind(&req.hostname).bind(&req.companion_version).bind(ts(now)).bind(ts(now + chrono::Duration::seconds(ttl_secs))).bind(client_addr)
         .bind(ts(now)).bind(max_pending)
         .execute(db).await?;
-    Ok(r.rows_affected() == 1)
+    Ok(if r.rows_affected() == 1 {
+        Started::Stored
+    } else {
+        Started::ServerFull
+    })
+}
+
+/// The most pending pairing codes one address holds (ADR 0090).
+pub const PENDING_PER_ADDR: i64 = 5;
+
+/// What became of a pairing start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Started {
+    Stored,
+    /// The server's own cap on pending codes is reached.
+    ServerFull,
+    /// This address holds its share of pending codes.
+    AddressFull,
 }
 
 /// How long after its expiry a code is kept, so a late poll still reads `Expired` (#168).
@@ -332,10 +365,11 @@ mod tests {
             ("recent", "RECENT", -60),
             ("live", "LIVE", 900),
         ] {
-            assert!(
-                create_pairing_code(&db, &start(), device, user_code, ttl, 50)
+            assert_eq!(
+                create_pairing_code(&db, &start(), device, user_code, ttl, 50, None)
                     .await
-                    .unwrap()
+                    .unwrap(),
+                Started::Stored
             );
         }
         sqlx::query("UPDATE pairing_codes SET status = 'consumed' WHERE device_code = 'old'")
@@ -354,10 +388,11 @@ mod tests {
     #[tokio::test]
     async fn claim_refuses_a_code_already_claimed() {
         let (db, _tmp) = pool().await;
-        assert!(
-            create_pairing_code(&db, &start(), "dev", "CODE", 900, 50)
+        assert_eq!(
+            create_pairing_code(&db, &start(), "dev", "CODE", 900, 50, None)
                 .await
-                .unwrap()
+                .unwrap(),
+            Started::Stored
         );
         let mut tx = db.begin().await.unwrap();
         assert!(claim_code(&mut tx, "dev", "alice", "t1").await.unwrap());
@@ -390,13 +425,71 @@ mod tests {
             ("c", "C", 900),
         ] {
             stored.push(
-                create_pairing_code(&db, &start(), device, code, ttl, 2)
+                create_pairing_code(&db, &start(), device, code, ttl, 2, None)
                     .await
-                    .unwrap(),
+                    .unwrap()
+                    == Started::Stored,
             );
         }
         assert_eq!(stored, [true, true, true, false]);
         assert_eq!(status(&db, "c").await, None, "nothing stored over the cap");
         println!("checked 4 starts against a cap of 2: 3 stored, 1 refused");
+    }
+
+    /// ADR 0090: one address holds a few pending codes; another address, and a code that
+    /// expired or was approved, are not counted against it.
+    #[tokio::test]
+    async fn one_address_holds_only_its_share_of_pending_codes() {
+        let (db, _tmp) = pool().await;
+        let make = |device: String, ttl: i64, addr: Option<&'static str>| {
+            let db = db.clone();
+            async move {
+                create_pairing_code(
+                    &db,
+                    &start(),
+                    &device,
+                    &device.to_uppercase(),
+                    ttl,
+                    50,
+                    addr,
+                )
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(
+            make("gone".into(), -1, Some("198.51.100.7")).await,
+            Started::Stored
+        );
+        for i in 0..PENDING_PER_ADDR {
+            assert_eq!(
+                make(format!("a{i}"), 900, Some("198.51.100.7")).await,
+                Started::Stored
+            );
+        }
+        assert_eq!(
+            make("over".into(), 900, Some("198.51.100.7")).await,
+            Started::AddressFull
+        );
+        assert_eq!(
+            status(&db, "over").await,
+            None,
+            "nothing stored over the share"
+        );
+        // Someone else pairs all the same, and so does a peer the server does not know.
+        assert_eq!(
+            make("other".into(), 900, Some("203.0.113.9")).await,
+            Started::Stored
+        );
+        assert_eq!(make("unknown".into(), 900, None).await, Started::Stored);
+        // An approved code frees its place.
+        let mut tx = db.begin().await.unwrap();
+        assert!(claim_code(&mut tx, "a0", "alice", "t").await.unwrap());
+        tx.commit().await.unwrap();
+        assert_eq!(
+            make("again".into(), 900, Some("198.51.100.7")).await,
+            Started::Stored
+        );
+        println!("checked {} starts from 3 addresses", PENDING_PER_ADDR + 6);
     }
 }

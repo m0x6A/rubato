@@ -8,6 +8,7 @@ pub mod config;
 pub mod db;
 pub mod github;
 pub mod http;
+pub mod limits;
 pub mod purge;
 pub mod secrets;
 pub mod signer;

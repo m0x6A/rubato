@@ -541,7 +541,142 @@ pub struct Config {
     /// `RUBATO_OPERATORS`: the GitHub user ids that may use the operator page (ADR 0088). Ids,
     /// not logins: a login can be renamed and reused. Not a role inside any tenant.
     pub operators: Vec<u64>,
+    /// `RUBATO_ALLOW_HTTP=1`: a server off loopback may run on plain http, as on a LAN, and
+    /// then needs none of the secrets a server on the internet must have (ADR 0090).
+    pub allow_http: bool,
+    /// `RUBATO_TRUSTED_PROXY`: the addresses and networks of the reverse proxy in front. Only a
+    /// request from one of them has its client address read from `X-Forwarded-For` (ADR 0090).
+    pub trusted_proxies: Vec<Net>,
+    /// Token buckets on the anonymous paths and on writes, the request timeout and the bound
+    /// on concurrent requests (ADR 0090). On for a server started from the environment; tests
+    /// turn them on where they test them.
+    pub request_limits: bool,
     pub warnings: Vec<String>,
+}
+
+/// An address or a network in CIDR form (`172.18.0.0/16`, `10.1.2.3`, `fd00::/8`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Net {
+    addr: std::net::IpAddr,
+    prefix: u8,
+}
+
+impl Net {
+    pub fn parse(s: &str) -> Option<Net> {
+        let (addr, prefix) = match s.split_once('/') {
+            Some((a, p)) => (
+                a.parse::<std::net::IpAddr>().ok()?,
+                Some(p.parse::<u8>().ok()?),
+            ),
+            None => (s.parse::<std::net::IpAddr>().ok()?, None),
+        };
+        let max = if addr.is_ipv4() { 32 } else { 128 };
+        let prefix = prefix.unwrap_or(max);
+        (prefix <= max).then_some(Net { addr, prefix })
+    }
+
+    pub fn contains(&self, ip: std::net::IpAddr) -> bool {
+        use std::net::IpAddr;
+        // An IPv4 client seen through an IPv6 socket is still that IPv4 address.
+        let ip = match ip {
+            IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+            v4 => v4,
+        };
+        match (self.addr, ip) {
+            (IpAddr::V4(net), IpAddr::V4(ip)) => {
+                let mask = u32::MAX
+                    .checked_shl(32 - u32::from(self.prefix))
+                    .unwrap_or(0);
+                u32::from(net) & mask == u32::from(ip) & mask
+            }
+            (IpAddr::V6(net), IpAddr::V6(ip)) => {
+                let mask = u128::MAX
+                    .checked_shl(128 - u32::from(self.prefix))
+                    .unwrap_or(0);
+                u128::from(net) & mask == u128::from(ip) & mask
+            }
+            _ => false,
+        }
+    }
+}
+
+/// `RUBATO_TRUSTED_PROXY`: comma-separated addresses or networks. A value that does not read
+/// stops the start: a proxy silently not trusted would rate-limit everyone as one address.
+fn trusted_proxies(v: Option<&str>) -> Result<Vec<Net>> {
+    let Some(v) = v else { return Ok(Vec::new()) };
+    v.split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            Net::parse(p).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "RUBATO_TRUSTED_PROXY: {p:?} is not an address or a network (10.1.2.3, 172.18.0.0/16)"
+                )
+            })
+        })
+        .collect()
+}
+
+/// The shortest `RUBATO_SESSION_SECRET` a server on the internet starts with (ADR 0090).
+pub const SESSION_SECRET_MIN_BYTES: usize = 32;
+
+/// What a server needs before it may be reached from outside this machine (ADR 0090). Off
+/// loopback the public URL is https, unless `RUBATO_ALLOW_HTTP=1` says this is a LAN; and
+/// without that opt-in the session secret (at least 32 bytes), the token key, the GitHub App
+/// and the operators are all set. Every refusal starts `refusing to start:` and names the
+/// setting. Returns whether plain http was opted into.
+fn internet(
+    local: bool,
+    public_url: &str,
+    allow_http: Option<&str>,
+    session_secret: Option<&str>,
+    token_key: bool,
+    github_app: bool,
+    operators: usize,
+) -> Result<bool> {
+    let allow_http = match allow_http {
+        None => false,
+        Some("1") => true,
+        Some(other) => {
+            anyhow::bail!("refusing to start: RUBATO_ALLOW_HTTP must be 1 or unset, not {other:?}")
+        }
+    };
+    if local {
+        return Ok(allow_http);
+    }
+    // On a LAN, as before ADR 0090; `insecure_cookie_warning` says what plain http costs.
+    if allow_http {
+        return Ok(true);
+    }
+    anyhow::ensure!(
+        public_url.starts_with("https://"),
+        "refusing to start: RUBATO_PUBLIC_URL {public_url} is not https and the server is not local.          Put it behind TLS (deploy/compose.yaml runs Caddy), or set RUBATO_ALLOW_HTTP=1 on a LAN (ADR 0090)"
+    );
+    let mut missing = Vec::new();
+    match session_secret {
+        None => missing.push("RUBATO_SESSION_SECRET is unset".to_owned()),
+        Some(s) if s.len() < SESSION_SECRET_MIN_BYTES => missing.push(format!(
+            "RUBATO_SESSION_SECRET is {} bytes, shorter than {SESSION_SECRET_MIN_BYTES}",
+            s.len()
+        )),
+        Some(_) => {}
+    }
+    if !token_key {
+        missing.push("RUBATO_TOKEN_KEY is unset".to_owned());
+    }
+    if !github_app {
+        missing
+            .push("the GitHub App (RUBATO_GITHUB_APP_ID and its key) is not configured".to_owned());
+    }
+    if operators == 0 {
+        missing.push("RUBATO_OPERATORS names nobody, so no tenant could be created".to_owned());
+    }
+    anyhow::ensure!(
+        missing.is_empty(),
+        "refusing to start: a server off loopback needs its secrets (ADR 0090): {}",
+        missing.join("; ")
+    );
+    Ok(false)
 }
 
 fn env(name: &str) -> Option<String> {
@@ -693,8 +828,20 @@ impl Config {
                 &mut warnings,
             )?,
             operators: operators(env("RUBATO_OPERATORS").as_deref())?,
+            allow_http: false,
+            trusted_proxies: trusted_proxies(env("RUBATO_TRUSTED_PROXY").as_deref())?,
+            request_limits: true,
             warnings,
         };
+        config.allow_http = internet(
+            is_local(config.bind, &config.public_url),
+            &config.public_url,
+            env("RUBATO_ALLOW_HTTP").as_deref(),
+            env("RUBATO_SESSION_SECRET").as_deref(),
+            config.token_key.is_some(),
+            config.github_app.is_some(),
+            config.operators.len(),
+        )?;
         let open = exposure(
             config.bind,
             &config.public_url,
@@ -909,8 +1056,28 @@ impl Config {
             fleet_max: rubato_protocol::fleet::limits::FLEET_MAX_DEFAULT,
             context_graph: None,
             operators: Vec::new(),
+            allow_http: false,
+            trusted_proxies: Vec::new(),
+            request_limits: false,
             warnings: Vec::new(),
         }
+    }
+
+    /// The name of the session cookie (ADR 0090). Over https it carries the `__Host-` prefix: a
+    /// browser then accepts it only with `Secure`, `Path=/` and no `Domain`, so no other host of
+    /// the site and no plain-http page can set or overwrite it.
+    pub fn session_cookie(&self) -> &'static str {
+        if self.https() {
+            "__Host-rubato_session"
+        } else {
+            "rubato_session"
+        }
+    }
+
+    /// Whether the public URL is https: the session cookie is then `__Host-` prefixed and
+    /// `Strict-Transport-Security` is sent (ADR 0090).
+    pub fn https(&self) -> bool {
+        self.public_url.starts_with("https://")
     }
 
     /// Whether `github_id` is listed in `RUBATO_OPERATORS` (ADR 0088).
@@ -1357,6 +1524,121 @@ mod tests {
     }
 
     /// The fake adapter echoes uploads: only a dev server (loopback, ADR 0064) may use it.
+    /// ADR 0090: off loopback, https or the LAN opt-in; and without the opt-in, every secret.
+    #[test]
+    fn a_server_off_loopback_needs_tls_and_its_secrets() {
+        let secret = "s".repeat(SESSION_SECRET_MIN_BYTES);
+        let run = |local: bool,
+                   url: &str,
+                   allow: Option<&str>,
+                   secret: Option<&str>,
+                   key: bool,
+                   app: bool,
+                   ops: usize| {
+            internet(local, url, allow, secret, key, app, ops).map_err(|e| e.to_string())
+        };
+        // Local: nothing is asked.
+        assert_eq!(
+            run(true, "http://127.0.0.1:8080", None, None, false, false, 0),
+            Ok(false)
+        );
+        // The LAN opt-in: plain http, and no secret is required, as before.
+        assert_eq!(
+            run(false, "http://apps:18080", Some("1"), None, false, false, 0),
+            Ok(true)
+        );
+        // Off loopback without it: https, or nothing.
+        let err = run(
+            false,
+            "http://demo.example",
+            None,
+            Some(&secret),
+            true,
+            true,
+            1,
+        )
+        .unwrap_err();
+        assert!(
+            err.starts_with(
+                "refusing to start: RUBATO_PUBLIC_URL http://demo.example is not https"
+            ),
+            "{err}"
+        );
+        assert!(err.contains("RUBATO_ALLOW_HTTP=1"), "{err}");
+        // With https, each missing secret is named, all at once.
+        assert_eq!(
+            run(
+                false,
+                "https://demo.example",
+                None,
+                Some(&secret),
+                true,
+                true,
+                1
+            ),
+            Ok(false)
+        );
+        let err = run(false, "https://demo.example", None, None, false, false, 0).unwrap_err();
+        for part in [
+            "refusing to start: a server off loopback needs its secrets",
+            "RUBATO_SESSION_SECRET is unset",
+            "RUBATO_TOKEN_KEY is unset",
+            "the GitHub App",
+            "RUBATO_OPERATORS names nobody",
+        ] {
+            assert!(err.contains(part), "{part}: {err}");
+        }
+        let err = run(
+            false,
+            "https://demo.example",
+            None,
+            Some("short"),
+            true,
+            true,
+            1,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("RUBATO_SESSION_SECRET is 5 bytes, shorter than 32"),
+            "{err}"
+        );
+        assert!(!err.contains("RUBATO_TOKEN_KEY"), "{err}");
+        // A value that is not the opt-in is not read as one.
+        let err = run(
+            false,
+            "https://demo.example",
+            Some("true"),
+            Some(&secret),
+            true,
+            true,
+            1,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("RUBATO_ALLOW_HTTP must be 1 or unset"),
+            "{err}"
+        );
+        println!("checked 8 start-up cases");
+    }
+
+    #[test]
+    fn trusted_proxies_are_addresses_and_networks() {
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        let nets = trusted_proxies(Some("172.18.0.0/16, 10.1.2.3,fd00::/8")).unwrap();
+        assert_eq!(nets.len(), 3);
+        let trusted = |a: &str| nets.iter().any(|n| n.contains(ip(a)));
+        assert!(trusted("172.18.4.9") && trusted("10.1.2.3") && trusted("fd12::1"));
+        assert!(!trusted("172.19.0.1") && !trusted("10.1.2.4") && !trusted("2001:db8::1"));
+        // An IPv4 peer on a dual-stack socket.
+        assert!(trusted("::ffff:10.1.2.3"));
+        assert!(Net::parse("0.0.0.0/0").unwrap().contains(ip("8.8.8.8")));
+        assert_eq!(trusted_proxies(None).unwrap(), Vec::new());
+        for bad in ["proxy", "10.0.0.0/33", "10.0.0.0/x"] {
+            let err = trusted_proxies(Some(bad)).unwrap_err().to_string();
+            assert!(err.contains("RUBATO_TRUSTED_PROXY"), "{err}");
+        }
+    }
+
     #[test]
     fn operators_are_numeric_github_ids() {
         assert_eq!(operators(None).unwrap(), Vec::<u64>::new());

@@ -85,8 +85,12 @@ pub async fn check_workspace(
     next.run(req).await
 }
 
+/// The largest body a route takes unless it sets its own limit (ADR 0090).
+pub const DEFAULT_BODY_MAX_BYTES: usize = 1024 * 1024;
+
 /// The largest JSON body [`check_repos`] reads to look for a repository; a larger one is 413.
-pub const SCOPE_BODY_MAX_BYTES: usize = 2 * 1024 * 1024;
+/// The default limit: a tenant route with a larger cap of its own takes no JSON.
+pub const SCOPE_BODY_MAX_BYTES: usize = DEFAULT_BODY_MAX_BYTES;
 
 /// Every repository a request names where the protocol puts one: `repo`, `issue.repo` and
 /// `issues[].repo` of a JSON body.
@@ -305,9 +309,32 @@ fn policy_without_voice(public_url: &str) -> String {
 }
 
 /// Add `Content-Security-Policy` and `X-Content-Type-Options: nosniff` to a response.
-pub fn add_security_headers(csp: &axum::http::HeaderValue, res: &mut Response) {
+/// The value of one cookie among a request's.
+pub fn cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(';'))
+        .filter_map(|kv| kv.trim().split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| v.to_owned())
+}
+
+/// A year, with subdomains: what `Strict-Transport-Security` says over https (ADR 0090).
+pub const HSTS: &str = "max-age=31536000; includeSubDomains";
+
+pub fn add_security_headers(csp: &axum::http::HeaderValue, https: bool, res: &mut Response) {
     use axum::http::{HeaderValue, header};
     let h = res.headers_mut();
+    // Only over https: a browser ignores it over http, and a LAN on plain http must stay
+    // reachable.
+    if https {
+        h.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static(HSTS),
+        );
+    }
     h.insert(header::CONTENT_SECURITY_POLICY, csp.clone());
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,

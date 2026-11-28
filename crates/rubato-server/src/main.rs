@@ -117,11 +117,15 @@ async fn main() -> Result<()> {
     let background = tasks::spawn(state.clone(), shutdown_rx.clone());
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, "rubato-server listening");
-    let serve = axum::serve(listener, app::router(state))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .into_future();
+    // With each connection's peer address: the rate limits are per address (ADR 0090).
+    let serve = axum::serve(
+        listener,
+        app::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .into_future();
     // Supervise while serving, so a dead poll task ends the process at once (design D12).
     let supervised = tasks::supervise(background, shutdown_rx);
     tokio::pin!(supervised);

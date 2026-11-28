@@ -4,20 +4,11 @@ use super::store;
 use super::team::{self, reason};
 use crate::kernel::state::App;
 use axum::extract::FromRequestParts;
-use axum::http::{HeaderMap, StatusCode, header, request::Parts};
+use axum::http::{HeaderMap, StatusCode, request::Parts};
 use chrono::Utc;
 
-pub const COOKIE: &str = "rubato_session";
-
 pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|s| s.split(';'))
-        .filter_map(|kv| kv.trim().split_once('='))
-        .find(|(k, _)| *k == name)
-        .map(|(_, v)| v.to_owned())
+    crate::kernel::http::cookie(headers, name)
 }
 
 /// The logged-in GitHub login. In dev mode (`RUBATO_DEV_USER`) the header `x-rubato-dev-user`
@@ -38,7 +29,8 @@ impl FromRequestParts<App> for CurrentUser {
                 .unwrap_or_else(|| dev.clone());
             return Ok(CurrentUser(login));
         }
-        let value = cookie_value(&parts.headers, COOKIE).ok_or(StatusCode::UNAUTHORIZED)?;
+        let value = cookie_value(&parts.headers, app.config.session_cookie())
+            .ok_or(StatusCode::UNAUTHORIZED)?;
         let id = app.signer.verify(&value).ok_or(StatusCode::UNAUTHORIZED)?;
         let Ok(Some(session)) = store::web_session(&app.db, &id).await else {
             return Err(StatusCode::UNAUTHORIZED);
@@ -48,7 +40,14 @@ impl FromRequestParts<App> for CurrentUser {
         // request (ADR 0088, superseding ADR 0022's team record). A session ends with its cookie,
         // after 30 days (ADR 0064).
         if !team::session_is_current(session.created_at, now) {
-            app.reject(parts.uri.path(), reason::SESSION_EXPIRED, &session.login);
+            // The route's template, never the concrete path (ADR 0090): a tenant id or a
+            // probe's path does not become a label value.
+            let route = parts
+                .extensions
+                .get::<axum::extract::MatchedPath>()
+                .map_or("unmatched", |m| m.as_str())
+                .to_owned();
+            app.reject(&route, reason::SESSION_EXPIRED, &session.login);
             return Err(StatusCode::UNAUTHORIZED);
         }
         Ok(CurrentUser(session.login))
@@ -58,7 +57,7 @@ impl FromRequestParts<App> for CurrentUser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::HeaderValue;
+    use axum::http::{HeaderValue, header};
 
     #[test]
     fn reads_a_cookie_among_many() {
@@ -67,7 +66,7 @@ mod tests {
             header::COOKIE,
             HeaderValue::from_static("a=1; rubato_session=x.y; b=2"),
         );
-        assert_eq!(cookie_value(&h, COOKIE).as_deref(), Some("x.y"));
+        assert_eq!(cookie_value(&h, "rubato_session").as_deref(), Some("x.y"));
         assert_eq!(cookie_value(&h, "zzz"), None);
     }
 

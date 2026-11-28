@@ -1,7 +1,7 @@
 # deploy
 
 Rubato's stack as it runs on the apps host (`/opt/stacks/rubato`, Dockge). A deploy copies
-`compose.yaml` and `livekit.yaml` there, sets the `app` image tag, and runs
+`compose.yaml`, `livekit.yaml` and `Caddyfile` there, sets the `app` image tag, and runs
 `docker compose up -d --pull never`. Secrets live only in the stack's `.env` on the host.
 How a deploy goes is in `.claude/profiles/dockge.md`.
 
@@ -9,9 +9,59 @@ How a deploy goes is in `.claude/profiles/dockge.md`.
 | --- | --- | --- |
 | `app` | always | rubato-server with the web |
 | `livekit` | with the `voice` profile | LiveKit for a plan room's voice channel (ADR 0073, #315) |
+| `caddy` | with the `public` profile | TLS for a server on the internet, certificates by ACME (ADR 0090) |
 
 `pnpm deploy:check` checks these files and `pnpm deploy:test` makes the check fail on purpose
 on `fixtures/bad/`.
+
+## On a LAN, over plain http
+
+Since ADR 0090 the server refuses to start off loopback when `RUBATO_PUBLIC_URL` is not https.
+A LAN deployment says that plain http is meant, in the stack's `.env`:
+
+```
+RUBATO_ALLOW_HTTP=1
+```
+
+Without that line the container exits at start with `refusing to start: RUBATO_PUBLIC_URL … is
+not https`. With it nothing else changes: no secret is required that was not required before.
+
+## On the internet
+
+A server anyone can reach runs behind Caddy, which gets its certificate by ACME. The host needs
+a DNS name pointing at it and ports 80 and 443 open. In the stack's `.env`:
+
+```
+COMPOSE_PROFILES=public
+RUBATO_DOMAIN=rubato.example.org
+RUBATO_ACME_EMAIL=you@example.org
+RUBATO_PUBLIC_URL=https://rubato.example.org
+RUBATO_APP_BIND=127.0.0.1
+RUBATO_TRUSTED_PROXY=172.31.250.0/24
+RUBATO_SESSION_SECRET=<at least 32 bytes: openssl rand -hex 32>
+RUBATO_TOKEN_KEY=<64 hex digits: openssl rand -hex 32>
+RUBATO_OPERATORS=<your GitHub user id; gh api user --jq .id>
+```
+
+and the GitHub App's settings as before (`RUBATO_GITHUB_APP_ID`, its key, `GITHUB_CLIENT_ID`,
+`GITHUB_CLIENT_SECRET`). `RUBATO_ALLOW_HTTP` must not be set. The server names what is missing
+and does not start: `refusing to start: a server off loopback needs its secrets (ADR 0090): …`.
+
+- `RUBATO_APP_BIND=127.0.0.1` keeps the app's own port off the public interface: only Caddy
+  reaches it.
+- `RUBATO_TRUSTED_PROXY` is the `edge` network of `compose.yaml`. The app reads
+  `X-Forwarded-For` only from an address in it, so rate limits count each visitor, not Caddy.
+  Left unset, every visitor shares one bucket and the demo answers 429 under little load.
+- The first person in is an operator (`RUBATO_OPERATORS`): they log in, open **Operator**,
+  create a tenant, attach the App's installation and name its first admin.
+- On GitHub, the App's callback URL is `https://<domain>/auth/github/callback` and, for webhooks
+  (ADR 0074), its webhook URL `https://<domain>/webhooks/github` with `RUBATO_GITHUB_WEBHOOK_SECRET`
+  set to the same secret.
+
+What a visitor meets when a limit is hit: 429 with `Retry-After` (30 anonymous requests at once
+per address on login and pairing, then one a second; 60 writes at once per session, then two a
+second), and 503 `timeout` for a request that runs past 30 s. Each is counted on
+`rubato.web.rejected` with the route's template.
 
 ## Voice: turn on
 

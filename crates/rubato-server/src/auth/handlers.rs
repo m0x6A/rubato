@@ -1,6 +1,6 @@
 //! GitHub OAuth login, logout and `me` for the web view.
 
-use super::current_user::{COOKIE, cookie_value};
+use super::current_user::cookie_value;
 use super::store;
 use crate::kernel::state::App;
 use axum::Json;
@@ -222,7 +222,12 @@ pub async fn callback(
     let secure = app.config.public_url.starts_with("https");
     res.headers_mut().append(
         header::SET_COOKIE,
-        set_cookie(COOKIE, &app.signer.sign(&id), 60 * 60 * 24 * 30, secure),
+        set_cookie(
+            app.config.session_cookie(),
+            &app.signer.sign(&id),
+            60 * 60 * 24 * 30,
+            secure,
+        ),
     );
     res.headers_mut()
         .append(header::SET_COOKIE, set_cookie(STATE_COOKIE, "", 0, secure));
@@ -254,7 +259,7 @@ fn login_failed_here(e: impl std::fmt::Display) -> Response {
 }
 
 pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
-    if let Some(v) = cookie_value(&headers, COOKIE)
+    if let Some(v) = cookie_value(&headers, app.config.session_cookie())
         && let Some(id) = app.signer.verify(&v)
     {
         if let Ok(Some(store::WebSession { login, .. })) = store::web_session(&app.db, &id).await {
@@ -269,7 +274,12 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
     let mut res = StatusCode::NO_CONTENT.into_response();
     res.headers_mut().append(
         header::SET_COOKIE,
-        set_cookie(COOKIE, "", 0, app.config.public_url.starts_with("https")),
+        set_cookie(
+            app.config.session_cookie(),
+            "",
+            0,
+            app.config.public_url.starts_with("https"),
+        ),
     );
     res
 }

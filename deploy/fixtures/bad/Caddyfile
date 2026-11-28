@@ -1,0 +1,13 @@
+# Must fail both Caddyfile rules: a self-signed certificate, no redirect, a plain-http site, a
+# proxy trusted in front, and the wrong upstream.
+{
+	auto_https off
+	servers {
+		trusted_proxies static 0.0.0.0/0
+	}
+}
+
+http://rubato.example {
+	tls internal
+	reverse_proxy localhost:9999
+}

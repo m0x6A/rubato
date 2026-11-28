@@ -388,11 +388,23 @@ pub fn router(app: App) -> Router {
         app.config.livekit_url(),
     ))
     .expect("a header-safe policy");
+    let https = app.config.https();
     api.fallback_service(ServeDir::new(dist).not_found_service(ServeFile::new(index)))
+        // ADR 0090: whose address, the token buckets, the timeout, the bound on requests at
+        // once. Outside every route, inside the headers and the trace, so a refusal carries
+        // both.
+        .layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            crate::kernel::limits::guard,
+        ))
+        // The default body limit, said out loud (ADR 0090); a route that takes more says so.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::kernel::http::DEFAULT_BODY_MAX_BYTES,
+        ))
         .layer(axum::middleware::map_response(move |mut res: Response| {
             let csp = csp.clone();
             async move {
-                crate::kernel::http::add_security_headers(&csp, &mut res);
+                crate::kernel::http::add_security_headers(&csp, https, &mut res);
                 res
             }
         }))
@@ -1839,7 +1851,66 @@ mod tests {
             assert!(csp.starts_with("default-src 'self';"), "{path}: {csp}");
             assert!(csp.contains("ws://192.168.1.20:8081"), "{path}: {csp}");
             assert!(csp.contains("frame-ancestors 'none'"), "{path}: {csp}");
+            // Plain http, as on a LAN: no HSTS, which a browser would ignore there anyway.
+            assert!(
+                !r.headers().contains_key("strict-transport-security"),
+                "{path}"
+            );
         }
+    }
+
+    /// ADR 0090: over https every response says so for a year, the session cookie is the
+    /// `__Host-` one, and the cookie of the plain name opens nothing.
+    #[tokio::test(flavor = "current_thread")]
+    async fn over_https_the_server_sends_hsts_and_reads_only_the_host_prefixed_cookie() {
+        let dist = tempfile::tempdir().unwrap();
+        std::fs::write(dist.path().join("index.html"), "<!doctype html>").unwrap();
+        let d = dist.path().to_owned();
+        let (base, app, _reader, _tmp) = hardened(|c| {
+            c.web_dist = d;
+            c.public_url = "https://rubato.example".into();
+            c.dev_user = None;
+        })
+        .await;
+        assert_eq!(app.config.session_cookie(), "__Host-rubato_session");
+        for path in ["/api/health", "/api/nope", "/", "/api/me"] {
+            let r = reqwest::get(format!("{base}{path}")).await.unwrap();
+            assert_eq!(
+                r.headers()["strict-transport-security"],
+                crate::kernel::http::HSTS,
+                "{path}"
+            );
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO web_sessions (id, login, created_at) VALUES (?, 'ada', ?)")
+            .bind(&id)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let signed = app.signer.sign(&id);
+        let me = |name: &str| {
+            reqwest::Client::new()
+                .get(format!("{base}/api/me"))
+                .header("cookie", format!("{name}={signed}"))
+                .send()
+        };
+        assert_eq!(me("__Host-rubato_session").await.unwrap().status(), 200);
+        assert_eq!(me("rubato_session").await.unwrap().status(), 401);
+        // Logging out clears the cookie of the same name, with the attributes the prefix needs.
+        let out = reqwest::Client::new()
+            .post(format!("{base}/auth/logout"))
+            .header("origin", "https://rubato.example")
+            .header("cookie", format!("__Host-rubato_session={signed}"))
+            .send()
+            .await
+            .unwrap();
+        let set = out.headers()["set-cookie"].to_str().unwrap().to_owned();
+        assert!(set.starts_with("__Host-rubato_session=;"), "{set}");
+        for part in ["Path=/", "HttpOnly", "SameSite=Lax", "Secure"] {
+            assert!(set.contains(part), "{part}: {set}");
+        }
+        assert!(!set.contains("Domain"), "{set}");
     }
 
     #[tokio::test(flavor = "current_thread")]

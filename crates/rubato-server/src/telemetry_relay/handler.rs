@@ -10,8 +10,7 @@ use axum::http::StatusCode;
 use opentelemetry::KeyValue;
 use rubato_protocol::otel::attr;
 use rubato_protocol::telemetry_relay::{BUCKET_BURST, BUCKET_REFILL_MS, MAX_BODY_BYTES};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// How long one export may take.
@@ -19,36 +18,17 @@ pub const EXPORT_TIMEOUT: Duration = Duration::from_secs(5);
 /// The most logins the bucket remembers; past it, the oldest is forgotten.
 const MAX_BUCKETS: usize = 1_000;
 
-/// Per login: tokens left and when they were last counted.
-fn buckets() -> &'static Mutex<HashMap<String, (f64, Instant)>> {
-    static B: OnceLock<Mutex<HashMap<String, (f64, Instant)>>> = OnceLock::new();
-    B.get_or_init(|| Mutex::new(HashMap::new()))
+/// Per login, the relay's own bucket (`kernel::limits::Buckets`, ADR 0090).
+fn buckets() -> &'static crate::kernel::limits::Buckets {
+    static B: OnceLock<crate::kernel::limits::Buckets> = OnceLock::new();
+    B.get_or_init(|| {
+        crate::kernel::limits::Buckets::with_max(BUCKET_BURST, BUCKET_REFILL_MS, MAX_BUCKETS)
+    })
 }
 
 /// Take one token for `login`, refilling one every `BUCKET_REFILL_MS` up to `BUCKET_BURST`.
 pub fn take_token(login: &str, now: Instant) -> bool {
-    let mut b = buckets().lock().unwrap();
-    if b.len() >= MAX_BUCKETS
-        && !b.contains_key(login)
-        && let Some(oldest) = b
-            .iter()
-            .min_by_key(|(_, (_, at))| *at)
-            .map(|(k, _)| k.clone())
-    {
-        b.remove(&oldest);
-    }
-    let burst = f64::from(BUCKET_BURST);
-    let (tokens, at) = b.entry(login.to_owned()).or_insert((burst, now));
-    let refilled =
-        now.saturating_duration_since(*at).as_secs_f64() * 1000.0 / f64::from(BUCKET_REFILL_MS);
-    *tokens = (*tokens + refilled).min(burst);
-    *at = now;
-    if *tokens >= 1.0 {
-        *tokens -= 1.0;
-        true
-    } else {
-        false
-    }
+    buckets().take(login, now).is_ok()
 }
 
 fn count(app: &App, outcome: &'static str) {
