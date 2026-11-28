@@ -61,13 +61,16 @@ async fn own_lane(app: &App, user: &str, companion_id: Uuid) -> Result<Vec<Uuid>
 
 pub async fn add(
     State(app): State<App>,
+    scope: crate::kernel::tenancy::TenantScope,
     CurrentUser(user): CurrentUser,
     Json(req): Json<QueueRequest>,
 ) -> Result<StatusCode, Refusal> {
+    let t = scope.tenant();
     let revoked = own_lane(&app, &user, req.companion_id).await?;
-    // A team route (ADR 0049): the repo must be one some workspace's map names (issue #163).
+    // A tenant route (ADR 0089): the repo must be one a map of this tenant names (issue
+    // #163), so an issue of another tenant's repository is never queued here.
     if !app
-        .union_repos()
+        .repos_named_in(t)
         .await
         .iter()
         .any(|r| r.eq_ignore_ascii_case(&req.issue.repo))
@@ -80,6 +83,7 @@ pub async fn add(
     }
     let outcome = store::add(
         &app.db,
+        t,
         req.companion_id,
         &req.issue,
         &user,
@@ -142,10 +146,15 @@ pub async fn remove(
 /// `rubato.queue.depth` for every pairing, on every poll tick: 0 for an empty lane and for a
 /// revoked one, because a gauge recorded only on change keeps its last value.
 pub async fn record_depth(app: &App) {
-    let (pairings, queued) = match (
-        pairing::list_pairings(&app.db, None).await,
-        store::all(&app.db).await,
-    ) {
+    let mut all = Ok(Vec::new());
+    for t in &app.tenants() {
+        match (store::all(&app.db, t).await, &mut all) {
+            (Ok(rows), Ok(v)) => v.extend(rows),
+            (Err(e), _) => all = Err(e),
+            _ => {}
+        }
+    }
+    let (pairings, queued) = match (pairing::list_pairings(&app.db, None).await, all) {
         (Ok(p), Ok(q)) => (p, q),
         (Err(e), _) | (_, Err(e)) => {
             tracing::error!(error = %e, "reading the queue depth failed");
@@ -214,6 +223,7 @@ mod tests {
         for (lane, n) in [(busy, 1), (busy, 2), (revoked, 3)] {
             store::add(
                 &app.db,
+                &crate::kernel::tenancy::TenantId::default_tenant(),
                 lane,
                 &IssueRef::new("o/r", n),
                 "x",
@@ -281,6 +291,7 @@ mod tests {
         let add_as = |user: &str, companion_id: Uuid, repo: &str| {
             add(
                 State(app.clone()),
+                crate::kernel::tenancy::default_scope(),
                 CurrentUser(user.to_owned()),
                 Json(QueueRequest {
                     issue: IssueRef::new(repo, 1),
@@ -303,7 +314,9 @@ mod tests {
             add_as("m0x6A", mine, "O/R").await.unwrap(),
             StatusCode::CREATED
         );
-        let rows = store::all(&app.db).await.unwrap();
+        let rows = store::all(&app.db, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].issue, IssueRef::new("O/R", 1));
         let counted = reader

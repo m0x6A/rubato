@@ -95,7 +95,7 @@ pub async fn import(
     }
     let Some(head) = app
         .github
-        .unscoped(&issue.repo)
+        .within(ws.key().tenant(), &issue.repo)
         .branch_sha(&issue.repo, &req.branch)
         .await
         .map_err(internal)?
@@ -105,7 +105,7 @@ pub async fn import(
     let path = plans::plan_path(&map, &issue, &req.branch);
     let Some(text) = app
         .github
-        .unscoped(&issue.repo)
+        .within(ws.key().tenant(), &issue.repo)
         .file(&issue.repo, &path, &head)
         .instrument(crate::kernel::github::part_read(
             crate::kernel::github::READS_PLAN,
@@ -135,7 +135,7 @@ pub async fn import(
         for p in bundle_paths(&text, &path).into_iter().skip(1) {
             match app
                 .github
-                .unscoped(&issue.repo)
+                .within(ws.key().tenant(), &issue.repo)
                 .file(&issue.repo, &p, &head)
                 .await
                 .map_err(internal)?
@@ -146,7 +146,7 @@ pub async fn import(
         }
         let original_author = match app
             .github
-            .unscoped(&issue.repo)
+            .within(ws.key().tenant(), &issue.repo)
             .last_commit_author(&issue.repo, &path, &head)
             .await
         {

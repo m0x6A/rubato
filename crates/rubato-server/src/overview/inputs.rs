@@ -77,7 +77,12 @@ pub async fn build_overview_inputs(
     };
     Ok(OverviewInputs {
         pins: pins::list(&app.db, ws).await?,
-        sessions: companion_link::all_sessions(&app.db).await?,
+        // Only the sessions in this tenant's repositories (design §6.2).
+        sessions: companion_link::all_sessions(&app.db)
+            .await?
+            .into_iter()
+            .filter(|s| app.session_in(t, s))
+            .collect(),
         plans: plans::all(&app.db, t).await?,
         drafts: plan_drafts::latest_drafts(app, t).await?,
         prs: github_poll::all_prs(&app.db, t).await?,
@@ -87,14 +92,14 @@ pub async fn build_overview_inputs(
         ignored_approvals: approvals.ignored,
         approvals_in_rubato: app.config.comment_approvals_until.is_some(),
         approval_findings: approve::link_findings(app, t).await?,
-        launched: launch::launched_issues(&app.db).await?,
-        cap_hits: launch::issues_with_live_cap_hit(&app.db).await?,
+        launched: launch::launched_issues(&app.db, t).await?,
+        cap_hits: launch::issues_with_live_cap_hit(&app.db, t).await?,
         meta: github_poll::all_issue_meta(&app.db, t).await?,
-        launch_map_versions: launch::launch_map_versions(&app.db, ws).await?,
+        launch_map_versions: launch::launch_map_versions(&app.db, t, ws).await?,
         backlog,
         uncovered_repos: github_poll::uncovered(&app.db, t).await?,
         layout: layout::all(&app.db, ws).await?,
-        queue: queue::all(&app.db).await?,
+        queue: queue::all(&app.db, t).await?,
         repo_pulls: github_poll::repo_pulls(&app.db, t).await?,
         traffic: app.traffic_of(ws).await,
         dismissals: traffic::dismissals(&app.db, ws).await?,
@@ -114,7 +119,7 @@ async fn workspace_inputs(
         return Ok(WorkspaceInputs::default());
     }
     let mut out = WorkspaceInputs {
-        launched_here: launch::launched_issues_in(&app.db, ws).await?,
+        launched_here: launch::launched_issues_in(&app.db, ws.tenant(), ws).await?,
         ..Default::default()
     };
     for w in all {
@@ -131,7 +136,7 @@ async fn workspace_inputs(
                 .into_iter()
                 .map(|p| p.issue)
                 .collect(),
-            launched: launch::launched_issues_in(&app.db, &other).await?,
+            launched: launch::launched_issues_in(&app.db, other.tenant(), &other).await?,
             id: w.id.clone(),
             name: w.name.clone(),
         });

@@ -35,6 +35,25 @@ pub async fn scope_for(app: &App, tenant: &TenantId, login: &str) -> Result<Opti
         .map(|role| TenantScope::granted(tenant.clone(), github_id, login.to_owned(), role)))
 }
 
+/// The logins of a tenant's members, lower case, for what a tenant's views show of people
+/// (their companions, design §6.2). `None` means every login: local development, where every dev
+/// login is an admin of tenant `default`.
+pub async fn member_logins(
+    app: &App,
+    tenant: &TenantId,
+) -> Result<Option<std::collections::HashSet<String>>> {
+    if app.config.dev_user.is_some() && tenant.as_str() == DEFAULT_TENANT {
+        return Ok(None);
+    }
+    Ok(Some(
+        store::members(&app.db, tenant.as_str())
+            .await?
+            .into_iter()
+            .map(|m| m.login.to_ascii_lowercase())
+            .collect(),
+    ))
+}
+
 /// Layer on every `/api/t/{tenant}/…` route (ADR 0089): the logged-in person's membership of
 /// `{tenant}` becomes the request's [`TenantScope`]. No session is 401; an unknown tenant, or
 /// one the person is not in, is 404 `unknown_tenant`, counted on `rubato.web.rejected`.

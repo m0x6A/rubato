@@ -282,3 +282,81 @@ async fn repo_fact_rows_land_in_tenant_default_and_the_column_has_no_default() {
     }
     println!("checked {} tables of migration 0035", tables.len());
 }
+
+/// The Launch tables of migration 0036 (design §3.1).
+const LAUNCH_TABLES: [&str; 6] = [
+    "launches",
+    "companion_queue",
+    "session_messages",
+    "agent_reports",
+    "fleet_requests",
+    "cap_hits",
+];
+
+#[tokio::test]
+async fn launch_rows_land_in_tenant_default_and_the_column_has_no_default() {
+    let (pool, _tmp) = at(35).await;
+    for t in LAUNCH_TABLES {
+        let sql = insert_of(&pool, t, "a/b", 1).await;
+        sqlx::query(&sql)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("{t}: {e}: {sql}"));
+    }
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let mut tables = Vec::new();
+    for t in LAUNCH_TABLES {
+        tables.push(Table {
+            name: t,
+            before: String::new(),
+            rows: 1,
+            without_tenant: insert_of(&pool, t, "c/d", 2).await,
+        });
+    }
+    check(&pool, &tables).await;
+    // A launch names its workspace: the column lost the default it had since workspaces.
+    let ws = sqlx::query("PRAGMA table_info(launches)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.get::<String, _>("name") == "workspace_id")
+        .unwrap();
+    assert_eq!(ws.get::<Option<String>, _>("dflt_value"), None);
+    println!("checked {} tables of migration 0036", tables.len());
+}
+
+/// Every table that has a `tenant_id` column after all migrations, and no other, is one of the
+/// lists above or a tenancy table: a table added later joins a list or fails here.
+#[tokio::test]
+async fn every_tenant_owned_table_is_covered_by_a_migration_test() {
+    let (pool, _tmp) = at(i64::MAX).await;
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let mut with_tenant = Vec::new();
+    for n in &names {
+        let has: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM pragma_table_info('{n}') WHERE name = 'tenant_id'"
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if has > 0 {
+            with_tenant.push(n.clone());
+        }
+    }
+    let mut covered: Vec<String> = workspace_tables()
+        .iter()
+        .map(|t| t.name.to_owned())
+        .chain(REPO_FACT_TABLES.iter().map(|t| (*t).to_owned()))
+        .chain(LAUNCH_TABLES.iter().map(|t| (*t).to_owned()))
+        .chain(["tenant_installations", "tenant_members", "tenant_repos"].map(String::from))
+        .collect();
+    covered.sort();
+    with_tenant.sort();
+    assert_eq!(with_tenant, covered);
+    println!("checked {} tables with a tenant", covered.len());
+}

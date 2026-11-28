@@ -162,7 +162,7 @@ async fn build_repo(app: &App, store: &Store, repo: &str, key: &str) -> Result<O
     let now = app.clock.now();
     let head = app
         .github
-        .unscoped(repo)
+        .for_system(repo)
         .default_head(repo)
         .await
         .map_err(fail("head"))?
@@ -186,7 +186,7 @@ async fn build_repo(app: &App, store: &Store, repo: &str, key: &str) -> Result<O
     let tarball = tokio::time::timeout(
         TARBALL_DEADLINE,
         app.github
-            .unscoped(repo)
+            .for_system(repo)
             .tarball(repo, &head, limits::GRAPH_TARBALL_MAX_BYTES),
     )
     .await

@@ -443,7 +443,7 @@ impl Poller {
             .into_iter()
             .map(|p| p.issue)
             .collect();
-        issues.extend(launch::launched_issues(&app.db).await?);
+        issues.extend(launch::launched_issues(&app.db, t).await?);
         let sessions = companion_link::all_sessions(&app.db).await?;
         let live: HashSet<IssueRef> = sessions
             .iter()
@@ -751,8 +751,10 @@ impl Poller {
             .unwrap_or_default();
         session_messages::record_gauges(app, &sessions).await;
         // Lines of launches no companion reports any more (a revoked one sends no snapshot).
-        if let Err(e) = agent_reports::prune_absent(&app.db, &app.latest_sessions()).await {
-            tracing::error!(error = %format!("{e:#}"), "pruning agent reports failed");
+        for t in &tenants {
+            if let Err(e) = agent_reports::prune_absent(&app.db, t, &app.latest_sessions()).await {
+                tracing::error!(error = %format!("{e:#}"), "pruning agent reports failed");
+            }
         }
         webhooks::record(app).await;
         // #69: a companion silent with its socket open counts its sessions as unknown.

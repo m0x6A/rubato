@@ -87,7 +87,7 @@ async fn clear_merged_ws(app: &App, w: &WorkspaceEntry) {
     log_state("merged", "empty", &row, None);
     if let Err(e) = app
         .github
-        .unscoped(&w.map_repo)
+        .within(&w.tenant, &w.map_repo)
         .delete_ref(&w.map_repo, &row.branch)
         .await
     {
@@ -104,7 +104,7 @@ async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Res
     }
     let Some(pr) = app
         .github
-        .unscoped(repo)
+        .within(&w.tenant, repo)
         .pull_for_branch(repo, &row.branch)
         .await?
     else {
@@ -124,7 +124,7 @@ async fn follow(app: &App, w: &WorkspaceEntry, row: &ProposalRow) -> anyhow::Res
         count(app, "closed");
         if let Err(e) = app
             .github
-            .unscoped(repo)
+            .within(&w.tenant, repo)
             .delete_ref(repo, &row.branch)
             .await
         {

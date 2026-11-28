@@ -522,8 +522,14 @@ async fn on_envelope(
                     return Some(ServerMessage::Ack { seq: env.seq });
                 }
                 tracing::warn!(rubato.issue = %hit.issue, rubato.session_id = ?hit.session_id, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
-                if let Err(e) = launch::record_cap_hit(&app.db, &hit, now).await {
-                    tracing::error!(error = %e, "storing cap hit");
+                // The hit is its issue's repository's tenant's (ADR 0087).
+                match app.repo_tenant(&hit.issue.repo) {
+                    Ok(t) => {
+                        if let Err(e) = launch::record_cap_hit(&app.db, &t, &hit, now).await {
+                            tracing::error!(error = %e, "storing cap hit");
+                        }
+                    }
+                    Err(e) => tracing::warn!(rubato.issue = %hit.issue, error = %e, "cap hit for a repository in no tenant not stored"),
                 }
                 app.notify("cap hit");
                 Some(ServerMessage::Ack { seq: env.seq })
@@ -578,14 +584,27 @@ async fn on_envelope(
                 let span = tracing::Span::current();
                 span.record("rubato.launch_id", r.launch_id.to_string());
                 match accept_report(app, companion_id, &r).await {
-                    Ok(Accepted::Yes { issue, doing, parts }) => {
+                    Ok(Accepted::Yes {
+                        tenant,
+                        issue,
+                        doing,
+                        parts,
+                    }) => {
                         span.record("rubato.issue", issue.to_string());
                         span.record("rubato.outcome", "stored");
                         observe(
                             "record_agent_report",
                             companion_id,
                             env.seq,
-                            agent_reports::record(&app.db, companion_id, r.launch_id, &doing, &parts, now)
+                            agent_reports::record(
+                                &app.db,
+                                &tenant,
+                                companion_id,
+                                r.launch_id,
+                                &doing,
+                                &parts,
+                                now,
+                            )
                                 .await
                                 .map(|_| ()),
                         );
@@ -621,6 +640,8 @@ async fn on_envelope(
 
 enum Accepted {
     Yes {
+        /// The launch's tenant (ADR 0087).
+        tenant: crate::kernel::tenancy::TenantId,
         issue: rubato_protocol::IssueRef,
         doing: String,
         parts: Vec<String>,
@@ -690,6 +711,7 @@ async fn accept_report(
         }
     }
     Ok(Accepted::Yes {
+        tenant: target.tenant.clone(),
         issue: target.issue,
         doing: bounded_line(&r.doing),
         parts,
@@ -1301,7 +1323,7 @@ mod tests {
         )
         .await;
         let target = launched_to.unwrap_or(pairing.companion_id);
-        sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 7, '{}', ?)")
+        sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, 'm0x6A', 'm0x6A/rubato', 7, '{}', ?)")
             .bind(LAUNCH.to_string())
             .bind(target.to_string())
             .bind(crate::kernel::db::ts(Utc::now()))
@@ -1347,7 +1369,9 @@ mod tests {
     }
 
     async fn lines(app: &App) -> Vec<rubato_protocol::AgentLine> {
-        crate::agent_reports::all(app).await.unwrap()
+        crate::agent_reports::all(app, &crate::kernel::tenancy::TenantId::default_tenant())
+            .await
+            .unwrap()
     }
 
     #[tokio::test(flavor = "current_thread")]

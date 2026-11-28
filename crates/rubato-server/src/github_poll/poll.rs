@@ -78,7 +78,7 @@ pub async fn read_meta(
     }
     let closed = match app
         .github
-        .unscoped(&issue.repo)
+        .within(t, &issue.repo)
         .issue(&issue.repo, issue.number)
         .await?
     {
@@ -146,7 +146,7 @@ impl RepoView {
         if !self.branches.contains_key(&issue.repo) {
             let listed = app
                 .github
-                .unscoped(&issue.repo)
+                .for_system(&issue.repo)
                 .branches(&issue.repo, "issue/")
                 .await
                 .map_err(|e| format!("{e:#}"));
@@ -189,7 +189,7 @@ impl RepoView {
         if !self.branches.contains_key(repo) {
             let listed = app
                 .github
-                .unscoped(repo)
+                .for_system(repo)
                 .branches(repo, "issue/")
                 .await
                 .map_err(|e| format!("{e:#}"));
@@ -224,7 +224,7 @@ impl RepoView {
         if !self.pulls.contains_key(repo) {
             let listing = app
                 .github
-                .unscoped(repo)
+                .for_system(repo)
                 .open_pulls(repo)
                 .await
                 .map_err(|e| format!("{e:#}"));
@@ -264,7 +264,7 @@ pub async fn poll_pr_of_gone_branch(app: &App, issue: &IssueRef) -> Result<()> {
     let branch = stored.branch.clone();
     let pr = app
         .github
-        .unscoped(&issue.repo)
+        .within(t, &issue.repo)
         .pull_for_branch(&issue.repo, &branch)
         .await?;
     store_pr(app, issue, &branch, pr).await
@@ -296,7 +296,7 @@ pub async fn poll_pr(
                 return Ok(());
             }
             app.github
-                .unscoped(&issue.repo)
+                .within(t, &issue.repo)
                 .pull_for_branch(&issue.repo, branch)
                 .await?
         }
@@ -311,7 +311,7 @@ async fn store_pr(app: &App, issue: &IssueRef, branch: &str, pr: Option<PullInfo
             ChecksStatus::Green
         } else {
             app.github
-                .unscoped(&issue.repo)
+                .within(t, &issue.repo)
                 .checks(&issue.repo, &pr.head_sha)
                 .await?
         };
@@ -358,7 +358,7 @@ pub async fn poll_comments(app: &App, issue: &IssueRef) -> Result<CommentsRead> 
     let mut kept: Vec<u64> = Vec::new();
     for c in app
         .github
-        .unscoped(&issue.repo)
+        .within(t, &issue.repo)
         .issue_comments(&issue.repo, issue.number)
         .await?
     {

@@ -42,7 +42,7 @@ async fn leave(
         return Ok(());
     }
     let (agents, requests) = rooms::leave_repos(conn, t, repos, now).await?;
-    let queued = queue::drop_repos(conn, repos).await?;
+    let queued = queue::drop_repos(conn, t, repos).await?;
     tracing::info!(
         repos = repos.len(),
         agents,

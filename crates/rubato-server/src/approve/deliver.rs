@@ -110,7 +110,7 @@ async fn bind_waiting(app: &App, launch_id: Uuid) -> Result<()> {
             && a.branch == branch
             && current_owned
             && !handed_off
-            && !session_messages::plan_approved_open(&app.db, a.id).await?
+            && !session_messages::plan_approved_open(&app.db, &tenant, a.id).await?
         {
             waiting.push(a);
         }

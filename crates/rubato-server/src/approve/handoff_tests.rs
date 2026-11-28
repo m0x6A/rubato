@@ -111,7 +111,7 @@ async fn insert_launch(app: &App, launch: Uuid, companion: Uuid, issue: &IssueRe
         role: Default::default(),
         lead_launch_id: None,
     };
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, ?, ?, ?, ?, ?)")
         .bind(launch.to_string())
         .bind(companion.to_string())
         .bind(OWNER)
@@ -218,6 +218,7 @@ async fn approve_as(h: &H, user: &str, text: &str) -> rubato_protocol::DraftAppr
 async fn chat(h: &H, text: &str) -> Uuid {
     session_messages::send(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(OWNER.into()),
         Path(h.launch.into()),
         Json(SessionMessageRequest { text: text.into() }),
@@ -317,6 +318,7 @@ async fn plan_approved_waits_for_a_companion_that_can_type_it_and_for_a_live_ses
     approve_as(&h, "teammate", &two).await;
     let queued = session_messages::list(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(OWNER.into()),
         Path(h.launch.into()),
     )
@@ -751,6 +753,7 @@ async fn the_reconcile_records_the_handoff_gauges() {
 async fn messages_of(h: &H, launch: Uuid) -> Vec<rubato_protocol::SessionMessageView> {
     session_messages::list(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(OWNER.into()),
         Path(launch.into()),
     )

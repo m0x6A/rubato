@@ -62,6 +62,7 @@ pub async fn room_turn(
 /// When each approval's `plan_approved` was typed into its session, by approval id.
 pub async fn plan_approved_delivered(
     db: &sqlx::SqlitePool,
+    t: &crate::kernel::tenancy::TenantId,
 ) -> anyhow::Result<std::collections::HashMap<uuid::Uuid, chrono::DateTime<chrono::Utc>>> {
-    store::plan_approved_delivered(db).await
+    store::plan_approved_delivered(db, t).await
 }

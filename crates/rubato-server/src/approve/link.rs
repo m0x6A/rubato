@@ -234,7 +234,7 @@ pub async fn current(app: &App, t: &TenantId) -> Result<Assessment> {
         .collect();
     let plans = plans::all(&app.db, t).await?;
     let links = links::all(&app.db, t).await?;
-    let delivered = session_messages::plan_approved_delivered(&app.db).await?;
+    let delivered = session_messages::plan_approved_delivered(&app.db, t).await?;
     let mut can_act = HashSet::new();
     for login in approvals
         .iter()

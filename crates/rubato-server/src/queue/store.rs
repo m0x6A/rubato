@@ -1,6 +1,7 @@
 //! Table `companion_queue`.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rubato_protocol::{IssueRef, QueuedIssue};
@@ -9,10 +10,13 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 /// Every queued issue, lane by lane, each lane in its order.
-pub async fn all(db: &SqlitePool) -> Result<Vec<QueuedIssue>> {
-    let rows = sqlx::query("SELECT * FROM companion_queue ORDER BY companion_id, position")
-        .fetch_all(db)
-        .await?;
+pub async fn all(db: &SqlitePool, t: &TenantId) -> Result<Vec<QueuedIssue>> {
+    let rows = sqlx::query(
+        "SELECT * FROM companion_queue WHERE tenant_id = ? ORDER BY companion_id, position",
+    )
+    .bind(t.as_str())
+    .fetch_all(db)
+    .await?;
     Ok(rows
         .iter()
         .map(|r| QueuedIssue {
@@ -82,8 +86,10 @@ pub enum Added {
 /// Queue `issue` at the end of the lane. Count and insert run in one `BEGIN IMMEDIATE`
 /// transaction: a plain (deferred) one would let two adds both read 49 and the loser fail with
 /// `SQLITE_BUSY` on its write.
+#[allow(clippy::too_many_arguments)]
 pub async fn add(
     db: &SqlitePool,
+    t: &TenantId,
     companion_id: Uuid,
     issue: &IssueRef,
     by: &str,
@@ -99,8 +105,8 @@ pub async fn add(
     } else if now.len() >= max {
         Added::Full
     } else {
-        sqlx::query("INSERT INTO companion_queue (companion_id, repo, number, position, queued_by, queued_at) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(companion_id.to_string())
+        sqlx::query("INSERT INTO companion_queue (tenant_id, companion_id, repo, number, position, queued_by, queued_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(t.as_str()).bind(companion_id.to_string())
             .bind(&issue.repo)
             .bind(issue.number as i64)
             .bind(now.len() as i64)
@@ -194,14 +200,21 @@ pub async fn launch_not_started(
 
 /// Drop every queued issue of these repositories inside the caller's transaction: the
 /// installation that covered them was detached (design §3.3). Returns how many rows.
-pub async fn drop_repos(conn: &mut SqliteConnection, repos: &[String]) -> Result<u64> {
+pub async fn drop_repos(
+    conn: &mut SqliteConnection,
+    t: &TenantId,
+    repos: &[String],
+) -> Result<u64> {
     let mut n = 0;
     for repo in repos {
-        n += sqlx::query("DELETE FROM companion_queue WHERE repo = ? COLLATE NOCASE")
-            .bind(repo)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected();
+        n += sqlx::query(
+            "DELETE FROM companion_queue WHERE tenant_id = ? AND repo = ? COLLATE NOCASE",
+        )
+        .bind(t.as_str())
+        .bind(repo)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
     }
     Ok(n)
 }

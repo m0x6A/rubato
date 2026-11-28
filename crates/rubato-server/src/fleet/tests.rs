@@ -489,9 +489,16 @@ async fn a_repeat_never_acts_twice() {
     assert_eq!(messages_of(&h, h.a1).await, 1);
     // A claim never finished: in progress, then unknown after a minute; never acted on.
     let stuck = req(h.lead, FleetAction::Stop { launch_id: h.a1 });
-    store::claim(&h.app.db, h.ca, "alice", &stuck, h.app.clock.now())
-        .await
-        .unwrap();
+    store::claim(
+        &h.app.db,
+        &crate::kernel::tenancy::TenantId::default_tenant(),
+        h.ca,
+        "alice",
+        &stuck,
+        h.app.clock.now(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         ask(&h, h.ca, "alice", &stuck).await.outcome,
         FleetOutcome::InProgress

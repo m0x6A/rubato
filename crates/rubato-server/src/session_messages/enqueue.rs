@@ -28,6 +28,7 @@ pub async fn enqueue(
         return Ok(None);
     };
     let row = MessageRow {
+        tenant: target.tenant.clone(),
         id: Uuid::new_v4(),
         launch_id,
         session_id: target.session_id.clone(),
@@ -86,6 +87,7 @@ pub async fn enqueue_chat_via(
         return Ok(Err(ChatRefused::UnknownLaunch));
     };
     let row = MessageRow {
+        tenant: target.tenant.clone(),
         id: Uuid::new_v4(),
         launch_id,
         session_id: target.session_id.clone(),

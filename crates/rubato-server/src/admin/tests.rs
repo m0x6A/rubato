@@ -48,7 +48,7 @@ async fn ada_holds_everything(app: &App) {
     .await;
     exec(app, "INSERT INTO user_tokens (login, access_ct, refresh_ct, expires_at, updated_at) VALUES ('ada', 'a', 'r', ?, ?)", &[&now, &now]).await;
     exec(app, "INSERT INTO pairings (companion_id, user, token_hash, hostname, created_at) VALUES ('00000000-0000-0000-0000-0000000000aa', 'ada', 'h1', 'laptop', ?)", &[&now]).await;
-    exec(app, "INSERT INTO companion_queue (companion_id, repo, number, position, queued_by, queued_at) VALUES ('00000000-0000-0000-0000-0000000000aa', 'acme/api', 1, 0, 'ada', ?)", &[&now]).await;
+    exec(app, "INSERT INTO companion_queue (tenant_id, companion_id, repo, number, position, queued_by, queued_at) VALUES ('default', '00000000-0000-0000-0000-0000000000aa', 'acme/api', 1, 0, 'ada', ?)", &[&now]).await;
     let mut tx = app.db.begin().await.unwrap();
     crate::tenants::create_tenant(&mut tx, "acme", "Acme", "op", Utc::now())
         .await

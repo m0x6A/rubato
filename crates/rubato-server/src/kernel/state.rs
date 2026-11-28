@@ -263,6 +263,25 @@ impl AppState {
         })
     }
 
+    /// Whether a companion's session shows in a tenant (design §3.1, the Companion class):
+    /// session snapshots carry no tenant, so a read for a tenant keeps only the sessions whose
+    /// repository is live in it. A session in no repository shows only on a server with one
+    /// GitHub context, where everything is tenant `default`'s.
+    pub fn session_in(&self, tenant: &TenantId, s: &SessionState) -> bool {
+        match s
+            .issue
+            .as_ref()
+            .map(|i| i.repo.as_str())
+            .or(s.repo.as_deref())
+        {
+            Some(repo) => self.github.tenant_of(repo).as_ref() == Some(tenant),
+            None => {
+                !self.github.routes_by_installation()
+                    && tenant.as_str() == crate::kernel::tenancy::DEFAULT_TENANT
+            }
+        }
+    }
+
     /// Every tenant this server reads for: those with a live installation, in id order. With one
     /// GitHub context, tenant `default`.
     pub fn tenants(&self) -> Vec<TenantId> {
@@ -389,6 +408,21 @@ impl AppState {
                 .into_iter()
                 .map(|r| r.to_ascii_lowercase()),
         );
+        out
+    }
+
+    /// Every distinct repo the loaded maps of one tenant's workspaces name, each once, in order.
+    pub async fn repos_named_in(&self, tenant: &TenantId) -> Vec<String> {
+        let maps = self.maps.read().await;
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for (_, m) in maps.iter().filter(|(k, _)| k.tenant() == tenant) {
+            for r in m.map.repos_named() {
+                if seen.insert(r.to_ascii_lowercase()) {
+                    out.push(r.to_string());
+                }
+            }
+        }
         out
     }
 

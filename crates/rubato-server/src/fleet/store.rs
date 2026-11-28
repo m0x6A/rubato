@@ -3,6 +3,7 @@
 //! refused.
 
 use crate::kernel::db::{parse_ts, ts};
+use crate::kernel::tenancy::TenantId;
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use rubato_protocol::fleet::limits;
@@ -26,6 +27,7 @@ pub enum Claim {
 /// Claim `req` for `companion_id`, as `owner`. Deletes rows older than the retention first.
 pub async fn claim(
     db: &SqlitePool,
+    t: &TenantId,
     companion_id: Uuid,
     owner: &str,
     req: &FleetRequest,
@@ -37,10 +39,9 @@ pub async fn claim(
         .await?;
     let hash = req.action.hash();
     let inserted = sqlx::query(
-        "INSERT OR IGNORE INTO fleet_requests (companion_id, lead_launch_id, request_id, action_hash, action, owner, target_launch_id, state, claimed_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?)",
+        "INSERT OR IGNORE INTO fleet_requests (tenant_id, companion_id, lead_launch_id, request_id, action_hash, action, owner, target_launch_id, state, claimed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', ?)",
     )
-    .bind(companion_id.to_string())
+    .bind(t.as_str()).bind(companion_id.to_string())
     .bind(req.lead_launch_id.to_string())
     .bind(req.request_id.to_string())
     .bind(&hash)

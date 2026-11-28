@@ -905,6 +905,7 @@ async fn the_overview_carries_live_agent_lines_and_nothing_else() {
     let now = chrono::Utc::now();
     rubato_server::agent_reports::record(
         &h.app.db,
+        &rubato_server::kernel::tenancy::TenantId::default_tenant(),
         c,
         live,
         "designing the seam",
@@ -913,9 +914,17 @@ async fn the_overview_carries_live_agent_lines_and_nothing_else() {
     )
     .await
     .unwrap();
-    rubato_server::agent_reports::record(&h.app.db, c, gone, "ended", &[], now)
-        .await
-        .unwrap();
+    rubato_server::agent_reports::record(
+        &h.app.db,
+        &rubato_server::kernel::tenancy::TenantId::default_tenant(),
+        c,
+        gone,
+        "ended",
+        &[],
+        now,
+    )
+    .await
+    .unwrap();
     let mut s: rubato_protocol::SessionState = serde_json::from_value(serde_json::json!({
         "session_id": "s", "companion_id": c, "user": "m0x6A", "cwd": "/w",
         "status": "idle", "source": "launch", "last_seen": now,
@@ -7713,7 +7722,7 @@ async fn approval_rows(db: &sqlx::SqlitePool) -> Vec<String> {
 /// so a `Launch` result and a `HandoffReport` reach `approve` instead of stopping at a gate.
 async fn seed_guard(h: &Harness, companion_id: Uuid) {
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 122, '{}', ?)")
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, 'm0x6A', 'm0x6A/rubato', 122, '{}', ?)")
         .bind(GUARD_LAUNCH).bind(companion_id.to_string()).bind(&now)
         .execute(&h.app.db).await.unwrap();
     sqlx::query("INSERT INTO rubato_approvals (tenant_id, id, repo, number, branch, draft_id, rev, plan_sha, bundle_hash, approved_by, approved_at, self, summary, created_at) VALUES ('default', ?, 'm0x6A/rubato', 122, 'issue/122-plan-in-rubato', ?, 3, 'abc1234', 'def5678', 'alice', ?, 0, 'ok', ?)")

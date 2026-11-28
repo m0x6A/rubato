@@ -468,7 +468,7 @@ mod call_in_tests {
             role: Default::default(),
             lead_launch_id: None,
         };
-        sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, ?, ?, ?, ?, ?)")
             .bind(id.to_string())
             .bind(companion.to_string())
             .bind(user)
@@ -567,6 +567,7 @@ mod call_in_tests {
     ) -> Vec<(rubato_protocol::SessionMessageView, RoomTurnRef)> {
         let views = session_messages::list(
             State(h.app.clone()),
+            crate::kernel::tenancy::default_scope(),
             CurrentUser(OWNER.into()),
             Path(launch.into()),
         )

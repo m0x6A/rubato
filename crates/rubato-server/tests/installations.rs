@@ -291,7 +291,7 @@ async fn an_installation_deleted_on_github_is_detached_and_its_rows_kept() {
     for sql in [
         "INSERT INTO room_agents (tenant_id, id, repo, number, branch, launch_id, owner, called_by, joined_at) VALUES ('bcorp', 'a1', 'bcorp/web', 3, 'issue/3-x', 'l1', 'ada', 'ada', ?)",
         "INSERT INTO room_requests (tenant_id, id, repo, number, branch, owner, launch_id, requested_by, at, state) VALUES ('bcorp', 'r1', 'bcorp/web', 3, 'issue/3-x', 'ada', 'l1', 'bob', ?, 'pending')",
-        "INSERT INTO companion_queue (companion_id, repo, number, position, queued_by, queued_at) VALUES ('00000000-0000-0000-0000-0000000000aa', 'bcorp/web', 3, 0, 'ada', ?)",
+        "INSERT INTO companion_queue (tenant_id, companion_id, repo, number, position, queued_by, queued_at) VALUES ('bcorp', '00000000-0000-0000-0000-0000000000aa', 'bcorp/web', 3, 0, 'ada', ?)",
     ] {
         sqlx::query(sql)
             .bind(&now)

@@ -38,145 +38,257 @@ use tower_http::trace::TraceLayer;
 /// The body of the 404 answer for an unknown API path.
 pub const UNKNOWN_API_PATH: &str = r#"{"error":"unknown api path"}"#;
 
-/// The map-scoped routes (ADR 0049, ADR 0089): each under `/api/t/{tenant}/w/{ws}`, for a
-/// workspace the tenant holds. Nothing is served unprefixed or under `/api/w/{ws}` any more.
-fn map_scoped() -> Router<App> {
-    let at = |p: &str| workspace_routes::scoped("{tenant}", "{ws}", p);
-    Router::new()
-        .route(&at(overview_routes::OVERVIEW), get(overview::overview))
-        .route(&at(map_routes::MAP), get(map::map))
-        .route(&at(map_routes::MAP_RELOAD), post(map::map_reload))
-        .route(&at(draft_routes::DRAFT_OPS), post(map_draft::add_op))
-        .route(
-            &at(&format!("{}/{{seq}}", draft_routes::DRAFT_OPS)),
-            delete(map_draft::remove_op),
-        )
-        .route(&at(draft_routes::DRAFT_DISCARD), post(map_draft::discard))
-        .route(&at(draft_routes::DRAFT_RESTORE), post(map_draft::restore))
-        .route(&at(draft_routes::DRAFT_YAML), get(map_draft::proposed_yaml))
-        .route(&at(draft_routes::DRAFT_PROPOSE), post(map_draft::propose))
-        .route(&at(draft_routes::DRAFT_WITHDRAW), post(map_draft::withdraw))
-        .route(
-            &at(pin_routes::PINS),
-            post(pins::add_pin).delete(pins::remove_pin),
-        )
-        .route(&at(launch_routes::LAUNCH), post(launch::launch))
-        .route(&at(plan_draft_routes::PLAN_IMPORT), post(import::import))
-        .route(&at(issue_routes::ISSUES), post(new_issue::create))
-        .route(&at(approve_routes::PLAN_APPROVE), post(approve::approve))
-        .route(
-            &at(approve_routes::PLAN_DRAFT_APPROVE),
-            post(approve::approve_draft),
-        )
-        .route(
-            &at(layout_routes::LAYOUT),
-            put(layout::put_layout).delete(layout::clear_layout),
-        )
-        .route(
-            &at(layout_routes::LAYOUT_GROUPED),
-            delete(layout::clear_grouped_layout),
-        )
-        .route(
-            &at(traffic_routes::TRAFFIC_DISMISSALS),
-            post(traffic::dismiss),
-        )
-        .route(
-            &at(&format!("{}/{{id}}", traffic_routes::TRAFFIC_DISMISSALS)),
-            delete(traffic::undismiss),
-        )
-        .route(&at(pull_routes::PULL), get(pulls::pull_view))
-        .route(&at(pull_routes::PULLS_MERGE), post(pulls::merge))
-        .route(
-            &at(settings_routes::SETTINGS),
-            get(workspace_settings::settings).put(workspace_settings::update),
-        )
+/// One tenant route (ADR 0089): the path as the protocol names it, whether it is map-scoped (and
+/// so mounted under a workspace), and its handler for each method. The router is built from
+/// this table and from nothing else, and the cross-tenant sweep reads the same table
+/// ([`tenant_route_table`]), so a tenant route cannot be added without being swept (design §11.2).
+struct TenantRoute {
+    path: String,
+    map_scoped: bool,
+    on: Vec<(Method, axum::routing::MethodRouter<App>)>,
 }
 
-/// The tenant routes that name no workspace (ADR 0089): each under `/api/t/{tenant}`.
-fn tenant_scoped() -> Router<App> {
-    let at = |p: &str| tenant_routes::in_tenant("{tenant}", p);
-    Router::new()
-        .route(
-            &at(workspace_routes::WORKSPACES),
-            get(map::workspaces).post(workspace_settings::create),
-        )
-        .route(
-            &at(settings_routes::TRAFFIC_SOURCES),
-            get(workspace_settings::sources),
-        )
-        .route(
-            &at(queue_routes::QUEUE),
-            post(queue::add).put(queue::reorder).delete(queue::remove),
-        )
-        .route(
-            &at(rubato_protocol::session_message::routes::LAUNCH_MESSAGES),
-            get(session_messages::list).post(session_messages::send),
-        )
-        .route(
-            &at(rubato_protocol::session_message::routes::LAUNCH_STOP),
-            post(session_messages::stop),
-        )
-        .route(
-            &at(rubato_protocol::session_log::routes::LAUNCH_LOG),
-            get(session_log::log),
-        )
-        .route(
-            &at(rubato_protocol::plan_draft::routes::DRAFT),
-            get(plan_drafts::draft),
-        )
-        .route(
-            &at(rubato_protocol::plan_draft::routes::DRAFT_REVISION),
-            get(plan_drafts::revision),
-        )
-        .route(&at(rubato_protocol::room::routes::ROOM), get(rooms::room))
-        .route(
-            &at(rubato_protocol::room::routes::ROOM_AGENTS),
-            post(rooms::call_in).delete(rooms::dismiss),
-        )
-        .route(
-            &at(rubato_protocol::room::routes::ROOM_REQUEST),
-            post(rooms::answer),
-        )
-        .route(
-            &at(rubato_protocol::room::routes::ROOM_MESSAGES),
-            post(rooms::post),
-        )
+impl TenantRoute {
+    /// Where the route is mounted: under the tenant, and under its workspace when map-scoped.
+    fn mounted(&self) -> String {
+        // Already a full tenant path (`/api/t/{tenant}/…`); `/api/traffic/…` is not one.
+        if self
+            .path
+            .starts_with(&format!("{}/", tenant_routes::TENANT_PREFIX))
+        {
+            self.path.clone()
+        } else if self.map_scoped {
+            workspace_routes::scoped("{tenant}", "{ws}", &self.path)
+        } else {
+            tenant_routes::in_tenant("{tenant}", &self.path)
+        }
+    }
+}
+
+fn tenant_routes() -> Vec<TenantRoute> {
+    let ws = |path: &str, on: Vec<(Method, axum::routing::MethodRouter<App>)>| TenantRoute {
+        path: path.to_owned(),
+        map_scoped: true,
+        on,
+    };
+    let t = |path: &str, on: Vec<(Method, axum::routing::MethodRouter<App>)>| TenantRoute {
+        path: path.to_owned(),
+        map_scoped: false,
+        on,
+    };
+    use Method as M;
+    use rubato_protocol::plan_draft::routes as drafts;
+    use rubato_protocol::room::routes as room;
+    use rubato_protocol::session_log::routes as log;
+    use rubato_protocol::session_message::routes as messages;
+    use rubato_protocol::voice::routes as speech;
+    vec![
+        // Map-scoped (ADR 0049): each under `/api/t/{tenant}/w/{ws}`.
+        ws(
+            overview_routes::OVERVIEW,
+            vec![(M::GET, get(overview::overview))],
+        ),
+        ws(map_routes::MAP, vec![(M::GET, get(map::map))]),
+        ws(
+            map_routes::MAP_RELOAD,
+            vec![(M::POST, post(map::map_reload))],
+        ),
+        ws(
+            draft_routes::DRAFT_OPS,
+            vec![(M::POST, post(map_draft::add_op))],
+        ),
+        ws(
+            &format!("{}/{{seq}}", draft_routes::DRAFT_OPS),
+            vec![(M::DELETE, delete(map_draft::remove_op))],
+        ),
+        ws(
+            draft_routes::DRAFT_DISCARD,
+            vec![(M::POST, post(map_draft::discard))],
+        ),
+        ws(
+            draft_routes::DRAFT_RESTORE,
+            vec![(M::POST, post(map_draft::restore))],
+        ),
+        ws(
+            draft_routes::DRAFT_YAML,
+            vec![(M::GET, get(map_draft::proposed_yaml))],
+        ),
+        ws(
+            draft_routes::DRAFT_PROPOSE,
+            vec![(M::POST, post(map_draft::propose))],
+        ),
+        ws(
+            draft_routes::DRAFT_WITHDRAW,
+            vec![(M::POST, post(map_draft::withdraw))],
+        ),
+        ws(
+            pin_routes::PINS,
+            vec![
+                (M::POST, post(pins::add_pin)),
+                (M::DELETE, delete(pins::remove_pin)),
+            ],
+        ),
+        ws(launch_routes::LAUNCH, vec![(M::POST, post(launch::launch))]),
+        ws(
+            plan_draft_routes::PLAN_IMPORT,
+            vec![(M::POST, post(import::import))],
+        ),
+        ws(
+            issue_routes::ISSUES,
+            vec![(M::POST, post(new_issue::create))],
+        ),
+        ws(
+            approve_routes::PLAN_APPROVE,
+            vec![(M::POST, post(approve::approve))],
+        ),
+        ws(
+            approve_routes::PLAN_DRAFT_APPROVE,
+            vec![(M::POST, post(approve::approve_draft))],
+        ),
+        ws(
+            layout_routes::LAYOUT,
+            vec![
+                (M::PUT, put(layout::put_layout)),
+                (M::DELETE, delete(layout::clear_layout)),
+            ],
+        ),
+        ws(
+            layout_routes::LAYOUT_GROUPED,
+            vec![(M::DELETE, delete(layout::clear_grouped_layout))],
+        ),
+        ws(
+            traffic_routes::TRAFFIC_DISMISSALS,
+            vec![(M::POST, post(traffic::dismiss))],
+        ),
+        ws(
+            &format!("{}/{{id}}", traffic_routes::TRAFFIC_DISMISSALS),
+            vec![(M::DELETE, delete(traffic::undismiss))],
+        ),
+        ws(pull_routes::PULL, vec![(M::GET, get(pulls::pull_view))]),
+        ws(
+            pull_routes::PULLS_MERGE,
+            vec![(M::POST, post(pulls::merge))],
+        ),
+        ws(
+            settings_routes::SETTINGS,
+            vec![
+                (M::GET, get(workspace_settings::settings)),
+                (M::PUT, put(workspace_settings::update)),
+            ],
+        ),
+        // ADR 0075: a workspace is deleted by its own id. Its path is already the full one.
+        ws(
+            settings_routes::WORKSPACE,
+            vec![(M::DELETE, delete(workspace_settings::delete))],
+        ),
+        // Tenant routes that name no workspace: each under `/api/t/{tenant}`.
+        t(
+            workspace_routes::WORKSPACES,
+            vec![
+                (M::GET, get(map::workspaces)),
+                (M::POST, post(workspace_settings::create)),
+            ],
+        ),
+        t(
+            settings_routes::TRAFFIC_SOURCES,
+            vec![(M::GET, get(workspace_settings::sources))],
+        ),
+        t(
+            queue_routes::QUEUE,
+            vec![
+                (M::POST, post(queue::add)),
+                (M::PUT, put(queue::reorder)),
+                (M::DELETE, delete(queue::remove)),
+            ],
+        ),
+        t(
+            messages::LAUNCH_MESSAGES,
+            vec![
+                (M::GET, get(session_messages::list)),
+                (M::POST, post(session_messages::send)),
+            ],
+        ),
+        t(
+            messages::LAUNCH_STOP,
+            vec![(M::POST, post(session_messages::stop))],
+        ),
+        t(log::LAUNCH_LOG, vec![(M::GET, get(session_log::log))]),
+        t(drafts::DRAFT, vec![(M::GET, get(plan_drafts::draft))]),
+        t(
+            drafts::DRAFT_REVISION,
+            vec![(M::GET, get(plan_drafts::revision))],
+        ),
+        t(room::ROOM, vec![(M::GET, get(rooms::room))]),
+        t(
+            room::ROOM_AGENTS,
+            vec![
+                (M::POST, post(rooms::call_in)),
+                (M::DELETE, delete(rooms::dismiss)),
+            ],
+        ),
+        t(room::ROOM_REQUEST, vec![(M::POST, post(rooms::answer))]),
+        t(room::ROOM_MESSAGES, vec![(M::POST, post(rooms::post))]),
         // ADR 0073: a plan room's voice channel. Every route answers 404 `voice_off` while
         // `RUBATO_VOICE` is off; the handlers cap their own bodies.
-        .route(
-            &at(rubato_protocol::voice::routes::VOICE_TOKEN),
-            post(voice::voice_token),
-        )
-        .route(
-            &at(rubato_protocol::voice::routes::VOICE_UTTERANCE),
-            post(voice::utterance),
-        )
-        .route(
-            &at(rubato_protocol::voice::routes::VOICE_SPEECH),
-            get(voice::speech),
-        )
-        .route(
-            &at(rubato_protocol::voice::routes::VOICE_JOIN_FAILED),
-            post(voice::join_failed),
-        )
+        t(
+            speech::VOICE_TOKEN,
+            vec![(M::POST, post(voice::voice_token))],
+        ),
+        t(
+            speech::VOICE_UTTERANCE,
+            vec![(M::POST, post(voice::utterance))],
+        ),
+        t(speech::VOICE_SPEECH, vec![(M::GET, get(voice::speech))]),
+        t(
+            speech::VOICE_JOIN_FAILED,
+            vec![(M::POST, post(voice::join_failed))],
+        ),
+    ]
+}
+
+/// Every tenant route as it is mounted: its method and its path template (`{tenant}`, `{ws}`
+/// and its own ids as placeholders). What the cross-tenant sweep calls (design §11.2).
+#[doc(hidden)]
+pub fn tenant_route_table() -> Vec<(Method, String)> {
+    tenant_routes()
+        .iter()
+        .flat_map(|r| {
+            let at = r.mounted();
+            r.on.iter().map(move |(m, _)| (m.clone(), at.clone()))
+        })
+        .collect()
 }
 
 pub fn router(app: App) -> Router {
     let dist = app.config.web_dist.clone();
     let index = dist.join("index.html");
-    let scoped = map_scoped()
-        // ADR 0075: a workspace is deleted by its own id.
-        .route(
-            settings_routes::WORKSPACE,
-            delete(workspace_settings::delete),
-        )
+    // Built from the one table (design §11.2). A map-scoped route gets the workspace layer; all
+    // get the membership layer, which runs first (ADR 0089).
+    let (mut scoped, mut plain) = (Router::new(), Router::new());
+    for r in tenant_routes() {
+        let at = r.mounted();
+        let on =
+            r.on.into_iter()
+                .fold(axum::routing::MethodRouter::new(), |all, (_, one)| {
+                    all.merge(one)
+                });
+        if r.map_scoped {
+            scoped = scoped.route(&at, on);
+        } else {
+            plain = plain.route(&at, on);
+        }
+    }
+    let scoped = scoped.route_layer(axum::middleware::from_fn_with_state(
+        app.clone(),
+        crate::kernel::http::check_workspace,
+    ));
+    // Outermost first: the membership layer, then the repositories the request names.
+    let tenant = plain
+        .merge(scoped)
         .route_layer(axum::middleware::from_fn_with_state(
             app.clone(),
-            crate::kernel::http::check_workspace,
-        ));
-    // Every tenant route (ADR 0089): the membership layer runs first, then the workspace's.
-    let tenant = tenant_scoped()
-        .merge(scoped)
+            crate::kernel::http::check_repos,
+        ))
         .route_layer(axum::middleware::from_fn_with_state(
             app.clone(),
             tenants::check_tenant,

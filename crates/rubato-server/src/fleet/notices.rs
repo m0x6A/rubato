@@ -149,7 +149,7 @@ pub async fn leads(app: &App, ws: &WsKey) -> Vec<LeadView> {
         if t.role != LaunchRole::Lead || launch::ws_key(app, &t).as_ref() != Some(ws) {
             continue;
         }
-        let workers = launch::workers_of(&app.db, *l)
+        let workers = launch::workers_of(&app.db, &t.tenant, *l)
             .await
             .unwrap_or_default()
             .into_iter()

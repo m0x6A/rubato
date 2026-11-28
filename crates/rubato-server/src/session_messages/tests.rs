@@ -72,7 +72,7 @@ async fn harness() -> H {
         role: Default::default(),
         lead_launch_id: None,
     };
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, ?, 'm0x6A/rubato', 122, ?, ?)")
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, ?, 'm0x6A/rubato', 122, ?, ?)")
         .bind(launch.to_string())
         .bind(companion.to_string())
         .bind(OWNER)
@@ -116,6 +116,7 @@ fn pushed(rx: &mut mpsc::UnboundedReceiver<ServerMessage>) -> Vec<(Uuid, String)
 async fn send(h: &H, user: &str, text: &str) -> Result<Uuid, (StatusCode, String)> {
     handlers::send(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(user.into()),
         Path(h.launch.into()),
         Json(SessionMessageRequest { text: text.into() }),
@@ -297,6 +298,7 @@ async fn two_dispatches_at_once_push_one_message() {
     let mut rx = connect_companion(&h, &[capability::SESSION_INPUT]);
     for text in ["a", "b", "c"] {
         let row = store::MessageRow {
+            tenant: crate::kernel::tenancy::TenantId::default_tenant(),
             id: Uuid::new_v4(),
             launch_id: h.launch,
             session_id: None,
@@ -351,6 +353,7 @@ async fn only_the_owner_sends_and_the_text_must_fit() {
     );
     let other = handlers::send(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(OWNER.into()),
         Path(Uuid::new_v4().into()),
         Json(SessionMessageRequest { text: "hi".into() }),
@@ -368,6 +371,7 @@ async fn only_the_owner_sends_and_the_text_must_fit() {
     // Everyone reads.
     let Json(list) = handlers::list(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser("alice".into()),
         Path(h.launch.into()),
     )
@@ -439,6 +443,7 @@ async fn a_clear_moves_queued_rows_to_the_new_session_and_an_old_hook_finds_them
 async fn stop_as(h: &H, user: &str) -> Result<Uuid, (StatusCode, String)> {
     handlers::stop(
         State(h.app.clone()),
+        crate::kernel::tenancy::default_scope(),
         CurrentUser(user.into()),
         Path(h.launch.into()),
     )
@@ -469,7 +474,12 @@ async fn stop_is_owner_only_and_never_queued() {
         stop_as(&h, OWNER).await.unwrap_err(),
         (StatusCode::CONFLICT, "companion_offline".into())
     );
-    let queued = store::queued(&h.app.db).await.unwrap();
+    let queued = store::queued(
+        &h.app.db,
+        &crate::kernel::tenancy::TenantId::default_tenant(),
+    )
+    .await
+    .unwrap();
     assert!(
         queued.is_empty(),
         "a refused stop is not queued: {}",

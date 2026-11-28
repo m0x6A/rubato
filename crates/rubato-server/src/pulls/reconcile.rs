@@ -71,7 +71,7 @@ pub async fn reconcile(app: &App, t: &TenantId, complete: &[String]) {
                     let _ = forget().await;
                     continue;
                 }
-                None => match app.github.unscoped(&i.repo).pull(&i.repo, i.number).await {
+                None => match app.github.within(t, &i.repo).pull(&i.repo, i.number).await {
                     Ok(Some(p)) if p.info.merged_at.is_some() => {
                         if let Err(e) = store::merged(&app.db, t, &i, None).await {
                             tracing::error!(error = %format!("{e:#}"), "settling a merge failed");

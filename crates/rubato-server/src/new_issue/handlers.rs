@@ -110,7 +110,7 @@ pub async fn create(
             ),
         ));
     }
-    let gh = app.github.unscoped(&req.repo);
+    let gh = app.github.within(ws.key().tenant(), &req.repo);
     if !gh.can_write() {
         return Err(refuse(
             reason::CANNOT_WRITE,

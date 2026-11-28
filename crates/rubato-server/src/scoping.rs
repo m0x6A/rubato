@@ -104,14 +104,7 @@ const CLASSES: &[(&str, Class)] = &[
 
 /// Checked tables whose `tenant_id` has not landed yet (design §13): each pull request that
 /// scopes a table's queries adds its column and takes it off this list.
-const NOT_YET_SCOPED: &[&str] = &[
-    "launches",
-    "companion_queue",
-    "session_messages",
-    "agent_reports",
-    "fleet_requests",
-    "cap_hits",
-];
+const NOT_YET_SCOPED: &[&str] = &[];
 
 /// Queries whose SQL is a run-time string, by file: how many, and why that is allowed. A file
 /// that gains one fails until it is listed here with a reason, or uses a literal.
@@ -152,6 +145,26 @@ const DYNAMIC: &[(&str, usize, &str)] = &[
 /// the server's own bookkeeping (the registry, the poll's work list). Each says why. A query
 /// that no longer exists must leave the list.
 const GLOBAL: &[(&str, &str, &str)] = &[
+    (
+        "launch/store.rs",
+        "SELECT tenant_id, companion_id, user, repo, number, command, workspace_id, role, lead_launch_id FROM launches WHERE id = ?",
+        "a launch found by its own id: a companion's envelope and a hook name it by id alone. The row says its tenant, and a request handler compares that with its scope (launch_in)",
+    ),
+    (
+        "session_messages/store.rs",
+        "SELECT fmt_COLUMNS FROM session_messages WHERE id = ?",
+        "a message found by its own id: the companion's answer names it by id alone. The row says its tenant and its companion, and the caller checks the companion",
+    ),
+    (
+        "fleet/store.rs",
+        "DELETE FROM fleet_requests WHERE claimed_at < ?",
+        "housekeeping: claims older than the keep time go, whatever their tenant; nothing is read back",
+    ),
+    (
+        "fleet/store.rs",
+        "SELECT COUNT(*) FROM fleet_requests",
+        "a gauge over the whole table for the server's own dashboard: a count, no row",
+    ),
     (
         "workspace_settings/store.rs",
         "SELECT COUNT(*) FROM workspace_settings",
@@ -446,7 +459,17 @@ fn tables(from: &[TableWithJoins]) -> (Vec<(String, String)>, Vec<Expr>) {
     (t, on)
 }
 
-/// One scope: the checked tables it names must each have a `tenant_id` predicate.
+/// Whether a table's rows are also one companion's (design §3.1, the Launch class): a launch, a
+/// queued issue, a message to a session, an agent's report and a lead's request each name the
+/// companion they belong to. A query that names `companion_id` reads or writes one person's own
+/// companion, the pairing's, whichever tenants that person is in: the Companion-class key. It is
+/// scoped by that, as a query that names `tenant_id` is by the tenant.
+fn companions_own(table: &str) -> bool {
+    class_of(table) == Some(Class::Launch) && table != "cap_hits"
+}
+
+/// One scope: the checked tables it names must each have a `tenant_id` predicate, or, for a
+/// table of a companion's own rows, a `companion_id` one.
 fn scope(
     what: &str,
     named: &[(String, String)],
@@ -458,7 +481,7 @@ fn scope(
     let checked: Vec<&(String, String)> = named.iter().filter(|(t, _)| enforced(t)).collect();
     for (table, by) in &checked {
         let ok = ids.iter().any(|(q, n)| {
-            n == "tenant_id"
+            (n == "tenant_id" || (n == "companion_id" && companions_own(table)))
                 && (q.as_deref() == Some(by.as_str()) || (q.is_none() && checked.len() == 1))
         });
         if !ok {

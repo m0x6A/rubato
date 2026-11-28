@@ -113,8 +113,28 @@ pub async fn on_request(
             });
         }
         let now = app.clock.now();
+        // The request is the lead launch's tenant's (ADR 0087). A lead this server never
+        // launched has none: refused here, and nothing is recorded for it.
+        let t = match launch::launch_target(&app.db, req.lead_launch_id).await {
+            Ok(Some(l)) => l.tenant,
+            Ok(None) => {
+                span.record("rubato.outcome", "refused");
+                span.record("rubato.reason", reason::IDENTITY);
+                count(app, action, "refused", reason::IDENTITY);
+                tracing::warn!(rubato.launch_id = %req.lead_launch_id, rubato.reason = reason::IDENTITY, "fleet request refused");
+                return Some(
+                    Answer::refused(reason::IDENTITY, "no such launch on this companion")
+                        .result(req),
+                );
+            }
+            Err(e) => {
+                tracing::error!(slice = "fleet", error = %format!("{e:#}"), "fleet: reading the lead launch failed");
+                return Some(Answer::refused("internal", "the request could not be recorded").result(req));
+            }
+        };
+        let t = &t;
         // Step 2: the claim, before any check, so a repeat never acts twice.
-        let answer = match store::claim(&app.db, companion_id, user, req, now).await {
+        let answer = match store::claim(&app.db, t, companion_id, user, req, now).await {
             Err(e) => {
                 tracing::error!(slice = "fleet", error = %format!("{e:#}"), "fleet claim failed");
                 return Some(Answer::refused("internal", "the request could not be recorded").result(req));
@@ -299,7 +319,8 @@ async fn act_inner(
                 .iter()
                 .any(|d| d.issue == *issue && !d.summary.owner.eq_ignore_ascii_case(owner));
             if drafted_by_another
-                || launch::launched_by_another(&app.db, issue, owner, since).await?
+                || launch::launched_by_another(&app.db, lead_ws.tenant(), issue, owner, since)
+                    .await?
             {
                 return Ok(Answer::refused(
                     reason::SOMEONE_ELSES_ISSUE,
@@ -407,7 +428,10 @@ fn is_live(row: &launch::FleetLaunch, live: &HashMap<Uuid, SessionStatus>) -> bo
 /// How many of `lead`'s workers are live.
 pub async fn live_workers(app: &App, lead: Uuid) -> anyhow::Result<usize> {
     let live = sessions_by_launch(app);
-    Ok(launch::workers_of(&app.db, lead)
+    let Some(l) = launch::launch_target(&app.db, lead).await? else {
+        return Ok(0);
+    };
+    Ok(launch::workers_of(&app.db, &l.tenant, lead)
         .await?
         .iter()
         .filter(|r| is_live(r, &live))
@@ -419,7 +443,8 @@ pub async fn live_workers(app: &App, lead: Uuid) -> anyhow::Result<usize> {
 async fn list(app: &App, owner: &str, ws: &WsKey) -> anyhow::Result<Vec<FleetEntry>> {
     let live = sessions_by_launch(app);
     let since = Utc::now() - Duration::hours(limits::LIST_HOURS);
-    let mut rows = launch::launches_of(&app.db, owner, ws, since, limits::LIST_MAX).await?;
+    let mut rows =
+        launch::launches_of(&app.db, ws.tenant(), owner, ws, since, limits::LIST_MAX).await?;
     let have: HashSet<Uuid> = rows.iter().map(|r| r.launch_id).collect();
     let older: Vec<Uuid> = live
         .keys()

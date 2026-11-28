@@ -186,7 +186,7 @@ pub async fn propose(
             ),
         ));
     }
-    if !app.github.unscoped(&cfg.map_repo).can_write() {
+    if !app.github.within(&cfg.tenant, &cfg.map_repo).can_write() {
         return Err(refuse(
             reason::CANNOT_WRITE,
             "This Rubato cannot write to GitHub: it runs on a personal token or none, and only a GitHub App installation can open pull requests. Copy YAML gives the full proposed file.".into(),
@@ -228,7 +228,7 @@ pub async fn propose(
     // Other commits on that branch do not matter; a different map file does.
     let head = match app
         .github
-        .unscoped(&cfg.map_repo)
+        .within(&cfg.tenant, &cfg.map_repo)
         .branch_sha(&cfg.map_repo, &cfg.map_ref)
         .await
     {
@@ -259,7 +259,7 @@ pub async fn propose(
     };
     let on_branch = match app
         .github
-        .unscoped(&cfg.map_repo)
+        .within(&cfg.tenant, &cfg.map_repo)
         .file(&cfg.map_repo, &cfg.map_path, &cfg.map_ref)
         .instrument(crate::kernel::github::part_read(
             crate::kernel::github::READS_MAP,
@@ -348,14 +348,14 @@ pub async fn propose(
     };
 
     app.github
-        .unscoped(&cfg.map_repo)
+        .within(&cfg.tenant, &cfg.map_repo)
         .create_ref(&cfg.map_repo, &row.branch, &row.base_sha)
         .await
         .map_err(|e| fail("ref", e))?;
     // A resumed proposal may have written the file already.
     let written = app
         .github
-        .unscoped(&cfg.map_repo)
+        .within(&cfg.tenant, &cfg.map_repo)
         .file(&cfg.map_repo, &cfg.map_path, &row.branch)
         .instrument(crate::kernel::github::part_read(
             crate::kernel::github::READS_MAP,
@@ -369,7 +369,7 @@ pub async fn propose(
             if ops.len() == 1 { "" } else { "s" }
         );
         app.github
-            .unscoped(&cfg.map_repo)
+            .within(&cfg.tenant, &cfg.map_repo)
             .put_file(
                 &cfg.map_repo,
                 &row.branch,
@@ -383,7 +383,7 @@ pub async fn propose(
     // A pull request opened by a call that then timed out is found, not opened twice.
     let pr = match app
         .github
-        .unscoped(&cfg.map_repo)
+        .within(&cfg.tenant, &cfg.map_repo)
         .pull_for_branch(&cfg.map_repo, &row.branch)
         .await
         .map_err(|e| fail("pull", e))?
@@ -391,7 +391,7 @@ pub async fn propose(
         Some(p) => (p.number, p.url),
         None => app
             .github
-            .unscoped(&cfg.map_repo)
+            .within(&cfg.tenant, &cfg.map_repo)
             .create_pull(
                 &cfg.map_repo,
                 &row.branch,
@@ -485,7 +485,7 @@ pub async fn withdraw(
         Some(n) => Some(n),
         None => app
             .github
-            .unscoped(&cfg.map_repo)
+            .within(&cfg.tenant, &cfg.map_repo)
             .pull_for_branch(&cfg.map_repo, &row.branch)
             .await
             .map_err(fail)?
@@ -494,14 +494,14 @@ pub async fn withdraw(
     };
     if let Some(number) = open {
         app.github
-            .unscoped(&cfg.map_repo)
+            .within(&cfg.tenant, &cfg.map_repo)
             .close_pull(&cfg.map_repo, number)
             .await
             .map_err(fail)?;
     }
     if let Err(e) = app
         .github
-        .unscoped(&cfg.map_repo)
+        .within(&cfg.tenant, &cfg.map_repo)
         .delete_ref(&cfg.map_repo, &row.branch)
         .await
     {

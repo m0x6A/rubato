@@ -128,7 +128,7 @@ async fn replace(
         );
         let owned = tracked.contains(&(repo.to_owned(), pr.number));
         if full && !owned && OpenPull::checks_due(checks, checks_sha.as_deref(), &pr.head_sha) {
-            match app.github.unscoped(repo).checks(repo, &pr.head_sha).await {
+            match app.github.within(t, repo).checks(repo, &pr.head_sha).await {
                 Ok(c) => {
                     pass.checks_read += 1;
                     checks = Some(c);

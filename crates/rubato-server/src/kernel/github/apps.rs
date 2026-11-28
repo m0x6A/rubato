@@ -169,19 +169,28 @@ impl GitHubApps {
         }
     }
 
-    /// The client for `repo` in whichever tenant it is live in, or one whose every call fails
-    /// with [`NotCovered`]: a repository no installation covers is an error, never "absent".
-    /// Until requests carry a tenant (plan 345, PR 4) the slices that serve them reach GitHub
-    /// through this; the files that may are listed in `UNSCOPED_CALLERS`, and the list only
-    /// shrinks.
-    pub fn unscoped(&self, repo: &str) -> Client {
-        self.tenant_of(repo)
-            .and_then(|t| self.for_repo(&t, repo))
-            .unwrap_or_else(|| {
-                Arc::new(Uncovered(NotCovered {
-                    repo: repo.to_owned(),
-                }))
-            })
+    /// The client for `repo` when acting for `tenant`, or one whose every call fails with
+    /// [`NotCovered`] when the repository is not live in that tenant: a repository outside the
+    /// tenant is an error, never "absent", and never a call made for another tenant.
+    pub fn within(&self, tenant: &TenantId, repo: &str) -> Client {
+        self.for_repo(tenant, repo).unwrap_or_else(|| {
+            Arc::new(Uncovered(NotCovered {
+                repo: repo.to_owned(),
+            }))
+        })
+    }
+
+    /// The client of the tenant `repo` is live in, for work that acts for no person and starts
+    /// from a repository: the poll's shared listings and the context graph's builds. Never for
+    /// a request: a request acts for the tenant of its scope ([`Self::within`]). The files that
+    /// may call this are listed in `SYSTEM_CALLERS`, and a test keeps the list exact.
+    pub fn for_system(&self, repo: &str) -> Client {
+        match self.tenant_of(repo) {
+            Some(t) => self.within(&t, repo),
+            None => Arc::new(Uncovered(NotCovered {
+                repo: repo.to_owned(),
+            })),
+        }
     }
 
     /// The client of one installation, made on first use.
@@ -349,23 +358,15 @@ impl GitHubApi for Uncovered {
     }
 }
 
-/// The files that may still reach GitHub without saying which tenant they act for (plan 345):
-/// request handlers until their routes carry a tenant (PR 4), and the poll, which resolves each
-/// repository's tenant from the routes. A file that stops calling [`GitHubApps::unscoped`] must
-/// leave this list, and no file may join it.
+/// The files that may reach GitHub from a repository alone ([`GitHubApps::for_system`]): work
+/// that acts for no person. No request handler is among them, and none may join without a
+/// reason here.
 #[cfg(test)]
-pub(crate) const UNSCOPED_CALLERS: &[&str] = &[
+pub(crate) const SYSTEM_CALLERS: &[&str] = &[
+    // The context graph builds each repository's source through its own installation.
     "context_graph/build.rs",
-    "github_poll/backlog.rs",
+    // The poll's per-repository listings (branches, open pull requests), shared by its issues.
     "github_poll/poll.rs",
-    "github_poll/pulls.rs",
-    "import/handler.rs",
-    "map_draft/poll.rs",
-    "map_draft/propose.rs",
-    "new_issue/handlers.rs",
-    "plans/fetch.rs",
-    "pulls/facts.rs",
-    "pulls/reconcile.rs",
 ];
 
 #[cfg(test)]
@@ -373,7 +374,7 @@ mod tests {
     use super::*;
     use crate::kernel::github::FakeGitHub;
 
-    /// Every `.unscoped(` call outside this file, by file, relative to `src/`.
+    /// Every `.for_system(` call outside this file, by file, relative to `src/`.
     fn callers(root: &std::path::Path) -> std::collections::BTreeMap<String, usize> {
         fn walk(
             dir: &std::path::Path,
@@ -395,7 +396,7 @@ mod tests {
                     }
                     let n = std::fs::read_to_string(&p)
                         .unwrap()
-                        .matches(".unscoped(")
+                        .matches(".for_system(")
                         .count();
                     if n > 0 {
                         out.insert(rel, n);
@@ -408,17 +409,17 @@ mod tests {
         out
     }
 
-    /// The list of [`UNSCOPED_CALLERS`] is exact: a new caller fails, and so does a listed file
+    /// The list of [`SYSTEM_CALLERS`] is exact: a new caller fails, and so does a listed file
     /// that no longer calls it.
     fn unlisted_and_stale(
         found: &std::collections::BTreeMap<String, usize>,
     ) -> (Vec<String>, Vec<String>) {
         let unlisted = found
             .keys()
-            .filter(|f| !UNSCOPED_CALLERS.contains(&f.as_str()))
+            .filter(|f| !SYSTEM_CALLERS.contains(&f.as_str()))
             .cloned()
             .collect();
-        let stale = UNSCOPED_CALLERS
+        let stale = SYSTEM_CALLERS
             .iter()
             .filter(|f| !found.contains_key(**f))
             .map(|f| (*f).to_owned())
@@ -433,14 +434,14 @@ mod tests {
         let (unlisted, stale) = unlisted_and_stale(&found);
         assert!(
             unlisted.is_empty(),
-            "new callers of GitHubApps::unscoped: {unlisted:?}; use for_repo with the tenant"
+            "new callers of GitHubApps::for_system: {unlisted:?}; a request uses within() with its tenant"
         );
         assert!(
             stale.is_empty(),
-            "no longer call unscoped, take them off UNSCOPED_CALLERS: {stale:?}"
+            "no longer call for_system, take them off SYSTEM_CALLERS: {stale:?}"
         );
         println!(
-            "checked {} unscoped calls in {} files",
+            "checked {} for_system calls in {} files",
             found.values().sum::<usize>(),
             found.len()
         );
@@ -448,17 +449,17 @@ mod tests {
 
     #[test]
     fn must_fail_a_new_caller_and_a_stale_entry_are_reported() {
-        let mut found: std::collections::BTreeMap<String, usize> = UNSCOPED_CALLERS
+        let mut found: std::collections::BTreeMap<String, usize> = SYSTEM_CALLERS
             .iter()
             .map(|f| ((*f).to_owned(), 1))
             .collect();
         found.insert("pins/handlers.rs".into(), 1);
-        found.remove("plans/fetch.rs");
+        found.remove("github_poll/poll.rs");
         assert_eq!(
             unlisted_and_stale(&found),
             (
                 vec!["pins/handlers.rs".to_owned()],
-                vec!["plans/fetch.rs".to_owned()]
+                vec!["github_poll/poll.rs".to_owned()]
             )
         );
     }
@@ -525,7 +526,7 @@ mod tests {
         assert!(apps.for_repo(&t("acme"), "stranger/repo").is_none());
         assert_eq!(apps.tenant_of("bcorp/web"), Some(t("bcorp")));
         let err = apps
-            .unscoped("stranger/repo")
+            .for_system("stranger/repo")
             .file("stranger/repo", "x", "main")
             .await
             .unwrap_err();

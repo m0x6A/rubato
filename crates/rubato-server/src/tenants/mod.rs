@@ -10,7 +10,7 @@ mod scope;
 mod seed;
 mod store;
 
-pub use scope::{check_tenant, scope_for};
+pub use scope::{check_tenant, member_logins, scope_for};
 pub use seed::{DEFAULT_TENANT, Seeded, start};
 pub use store::{
     Outcome, Refused, Removed, Synced, add_member, attach_installation, attached, create_tenant,

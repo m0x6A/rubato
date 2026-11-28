@@ -29,10 +29,20 @@ pub async fn overview(
     let mut inputs = build_overview_inputs(&app, ws.key(), &all, &maps)
         .await
         .map_err(|e| internal(SLICE, e))?;
+    // The companions of this tenant's members only (design §6.2): a person in another tenant
+    // is nobody here.
+    let members = crate::tenants::member_logins(&app, ws.key().tenant())
+        .await
+        .map_err(|e| internal(SLICE, e))?;
     let companions: Vec<_> = pairing::list_pairings(&app.db, None)
         .await
         .map_err(|e| internal(SLICE, e))?
         .into_iter()
+        .filter(|r| {
+            members
+                .as_ref()
+                .is_none_or(|m| m.contains(&r.user.to_ascii_lowercase()))
+        })
         .map(|r| pairing::to_info(&app, r))
         .collect();
     // A revoked companion's lane takes no starts, so its queue is not shown (its rows go with
@@ -101,7 +111,7 @@ pub async fn overview(
         // it was before workspaces (the golden test).
         workspaces: if all.len() > 1 { all } else { vec![] },
         // What each live launched agent last said (ADR 0071): shown with its age, never progress.
-        agent_lines: crate::agent_reports::all(&app)
+        agent_lines: crate::agent_reports::all(&app, ws.key().tenant())
             .await
             .map_err(|e| internal(SLICE, e))?,
         // A person's lead agents and their workers, only with the flag on (ADR 0072).

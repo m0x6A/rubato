@@ -216,7 +216,7 @@ pub(super) async fn fits_another(
                 .await?
                 .iter()
                 .any(|p| &p.issue == issue)
-            || crate::launch::launched_issues_in(&app.db, &w.key())
+            || crate::launch::launched_issues_in(&app.db, &w.tenant, &w.key())
                 .await?
                 .contains(issue);
         if holds && plan_fit(plan, parse_error, &m.map).is_some_and(|f| f.fits) {

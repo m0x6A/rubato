@@ -95,9 +95,9 @@ capability.
 Each deployable's block appears here with the PR that slices it:
 
 <!-- slices: rubato-server -->
-`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router: tenant routes under `/api/t/{tenant}` and map-scoped ones under
+`crates/rubato-server/src/`: composition root `lib.rs`, `main.rs`, `app.rs` (router, built from one table of tenant routes that the cross-tenant sweep also reads: tenant routes under `/api/t/{tenant}` and map-scoped ones under
 `/api/t/{tenant}/w/{ws}`, ADR 0089; 404 for unknown `/api`, `/ws`, `/auth` paths, the paths of before tenants among them), `tasks.rs` (poll loop, traffic fetch, task supervision); `kernel/`
-(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per tenant's workspace and each companion's latest sessions, signer, `http::internal` and `http::Ws`, GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth` reaches tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, `WsKey`, `TenantScope` and `AdminScope`, ADR 0087, 0088, 0089); slices:
+(config, workspaces and the workspace registry, telemetry, db connection, `secrets` (sealing with the token key), `AppState` with a map per tenant's workspace and each companion's latest sessions, signer, `http::internal`, `http::Ws` and `http::check_repos` (a tenant route refuses a repository that is not its tenant's, ADR 0089), GitHub port, the `Speech` port with its `openai_compatible` and `fake` adapters, ADR 0073; the `Admission` port through which `auth` reaches tenancy, ADR 0087; `GitHubApps`, one GitHub client per App installation routed by tenant, and `tenancy`'s `TenantId`, `WsKey`, `TenantScope` and `AdminScope`, ADR 0087, 0088, 0089); slices:
 
 ```text
 auth            GitHub login (invited people and operators only, ADR 0088), CurrentUser, tokens  users, web_sessions, user_tokens

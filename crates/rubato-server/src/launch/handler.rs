@@ -31,6 +31,7 @@ const SLICE: &str = "launch";
 /// the write, record the cap hit, and answer 409 whether or not the write worked.
 async fn refuse_past_attempt_limit(
     db: &SqlitePool,
+    t: &crate::kernel::tenancy::TenantId,
     issue: &IssueRef,
     attempt: u32,
     attempt_limit: u32,
@@ -44,7 +45,7 @@ async fn refuse_past_attempt_limit(
         at: Utc::now(),
     };
     tracing::warn!(rubato.issue = %hit.issue, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", event::CAP_HIT);
-    if let Err(e) = store::store_cap_hit(db, &hit, hit.at).await {
+    if let Err(e) = store::store_cap_hit(db, t, &hit, hit.at).await {
         tracing::error!(slice = SLICE, rubato.issue = %hit.issue, error = %e, "storing cap hit");
     }
     (
@@ -219,7 +220,7 @@ pub async fn start(
     } else {
         pins
     };
-    let attempt = store::launch_count(&app.db, &req.issue)
+    let attempt = store::launch_count(&app.db, t, &req.issue)
         .await
         .map_err(|e| (internal(SLICE, e), String::new()))?
         + 1;
@@ -237,7 +238,8 @@ pub async fn start(
         .or(defaults.default_attempt_limit)
         .unwrap_or(crate::kernel::config::BUILT_IN_ATTEMPT_LIMIT);
     if attempt > attempt_limit {
-        let refusal = refuse_past_attempt_limit(&app.db, &req.issue, attempt, attempt_limit).await;
+        let refusal =
+            refuse_past_attempt_limit(&app.db, t, &req.issue, attempt, attempt_limit).await;
         app.notify("cap hit");
         return Err(refusal);
     }
@@ -334,7 +336,14 @@ mod tests {
         let db = SqlitePool::connect("sqlite::memory:").await.unwrap();
         let issue = IssueRef::new("m0x6A/rubato", 30);
 
-        let (status, body) = refuse_past_attempt_limit(&db, &issue, 4, 3).await;
+        let (status, body) = refuse_past_attempt_limit(
+            &db,
+            &crate::kernel::tenancy::TenantId::default_tenant(),
+            &issue,
+            4,
+            3,
+        )
+        .await;
 
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body, "attempt limit 3 reached for m0x6A/rubato#30");

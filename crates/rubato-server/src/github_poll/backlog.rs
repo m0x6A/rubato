@@ -132,7 +132,7 @@ pub async fn list_open_issues_in(
         }
         match app
             .github
-            .unscoped(repo)
+            .within(t, repo)
             .open_issues(repo, BACKLOG_MAX_PER_REPO)
             .await
         {

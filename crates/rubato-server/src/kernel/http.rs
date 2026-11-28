@@ -85,6 +85,92 @@ pub async fn check_workspace(
     next.run(req).await
 }
 
+/// The largest JSON body [`check_repos`] reads to look for a repository; a larger one is 413.
+pub const SCOPE_BODY_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// Every repository a request names where the protocol puts one: `repo`, `issue.repo` and
+/// `issues[].repo` of a JSON body.
+fn repos_in_body(v: &serde_json::Value) -> Vec<&str> {
+    fn repo(v: &serde_json::Value) -> Option<&str> {
+        v.get("repo").and_then(|r| r.as_str())
+    }
+    let mut out = Vec::new();
+    out.extend(repo(v));
+    out.extend(v.get("issue").and_then(repo));
+    if let Some(list) = v.get("issues").and_then(|i| i.as_array()) {
+        out.extend(list.iter().filter_map(repo));
+    }
+    out
+}
+
+/// Layer on every `/api/t/{tenant}/…` route, inside `tenants::check_tenant` (design §4.2): a
+/// repository the request names, in its path (`{owner}/{repo}`), its query (`repo=`) or its JSON
+/// body, must be live in the tenant the person acts in. One that is another tenant's, or that no
+/// installation covers, answers 404 `other_tenant`, counted on `rubato.web.rejected`, before any
+/// handler runs: no handler can forget the check, and none acts for a repository's own tenant
+/// on a request made in another.
+pub async fn check_repos(
+    State(app): State<App>,
+    params: RawPathParams,
+    req: Request,
+    next: Next,
+) -> Response {
+    let Some(scope) = req.extensions().get::<TenantScope>().cloned() else {
+        return unknown_tenant();
+    };
+    let route = req
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let foreign = |repo: &str| app.github.tenant_of(repo).as_ref() != Some(scope.tenant());
+    let refuse = |repo: &str| {
+        app.reject(
+            &route,
+            rubato_protocol::tenant::reason::OTHER_TENANT,
+            scope.login(),
+        );
+        tracing::warn!(rubato.route = %route, rubato.tenant = %scope.tenant(), rubato.user = %scope.login(), rubato.repo = %repo, "a repository outside the tenant was named");
+        crate::kernel::tenancy::other_tenant()
+    };
+    let param = |name: &str| params.iter().find(|(k, _)| *k == name).map(|(_, v)| v);
+    if let (Some(owner), Some(name)) = (param("owner"), param("repo")) {
+        let repo = format!("{owner}/{name}");
+        if foreign(&repo) {
+            return refuse(&repo);
+        }
+    }
+    let in_query: Option<String> = req.uri().query().and_then(|q| {
+        url::form_urlencoded::parse(q.as_bytes())
+            .find(|(k, _)| k == "repo")
+            .map(|(_, v)| v.into_owned())
+    });
+    if let Some(repo) = in_query.filter(|r| foreign(r)) {
+        return refuse(&repo);
+    }
+    let json = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if !json {
+        return next.run(req).await;
+    }
+    let (parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, SCOPE_BODY_MAX_BYTES).await {
+        Ok(b) => b,
+        Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+    };
+    // A body that is not JSON after all is the handler's to refuse.
+    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        && let Some(repo) = repos_in_body(&v).into_iter().find(|r| foreign(r))
+    {
+        return refuse(repo);
+    }
+    next.run(Request::from_parts(parts, axum::body::Body::from(bytes)))
+        .await
+}
+
 /// The body of the 403 answer for a write or websocket upgrade from another origin (ADR 0066).
 pub const CROSS_ORIGIN: &str = r#"{"reason":"cross_origin"}"#;
 

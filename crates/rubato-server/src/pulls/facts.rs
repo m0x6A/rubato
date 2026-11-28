@@ -185,7 +185,7 @@ fn fold(runs: &[CheckRun]) -> ChecksStatus {
 /// The installation's reads. `None` when GitHub has no such pull request.
 async fn fetch(app: &App, map: &LoadedMap, repo: &str, number: u64) -> Result<Option<Fetched>> {
     let t = &app.repo_tenant(repo)?;
-    let gh = app.github.unscoped(repo);
+    let gh = app.github.within(t, repo);
     let Some(pull) = gh.pull(repo, number).await? else {
         return Ok(None);
     };

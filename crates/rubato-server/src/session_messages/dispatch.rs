@@ -60,7 +60,7 @@ pub async fn dispatch(app: &App, launch_id: Uuid) {
         }
         let handoff = app.announced(target.companion_id, capability::PLAN_HANDOFF);
         let turns = app.announced(target.companion_id, capability::ROOM_TURNS);
-        let row = match store::take_next(&app.db, launch_id, now, handoff, turns).await {
+        let row = match store::take_next(&app.db, &target.tenant, launch_id, now, handoff, turns).await {
             Ok(Some(r)) => r,
             Ok(None) => return,
             Err(e) => {
@@ -75,7 +75,7 @@ pub async fn dispatch(app: &App, launch_id: Uuid) {
                 rubato.issue = %row.issue,
                 "session message dispatched"
             );
-        } else if let Err(e) = store::unsend(&app.db, row.id).await {
+        } else if let Err(e) = store::unsend(&app.db, &row.tenant, row.id).await {
             tracing::error!(error = %format!("{e:#}"), "dispatch: un-sending failed");
         }
         app.notify_resource(WebResource::LaunchMessages { launch_id });
@@ -132,7 +132,7 @@ pub async fn on_hello(app: &App, companion_id: Uuid) {
 pub async fn on_sessions(app: &App, sessions: &[SessionState]) {
     for s in sessions {
         if let (Some(l), Some(sid)) = (s.launch_id, s.session_id.as_deref())
-            && let Err(e) = store::move_session(&app.db, l, sid).await
+            && let Err(e) = store::move_session(&app.db, s.companion_id, l, sid).await
         {
             tracing::error!(error = %format!("{e:#}"), "moving messages to a new session id failed");
         }
@@ -200,15 +200,20 @@ pub async fn on_result(app: &App, companion_id: Uuid, r: &SessionMessageResult) 
 pub async fn sweep(app: &App) -> usize {
     let now = app.clock.now();
     let before = now - Duration::seconds(ANSWER_WITHIN_SECS);
-    let rows = store::sent_before(&app.db, before)
-        .await
-        .unwrap_or_default();
+    let mut rows = Vec::new();
+    for t in &app.tenants() {
+        rows.extend(
+            store::sent_before(&app.db, t, before)
+                .await
+                .unwrap_or_default(),
+        );
+    }
     let mut moved = 0;
     for row in rows {
         if !app.companion_live(row.companion_id, capability::SESSION_INPUT, now) {
             continue;
         }
-        if store::mark_unknown(&app.db, row.id, "no answer", now)
+        if store::mark_unknown(&app.db, &row.tenant, row.id, "no answer", now)
             .await
             .unwrap_or(false)
         {
@@ -268,9 +273,11 @@ pub async fn record_gauges(app: &App, sessions: &[SessionState]) {
         .filter(|s| waits_for_input(s))
         .filter_map(|s| s.launch_id)
         .collect();
-    let oldest = store::queued(&app.db)
-        .await
-        .unwrap_or_default()
+    let mut queued = Vec::new();
+    for t in &app.tenants() {
+        queued.extend(store::queued(&app.db, t).await.unwrap_or_default());
+    }
+    let oldest = queued
         .iter()
         .filter(|r| waiting.contains(&r.launch_id))
         .map(|r| now.signed_duration_since(r.created_at).num_seconds().max(0) as u64)

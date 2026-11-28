@@ -181,7 +181,7 @@ async fn h(caps: &[&str]) -> H {
         .unwrap()
         .insert(C, CompanionConn::new(tx, Utc::now()));
     app.set_capabilities(C, caps.iter().map(|c| (*c).to_owned()).collect());
-    sqlx::query("INSERT INTO launches (workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', ?, ?, 'm0x6A', 'm0x6A/rubato', 7, '{}', '2026-11-16T12:00:00Z')")
+    sqlx::query("INSERT INTO launches (tenant_id, workspace_id, id, companion_id, user, repo, number, command, created_at) VALUES ('default', 'default', ?, ?, 'm0x6A', 'm0x6A/rubato', 7, '{}', '2026-11-16T12:00:00Z')")
         .bind(L.to_string())
         .bind(C.to_string())
         .execute(&app.db)
