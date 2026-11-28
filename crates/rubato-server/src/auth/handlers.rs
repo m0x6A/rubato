@@ -16,8 +16,6 @@ use rubato_protocol::Me;
 use rubato_protocol::auth::routes;
 use serde::Deserialize;
 
-const STATE_COOKIE: &str = "rubato_oauth_state";
-
 fn set_cookie(name: &str, value: &str, max_age: i64, secure: bool) -> HeaderValue {
     let mut s = format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}");
     if secure {
@@ -76,7 +74,7 @@ pub async fn login(State(app): State<App>) -> Response {
     res.headers_mut().append(
         header::SET_COOKIE,
         set_cookie(
-            STATE_COOKIE,
+            app.config.oauth_state_cookie(),
             state.secret(),
             600,
             app.config.public_url.starts_with("https"),
@@ -106,7 +104,8 @@ pub async fn callback(
     let Some(client) = oauth_client(&app) else {
         return StatusCode::NOT_IMPLEMENTED.into_response();
     };
-    if cookie_value(&headers, STATE_COOKIE).as_deref() != Some(q.state.as_str()) {
+    if cookie_value(&headers, app.config.oauth_state_cookie()).as_deref() != Some(q.state.as_str())
+    {
         return (StatusCode::BAD_REQUEST, "oauth state mismatch").into_response();
     }
     let http = match oauth2::reqwest::ClientBuilder::new()
@@ -211,6 +210,8 @@ pub async fn callback(
         Ok(id) => id,
         Err(e) => return login_failed_here(e),
     };
+    // Its writes draw on the person's bucket from the first one (ADR 0090).
+    app.limiter.know(&id, &user.login);
     if let Err(e) = app
         .admission()
         .after_login(&app, &user.login, user.id)
@@ -229,8 +230,10 @@ pub async fn callback(
             secure,
         ),
     );
-    res.headers_mut()
-        .append(header::SET_COOKIE, set_cookie(STATE_COOKIE, "", 0, secure));
+    res.headers_mut().append(
+        header::SET_COOKIE,
+        set_cookie(app.config.oauth_state_cookie(), "", 0, secure),
+    );
     res
 }
 

@@ -1873,6 +1873,7 @@ mod tests {
         })
         .await;
         assert_eq!(app.config.session_cookie(), "__Host-rubato_session");
+        assert_eq!(app.config.oauth_state_cookie(), "__Host-rubato_oauth_state");
         for path in ["/api/health", "/api/nope", "/", "/api/me"] {
             let r = reqwest::get(format!("{base}{path}")).await.unwrap();
             assert_eq!(

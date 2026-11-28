@@ -55,6 +55,24 @@ impl FromRequestParts<App> for CurrentUser {
     }
 }
 
+/// At start: tell the write limit whose each stored session is, so a person's sessions share
+/// one bucket from the first write after a restart (ADR 0090). Returns how many it told. A
+/// read that fails is logged; each session is then learned at its first admitted request.
+pub async fn start(app: &App) -> usize {
+    match store::web_sessions(&app.db).await {
+        Ok(sessions) => {
+            for (id, login) in &sessions {
+                app.limiter.know(id, login);
+            }
+            sessions.len()
+        }
+        Err(e) => {
+            tracing::error!(error = %format!("{e:#}"), "reading the web sessions for the write limit failed");
+            0
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +111,35 @@ mod tests {
         let (mut parts, ()) = req.into_parts();
         let got = CurrentUser::from_request_parts(&mut parts, &app).await;
         assert_eq!(got.unwrap_err(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// After a restart the write limit knows whose each stored session is before any request:
+    /// two sessions of one person draw on one bucket, whatever the case of the login.
+    #[tokio::test]
+    async fn at_start_the_write_limit_learns_the_stored_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let pool = crate::kernel::db::connect(&url).await.unwrap();
+        let app = crate::kernel::state::AppState::new(
+            pool,
+            crate::kernel::config::Config::for_tests(url, "m0x6A"),
+            std::sync::Arc::new(crate::kernel::github::FakeGitHub::new()),
+        );
+        let s1 = store::create_web_session(&app.db, "Ada", None)
+            .await
+            .unwrap();
+        let s2 = store::create_web_session(&app.db, "ada", None)
+            .await
+            .unwrap();
+        let s3 = store::create_web_session(&app.db, "mia", None)
+            .await
+            .unwrap();
+        assert_eq!(app.limiter.writer(&s1), format!("session:{s1}"));
+        assert_eq!(start(&app).await, 3);
+        assert_eq!(app.limiter.writer(&s1), "person:ada");
+        assert_eq!(app.limiter.writer(&s2), "person:ada");
+        assert_eq!(app.limiter.writer(&s3), "person:mia");
+        assert_eq!(app.limiter.writer("unknown"), "session:unknown");
+        println!("checked 3 stored sessions and 1 unknown one");
     }
 }

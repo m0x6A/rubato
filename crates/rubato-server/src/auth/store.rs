@@ -72,6 +72,16 @@ pub struct WebSession {
 }
 
 /// A session's login, when it was created, and its team record.
+/// Every web session with its login: what the write limit is told at start.
+pub async fn web_sessions(db: &SqlitePool) -> Result<Vec<(String, String)>> {
+    Ok(sqlx::query("SELECT id, login FROM web_sessions")
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .map(|r| (r.get::<String, _>("id"), r.get::<String, _>("login")))
+        .collect())
+}
+
 pub async fn web_session(db: &SqlitePool, id: &str) -> Result<Option<WebSession>> {
     Ok(
         sqlx::query("SELECT login, created_at FROM web_sessions WHERE id = ?")

@@ -198,7 +198,7 @@ impl Limiter {
 
     /// The bucket a write of `session` draws on: its person's, or its own until `auth` has
     /// admitted one request of it (the first after a restart).
-    fn writer(&self, session: &str) -> String {
+    pub fn writer(&self, session: &str) -> String {
         match self.people.lock().unwrap().get(session) {
             Some(person) => format!("person:{person}"),
             None => format!("session:{session}"),

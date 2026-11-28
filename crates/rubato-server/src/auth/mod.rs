@@ -8,7 +8,7 @@ mod store;
 mod team;
 mod tokens;
 
-pub use current_user::CurrentUser;
+pub use current_user::{CurrentUser, start};
 pub use handlers::{callback, login, logout, me};
 pub use store::{Person, github_id_of, people, revoke_person};
 pub use tokens::{

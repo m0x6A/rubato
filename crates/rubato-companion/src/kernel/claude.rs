@@ -642,12 +642,22 @@ echo '{"type":"result","result":"PONG","total_cost_usd":0.25,"is_error":false}'"
             .trim()
             .parse()
             .unwrap();
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &child.to_string()])
-            .status()
-            .unwrap()
-            .success();
-        assert!(!alive, "the turn's child outlived the kill");
+        // The group was sent SIGKILL; the orphaned child still answers `kill -0` until whoever
+        // inherited it has reaped it, so give that a moment instead of asking once.
+        let alive = || {
+            std::process::Command::new("kill")
+                .args(["-0", &child.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        let mut waited = 0;
+        while alive() && waited < 100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            waited += 1;
+        }
+        assert!(!alive(), "the turn's child outlived the kill");
     }
 
     #[tokio::test]

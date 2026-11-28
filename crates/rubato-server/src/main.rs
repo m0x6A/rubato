@@ -108,6 +108,7 @@ async fn main() -> Result<()> {
     state.set_admission(std::sync::Arc::new(rubato_server::admin::Admission));
     rubato_server::tenants::start(&state).await?;
     rubato_server::tenants::load_routes(&state).await?;
+    rubato_server::auth::start(&state).await;
     rubato_server::kernel::workspaces::report(&state).await?;
     map::warm(&state).await?;
     // The context graph's own file, when its flag is on (ADR 0084).

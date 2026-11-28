@@ -1074,6 +1074,17 @@ impl Config {
         }
     }
 
+    /// The name of the cookie that carries the OAuth state through GitHub's login, prefixed
+    /// like the session cookie: a sibling host that could set the plain name could otherwise
+    /// plant its own state and log a visitor in as someone else.
+    pub fn oauth_state_cookie(&self) -> &'static str {
+        if self.https() {
+            "__Host-rubato_oauth_state"
+        } else {
+            "rubato_oauth_state"
+        }
+    }
+
     /// Whether the public URL is https: the session cookie is then `__Host-` prefixed and
     /// `Strict-Transport-Security` is sent (ADR 0090).
     pub fn https(&self) -> bool {
