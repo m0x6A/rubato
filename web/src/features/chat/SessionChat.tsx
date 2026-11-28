@@ -2,6 +2,7 @@ import { useCallback, useId, useMemo, useRef, useState } from "react";
 import type { LaunchLog, Me, SessionLogEntry, SessionState } from "../../protocol.ts";
 import { ApiError } from "../../shared/api.ts";
 import { relative } from "../../shared/format.ts";
+import { showOnPage } from "../../shared/route.ts";
 import { chatApi, failureWords } from "./api.ts";
 import { stateText } from "./states.ts";
 import { KIND_LABEL, type Turn, entryDomId, messageDomId, turnsByMessage } from "./thread.ts";
@@ -182,7 +183,7 @@ function Entry({ launchId, e, newSession, author }: { launchId: string; e: Sessi
                 {author && e.message_id && (
                   <>
                     {" · "}
-                    <a href={`#${messageDomId(launchId, e.message_id)}`}>the message</a>
+                    <a href={`#${messageDomId(launchId, e.message_id)}`} onClick={(ev) => showOnPage(ev, messageDomId(launchId, e.message_id ?? ""))}>the message</a>
                   </>
                 )}
               </span>
@@ -226,10 +227,10 @@ function Message({ launchId, m, live, turn, onSendAgain }: { launchId: string; m
         {turn?.reply ? (
           <>
             <span className="msg-answered">answered</span>
-            <a href={`#${entryDomId(launchId, turn.reply)}`}>see the reply</a>
+            <a href={`#${entryDomId(launchId, turn.reply)}`} onClick={(ev) => turn.reply && showOnPage(ev, entryDomId(launchId, turn.reply))}>see the reply</a>
           </>
         ) : (
-          turn && <a href={`#${entryDomId(launchId, turn.prompt)}`}>see it in the conversation</a>
+          turn && <a href={`#${entryDomId(launchId, turn.prompt)}`} onClick={(ev) => showOnPage(ev, entryDomId(launchId, turn.prompt))}>see it in the conversation</a>
         )}
       </div>
       <p className="chat-text">{m.text}</p>

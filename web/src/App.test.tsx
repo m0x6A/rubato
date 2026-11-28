@@ -26,6 +26,8 @@ let layoutStore: Record<string, { x: number; y: number }>;
 let layoutAnswer: { status: number; body?: string };
 
 beforeEach(() => {
+  // Every test starts on the issue list: the view is in the URL (issue #357).
+  history.replaceState(null, "", "/");
   resetNeedsLogin();
   pinAnswer = { status: 201 };
   pinned = new Map();
@@ -102,6 +104,53 @@ describe("Configure workspace in the shell (issue #189)", () => {
     fireEvent.click(within(view).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("region", { name: "Configure workspace" })).toBeNull();
     expect(screen.getByRole("button", { name: /^Issues/ })).toBeInTheDocument();
+  });
+});
+
+describe("the view comes from the URL (issue #357)", () => {
+  const at = (n: number) => ({ issue: { repo: REPO, number: n }, state: "designed" as const, last_seen: minutesAgo(1) });
+
+  it("a link opens the issue it names, and Escape closes it to the list", async () => {
+    others = [issue(1, "web", { progress: at(1) })];
+    history.replaceState(null, "", "/#/issues/m0x6A/rubato/1");
+    render(<App />);
+    expect(await screen.findByTestId("issue-detail")).toHaveTextContent("m0x6A/rubato#1");
+    expect(screen.queryByTestId("not-found")).toBeNull();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("issue-detail")).toBeNull());
+    expect(location.hash).toBe("#/issues");
+  });
+
+  it("an issue Rubato does not track is said to be missing, with the list under it", async () => {
+    others = [issue(1, "web", { progress: at(1) })];
+    history.replaceState(null, "", "/#/issues/m0x6A/rubato/77");
+    render(<App />);
+    expect(await screen.findByTestId("not-found")).toHaveTextContent("m0x6A/rubato#77 is not among the issues Rubato tracks");
+    expect(screen.queryByTestId("issue-detail")).toBeNull();
+    expect(screen.getByTestId("issue-row-1")).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByTestId("not-found")).getByRole("button", { name: "All issues" }));
+    await waitFor(() => expect(screen.queryByTestId("not-found")).toBeNull());
+  });
+
+  it("a fragment that names no view says so", async () => {
+    history.replaceState(null, "", "/#/nowhere");
+    render(<App />);
+    expect(await screen.findByTestId("not-found")).toHaveTextContent("Nothing is at #/nowhere.");
+  });
+
+  it("a tab is a view with an address, and opening an issue is a step Back can undo", async () => {
+    others = [issue(1, "web", { progress: at(1) })];
+    render(<App />);
+    fireEvent.click(await screen.findByTestId("tab-repos"));
+    expect(location.hash).toBe("#/repos");
+    fireEvent.click(screen.getByRole("button", { name: /^Issues/ }));
+    expect(location.hash).toBe("#/issues");
+    const before = history.length;
+    fireEvent.click(await screen.findByTestId("issue-row-1"));
+    expect(location.hash).toBe("#/issues/m0x6A/rubato/1");
+    expect(history.length).toBe(before + 1);
   });
 });
 

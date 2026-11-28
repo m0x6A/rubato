@@ -154,8 +154,9 @@ test("start session appears only for the current user's own connected companion"
 
   // Alice's companion connects: still no button for m0x6A.
   const alice = await connectCompanion("alice");
+  // The reload keeps the view (issue #357): the issue is still open.
   await page.reload();
-  await page.getByTestId("issue-9").click();
+  await expect(page.getByTestId("issue-detail")).toBeVisible();
   await expect(page.getByTestId("no-companion")).toBeVisible();
   await expect(page.getByTestId("start-session")).toHaveCount(0);
   await page.getByRole("button", { name: /Companions/ }).click();
@@ -169,8 +170,10 @@ test("start session appears only for the current user's own connected companion"
       ok(env.message.branch as string);
     }
   }));
+  // Reloaded on Companions, the page stays there; the issue is one step back.
   await page.reload();
-  await page.getByTestId("issue-9").click();
+  await expect(page.getByTestId("companion-alice")).toBeVisible();
+  await page.goBack();
   await expect(page.getByTestId("start-session")).toBeVisible();
   await page.getByTestId("start-session").click();
   expect(await launched).toMatch(/^issue\/9-/);

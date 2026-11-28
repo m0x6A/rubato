@@ -80,11 +80,11 @@ Feature: Plans
     And HTML, scripts and images in the plan put nothing on the page but text and links
 
   @plans.board-from-another-tab
-  Scenario: Plans opened from another tab shows the board, and the open issue stays open
+  Scenario: Plans opened from another tab shows the board, and Back returns to the open issue
     Given a person with an issue open under Issues
     When they open the Plans tab
     Then they see the board of plans, not that issue's plan
-    And back under Issues the issue is still open
+    And going back in the browser shows the issue, still open
 
   @plans.approve-by-comment
   Scenario: When Rubato cannot comment as a person, Accept plan says what to comment instead

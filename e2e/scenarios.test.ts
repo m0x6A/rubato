@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { type Coverage, coverage, fromPlaywright, fromRun, readFeatures, renderMarkdown, runChecksNotRun, validate } from "./scenarios.ts";
+import { type Coverage, coverage, fromPlaywright, fromRun, goneSince, idsIn, readFeatures, renderMarkdown, runChecksNotRun, validate } from "./scenarios.ts";
 import type { RunResults } from "./run-checks.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -131,6 +131,30 @@ test("must fail: a malformed feature file fails the check", () => {
   const r = cli("check", "--features", fx("bad"), "--playwright", fx("covering.json"), "--run", fx("run.json"));
   assert.equal(r.status, 1, r.stdout);
   assert.match(r.stdout, /"invalid":6/);
+});
+
+test("every id the base had is still there: a reworded scenario keeps its id", () => {
+  const { features } = readFeatures(fx("good"));
+  const now = features.flatMap((f) => f.scenarios.flatMap((s) => (s.id ? [s.id] : [])));
+  // The base's files, as text: the same ids under other names, and tags that are not ids.
+  const base = idsIn(now.map((id) => `Feature: x\n\n  @wip ${id}\n  Scenario: worded differently back then\n    Given a thing\n`));
+  assert.equal(base.length, now.length);
+  assert.ok(base.length > 0);
+  assert.deepEqual(goneSince(base, features), []);
+});
+
+test("must fail: an id the base had and no scenario has now is reported", () => {
+  const { features } = readFeatures(fx("good"));
+  const base = idsIn(["Feature: x\n\n  @pins.renamed-away\n  Scenario: was here\n    Given a thing\n"]);
+  assert.deepEqual(goneSince(base, features), ["@pins.renamed-away"]);
+});
+
+test("--base reads features/ at a git ref; a ref that cannot be read is bad input", () => {
+  const ok = cli("check", "--playwright", fx("covering.json"), "--run", fx("run.json"), "--features", join(here, "../features"), "--base", "HEAD");
+  assert.match(ok.stdout, /ids of HEAD checked, \d+ gone/);
+  const bad = cli("check", "--playwright", fx("covering.json"), "--run", fx("run.json"), "--features", fx("good"), "--base", "no-such-ref-357");
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /no-such-ref-357/);
 });
 
 test("report writes the file and the job summary, and exits 0 although a test failed", () => {

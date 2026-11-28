@@ -12,6 +12,8 @@
  * `playwright test --list`), --run <file> (default for report e2e/results/run.json, else the
  * checks of e2e/run-checks.ts, not run), --out <file> (default e2e/results/scenarios.md).
  * The report is also appended to $GITHUB_STEP_SUMMARY when that is set.
+ * --base <git ref>: also fail when a scenario id that features/ has at that ref is gone now. An id
+ * never changes once merged (ADR 0069); a scenario is reworded under its id, not renamed.
  *
  * Exit 0 when the link holds (uncovered scenarios only warn), 1 when it does not, 2 on bad input.
  */
@@ -321,6 +323,43 @@ export function renderMarkdown(rows: Coverage[], v: Validation, tests: TestCase[
   return `${out.join("\n")}\n`;
 }
 
+/** The scenario ids in feature files' text, wherever they sit: enough to say which ids a ref had. */
+export function idsIn(texts: string[]): string[] {
+  const ids = new Set<string>();
+  for (const text of texts) {
+    for (const line of text.split("\n")) {
+      const t = line.trim();
+      if (t.startsWith("@")) {
+        for (const tag of t.split(/\s+/)) {
+          if (ID.test(tag)) {
+            ids.add(tag);
+          }
+        }
+      }
+    }
+  }
+  return [...ids].sort();
+}
+
+/** The ids the base had that no scenario has now (ADR 0069: ids never change once merged). */
+export function goneSince(baseIds: string[], features: Feature[]): string[] {
+  const now = new Set(features.flatMap((f) => f.scenarios.flatMap((s) => (s.id ? [s.id] : []))));
+  return baseIds.filter((id) => !now.has(id));
+}
+
+/** The text of every feature file at a git ref. */
+function featuresAt(ref: string): string[] {
+  const git = (...args: string[]) => {
+    const r = spawnSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (r.status !== 0) {
+      throw new Error(`git ${args.join(" ")} failed: ${r.stderr.trim()}`);
+    }
+    return r.stdout;
+  };
+  const files = git("ls-tree", "-r", "--name-only", ref, "features/").split("\n").filter((f) => f.endsWith(".feature"));
+  return files.map((f) => git("show", `${ref}:${f}`));
+}
+
 function relativeToRoot(p: string): string {
   const abs = resolve(p);
   return abs.startsWith(`${ROOT}/`) ? abs.slice(ROOT.length + 1) : p;
@@ -346,16 +385,19 @@ export function main(argv: string[], env: NodeJS.ProcessEnv = process.env): numb
     return i >= 0 ? rest[i + 1] : undefined;
   };
   if (command !== "check" && command !== "report") {
-    console.error("usage: scenarios.ts check|report [--features <dir>] [--playwright <file>] [--run <file>] [--out <file>]");
+    console.error("usage: scenarios.ts check|report [--features <dir>] [--playwright <file>] [--run <file>] [--out <file>] [--base <git ref>]");
     return 2;
   }
   const report = command === "report";
   let tests: TestCase[];
   let features: Feature[];
   let featureProblems: string[];
+  let baseIds: string[] | null = null;
   const sources: string[] = [];
   try {
     ({ features, problems: featureProblems } = readFeatures(opt("features") ?? join(ROOT, "features")));
+    const base = opt("base");
+    baseIds = base ? idsIn(featuresAt(base)) : null;
     const pwFile = opt("playwright") ?? (report && existsSync(join(ROOT, "e2e/results/playwright.json")) ? join(ROOT, "e2e/results/playwright.json") : undefined);
     const runFile = opt("run") ?? (report && existsSync(join(ROOT, "e2e/results/run.json")) ? join(ROOT, "e2e/results/run.json") : undefined);
     tests = [...fromPlaywright(pwFile ? readJson(pwFile) : listPlaywright()), ...(runFile ? fromRun(readJson<RunResults>(runFile)) : runChecksNotRun())];
@@ -366,9 +408,14 @@ export function main(argv: string[], env: NodeJS.ProcessEnv = process.env): numb
     return 2;
   }
   const v = validate(features, featureProblems, tests);
+  const gone = baseIds ? goneSince(baseIds, features) : [];
   for (const p of [...v.invalid, ...v.unknown, ...v.untagged]) {
     console.log(`error: ${p}`);
   }
+  for (const id of gone) {
+    console.log(`error: ${id} is in features/ at ${opt("base")} and gone now; an id never changes once merged (ADR 0069)`);
+  }
+  const ok = v.ok && gone.length === 0;
   for (const s of v.uncovered) {
     console.log(`warning: ${s.id} "${s.name}" (${s.file}:${s.line}) is cited by no test`);
     if (env["GITHUB_ACTIONS"] === "true") {
@@ -400,11 +447,12 @@ export function main(argv: string[], env: NodeJS.ProcessEnv = process.env): numb
       unknown: v.unknown.length,
       untagged: v.untagged.length,
       uncovered: v.uncovered.length,
-      outcome: v.ok ? "pass" : "fail",
+      ...(baseIds ? { base_ids: baseIds.length, gone: gone.length } : {}),
+      outcome: ok ? "pass" : "fail",
     }),
   );
-  console.log(`checked ${v.scenarios} scenarios and ${v.tests} tests: ${v.ok ? "ok" : "failed"}, ${v.uncovered.length} not covered`);
-  return v.ok ? 0 : 1;
+  console.log(`checked ${v.scenarios} scenarios and ${v.tests} tests: ${ok ? "ok" : "failed"}, ${v.uncovered.length} not covered${baseIds ? `; ${baseIds.length} ids of ${opt("base")} checked, ${gone.length} gone` : ""}`);
+  return ok ? 0 : 1;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

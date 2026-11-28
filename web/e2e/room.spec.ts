@@ -56,8 +56,8 @@ test("two people talk in a plan's room, and a teammate asks the owner to call th
   await openRoom(alice);
   await post(page, "From m0x6A: the table stays.");
   await post(alice, "From alice: agreed, one question.");
+  // The reload keeps the view (issue #357): the issue and its room are still open.
   await page.reload();
-  await page.getByTestId("issue-916").click();
   const log = page.getByRole("list", { name: "Messages in the room" });
   await expect(log).toContainText("From m0x6A: the table stays.");
   await expect(log).toContainText("From alice: agreed, one question.");
@@ -82,14 +82,13 @@ test("two people talk in a plan's room, and a teammate asks the owner to call th
   // alice asks; the request is pending, and the owner sees it with Accept and Decline.
   await expect.poll(async () => {
     await alice.reload();
-    await alice.getByTestId("issue-916").click();
+    await alice.getByTestId("issue-detail").waitFor();
     return alice.getByRole("button", { name: "Ask m0x6A to call their agent in" }).count();
   }, { timeout: 20_000 }).toBe(1);
   await alice.getByRole("button", { name: "Ask m0x6A to call their agent in" }).click();
   await alice.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(alice.getByText("Asked m0x6A; the request is pending.")).toBeVisible();
   await page.reload();
-  await page.getByTestId("issue-916").click();
   const requests = page.getByRole("list", { name: "Requests to call an agent in" });
   await expect(requests).toContainText("alice asks you to call your agent in");
   await requests.getByRole("button", { name: "Accept" }).click();
