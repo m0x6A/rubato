@@ -159,7 +159,7 @@ graph          this machine's copy of the context graph: fetch, check, apply; th
 ```
 <!-- /slices -->
 <!-- slices: web -->
-`web/src/`: composition root `main.tsx`, `App.tsx` (shell: tabs, layout, the panel's size, selection, handlers);
+`web/src/`: composition root `main.tsx`, `App.tsx` (shell: the top bar's two menus, the panel's nav and its one view from the route, the pages that hide the map, the panel's size, handlers; issue #357);
 `shared/` (`api.ts` request, `ApiError` and needs-login; `workspace.ts` the page's tenant and workspace,
 `inTenant()` for tenant paths and `scoped()` for map-scoped ones, ADR 0089; `format.ts`; `dnd.ts` the dragged issue;
 `motion.ts` the one motion switch, `data-motion` on `<html>`; `map.ts` `liveMap`, the map without
@@ -172,7 +172,7 @@ browsers have no `crypto.randomUUID`, issue #304);
 
 ```text
 live        the overview and every event, over /ws/web?t=<tenant>  GET /api/overview, /ws/web, GET /api/me (probe)
-auth        who is logged in, the login page                     GET /api/me, /auth/github/login
+auth        who is logged in, the login page, the account menu, log out   GET /api/me, /auth/github/login, POST /auth/logout
 chat        talk to your own session, message states, the log, stop  GET, POST /api/launches/:id/messages, GET /api/launches/:id/log, POST /api/launches/:id/stop
 map         the system map: graph, shared layout over ELK, By repo grouping, MapView, scenario player, ghosts and the map-versus-territory list  PUT, DELETE /api/layout, DELETE /api/layout/grouped; POST, DELETE /api/traffic/dismissals
 issues      issue list (open by default, Done on request), not-pinned backlog, detail, start gate   (none)
@@ -181,16 +181,16 @@ pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE 
 queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
 launch      start a session through your own companion           POST /api/launch
 drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
-findings    what the map and the plans disagree about            (none)
+findings    what the map and the plans disagree about, in a view of its own  (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 plans       the plans board: proposed and open, Done on request, a plan read in place; fit, Accept plan, drafts, plan text as Markdown (ADR 0079)    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
 repos       connected repos, what each provides, their open pull requests and issues, loose sessions, how fresh each context graph source is  (none)
 pulls       a repo's pull requests, a pull request's view, merge as yourself  GET /api/pulls/:owner/:repo/:number, POST /api/pulls/merge
 room        a plan's room: messages, notices, agents called in; its voice channel behind the voice flag  GET /api/room, POST /api/room/messages, POST, DELETE /api/room/agents, POST /api/room/requests/:id, POST /api/room/voice/token, utterance, join-failed, GET /api/room/voice/speech/:id
-workspaces  which application the map shows, the switcher       (none; map calls go under /api/t/{tenant}/w/{ws})
-tenants     which tenant the page shows, the switcher; a tenant's members: invite by GitHub login, roles, remove (ADR 0087, 0088)  GET, POST /api/t/{tenant}/members; PUT, DELETE /api/t/{tenant}/members/:github_id
+workspaces  which application the map shows: the workspace menu, with the map's commit  (none; map calls go under /api/t/{tenant}/w/{ws})
+tenants     which tenant the page shows (chosen in the account menu); a tenant's members: invite by GitHub login, roles, remove (ADR 0087, 0088)  GET, POST /api/t/{tenant}/members; PUT, DELETE /api/t/{tenant}/members/:github_id
 admin       the operator's page: tenants, the App's installations, attach, detach, purge, name an admin  GET /api/admin/installations; GET, POST /api/admin/tenants; DELETE /api/admin/tenants/:tenant; POST, DELETE /api/admin/tenants/:tenant/installations/:id; POST /api/admin/installations/:id/purge; POST /api/admin/tenants/:tenant/admins
-settings    Configure workspace: name, map ref, traffic source from the adapter's field list and how it is doing, launch defaults, create, delete  GET, PUT /api/settings; GET /api/traffic/sources; POST /api/workspaces; DELETE /api/t/{tenant}/w/{ws}
+settings    Configure workspace: name, map ref, traffic source from the adapter's field list and how it is doing, launch defaults; Workspaces, a page of its own: the list, create, delete  GET, PUT /api/settings; GET /api/traffic/sources; POST /api/workspaces; DELETE /api/t/{tenant}/w/{ws}
 ```
 <!-- /slices -->
 <!-- slices: rubato-protocol -->

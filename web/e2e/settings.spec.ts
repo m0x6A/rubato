@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
+import { expectMapVersion, switchWorkspace, workspaceButton } from "./shell.ts";
 
 // Issue #189 (ADR 0075): Configure workspace on both servers of `e2e/run.sh`.
 //
@@ -11,6 +12,7 @@ import { expect, test, type Page } from "@playwright/test";
 const repo = process.env["RUBATO_E2E_REPO"] ?? "";
 
 async function openSettings(page: Page) {
+  await workspaceButton(page).click();
   await page.getByTestId("configure-workspace").click();
   const view = page.getByTestId("settings");
   await expect(view.getByLabel("Name")).toBeVisible();
@@ -35,8 +37,7 @@ test.describe("on the server with two workspaces", () => {
     await page.evaluate(() => {
       (window as unknown as { __settingsE2e: boolean }).__settingsE2e = true;
     });
-    const switcher = page.getByRole("combobox", { name: "Workspace" });
-    await expect(switcher.locator("option:checked")).toHaveText("Shop");
+    await expect(workspaceButton(page)).toContainText("Shop");
 
     const view = await openSettings(page);
     await expect(view.getByLabel("Name")).toHaveValue("Shop");
@@ -45,7 +46,7 @@ test.describe("on the server with two workspaces", () => {
       // The name: every browser's switcher follows.
       await view.getByLabel("Name").fill("Corner shop");
       await save(page);
-      await expect(switcher.locator("option:checked")).toHaveText("Corner shop");
+      await expect(workspaceButton(page)).toContainText("Corner shop");
 
       // Shop's map is a file on the server: its ref cannot move, and the view says why.
       await view.getByLabel("Ref").fill("issue/901-lens");
@@ -54,13 +55,13 @@ test.describe("on the server with two workspaces", () => {
       expect((await (await page.request.get("/api/t/default/w/shop/settings")).json()).map_ref).toBe("main");
 
       // default reads its map from the seeded repository: the ref moves, and the map follows.
-      await switcher.selectOption("default");
+      await switchWorkspace(page, "default");
       await expect(view.getByText("m0x6A/rubato")).toBeVisible();
       await expect(view.getByLabel("Ref")).toHaveValue("main");
-      await expect(page.getByText(`map rubato @ ${sha("main")}`)).toBeVisible();
+      await expectMapVersion(page, `map rubato @ ${sha("main")}`);
       await view.getByLabel("Ref").fill("issue/901-lens");
       await save(page);
-      await expect(page.getByText(`map rubato @ ${sha("issue/901-lens")}`)).toBeVisible();
+      await expectMapVersion(page, `map rubato @ ${sha("issue/901-lens")}`);
       expect(await page.evaluate(() => (window as unknown as { __settingsE2e?: boolean }).__settingsE2e)).toBe(true);
     } finally {
       // Leave both workspaces as the other suites expect them.
@@ -73,14 +74,13 @@ test.describe("on the server with two workspaces", () => {
         expect(put.status(), path).toBe(200);
       }
     }
-    await expect(page.getByText(`map rubato @ ${sha("main")}`)).toBeVisible();
+    await expectMapVersion(page, `map rubato @ ${sha("main")}`);
   });
 
   // Issue #281: a traffic source belongs to one workspace. Nothing listens on the address, so
   // shop's source fails, and default, which has none, says so and shows no state.
   test("a traffic source set in shop shows there, failing, and default still has none", { tag: ["@settings.traffic-per-workspace", "@settings.traffic-status"] }, async ({ page }) => {
     await page.goto("/?w=shop");
-    const switcher = page.getByRole("combobox", { name: "Workspace" });
     const view = await openSettings(page);
     const status = view.getByTestId("settings-source-status");
     await expect(view.getByLabel("Source")).toHaveValue("");
@@ -93,7 +93,7 @@ test.describe("on the server with two workspaces", () => {
       await expect(status).toHaveAttribute("data-state", "failing", { timeout: 30_000 });
       await expect(status).toContainText("Failing: ");
 
-      await switcher.selectOption("default");
+      await switchWorkspace(page, "default");
       await expect(view.getByText("m0x6A/rubato")).toBeVisible();
       await expect(view.getByLabel("Source")).toHaveValue("");
       await expect(status).toHaveCount(0);
@@ -148,17 +148,33 @@ test.describe("on the server with one workspace", () => {
     const before = await (await page.request.get("/api/t/default/workspaces")).json();
     expect(before.map((w: { id: string }) => w.id)).toEqual(["default"]);
 
-    await expect(page.getByRole("combobox", { name: "Workspace" })).toHaveCount(0);
+    // One workspace: the menu offers none to switch to, and still leads to the settings.
+    await workspaceButton(page).click();
+    await expect(page.getByRole("menuitemradio")).toHaveCount(0);
+    await page.keyboard.press("Escape");
     const view = await openSettings(page);
+    // A page of its own: the map is hidden, not the top bar.
+    await expect(page.getByTestId("body")).toHaveAttribute("data-page", "settings");
+    await expect(page.getByTestId("node-rubato-server")).toBeHidden();
     await expect(view.getByText("m0x6A/rubato")).toBeVisible();
     await expect(view.getByLabel("Ref")).toHaveValue("main");
     await expect(view.getByLabel("Source")).toHaveValue("");
-    // default cannot be deleted, so the view does not offer it.
-    await expect(view.getByRole("button", { name: "Delete this workspace…" })).toHaveCount(0);
-    await expect(view.getByRole("button", { name: "New workspace…" })).toBeVisible();
+    // Creating and deleting workspaces are not this page's job.
+    await expect(view.getByRole("button", { name: /Delete|New workspace/ })).toHaveCount(0);
 
     await view.getByRole("button", { name: "Close" }).click();
     await expect(page.getByTestId("settings")).toHaveCount(0);
+    await expect(page.getByTestId("node-rubato-server")).toBeVisible();
+
+    // The Workspaces page lists the one workspace; default cannot be deleted, so it is not offered.
+    await workspaceButton(page).click();
+    await page.getByTestId("open-workspaces").click();
+    const list = page.getByTestId("workspaces");
+    await expect(list.getByTestId("workspace-default")).toContainText("showing now");
+    await expect(list.getByRole("button", { name: /^Delete/ })).toHaveCount(0);
+    await expect(list.getByRole("button", { name: "New workspace…" })).toBeVisible();
+    await list.getByRole("button", { name: "Close" }).click();
+    await expect(list).toHaveCount(0);
     expect(await (await page.request.get("/api/t/default/workspaces")).json()).toEqual(before);
   });
 });

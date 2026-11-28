@@ -25,7 +25,7 @@ export function Menu({ button, buttonLabel, menuLabel, buttonTestId, children }:
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const items = () => Array.from(list.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+  const items = () => Array.from(list.current?.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]') ?? []);
 
   useEffect(() => {
     if (open) {

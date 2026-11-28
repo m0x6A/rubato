@@ -34,7 +34,7 @@ test("an issue closed on GitHub is listed only under Done", { tag: ["@issues.ope
   await expect(page.getByTestId("plan-row-930")).toHaveCount(0);
 
   // Under Done, marked closed.
-  await page.getByRole("button", { name: /^Issues \(/ }).click();
+  await page.getByRole("button", { name: "Issues", exact: true }).click();
   await page.getByTestId("issues-view-done").click();
   const row = page.getByTestId("issue-930");
   await expect(row).toContainText("closed");

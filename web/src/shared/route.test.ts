@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { HOME, type Route, currentRoute, formatRoute, keepRouteForLogin, navigate, parentOf, parseRoute, restoreRouteAfterLogin, sameView, showOnPage } from "./route.ts";
+import { HOME, type Route, currentRoute, formatRoute, keepRouteForLogin, navigate, parentOf, isPage, parseRoute, restoreRouteAfterLogin, sameView, showOnPage } from "./route.ts";
 
 const ISSUE = { repo: "m0x6A/rubato", number: 357 };
 const PART = { kind: "node", id: "rubato-server" } as const;
@@ -17,13 +17,15 @@ const EVERY: Route[] = [
   { view: "plan", issue: ISSUE, sel: null },
   { view: "companions", sel: null },
   { view: "repos", sel: PART },
+  { view: "findings", sel: null },
   { view: "settings", sel: null },
+  { view: "workspaces", sel: null },
   { view: "members", sel: null },
   { view: "operator", sel: null },
   { view: "not-found", fragment: "/nowhere", sel: null },
 ];
 
-const KINDS = ["issues", "issue", "new-issue", "plans", "plan", "companions", "repos", "settings", "members", "operator", "not-found"];
+const KINDS = ["issues", "issue", "new-issue", "plans", "plan", "companions", "repos", "findings", "settings", "workspaces", "members", "operator", "not-found"];
 
 /** How many of the routes survive `format` then `parse`, and which kinds they cover. */
 function roundTrips(routes: Route[]): { ok: number; kinds: Set<string> } {
@@ -67,7 +69,7 @@ describe("the view in the URL fragment (issue #357)", () => {
   });
 
   it("names nothing it cannot read", () => {
-    for (const hash of ["#/nowhere", "#issues", "#/issues/m0x6A/rubato", "#/issues/m0x6A/rubato/0", "#/issues/m0x6A/rubato/12/extra/more", "#/plans/x", "#/repos/extra", "#/issues/new?at=galaxy:x", "#/issues/%E0%A4%A"]) {
+    for (const hash of ["#/nowhere", "#issues", "#/issues/m0x6A/rubato", "#/issues/m0x6A/rubato/0", "#/issues/m0x6A/rubato/12/extra/more", "#/plans/x", "#/repos/extra", "#/settings/nope", "#/issues/new?at=galaxy:x", "#/issues/%E0%A4%A"]) {
       expect(parseRoute(hash).view, hash).toBe("not-found");
     }
     // A selection that reads as nothing is dropped; the view still shows.
@@ -82,6 +84,10 @@ describe("the view in the URL fragment (issue #357)", () => {
     expect(parentOf({ view: "new-issue", at: PART, sel: PART })).toEqual({ view: "issues", sel: PART });
     expect(parentOf({ view: "companions", sel: null })).toBeNull();
     expect(parentOf({ view: "settings", sel: null })).toEqual(HOME);
+    expect(parentOf({ view: "findings", sel: PART })).toEqual({ view: "issues", sel: PART });
+    expect(parseRoute("#/settings/workspaces")).toEqual({ view: "workspaces", sel: null });
+    expect(isPage({ view: "workspaces", sel: null })).toBe(true);
+    expect(isPage({ view: "findings", sel: null })).toBe(false);
   });
 
   it("a new view is a new history entry; another selection on the same view is not", () => {

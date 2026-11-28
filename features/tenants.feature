@@ -6,14 +6,14 @@ Feature: Tenants
   @tenants.switch
   Scenario: A person in two tenants switches between them
     Given a person who is a member of the tenants "acme" and "bcorp"
-    When they pick "bcorp" in the tenant switcher
+    When they pick "bcorp" in the account menu
     Then the page shows bcorp's map, people and plans
     And nothing of acme is on the page
 
   @tenants.one-tenant-no-switcher
-  Scenario: A person in one tenant sees no switcher
+  Scenario: A person in one tenant has no tenant to choose
     Given a person who is a member of one tenant
-    Then no tenant switcher is drawn
+    Then the account menu offers no tenant to switch to
 
   @tenants.unknown-is-not-found
   Scenario: A tenant one is not in answers as one that does not exist

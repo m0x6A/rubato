@@ -4,7 +4,6 @@ import type { MemberView, TenantInfo } from "../../protocol.ts";
 import { forgetTenant, learnTenants } from "../../shared/workspace.ts";
 import { emitWebEvent } from "../live/index.ts";
 import { MembersView } from "./MembersView.tsx";
-import { TenantSwitcher } from "./Switcher.tsx";
 
 const ACME: TenantInfo = { id: "acme", name: "Acme", role: "admin" };
 const two: TenantInfo[] = [ACME, { id: "bcorp", name: "Bcorp", role: "member" }];
@@ -42,23 +41,6 @@ function serve(members: MemberView[], answers: { post?: Answer; put?: Answer; de
 afterEach(() => {
   vi.unstubAllGlobals();
   forgetTenant();
-});
-
-describe("the tenant switcher (ADR 0087)", () => {
-  it("is not drawn for a person in one tenant", () => {
-    const { container } = render(<TenantSwitcher tenants={[ACME]} current="acme" onSwitch={() => {}} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("lists every tenant the person is in, shows the current one and switches", () => {
-    const onSwitch = vi.fn();
-    render(<TenantSwitcher tenants={two} current="bcorp" onSwitch={onSwitch} />);
-    const select = screen.getByRole("combobox", { name: "Tenant" }) as HTMLSelectElement;
-    expect(select.value).toBe("bcorp");
-    expect([...select.options].map((o) => o.text)).toEqual(["Acme", "Bcorp"]);
-    fireEvent.change(select, { target: { value: "acme" } });
-    expect(onSwitch).toHaveBeenCalledWith("acme");
-  });
 });
 
 describe("the members of a tenant (ADR 0088)", () => {

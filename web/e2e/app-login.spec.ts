@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { account } from "./shell.ts";
 
 // These run against the second server of `e2e/run.sh`: no dev user, configured as a GitHub App
 // (ADR 0022), with `e2e/github-standin.ts` in place of github.com and api.github.com. So the
@@ -47,6 +48,15 @@ test("a team member logs in through the App and sees what the installation lists
   // The session survives a reload.
   await page.reload();
   await expect(page.getByTestId("node-rubato-server")).toBeVisible();
+});
+
+test("a person logs out from the account menu: the login page shows and the session no longer works", { tag: "@auth.log-out" }, async ({ page }) => {
+  await logInAs(page, "member");
+  await expect(page.getByTestId("node-rubato-server")).toBeVisible();
+  expect((await page.request.get("/api/me")).status()).toBe(200);
+  await account(page, "log-out");
+  await expect(page.getByRole("link", { name: "Log in with GitHub" })).toBeVisible();
+  expect((await page.request.get("/api/me")).status()).toBe(401);
 });
 
 test("logging in returns to the view the link named", { tag: "@navigation.login-returns" }, async ({ page }) => {

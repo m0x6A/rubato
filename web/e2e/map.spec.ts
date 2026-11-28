@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
+import { expectMapVersion } from "./shell.ts";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
 import { freshTraffic, ghostTraffic, quietTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
@@ -37,7 +38,7 @@ test("the map renders every node id from system-map.yml", { tag: "@map.every-par
   for (const n of map.nodes.filter((x) => x.retired != null)) {
     await expect(page.getByTestId(`node-${n.id}`)).toHaveCount(0);
   }
-  await expect(page.getByText("map rubato @")).toBeVisible();
+  await expectMapVersion(page, "map rubato @");
 });
 
 test("By repo boxes each repo's parts, and the Repos tab says what each repo provides (issue #89)", { tag: ["@map.by-repo", "@repos.what-each-provides"] }, async ({ page }) => {

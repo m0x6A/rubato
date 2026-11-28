@@ -259,7 +259,7 @@ describe("colour tokens reach their contrast", () => {
   });
 
   it("targets a pointer can hit are at least 24px high (WCAG 2.5.8)", () => {
-    const targets = [".pin-menu > button", '.pin-menu-list [role="menuitem"]', ".seam-chip", ".lens button", ".tabs button"];
+    const targets = [".pin-menu > button", '.pin-menu-list [role^="menuitem"]', ".seam-chip", ".lens button", ".tabs button"];
     for (const selector of targets) {
       const px = Number(/min-height:\s*(\d+)px/.exec(rule(selector))?.[1] ?? 0);
       expect(px, selector).toBeGreaterThanOrEqual(24);
