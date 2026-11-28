@@ -35,14 +35,15 @@ type Tab = "issues" | "plans" | "companions" | "repos";
 function tabOf(route: Route): Tab | null {
   switch (route.view) {
     case "plans":
-    case "plan":
       return "plans";
     case "companions":
       return "companions";
     case "repos":
       return "repos";
-    case "issues":
     case "issue":
+      // A plan read from the board is still under Plans: that is where its way back leads.
+      return route.from ? "plans" : "issues";
+    case "issues":
     case "new-issue":
     case "not-found":
       return "issues";
@@ -90,7 +91,7 @@ export function App() {
   // on the map, a new issue being written, and the pages that take the panel's place.
   const route = useRoute();
   const tab = tabOf(route);
-  const selectedIssue: IssueRef | null = route.view === "issue" || route.view === "plan" ? route.issue : null;
+  const selectedIssue: IssueRef | null = route.view === "issue" ? route.issue : null;
   const selection = route.sel;
   // "New issue here…": the part or seam a new issue is being written for (ADR 0025).
   // Started from "New issue…" with nothing selected, the place is still to be chosen (null).
@@ -199,7 +200,7 @@ export function App() {
       try {
         await pinsApi.addPin({ issue, target });
         setNotice(`${issueKey(issue)} pinned to ${target.id}`);
-        go({ view: "issue", issue, section: "overview" });
+        go({ view: "issue", issue, section: "overview", from: null });
         await refresh();
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
@@ -632,7 +633,7 @@ export function App() {
             <button className={tab === "issues" ? "active" : ""} onClick={() => go({ view: "issues", list: "open" })} title="Open issues Rubato tracks: pinned to the map, or with a plan">
               Issues
             </button>
-            <button className={tab === "plans" ? "active" : ""} onClick={() => go({ view: "plans" })} data-testid="tab-plans" aria-label={overview ? `Plans (${groupPlans(overview).proposed.length} proposed)` : undefined} title="Plans waiting for approval are counted">
+            <button className={tab === "plans" ? "active" : ""} onClick={() => go({ view: "plans", list: "plans" })} data-testid="tab-plans" aria-label={overview ? `Plans (${groupPlans(overview).proposed.length} proposed)` : undefined} title="Plans waiting for approval are counted">
               Plans{overview && <TabCount n={groupPlans(overview).proposed.length} />}
             </button>
             {/* Dragging an issue over this tab opens it, so the issue can be dropped on a lane. */}
@@ -711,7 +712,7 @@ export function App() {
               onNotice={(text) => setNotice(text)}
               onCreated={(issue) => {
                 // The overview has to hold the issue before its view can show it.
-                void refresh().then(() => go({ view: "issue", issue, section: "overview" }, { replace: true }));
+                void refresh().then(() => go({ view: "issue", issue, section: "overview", from: null }, { replace: true }));
               }}
             />
           )}
@@ -720,7 +721,7 @@ export function App() {
               overview={shown ?? overview}
               selection={selection}
               onSelect={onSelectOnMap}
-              onSelectIssue={(issue) => go({ view: "issue", issue, section: "overview" })}
+              onSelectIssue={(issue) => go({ view: "issue", issue, section: "overview", from: null })}
               onNewIssue={(at) => go({ view: "new-issue", at })}
             />
           )}
@@ -732,7 +733,7 @@ export function App() {
               onList={(which) => go({ view: "issues", list: which })}
               selection={selection}
               onClearSelection={() => selectOnly(null)}
-              onOpen={(issue) => go({ view: "issue", issue, section: "overview" })}
+              onOpen={(issue) => go({ view: "issue", issue, section: "overview", from: null })}
               onPin={onPin}
               onQueue={onQueue}
             />
@@ -742,12 +743,14 @@ export function App() {
               overview={overview}
               me={me}
               selected={selected}
-              // "← all issues" says where it goes: the list (Escape goes up, to the part's inspector when one is selected).
               section={route.section}
-              onSection={(section) => go({ view: "issue", issue: selected.issue, section })}
-              onClose={() => go({ view: "issues", list: "open" })}
-              onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview" })}
-              planOnMap={selected.plan ? <PlanInspector issue={selected} onSelect={onSelectOnMap} /> : null}
+              onSection={(section) => go({ view: "issue", issue: selected.issue, section, from: route.from })}
+              // The back button says where it goes: the list, or the board the plan was opened from
+              // (Escape goes up, to the part's inspector when one is selected).
+              backLabel={route.from ? "← all plans" : "← all issues"}
+              onClose={() => go(route.from ? { view: "plans", list: route.from } : { view: "issues", list: "open" })}
+              onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview", from: null })}
+              planOnMap={selected.plan ? <PlanInspector issue={selected} onSelect={onSelectOnMap} showDecisions={false} /> : null}
               onLaunch={onLaunch}
               onLaunchLead={onLaunchLead}
               onPin={onPin}
@@ -760,25 +763,14 @@ export function App() {
               onPairCompanion={() => go({ view: "companions" })}
             />
           )}
-          {overview && tab === "plans" && (
-            <PlansBoard
-              overview={overview}
-              me={me}
-              selected={route.view === "plan" ? selected : null}
-              onSelect={(issue) => go(issue ? { view: "plan", issue } : { view: "plans" })}
-              onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview" })}
-              onResume={ownConnectedCompanions(overview, me).length > 0 ? (issue, branch) => onLaunch(issue, branch) : undefined}
-              onNotice={(text) => {
-                setNotice(text);
-                void refresh();
-              }}
-            />
+          {overview && route.view === "plans" && (
+            <PlansBoard overview={overview} done={route.list === "plans-done"} onDone={(done) => go({ view: "plans", list: done ? "plans-done" : "plans" })} onOpen={(issue) => go({ view: "issue", issue, section: "plan", from: route.list })} />
           )}
           {overview && tab === "repos" && (
             <ConnectedRepos
               overview={overview}
               onPin={onPin}
-              onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview" })}
+              onOpenIssue={(issue) => go({ view: "issue", issue, section: "overview", from: null })}
             />
           )}
           {overview && tab === "companions" && <CompanionsPanel overview={overview} me={me} onChanged={refresh} onQueue={onQueue} onReorder={onReorder} onUnqueue={onUnqueue} onStart={onStart} />}

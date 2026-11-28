@@ -10,15 +10,20 @@ test("plans from voice-note issues show where they fit", { tag: ["@plans.found-b
   await page.getByTestId("tab-plans").click();
   const fits = page.getByTestId("plan-row-914");
   await expect(fits).toBeVisible({ timeout: 30_000 });
-  await expect(fits).toContainText("fits");
+  // A row says so only when something is wrong: the one that fits carries no badge for it.
+  await expect(fits).not.toContainText("does not fit");
   await expect(fits).toContainText("2 data models");
   await expect(fits).toContainText("found by its branch");
   const unfit = page.getByTestId("plan-row-915");
   await expect(unfit).toContainText("does not fit");
-  await expect(unfit.getByRole("button", { name: "Accept plan" })).toBeDisabled();
+  // A plan that does not fit cannot be accepted: its plan says why, where Accept is.
+  await unfit.getByRole("button", { name: "m0x6A/rubato#915" }).click();
+  const where = page.getByTestId("where-it-fits");
+  await expect(where.getByTestId("fit-verdict")).toHaveText("does not fit the map");
+  await expect(where.getByRole("button", { name: "Accept plan" })).toBeDisabled();
+  await page.getByRole("button", { name: "← all plans" }).click();
 
   await fits.getByRole("button", { name: "m0x6A/rubato#914" }).click();
-  const where = page.getByTestId("where-it-fits");
   await expect(where.getByTestId("fit-verdict")).toHaveText("fits the map");
   await expect(where.getByTestId("data-models")).toContainText("voice_notes");
   await expect(where.getByTestId("data-models")).toContainText("crosses companion-server");
@@ -27,9 +32,10 @@ test("plans from voice-note issues show where they fit", { tag: ["@plans.found-b
   await expect(page.getByTestId("node-rubato-companion")).toContainText("plans name it");
 });
 
-// Issue #265: the Plans tab is a board. Its columns sit side by side once the panel is wide, a
-// plan opens in the tab (the map still paints it), and the finished plan of #930 is only under Done.
-test("the plans board: columns in a wide panel, a plan read in place, finished plans on request", { tag: ["@plans.board", "@plans.done-view"] }, async ({ page, baseURL }) => {
+// Issue #265: the plans are a board. Its columns sit side by side once the panel is wide, a row
+// opens the plan as a part of its issue (issue #357; the map still paints it, and the way back is
+// the board), and the finished plan of #930 is only under Done.
+test("the plans board: columns in a wide panel, a plan opened from a row, finished plans on request", { tag: ["@plans.board", "@plans.done-view"] }, async ({ page, baseURL }) => {
   await page.request.post(`${baseURL}/api/t/default/w/default/pins`, { data: { issue: { repo: "m0x6A/rubato", number: 930 }, target: { kind: "node", id: "plan-check" } } });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -45,10 +51,18 @@ test("the plans board: columns in a wide panel, a plan read in place, finished p
   console.log(`plan columns: stacked at ${narrowProposed}/${narrowOpen}, side by side at ${wideProposed}/${wideOpen}`);
   expect(wideOpen!).toBeGreaterThan(wideProposed! + 200);
 
-  // A plan opens here; the tab does not change, and the map paints the plan.
+  // No row accepts, and nothing repeats the columns' counts above them.
+  await expect(page.getByTestId("plans-panel").getByRole("button", { name: "Accept plan" })).toHaveCount(0);
+  await expect(page.locator(".big-counts")).toHaveCount(0);
+
+  // A row opens the plan, in its issue; Plans stays the place, and the map paints the plan.
   await page.getByTestId("plan-row-914").getByRole("button", { name: "m0x6A/rubato#914" }).click();
-  const detail = page.getByTestId("plan-detail");
+  const detail = page.getByTestId("issue-detail");
+  await expect(page).toHaveURL(/#\/issues\/m0x6A\/rubato\/914\/plan\?from=plans$/);
+  await expect(detail.getByTestId("section-plan")).toHaveAttribute("aria-current", "page");
   await expect(detail.getByTestId("where-it-fits")).toBeVisible();
+  // The plan is accepted where it is read.
+  await expect(detail.getByTestId("accept-plan")).toBeVisible();
   await expect(page.getByTestId("tab-plans")).toHaveClass(/active/);
   await expect(page.getByTestId("node-rubato-companion")).toHaveClass(/paint-affected/);
   await detail.getByRole("button", { name: "← all plans" }).click();
@@ -61,11 +75,15 @@ test("the plans board: columns in a wide panel, a plan read in place, finished p
   await expect(done).toBeVisible({ timeout: 30_000 });
   await expect(done).toContainText("closed");
   await expect(done.getByTestId("accept-plan")).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/plans\/done$/);
   await done.getByRole("button", { name: "m0x6A/rubato#930" }).click();
-  await expect(page.getByTestId("plan-finished-note")).toBeVisible();
-  await expect(page.getByTestId("plan-detail").getByTestId("accept-plan")).toHaveCount(0);
-  await page.getByTestId("plan-open-issue").click();
-  await expect(page.getByTestId("issue-detail").getByTestId("finished-note")).toBeVisible();
+  await expect(detail.getByTestId("finished-note")).toBeVisible();
+  await expect(detail.getByTestId("where-it-fits")).toBeVisible();
+  await expect(detail.getByTestId("accept-plan")).toHaveCount(0);
+  // Escape goes up: to the finished plans, where it was opened from.
+  await detail.getByRole("heading", { level: 2 }).first().press("Escape");
+  await expect(done).toBeVisible();
+  await expect(page.getByTestId("plans-view-done")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("connected repos list the map's repo", { tag: "@repos.lists-map-repo" }, async ({ page }) => {
@@ -94,7 +112,7 @@ test("the Repos tab says how fresh each repository's context graph is", { tag: "
 // Issue #283: Accept plan says what it did, on the row. The dev server keeps no tokens and has no
 // GitHub to post to, so the page is told it may act, the post is answered here after a moment,
 // and the overview then counts the approval, as it does once the comment is on the issue.
-test("Accept plan reads Accepting… while it posts, and the row keeps the sentence under Open", { tag: "@plans.accept-says-so" }, async ({ page }) => {
+test("Accept plan reads Accepting… while it posts; the plan keeps the sentence and its row moves to Open", { tag: "@plans.accept-says-so" }, async ({ page }) => {
   let accepted = false;
   await page.route("**/api/me", async (route) => {
     const res = await route.fetch();
@@ -119,10 +137,15 @@ test("Accept plan reads Accepting… while it posts, and the row keeps the sente
   await page.getByTestId("tab-plans").click();
   const row = page.getByTestId("plan-row-914");
   await expect(page.getByTestId("plans-proposed").getByTestId("plan-row-914")).toBeVisible({ timeout: 30_000 });
-  await row.getByRole("button", { name: "Accept plan" }).click();
-  await expect(row.getByRole("button", { name: "Accepting…" })).toBeDisabled();
+  // A plan is accepted where it is read: in its issue's Plan part.
+  await row.getByRole("button", { name: "m0x6A/rubato#914" }).click();
+  const plan = page.getByTestId("where-it-fits");
+  await plan.getByRole("button", { name: "Accept plan" }).click();
+  await expect(plan.getByRole("button", { name: "Accepting…" })).toBeDisabled();
   release();
+  await expect(plan.getByTestId("plan-accepted")).toContainText("Accepted: posted");
+  await expect(plan.getByRole("button", { name: "Accept plan" })).toHaveCount(0);
+  // Back on the board, the plan is under Open.
+  await page.getByRole("button", { name: "← all plans" }).click();
   await expect(page.getByTestId("plans-open").getByTestId("plan-row-914")).toBeVisible();
-  await expect(row.getByTestId("plan-accepted")).toContainText("Accepted: posted");
-  await expect(row.getByRole("button", { name: "Accept plan" })).toHaveCount(0);
 });

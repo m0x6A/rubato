@@ -28,15 +28,15 @@ Feature: Plans
   Scenario: A plan that does not fit the map cannot be accepted
     Given a plan that names a part the map does not have
     When a person opens Plans
-    Then the plan is marked as not fitting
-    And Accept plan is disabled
+    Then the plan's row is marked as not fitting
+    And in the plan, Accept plan is disabled
 
   @plans.accept-says-so
   Scenario: Accept plan says what it did, where it was pressed
     Given a plan that fits the map and has no counted approval
-    When a person presses Accept plan on its row
+    When a person opens the plan and presses Accept plan
     Then the button reads "Accepting…" until the approval is posted
-    And the row says the plan was accepted, also after it moves to Open
+    And the plan says it was accepted, also after its row has moved to Open
 
   @plans.draft-revisions
   Scenario: The team reads every revision of a draft plan
@@ -69,8 +69,8 @@ Feature: Plans
     Given plans of issues that are open on GitHub, proposed and open
     When a person opens Plans with the panel widened
     Then Proposed and Open are columns side by side, and a plan that is only a draft is among the proposed
-    And a plan opens in the Plans tab, with where it fits and its draft, while the map paints it
-    And the issue is one press away
+    And a row opens the plan as a part of its issue, with where it fits and its draft, while the map paints it
+    And the way back from it is the board
 
   @plans.reads-as-markdown
   Scenario: A plan's text reads as a document

@@ -102,7 +102,7 @@ test("Plans from another tab shows the board; Back returns to the open issue", {
   await expect(page.getByTestId("issue-detail")).toBeVisible();
   await page.getByTestId("tab-plans").click();
   await expect(page.getByTestId("plan-columns")).toBeVisible();
-  await expect(page.getByTestId("plan-detail")).toHaveCount(0);
+  await expect(page.getByTestId("issue-detail")).toHaveCount(0);
   // One view at a time (issue #357): the board took the issue's place, and Back returns to it.
   await page.goBack();
   await expect(page.getByTestId("issue-detail")).toBeVisible();

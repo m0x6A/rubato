@@ -114,8 +114,8 @@ describe("plans (issue #80)", () => {
   it("accepts as you: posts the plan's sha once and says so", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ state: "posted", body: "Approved: plan f3c5e84f2b on issue/80-plans-in-view" }), { status: 200 }));
     const said: string[] = [];
-    render(<PlansBoard overview={overview({ issues: [planned(80)] })} me={me} selected={null} onSelect={() => {}} onOpenIssue={() => {}} onNotice={(t) => said.push(t)} />);
-    fireEvent.click(within(screen.getByTestId("plan-row-80")).getByRole("button", { name: "Accept plan" }));
+    render(<WhereItFits issue={planned(80)} map={overview().map.map} me={me} onNotice={(t) => said.push(t)} />);
+    fireEvent.click(within(screen.getByTestId("where-it-fits")).getByRole("button", { name: "Accept plan" }));
     await waitFor(() => expect(said).toHaveLength(1));
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
@@ -127,7 +127,7 @@ describe("plans (issue #80)", () => {
   it("explains a refusal in words", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ reason: "plan_changed" }), { status: 409 }));
     const said: string[] = [];
-    render(<PlansBoard overview={overview({ issues: [planned(80)] })} me={me} selected={null} onSelect={() => {}} onOpenIssue={() => {}} onNotice={(t) => said.push(t)} />);
+    render(<WhereItFits issue={planned(80)} map={overview().map.map} me={me} onNotice={(t) => said.push(t)} />);
     fireEvent.click(screen.getByRole("button", { name: "Accept plan" }));
     await waitFor(() => expect(said[0]).toBe("The plan changed since you saw it. Look again, then accept."));
   });
