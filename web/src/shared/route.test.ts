@@ -14,6 +14,8 @@ const EVERY: Route[] = [
   { view: "map", sel: PART },
   { view: "territory", sel: null },
   { view: "territory", sel: SEAM },
+  { view: "draft", sel: null },
+  { view: "draft", sel: PART },
   { view: "issue", issue: ISSUE, section: "overview", from: null, sel: null },
   { view: "issue", issue: ISSUE, section: "plan", from: null, sel: SEAM },
   { view: "issue", issue: ISSUE, section: "room", from: null, sel: null },
@@ -38,7 +40,7 @@ const EVERY: Route[] = [
   { view: "not-found", fragment: "/nowhere", sel: null },
 ];
 
-const KINDS = ["map", "territory", "issues", "issue", "new-issue", "plans", "companions", "pair", "repos", "repo", "pull", "findings", "settings", "workspaces", "members", "operator", "not-found"];
+const KINDS = ["map", "territory", "draft", "issues", "issue", "new-issue", "plans", "companions", "pair", "repos", "repo", "pull", "findings", "settings", "workspaces", "members", "operator", "not-found"];
 
 /** How many of the routes survive `format` then `parse`, and which kinds they cover. */
 function roundTrips(routes: Route[]): { ok: number; kinds: Set<string> } {

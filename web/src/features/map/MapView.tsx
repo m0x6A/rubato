@@ -1090,11 +1090,6 @@ function Inner({ graph, selected, onSelect, onPin, layout: stored, onMove, onAut
           {scenario.unplaced > 0 && <p className="scenario-note">{scenario.unplaced} of its steps cannot be drawn: the map no longer declares their flow.</p>}
         </div>
       )}
-      {editing && (
-        <p className="edit-hint" data-testid="edit-hint">
-          <strong>Editing the shared draft.</strong> Double-click the canvas to add a part, drag from the dot on a part&apos;s right edge to another part to draw a seam, or select a part or seam to change it in the panel. Nothing reaches the map until the draft is proposed and merged.
-        </p>
-      )}
       {lens === "traffic" && trafficFresh && graph.traffic && <TrafficLine traffic={graph.traffic} quietSeams={vitalsAt?.quietSeams ?? 0} toSettle={toSettle} />}
       {lens !== "scenario" && (
         <Legend folded={!keyInSight}>

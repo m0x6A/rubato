@@ -32,3 +32,11 @@ Feature: Map drafts
     When a person takes it into the draft
     Then it is a draft part that names its service
     And its observed call is a draft seam
+
+  @drafts.one-next-step
+  Scenario: The map draft's view offers one next step
+    Given a draft with changes in it
+    When a person opens the map draft
+    Then they see the changes, and Propose map change as the one next step
+    And adding a part or a seam opens its form when asked for, by its button, a double-click on the canvas or something taken from the observed system
+    And copying the file and discarding the draft are behind More, while Undo discard stays in sight

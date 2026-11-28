@@ -11,6 +11,7 @@ const PANEL: [fragment: string, view: string][] = [
   ["#/issues/done", "issues"],
   ["#/map?sel=part:web", "map"],
   ["#/map/territory", "territory"],
+  ["#/map/draft", "draft"],
   ["#/issues/m0x6A/rubato/915", "issue"],
   ["#/issues/new", "new-issue"],
   ["#/plans", "plans"],

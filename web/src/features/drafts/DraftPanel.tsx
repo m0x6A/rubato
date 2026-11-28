@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { Menu } from "../../shared/Menu.tsx";
 import type { MapNode, MapRef, NodeKind, Overview, Seam, ServiceId } from "../../protocol.ts";
 import { ApiError, failureText } from "../../shared/api.ts";
 import { relative } from "../../shared/format.ts";
@@ -85,21 +86,31 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
   const [copied, setCopied] = useState<string | null>(null);
   const addPartId = useRef<HTMLInputElement>(null);
   const addSeamFrom = useRef<HTMLSelectElement>(null);
-  useEffect(() => {
-    if (focusAddPart) {
-      addPartId.current?.focus();
-    }
-  }, [focusAddPart]);
   const partPrefill = prefill?.op === "add_node" ? prefill : null;
   const seamPrefill = prefill?.op === "add_seam" ? prefill : null;
+  // The forms that add a part or a seam show when asked for (issue #357): by their button, by a
+  // double-click on the canvas, or by something taken from the observed system, which fills one in.
+  const [adding, setAdding] = useState<"part" | "seam" | null>(prefill?.op === "add_node" ? "part" : prefill?.op === "add_seam" ? "seam" : focusAddPart ? "part" : null);
   useEffect(() => {
-    // The prefilled form takes focus, so the person sees what was filled in before sending it.
+    if (focusAddPart) {
+      setAdding("part");
+    }
+  }, [focusAddPart]);
+  useEffect(() => {
     if (prefill?.op === "add_node") {
-      addPartId.current?.focus();
+      setAdding("part");
     } else if (prefill?.op === "add_seam") {
-      addSeamFrom.current?.focus();
+      setAdding("seam");
     }
   }, [prefill]);
+  // The form that just opened takes focus, so the person sees what was filled in before sending it.
+  useEffect(() => {
+    if (adding === "part") {
+      addPartId.current?.focus();
+    } else if (adding === "seam") {
+      addSeamFrom.current?.focus();
+    }
+  }, [adding, focusAddPart, prefill]);
 
   /** Run one write; a refusal shows the server's own reason next to the forms. */
   const run = async (what: string, action: () => Promise<unknown>): Promise<boolean> => {
@@ -130,6 +141,7 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
     const node: MapNode = compact({ id, kind: String(f.get("kind")) as NodeKind, description: blank(String(f.get("description") ?? "")), repo: blank(String(f.get("repo") ?? "")), path: blank(String(f.get("path") ?? "")), service: serviceFrom(f) });
     if (await post({ op: "add_node", node }, `Part ${id} was not added`)) {
       form.reset();
+      setAdding(null);
       onPartAdded?.(id);
     }
   };
@@ -144,6 +156,7 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
     const seam: Seam = compact({ id, from, to, owner: String(f.get("owner")) === "from" ? from : to, carries: blank(String(f.get("carries") ?? "")) });
     if (await post({ op: "add_seam", seam }, `Seam ${id} was not added`)) {
       form.reset();
+      setAdding(null);
     }
   };
 
@@ -245,6 +258,11 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
         <span className="muted">{ops.length === 0 ? "empty" : `${ops.length} change${ops.length === 1 ? "" : "s"}`}</span>
       </header>
       <p className="muted">One draft for the whole team. Nothing here is on the map until it is proposed as a pull request and merged.</p>
+      {!frozen && (
+        <p className="edit-hint" data-testid="edit-hint">
+          Double-click the canvas to add a part, drag from the dot on a part&apos;s right edge to another part to draw a seam, or select a part or seam to change it here.
+        </p>
+      )}
 
       {proposal && (
         <p className={proposal.state === "proposed" ? "notice-line" : "warn"} data-testid="proposal">
@@ -306,19 +324,59 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
             Propose again
           </button>
         )}
-        {!frozen && ops.length > 0 && (
-          <button type="button" disabled={busy} onClick={() => void discard()}>
-            Discard draft
-          </button>
-        )}
+        {/* The way back from a discard, for everyone, while it is still possible: in sight. */}
         {draft.can_restore && (
           <button type="button" disabled={busy} onClick={() => void restore()}>
             Undo discard
           </button>
         )}
-        <button type="button" disabled={busy || ops.length === 0} onClick={() => void copyYaml()}>
-          Copy YAML
-        </button>
+        {/* What is rarely wanted is one press further: one obvious next step, the rest behind More. */}
+        {ops.length > 0 && (
+          <span className="draft-more" data-testid="draft-more">
+            <Menu
+              button={
+                <>
+                  More <span aria-hidden="true">▾</span>
+                </>
+              }
+              buttonLabel="More to do with the draft"
+              menuLabel="More to do with the draft"
+            >
+              {(close) => (
+                <>
+                  {ops.length > 0 && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      tabIndex={-1}
+                      aria-disabled={busy || undefined}
+                      onClick={() => {
+                        close();
+                        void copyYaml();
+                      }}
+                    >
+                      Copy YAML
+                    </button>
+                  )}
+                  {!frozen && ops.length > 0 && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      tabIndex={-1}
+                      aria-disabled={busy || undefined}
+                      onClick={() => {
+                        close();
+                        void discard();
+                      }}
+                    >
+                      Discard draft
+                    </button>
+                  )}
+                </>
+              )}
+            </Menu>
+          </span>
+        )}
       </div>
 
       {review && (
@@ -424,8 +482,19 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
         </form>
       )}
 
-      {!frozen && (
+      {!frozen && adding === null && (
+        <p className="draft-actions">
+          <button type="button" data-testid="draft-add-part" onClick={() => setAdding("part")}>
+            Add part…
+          </button>
+          <button type="button" data-testid="draft-add-seam" onClick={() => setAdding("seam")}>
+            Add seam…
+          </button>
+        </p>
+      )}
+      {!frozen && adding !== null && (
         <>
+          {adding === "part" && (
           <form className="stack draft-form" onSubmit={(e) => void addPart(e)} aria-label="Add part" key={`add-part-${partPrefill?.nonce ?? 0}`}>
             <h3>Add part</h3>
             {partPrefill && <p className="muted">Taken from the observed system. Set what it is, its kind and its repository, then add it.</p>}
@@ -458,6 +527,8 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
               Add part
             </button>
           </form>
+          )}
+          {adding === "seam" && (
           <form className="stack draft-form" onSubmit={(e) => void addSeam(e)} aria-label="Add seam" key={`add-seam-${seamPrefill?.nonce ?? 0}`}>
             <h3>Add seam</h3>
             {seamPrefill && <p className="muted">Taken from the observed system: {seamPrefill.from} calls {seamPrefill.to}. Set what it carries and who owns it, then add it.</p>}
@@ -497,6 +568,12 @@ export function DraftPanel({ overview, selection, onChanged, onNotice, focusAddP
               Add seam
             </button>
           </form>
+          )}
+          <p>
+            <button type="button" className="link" onClick={() => setAdding(null)}>
+              Not now
+            </button>
+          </p>
         </>
       )}
     </section>

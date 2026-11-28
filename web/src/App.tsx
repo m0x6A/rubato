@@ -108,8 +108,9 @@ export function App() {
     }
   }, [route]);
   const closePage = useCallback(() => navigate({ ...returnTo.current, sel: currentRoute().sel }), []);
-  // Edit mode: the draft panel shows, parts connect, a double-click on the canvas asks for a part.
-  const [editing, setEditing] = useState(false);
+  // Edit mode is the map draft's view (issue #357): there the draft shows, parts connect, and a
+  // double-click on the canvas asks for a part.
+  const editing = route.view === "draft";
   const [addPartFocus, setAddPartFocus] = useState(0);
   // A discrepancy taken from the observed system (issue #140): what the draft's form starts with.
   const [prefill, setPrefill] = useState<DraftPrefill | undefined>(undefined);
@@ -331,9 +332,13 @@ export function App() {
 
   /** A part or seam chosen on the map: its inspector shows, and an open issue gives way. */
   const onSelectOnMap = useCallback((ref: MapRef | null) => {
-    if (ref) {
+    const here = currentRoute().view;
+    if (here === "draft" || here === "territory") {
+      // These views are about the map: what is selected changes, the view stays.
+      selectOnly(ref);
+    } else if (ref) {
       navigate({ view: "map", sel: ref });
-    } else if (currentRoute().view === "map") {
+    } else if (here === "map") {
       // Nothing selected leaves the inspector nothing to show.
       navigate(HOME, { replace: true });
     } else {
@@ -446,13 +451,13 @@ export function App() {
       setPrefill({ nonce: Date.now(), op: "add_seam", from: take.from, to: take.to, id: take.id });
     } else if (take.kind === "select_seam") {
       setPrefill(undefined);
-      selectOnly({ kind: "seam", id: take.seam });
+      navigate({ view: "draft", sel: { kind: "seam", id: take.seam } });
+      return;
     } else {
       return;
     }
-    setEditing(true);
-    // The draft's form is in the panel; the list it was taken from gives way to it.
-    go({ view: "issues", list: "open" });
+    // The draft's form is its view; the list it was taken from gives way to it.
+    go({ view: "draft" });
   }, []);
 
   /** Dismiss a discrepancy for the workspace as yourself (ADR 0060), with a way back. */
@@ -502,7 +507,6 @@ export function App() {
       // the workspace just chosen.
       navigate(currentRoute().view === "settings" ? { view: "settings", sel: null } : HOME);
       returnTo.current = HOME;
-      setEditing(false);
       void refresh();
     },
     [refresh],
@@ -606,7 +610,7 @@ export function App() {
             <MapView graph={graph} selected={selection} onSelect={onSelectOnMap} onPin={onPin} layout={overview.layout} onMove={onMove} onAutoArrange={(arrangement) => void onAutoArrange(arrangement)} plan={selected?.plan ? { issue: selected.issue, plan: selected.plan } : null}
               draftMarks={marks}
               editing={editing}
-              onToggleEdit={() => setEditing((e) => !e)}
+              onToggleEdit={() => (editing ? goUp() : go({ view: "draft" }))}
               onConnectParts={(from, to) => void onConnectParts(from, to)}
               onAddPartAt={(at) => {
                 newPartAt.current = at;
@@ -722,7 +726,7 @@ export function App() {
               </button>
             </p>
           )}
-          {overview && editing && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} prefill={prefill} />}
+          {overview && route.view === "draft" && <DraftPanel overview={overview} selection={selection} onChanged={refresh} onNotice={setNotice} focusAddPart={addPartFocus} onPartAdded={(id) => void onPartAdded(id)} prefill={prefill} />}
           {/* The map explains what is selected; an open issue takes the panel instead. */}
           {/* With a part or seam selected, its inspector offers "New issue here…" instead. */}
           {overview && list && !selection && <TeamTrack issues={openIssues(overview)} />}

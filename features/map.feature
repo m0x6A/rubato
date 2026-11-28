@@ -101,7 +101,8 @@ Feature: The system map
   @map.edit-hint
   Scenario: Edit mode says how to edit the map
     When a person turns on Edit map
-    Then the map says how to add a part, how to draw a seam, and that nothing changes until the draft is merged
+    Then the map draft's view opens, with its address
+    And it says how to add a part, how to draw a seam, and that nothing changes until the draft is merged
 
   @map.play-journey
   Scenario: A journey plays step by step over the map

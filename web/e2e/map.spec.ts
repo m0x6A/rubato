@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
-import { NOT_PINNED, autoArrange, expectMapVersion, openSection, openTerritory, showNotPinned, toggleByRepo } from "./shell.ts";
+import { NOT_PINNED, autoArrange, expectMapVersion, openSection, draftMore, openTerritory, showNotPinned, toggleByRepo } from "./shell.ts";
 import { parse as parseYaml } from "yaml";
 import WebSocket from "ws";
 import { freshTraffic, ghostTraffic, quietTraffic, routeOverview, staleTraffic } from "./fixtures/traffic.ts";
@@ -485,7 +485,7 @@ test("queue an issue on a paired companion and start it", { tag: ["@queue.queue-
   mine.close();
 });
 
-test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@drafts.invalid-change-explained", "@drafts.propose-as-pull-request", "@drafts.withdraw"] }, async ({ page }) => {
+test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@drafts.invalid-change-explained", "@drafts.propose-as-pull-request", "@drafts.withdraw", "@drafts.one-next-step"] }, async ({ page }) => {
   const repo = process.env["RUBATO_E2E_REPO"];
   test.skip(!repo, "needs the seeded repository of e2e/run.sh");
   const git = (...args: string[]) => execFileSync("git", ["-C", repo!, ...args], { encoding: "utf8" }).trim();
@@ -494,10 +494,14 @@ test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@
   await expect(page.getByTestId("node-web")).toBeVisible();
   expect(draftBranches()).toEqual([]);
 
-  // Edit mode: the draft panel opens. Add a part with the form.
+  // Edit mode is the draft's view, with its address: it says how to edit, and its forms open when asked for.
   await page.getByRole("button", { name: "Edit map" }).click();
+  await expect(page).toHaveURL(/#\/map\/draft$/);
   const panel = page.getByTestId("draft-panel");
   await expect(panel).toContainText("empty");
+  await expect(panel.getByTestId("edit-hint")).toContainText("Double-click the canvas to add a part");
+  await expect(panel.getByRole("form")).toHaveCount(0);
+  await panel.getByTestId("draft-add-part").click();
   const addPart = panel.getByRole("form", { name: "Add part" });
   await addPart.getByLabel(/^Id/).fill("billing");
   await addPart.getByLabel("What it is").fill("Invoices and payments.");
@@ -528,9 +532,13 @@ test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@
   // A draft id is not a map id: it cannot be pinned, and an invalid change says why.
   const pin = await page.request.post("/api/t/default/w/default/pins", { data: { issue: { repo: "m0x6A/rubato", number: 903 }, target: { kind: "node", id: "billing" } } });
   expect(pin.status()).toBe(422);
+  await panel.getByTestId("draft-add-part").click();
   await addPart.getByLabel(/^Id/).fill("web");
   await addPart.getByRole("button", { name: "Add part" }).click();
   await expect(panel.getByRole("alert")).toContainText("Part web was not added: id web already exists");
+  // A refused change keeps its form, with what was typed.
+  await expect(addPart.getByLabel(/^Id/)).toHaveValue("web");
+  await panel.getByRole("button", { name: "Not now" }).click();
 
   // Give the seam a flow through its form, then look at what the proposal changes.
   await seam.click();
@@ -568,15 +576,20 @@ test("draft a part and a seam, propose", { tag: ["@drafts.add-part-and-seam", "@
   await expect(page.getByRole("status")).toContainText("Proposal withdrawn");
   expect(draftBranches()).toEqual([]);
   await expect(panel).toContainText("3 changes");
-  await expect(panel.getByRole("form", { name: "Add part" })).toBeVisible();
+  await expect(panel.getByTestId("draft-add-part")).toBeVisible();
+
+  // One next step in sight; the rest behind More.
+  await expect(panel.locator(".primary")).toHaveCount(1);
+  await expect(panel.getByRole("button", { name: "Propose map change…" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Discard draft" })).toHaveCount(0);
 
   // Discard empties it for everyone; Undo brings it back; discard again to leave the map as found.
-  await panel.getByRole("button", { name: "Discard draft" }).click();
+  await draftMore(page, "Discard draft");
   await expect(page.getByTestId("node-billing")).toHaveCount(0);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.getByTestId("node-billing")).toBeVisible();
   await expect(panel).toContainText("3 changes");
-  await panel.getByRole("button", { name: "Discard draft" }).click();
+  await draftMore(page, "Discard draft");
   await expect(page.getByTestId("node-billing")).toHaveCount(0);
   await expect(panel).toContainText("empty");
 });
@@ -635,7 +648,7 @@ test("a ghost taken into the draft becomes a part with its service, and its call
   expect(proposed.nodes.find((n) => n.id === "checkout")?.service).toEqual({ namespace: "shop", name: "checkout" });
 
   // Leave the map as found.
-  await panel.getByRole("button", { name: "Discard draft" }).click();
+  await draftMore(page, "Discard draft");
   await expect(panel).toContainText("empty");
 });
 

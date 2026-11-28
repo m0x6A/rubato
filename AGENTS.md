@@ -180,7 +180,7 @@ companions  lanes (sessions, agent line, queue, headless badge), revoke after as
 pins        the "Pin to…" menu, pin to a node or seam, unpin     POST, DELETE /api/pins
 queue       the "Queue on…" menu, queue on your own companion    POST, PUT, DELETE /api/queue
 launch      start a session through your own companion           POST /api/launch
-drafts      edit the map as one shared draft, propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
+drafts      edit the map as one shared draft, in a view of its own (the changes, one next step, forms on demand), propose it         POST /api/map/draft/ops, DELETE /api/map/draft/ops/:seq, POST discard, restore, propose, withdraw, GET yaml
 findings    what the map and the plans disagree about, in a view of its own  (none)
 new_issue   "New issue here…": the form, pinned where begun      POST /api/issues
 plans       the plans board: proposed and open, Done on request, a row opens the plan in its issue; there: fit, Accept plan, drafts, plan text as Markdown (ADR 0079)    POST /api/plans/approve, GET /api/drafts/:id, GET /api/drafts/:id/revisions/:rev
