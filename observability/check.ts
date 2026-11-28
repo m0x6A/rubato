@@ -47,6 +47,7 @@ const REQUIRED = [
   "InstallationSuspended",
   "RateLimited",
   "WebhookUnattachedHigh",
+  "ContextGraphSourcesCut",
 ];
 
 /** Panel title and the series it must query. Later PRs of issue #48 add theirs. */

@@ -734,6 +734,14 @@ impl Poller {
             if let Err(e) = auth::sweep_tokens(app).await {
                 tracing::error!(error = %format!("{e:#}"), "sweeping user tokens failed");
             }
+            // The dedupe rows of envelopes nobody can replay any more.
+            match companion_link::sweep_events(&app.db, app.clock.now()).await {
+                Ok(0) => {}
+                Ok(gone) => tracing::info!(gone, "companion events swept"),
+                Err(e) => {
+                    tracing::error!(error = %format!("{e:#}"), "sweeping companion events failed")
+                }
+            }
         }
         // After the per-issue reads and before the rate-limit read: the map proposal, if any.
         if map_draft::check_proposal(app).await {

@@ -124,13 +124,18 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 curl -sf http://127.0.0.1:18091/api/health > /dev/null || { echo "the App server did not start"; cat "$TMP/app-server.log" "$TMP/github.log"; exit 1; }
-# ADR 0088: only invited people log in. The seed made tenant `default` with installation 34; the
-# stand-in's `member` (GitHub user 1001) is invited here, straight into the table, until the
-# first admin of a tenant is named by an operator, and the operator here is `member` itself
-# (RUBATO_OPERATORS=1001), who must first be let in. `outsider` (1002) is invited nowhere; the
-# members page invites and removes `newcomer` through the API (e2e/tenants.spec.ts).
-command -v sqlite3 > /dev/null || { echo "sqlite3 is needed to invite the e2e member" >&2; exit 2; }
-sqlite3 "$TMP/app.db" "INSERT INTO tenant_members (tenant_id, github_id, login, role, invited_by, invited_at) VALUES ('default', 1001, 'member', 'admin', 'e2e', '2026-01-01T00:00:00+00:00');"
+# ADR 0088: only invited people and operators log in. The seed made tenant `default` with
+# installation 34 and no admin. The stand-in's `member` (GitHub user 1001) is the operator here
+# (RUBATO_OPERATORS=1001): it logs in through the stand-in, as a browser would, and names itself
+# the tenant's admin on the operator's route. `outsider` (1002) is invited nowhere; the members
+# page invites and removes `newcomer` through the API (e2e/tenants.spec.ts).
+APP=http://127.0.0.1:18091
+JAR="$TMP/operator.cookies"
+STATE=$(curl -s -c "$JAR" -o /dev/null -w '%{redirect_url}' "$APP/auth/github/login" | sed -n 's/.*[?&]state=\([^&]*\).*/\1/p')
+curl -s -b "$JAR" -c "$JAR" -o /dev/null "$APP/auth/github/callback?code=code-member&state=$STATE"
+NAMED=$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+  -d '{"login":"member"}' "$APP/api/admin/tenants/default/admins")
+[ "$NAMED" = 204 ] || { echo "the operator could not name the e2e tenant's admin: HTTP $NAMED"; cat "$TMP/app-server.log" "$TMP/github.log"; exit 1; }
 # Its first poll tick lists the open issues as the installation.
 for _ in $(seq 1 50); do
   curl -s http://127.0.0.1:18092/_standin/calls | grep -q '/repos/m0x6A/rubato/issues' && break

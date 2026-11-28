@@ -6,7 +6,8 @@
 //!   `RUBATO_TRUSTED_PROXY`: then the last address in `X-Forwarded-For` that is not such a proxy.
 //!   A header from anyone else is not read, so a client cannot choose its own bucket.
 //! - **Anonymous paths** (`/auth/*`, `/api/pair/start`, `/api/pair/poll`): a bucket per address.
-//! - **Writes**: a bucket per web session. Not in local development (`RUBATO_DEV_USER`, loopback
+//! - **Writes**: a bucket per person, shared by all their web sessions (`auth` tells the guard
+//!   whose each session is). Not in local development (`RUBATO_DEV_USER`, loopback
 //!   only), where there is no session and nobody to protect from.
 //! - A refusal is 429 with `Retry-After`, counted on `rubato.web.rejected` with reason
 //!   `rate_limited` and the route's template.
@@ -32,7 +33,7 @@ pub const ANONYMOUS_REFILL_MS: u32 = 1_000;
 /// [`WEBHOOK_REFILL_MS`]: twenty a second, sustained.
 pub const WEBHOOK_BURST: u32 = 300;
 pub const WEBHOOK_REFILL_MS: u32 = 50;
-/// A session may make this many writes at once, and one more each [`WRITE_REFILL_MS`].
+/// A person may make this many writes at once, and one more each [`WRITE_REFILL_MS`].
 pub const WRITE_BURST: u32 = 60;
 pub const WRITE_REFILL_MS: u32 = 500;
 /// How long a request may take; a websocket is not a request in this sense.
@@ -113,6 +114,8 @@ pub struct Limiter {
     /// Per address on `/webhooks/*`.
     pub webhooks: Buckets,
     pub writes: Buckets,
+    /// Whose each web session is, as `auth` last told it: the key of a write's bucket.
+    people: Mutex<HashMap<String, String>>,
     pub running: tokio::sync::Semaphore,
     /// Requests running now, by the key of the address they came from.
     pub per_address: Mutex<HashMap<String, u32>>,
@@ -129,6 +132,7 @@ impl Default for Limiter {
             anonymous: Buckets::new(ANONYMOUS_BURST, ANONYMOUS_REFILL_MS),
             webhooks: Buckets::new(WEBHOOK_BURST, WEBHOOK_REFILL_MS),
             writes: Buckets::new(WRITE_BURST, WRITE_REFILL_MS),
+            people: Mutex::new(HashMap::new()),
             running: tokio::sync::Semaphore::new(MAX_CONCURRENT_REQUESTS),
             per_address: Mutex::new(HashMap::new()),
             max_per_address: MAX_CONCURRENT_PER_ADDRESS,
@@ -172,6 +176,33 @@ pub fn address_key(ip: IpAddr) -> String {
                 format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
             }
         },
+    }
+}
+
+impl Limiter {
+    /// `session` is `person`'s. `auth` says so each time it admits a request, so every session
+    /// of one person draws on one bucket of writes (ADR 0090): logging in again buys no more.
+    pub fn know(&self, session: &str, person: &str) {
+        let person = person.to_lowercase();
+        let mut people = self.people.lock().unwrap();
+        if people.get(session) == Some(&person) {
+            return;
+        }
+        // Bounded like the buckets. What is dropped is learned again at that session's next
+        // request.
+        if people.len() >= MAX_BUCKETS {
+            people.clear();
+        }
+        people.insert(session.to_owned(), person);
+    }
+
+    /// The bucket a write of `session` draws on: its person's, or its own until `auth` has
+    /// admitted one request of it (the first after a restart).
+    fn writer(&self, session: &str) -> String {
+        match self.people.lock().unwrap().get(session) {
+            Some(person) => format!("person:{person}"),
+            None => format!("session:{session}"),
+        }
     }
 }
 
@@ -294,9 +325,9 @@ pub async fn guard(State(app): State<App>, mut req: Request, next: Next) -> Resp
         && let Some(session) =
             crate::kernel::http::cookie(req.headers(), app.config.session_cookie())
                 .and_then(|v| app.signer.verify(&v))
-        && let Err(wait) = app.limiter.writes.take(&session, now)
+        && let Err(wait) = app.limiter.writes.take(&app.limiter.writer(&session), now)
     {
-        return too_many(&app, &route, "session", wait);
+        return too_many(&app, &route, "person", wait);
     }
     // A websocket lives as long as its page: no timeout, and it holds no place among requests.
     if path.starts_with("/ws/") {
@@ -596,6 +627,37 @@ mod tests {
             .header("cookie", "rubato_session=ada.forged");
         assert_eq!(answer(forged).await.0, 200);
         assert_eq!(app.limiter.writes.keys(), 2);
+    }
+
+    /// ADR 0090: the bucket is the person's. A second session of the same person, once `auth`
+    /// has admitted a request of each, draws on the same bucket; another person's does not.
+    #[tokio::test]
+    async fn two_sessions_of_one_person_share_one_bucket_of_writes() {
+        let (s, app, _tmp) = guarded(|_, _| {}).await;
+        let cookie = |id: &str| format!("rubato_session={}", app.signer.sign(id));
+        let write = |session: &str| {
+            s.request("POST", "/api/me", A)
+                .header("cookie", cookie(session))
+        };
+        app.limiter.know("s1", "Ada");
+        app.limiter.know("s2", "ada");
+        app.limiter.know("s3", "mia");
+        for i in 0..WRITE_BURST {
+            let session = if i % 2 == 0 { "s1" } else { "s2" };
+            assert_eq!(answer(write(session)).await.0, 200, "write {i}");
+        }
+        assert_eq!(answer(write("s1")).await.0, 429);
+        assert_eq!(
+            answer(write("s2")).await.0,
+            429,
+            "a second session buys nothing"
+        );
+        assert_eq!(answer(write("s3")).await.0, 200, "another person writes");
+        assert_eq!(app.limiter.writes.keys(), 2);
+        println!(
+            "checked {} writes over 3 sessions of 2 people",
+            WRITE_BURST + 3
+        );
     }
 
     #[tokio::test]

@@ -5,5 +5,5 @@
 mod store;
 mod ws;
 
-pub use store::{all_sessions, session_snapshots};
+pub use store::{EVENT_KEEP_DAYS, all_sessions, session_snapshots, sweep_events};
 pub use ws::{keep_members_sessions, mark_quiet, upgrade};

@@ -65,7 +65,12 @@ pub async fn start(
     )
     .await
     .map_err(|e| (internal(SLICE, e), String::new()))?;
-    if stored != store::Started::Stored {
+    if stored == store::Started::Displaced {
+        tracing::warn!(
+            companion_id = %req.companion_id,
+            "pairing codes are at the server's cap: the largest holder's oldest code ended early"
+        );
+    } else if stored != store::Started::Stored {
         // The same answer for both caps: one address is not told how full the server is.
         let why = if stored == store::Started::AddressFull {
             reason::PENDING_CAP_ADDRESS

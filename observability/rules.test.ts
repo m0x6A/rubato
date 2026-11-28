@@ -135,6 +135,12 @@ const mutants: Mutant[] = [
     to: 'sum(increase(rubato_web_rejected_total{rubato_reason="rate_limited"}[10m])) > 50',
     caughtBy: "alertname: RateLimited, time: 10m",
   },
+  {
+    why: "#345: ContextGraphSourcesCut counts cut lists, not sources cut by their own caps",
+    from: "sum(increase(rubato_graph_sources_truncated_total[1h])) > 0",
+    to: "sum(increase(rubato_graph_truncated_total[1h])) > 0",
+    caughtBy: "alertname: ContextGraphSourcesCut, time: 1h",
+  },
 ];
 
 /** Run the committed rule tests against `rules`, in a scratch copy of the alerts folder. */

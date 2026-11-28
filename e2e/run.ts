@@ -337,9 +337,13 @@ async function main() {
     await waitFor("the companion's copy of the context graph", 60_000, async () => want.every((s) => status().includes(`  ${s}`))).catch(() => undefined);
     const said = status();
     checks.reach("graph-copy", want.length);
+    // What both sides logged about the graph, so a copy that never arrived says why.
+    const logged = ["server", "companion"]
+      .flatMap((name) => (existsSync(`${T}/${name}.log`) ? readFileSync(`${T}/${name}.log`, "utf8").split("\n") : []).filter((l) => /graph/i.test(l)).slice(-15).map((l) => `${name}| ${l}`))
+      .join("\n");
     for (const source of want) {
       if (!said.includes(`  ${source}`)) {
-        checks.problem("graph-copy", `rubato-companion status names no copy of ${source}:\n${said}`);
+        checks.problem("graph-copy", `rubato-companion status names no copy of ${source}:\n${said}\n${logged}`);
       }
     }
     // By hand: MCP over stdio, no launch id, no token in any config.

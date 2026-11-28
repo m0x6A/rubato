@@ -321,6 +321,7 @@ Runaway token spend is the new memory leak. Cost per issue, per node and per sea
 - An attached GitHub App installation suspended for 15 minutes (`InstallationSuspended`, ADR 0087).
 - A route that refused more than 50 requests as rate limited in 10 minutes (`RateLimited`, ADR 0090).
 - More than 100 webhook deliveries an hour from installations attached to no tenant (`WebhookUnattachedHigh`, ADR 0087).
+- A companion's list of context graph sources cut at the cap, so its copy matches a list that is not whole (`ContextGraphSourcesCut`, ADR 0087).
 
 Each of these has an alert rule committed under `observability/alerts/` and a test that makes it fire on purpose.
 

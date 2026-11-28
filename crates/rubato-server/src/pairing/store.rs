@@ -63,6 +63,7 @@ pub async fn create_pairing_code(
     // One address holds a few pending codes at most (ADR 0090), so one sender cannot fill the
     // server's cap and keep everyone else from pairing. A peer the server does not know is
     // held to the server's cap only.
+    let mut held_here = None;
     if let Some(addr) = client_addr {
         let held: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pairing_codes WHERE status = 'pending' AND expires_at > ? AND client_addr = ?",
@@ -74,17 +75,56 @@ pub async fn create_pairing_code(
         if held >= PENDING_PER_ADDR {
             return Ok(Started::AddressFull);
         }
+        held_here = Some(held);
     }
     // The cap is checked in the insert itself, so concurrent starts cannot overshoot it (#168).
-    let r = sqlx::query("INSERT INTO pairing_codes (device_code, user_code, companion_id, hostname, companion_version, status, created_at, expires_at, client_addr) SELECT ?, ?, ?, ?, ?, 'pending', ?, ?, ? WHERE (SELECT COUNT(*) FROM pairing_codes WHERE status = 'pending' AND expires_at > ?) < ?")
+    let insert = || {
+        sqlx::query("INSERT INTO pairing_codes (device_code, user_code, companion_id, hostname, companion_version, status, created_at, expires_at, client_addr) SELECT ?, ?, ?, ?, ?, 'pending', ?, ?, ? WHERE (SELECT COUNT(*) FROM pairing_codes WHERE status = 'pending' AND expires_at > ?) < ?")
         .bind(device_code).bind(user_code).bind(req.companion_id.to_string()).bind(&req.hostname).bind(&req.companion_version).bind(ts(now)).bind(ts(now + chrono::Duration::seconds(ttl_secs))).bind(client_addr)
         .bind(ts(now)).bind(max_pending)
-        .execute(db).await?;
-    Ok(if r.rows_affected() == 1 {
-        Started::Stored
+        .execute(db)
+    };
+    if insert().await?.rows_affected() == 1 {
+        return Ok(Started::Stored);
+    }
+    // Full. A few addresses that each hold their share fill the server's cap between them, so
+    // a known address that holds fewer codes than the largest holder takes the place of that
+    // holder's oldest code, which reads as expired from now on. Whoever holds least gets in;
+    // keeping everyone out takes as many addresses as the cap has places.
+    let Some(held) = held_here else {
+        return Ok(Started::ServerFull);
+    };
+    if !displace_oldest(db, now, held).await? {
+        return Ok(Started::ServerFull);
+    }
+    Ok(if insert().await?.rows_affected() == 1 {
+        Started::Displaced
     } else {
         Started::ServerFull
     })
+}
+
+/// End the oldest pending code of the address that holds the most, when that is more than
+/// `held`. Codes from peers the server did not know count as one holder.
+async fn displace_oldest(db: &SqlitePool, now: DateTime<Utc>, held: i64) -> Result<bool> {
+    let r = sqlx::query(
+        "UPDATE pairing_codes SET expires_at = ?1 WHERE device_code = (
+             SELECT device_code FROM pairing_codes
+              WHERE status = 'pending' AND expires_at > ?2 AND COALESCE(client_addr, '') = (
+                    SELECT COALESCE(client_addr, '') FROM pairing_codes
+                     WHERE status = 'pending' AND expires_at > ?2
+                     GROUP BY COALESCE(client_addr, '')
+                    HAVING COUNT(*) > ?3
+                     ORDER BY COUNT(*) DESC, MIN(created_at) ASC LIMIT 1)
+              ORDER BY created_at ASC, device_code ASC LIMIT 1)
+           AND status = 'pending'",
+    )
+    .bind(ts(now - chrono::Duration::seconds(1)))
+    .bind(ts(now))
+    .bind(held)
+    .execute(db)
+    .await?;
+    Ok(r.rows_affected() == 1)
 }
 
 /// The most pending pairing codes one address holds (ADR 0090).
@@ -94,6 +134,8 @@ pub const PENDING_PER_ADDR: i64 = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Started {
     Stored,
+    /// Stored in the place of the largest holder's oldest pending code: the server was full.
+    Displaced,
     /// The server's own cap on pending codes is reached.
     ServerFull,
     /// This address holds its share of pending codes.
@@ -491,5 +533,93 @@ mod tests {
             Started::Stored
         );
         println!("checked {} starts from 3 addresses", PENDING_PER_ADDR + 6);
+    }
+
+    /// A few addresses that each hold their share fill the server's cap. Someone who holds
+    /// fewer still pairs: the largest holder's oldest code ends early. An address that holds as
+    /// many as anyone, and a peer the server does not know, are refused.
+    #[tokio::test]
+    async fn a_full_server_gives_the_place_of_the_largest_holders_oldest_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}/t.db?mode=rwc", tmp.path().display());
+        let db = crate::kernel::db::connect(&url).await.unwrap();
+        let cap = 2 * PENDING_PER_ADDR + 1;
+        let make = |device: String, addr: Option<&'static str>| {
+            let db = db.clone();
+            async move {
+                create_pairing_code(
+                    &db,
+                    &start(),
+                    &device,
+                    &device.to_uppercase(),
+                    900,
+                    cap,
+                    addr,
+                )
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(
+            make("mine".into(), Some("192.0.2.1")).await,
+            Started::Stored
+        );
+        for (who, addr) in [("a", "198.51.100.7"), ("b", "198.51.100.8")] {
+            for i in 0..PENDING_PER_ADDR {
+                assert_eq!(make(format!("{who}{i}"), Some(addr)).await, Started::Stored);
+            }
+        }
+        // Full. A peer the server does not know displaces nobody.
+        assert_eq!(make("unknown".into(), None).await, Started::ServerFull);
+        // A newcomer takes the place of the oldest code of the first of the largest holders.
+        assert_eq!(
+            make("new".into(), Some("203.0.113.9")).await,
+            Started::Displaced
+        );
+        assert_eq!(
+            status(&db, "new").await.map(|s| s.0).as_deref(),
+            Some("pending")
+        );
+        assert_eq!(
+            poll_pairing_code(&db, "a0").await.unwrap(),
+            PairPollResponse::Expired,
+            "the displaced code reads as expired"
+        );
+        assert_eq!(
+            poll_pairing_code(&db, "mine").await.unwrap(),
+            PairPollResponse::Pending,
+            "a holder of one keeps its code"
+        );
+        // Now b holds the most (5), a holds 4: b's oldest goes next, and again a's.
+        assert_eq!(
+            make("new2".into(), Some("203.0.113.10")).await,
+            Started::Displaced
+        );
+        assert_eq!(
+            poll_pairing_code(&db, "b0").await.unwrap(),
+            PairPollResponse::Expired
+        );
+        // An address that holds as many as the largest holder displaces nobody.
+        for i in 0..2 {
+            assert_eq!(
+                make(format!("c{i}"), Some("203.0.113.9")).await,
+                Started::Displaced,
+                "start {i}"
+            );
+        }
+        // Holders now: a 3, b 3, and 203.0.113.9 holds 3 as well.
+        assert_eq!(
+            make("c2".into(), Some("203.0.113.9")).await,
+            Started::ServerFull
+        );
+        let pending: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pairing_codes WHERE status = 'pending' AND expires_at > ?",
+        )
+        .bind(ts(Utc::now()))
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(pending, cap, "never over the server's cap");
+        println!("checked {} starts against a cap of {cap}", cap + 6);
     }
 }

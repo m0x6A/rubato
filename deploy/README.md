@@ -79,7 +79,7 @@ and does not start: `refusing to start: a server off loopback needs its secrets 
   set to the same secret.
 
 What a visitor meets when a limit is hit: 429 with `Retry-After` (30 anonymous requests at once
-per address on login and pairing, then one a second; 60 writes at once per session, then two a
+per address on login and pairing, then one a second; 60 writes at once per person, then two a
 second), and 503 `timeout` for a request that runs past 30 s. Each is counted on
 `rubato.web.rejected` with the route's template.
 

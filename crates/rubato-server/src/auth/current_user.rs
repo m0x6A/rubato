@@ -50,6 +50,7 @@ impl FromRequestParts<App> for CurrentUser {
             app.reject(&route, reason::SESSION_EXPIRED, &session.login);
             return Err(StatusCode::UNAUTHORIZED);
         }
+        app.limiter.know(&id, &session.login);
         Ok(CurrentUser(session.login))
     }
 }

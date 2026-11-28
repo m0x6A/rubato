@@ -264,16 +264,17 @@ async fn a_snapshot_that_does_not_check_out_is_dropped_and_the_old_copy_answers(
         ),
     ] {
         answers.set(&key, answer);
-        assert_eq!(pass(&graph, at(NOW)).await.kept, [(key.clone(), reason)]);
+        let failed = pass(&graph, at(NOW)).await;
+        assert_eq!(failed.kept, [(key.clone(), reason)]);
+        assert!(failed.failed(), "{reason}: the task tries again soon");
         assert!(has(&graph, "a.rs").await);
     }
 
     // The real one arrives: applied, in step again.
     answers.set(&key, Fetched::Body(v2_body));
-    assert_eq!(
-        pass(&graph, at(NOW)).await.applied,
-        std::slice::from_ref(&key)
-    );
+    let applied = pass(&graph, at(NOW)).await;
+    assert_eq!(applied.applied, std::slice::from_ref(&key));
+    assert!(!applied.failed());
     assert!(has(&graph, "new.rs").await);
     let s = graph.status().await.sources.remove(0);
     assert_eq!((s.behind, s.error), (Some(false), None));

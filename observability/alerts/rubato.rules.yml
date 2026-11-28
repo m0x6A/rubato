@@ -129,6 +129,20 @@ groups:
           summary: "Companion {{ $labels.rubato_companion_id }}'s copy of the context graph has been behind for {{ $value | humanizeDuration }}: its agents read an old graph"
           panel: Context graph snapshots served and synced
 
+      # #345, ADR 0087: a companion's list of sources was cut at 256. The companion then matches
+      # the list it was sent, so ContextGraphCopyBehind reads 0 while its agents miss whole
+      # repositories. The cut is counted each time a list is announced, so this stays up while
+      # a person's tenants hold more built sources than the cap.
+      - alert: ContextGraphSourcesCut
+        expr: sum(increase(rubato_graph_sources_truncated_total[1h])) > 0
+        labels:
+          severity: ticket
+          seam: companion-server
+          owner: rubato-server
+        annotations:
+          summary: "A companion's list of context graph sources was cut at 256: its agents miss some repositories and no other rule sees it"
+          panel: Graph sources per companion
+
       # #122, ADR 0051: a message has waited more than 10 minutes while its launched session
       # waits for input (last hook Stop or idle_prompt; a fresh launch never counts). The queue
       # does not move: the companion is not live, lacks session_input, or keeps answering not_idle.

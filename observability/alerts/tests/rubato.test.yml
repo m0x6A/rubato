@@ -808,3 +808,26 @@ tests:
             exp_annotations:
               summary: "More than 100 webhook deliveries in an hour came from installations attached to no tenant"
               panel: Webhooks
+
+  # #345 ContextGraphSourcesCut: one cut list fires; a source cut by its own cap (another
+  # counter) does not.
+  - interval: 5m
+    input_series:
+      - series: 'rubato_graph_sources_truncated_total'
+        values: "0x12 1+1x12"
+      - series: 'rubato_graph_truncated_total{rubato_graph_source="repo/o/r",rubato_reason="files"}'
+        values: "0+1x24"
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ContextGraphSourcesCut
+        exp_alerts: []
+      - eval_time: 120m
+        alertname: ContextGraphSourcesCut
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              seam: companion-server
+              owner: rubato-server
+            exp_annotations:
+              summary: "A companion's list of context graph sources was cut at 256: its agents miss some repositories and no other rule sees it"
+              panel: Graph sources per companion
