@@ -107,6 +107,22 @@ fn repos_in_body(v: &serde_json::Value) -> Vec<&str> {
     out
 }
 
+/// Whether a `Content-Type` is one axum's `Json` extractor parses: `application/json` or any
+/// `application/*+json`, whatever its parameters and case. [`check_repos`] reads the body of
+/// exactly these, so no content type reaches a handler as JSON without having been looked at.
+pub fn is_json(content_type: &str) -> bool {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match essence.strip_prefix("application/") {
+        Some(sub) => sub == "json" || sub.ends_with("+json"),
+        None => false,
+    }
+}
+
 /// Layer on every `/api/t/{tenant}/…` route, inside `tenants::check_tenant` (design §4.2): a
 /// repository the request names, in its path (`{owner}/{repo}`), its query (`repo=`) or its JSON
 /// body, must be live in the tenant the person acts in. One that is another tenant's, or that no
@@ -153,11 +169,13 @@ pub async fn check_repos(
     if let Some(repo) = in_query.filter(|r| foreign(r)) {
         return refuse(&repo);
     }
+    // Whatever a handler's `Json` extractor would parse must be read here first: the two
+    // must never disagree on what is JSON.
     let json = req
         .headers()
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.starts_with("application/json"));
+        .is_some_and(is_json);
     if !json {
         return next.run(req).await;
     }
@@ -414,6 +432,37 @@ pub fn record_status<B>(res: &axum::http::Response<B>, span: &tracing::Span) {
 pub fn internal(slice: &'static str, e: impl std::fmt::Display) -> StatusCode {
     tracing::error!(slice, error = %e, "request failed");
     StatusCode::INTERNAL_SERVER_ERROR
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::is_json;
+
+    /// What the repository check reads is exactly what a handler would parse as JSON.
+    #[test]
+    fn a_content_type_is_json_whenever_the_json_extractor_would_take_it() {
+        for yes in [
+            "application/json",
+            "application/json; charset=utf-8",
+            "Application/JSON",
+            " application/json ",
+            "application/x+json",
+            "application/vnd.api+json;charset=utf-8",
+            "application/problem+JSON",
+        ] {
+            assert!(is_json(yes), "{yes}");
+        }
+        for no in [
+            "text/json",
+            "application/jsonp",
+            "application/x-www-form-urlencoded",
+            "multipart/form-data; boundary=json",
+            "application/octet-stream",
+            "",
+        ] {
+            assert!(!is_json(no), "{no}");
+        }
+    }
 }
 
 #[cfg(test)]

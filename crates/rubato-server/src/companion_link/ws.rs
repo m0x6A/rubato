@@ -453,6 +453,19 @@ async fn on_envelope(
                     let named: Vec<&str> = union.iter().map(String::as_str).collect();
                     canonicalise_repos(&mut sessions, &named);
                 }
+                // A companion says which repository a session is in; the server says whether its
+                // owner is in that repository's tenant (ADR 0087). A session in a tenant the
+                // owner is not a member of is dropped here, before anything is stored: it
+                // would otherwise show on that tenant's issue, carry spend onto it, and stand
+                // as proof for a cap hit.
+                let dropped = keep_members_sessions(app, &pairing.user, &mut sessions).await;
+                if dropped > 0 {
+                    tracing::warn!(rubato.companion_id = %companion_id, rubato.user = %pairing.user, dropped, reason = "not_member", "sessions in a tenant their owner is not a member of dropped");
+                    app.metrics.companion_refused.add(
+                        dropped as u64,
+                        &[KeyValue::new(attr::DROP_REASON, "not_member")],
+                    );
+                }
                 if let Err(e) = store::store_snapshot(&app.db, companion_id, &sessions, now).await {
                     tracing::error!(error = %e, "storing snapshot");
                 }
@@ -522,8 +535,21 @@ async fn on_envelope(
                     return Some(ServerMessage::Ack { seq: env.seq });
                 }
                 tracing::warn!(rubato.issue = %hit.issue, rubato.session_id = ?hit.session_id, kind = ?hit.kind, value = hit.value, limit = hit.limit, "{}", rubato_protocol::otel::event::CAP_HIT);
-                // The hit is its issue's repository's tenant's (ADR 0087).
+                // The hit is its issue's repository's tenant's (ADR 0087), and only from a
+                // companion whose owner is a member of it.
                 match app.repo_tenant(&hit.issue.repo) {
+                    Ok(t) if !app
+                        .admission()
+                        .is_member(app, &t, &pairing.user)
+                        .await
+                        .unwrap_or(false) =>
+                    {
+                        tracing::warn!(rubato.companion_id = %companion_id, rubato.issue = %hit.issue, rubato.tenant = %t, reason = "not_member", "cap hit for a tenant the companion's owner is not a member of dropped");
+                        app.metrics
+                            .companion_refused
+                            .add(1, &[KeyValue::new(attr::DROP_REASON, "not_member")]);
+                        return Some(ServerMessage::Ack { seq: env.seq });
+                    }
                     Ok(t) => {
                         if let Err(e) = launch::record_cap_hit(&app.db, &t, &hit, now).await {
                             tracing::error!(error = %e, "storing cap hit");
@@ -754,6 +780,50 @@ fn own_sessions(sessions: &mut [SessionState], companion_id: Uuid, user: &str) -
         }
     }
     changed
+}
+
+/// Keep only the sessions whose repository is in a tenant `user` is a member of, or in no
+/// tenant at all (a repository no installation covers shows nowhere but on a server with one
+/// GitHub context). A membership that cannot be read keeps nothing of that tenant. Returns how
+/// many were dropped.
+#[doc(hidden)]
+pub async fn keep_members_sessions(
+    app: &App,
+    user: &str,
+    sessions: &mut Vec<SessionState>,
+) -> usize {
+    let mut member: std::collections::HashMap<crate::kernel::tenancy::TenantId, bool> =
+        Default::default();
+    let before = sessions.len();
+    let mut kept = Vec::with_capacity(before);
+    for s in sessions.drain(..) {
+        let repo = s
+            .issue
+            .as_ref()
+            .map(|i| i.repo.as_str())
+            .or(s.repo.as_deref());
+        let Some(tenant) = repo.and_then(|r| app.github.tenant_of(r)) else {
+            kept.push(s);
+            continue;
+        };
+        let ok = match member.get(&tenant) {
+            Some(ok) => *ok,
+            None => {
+                let ok = app
+                    .admission()
+                    .is_member(app, &tenant, user)
+                    .await
+                    .unwrap_or(false);
+                member.insert(tenant, ok);
+                ok
+            }
+        };
+        if ok {
+            kept.push(s);
+        }
+    }
+    *sessions = kept;
+    before - sessions.len()
 }
 
 /// A cap hit counts only from a companion that was sent a launch for the issue or reports a

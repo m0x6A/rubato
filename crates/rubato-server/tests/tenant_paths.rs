@@ -566,6 +566,15 @@ async fn seed_bcorp(h: &H) {
     assert_eq!(status, 201, "{body}");
 }
 
+/// Content types axum's `Json` extractor accepts besides plain `application/json`. The review
+/// of #345 found the repository check reading only the plain one.
+const JSON_CONTENT_TYPES: &[&str] = &[
+    "application/x+json",
+    "application/vnd.api+json; charset=utf-8",
+    "Application/JSON",
+    "application/json;charset=utf-8",
+];
+
 /// What a route is called with when a member of acme names bcorp's things inside acme's own
 /// paths, and what must come back.
 enum Case {
@@ -858,9 +867,28 @@ async fn the_cross_tenant_sweep_finds_nothing() {
         let body = match &case {
             Case::Foreign(b) | Case::Own(b) => b.clone(),
         };
-        let (status, text) = h.call("ada", method.clone(), &path, body).await;
+        let (status, text) = h.call("ada", method.clone(), &path, body.clone()).await;
         if let Err(why) = judge(&case, status, &text) {
             problems.push(format!("{method} {path}: {why}"));
+        }
+        // 3. The same body under every content type a handler's JSON extractor parses: the
+        // repository check must read whatever the handler would.
+        if let (Case::Foreign(_), Some(body)) = (&case, &body) {
+            for content_type in JSON_CONTENT_TYPES {
+                let r = h
+                    .http
+                    .request(method.clone(), format!("{}{path}", h.url))
+                    .header("cookie", h.cookie("ada").await)
+                    .header("content-type", *content_type)
+                    .body(body.to_string())
+                    .send()
+                    .await
+                    .unwrap();
+                let (status, text) = (r.status().as_u16(), r.text().await.unwrap());
+                if let Err(why) = judge(&case, status, &text) {
+                    problems.push(format!("{method} {path} as {content_type}: {why}"));
+                }
+            }
         }
     }
     let after = counts(&h).await;
@@ -1912,4 +1940,52 @@ mod people_and_operator {
             Some("acme".to_owned())
         );
     }
+}
+
+// ---- A companion's sessions count only in its owner's tenants (review of #345) ----
+
+#[tokio::test]
+async fn a_companion_cannot_report_a_session_in_a_tenant_its_owner_is_not_in() {
+    use rubato_protocol::{IssueRef, SessionState};
+    let h = two_tenants().await;
+    let session = |repo: &str, by_issue: bool| -> SessionState {
+        serde_json::from_value(serde_json::json!({
+            "session_id": "s", "companion_id": A_COMPANION, "user": "ada", "cwd": "/x",
+            "repo": if by_issue { serde_json::Value::Null } else { repo.into() },
+            "issue": if by_issue { serde_json::to_value(IssueRef::new(repo, 1)).unwrap() } else { serde_json::Value::Null },
+            "status": "working", "source": "hook", "last_seen": chrono::Utc::now(),
+        }))
+        .unwrap()
+    };
+    let mut sent = vec![
+        session("acme/api", true),
+        session("bcorp/web", true),
+        session("bcorp/web", false),
+        // A repository no installation covers is in no tenant: nobody's to refuse.
+        session("stranger/repo", true),
+    ];
+    let dropped =
+        rubato_server::companion_link::keep_members_sessions(&h.app, "ada", &mut sent).await;
+    assert_eq!(dropped, 2);
+    let kept: Vec<String> = sent
+        .iter()
+        .map(|s| {
+            s.issue
+                .as_ref()
+                .map(|i| i.repo.clone())
+                .or(s.repo.clone())
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(kept, ["acme/api", "stranger/repo"]);
+    // bob, of bcorp, is the mirror image; zed, in no tenant, keeps only what is in none.
+    let mut bobs = vec![session("acme/api", true), session("bcorp/web", true)];
+    rubato_server::companion_link::keep_members_sessions(&h.app, "bob", &mut bobs).await;
+    assert_eq!(bobs.len(), 1);
+    assert_eq!(bobs[0].issue.as_ref().unwrap().repo, "bcorp/web");
+    let mut zeds = vec![session("acme/api", true), session("bcorp/web", false)];
+    assert_eq!(
+        rubato_server::companion_link::keep_members_sessions(&h.app, "zed", &mut zeds).await,
+        2
+    );
 }

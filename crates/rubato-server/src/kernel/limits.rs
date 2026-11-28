@@ -28,6 +28,10 @@ use std::time::{Duration, Instant};
 /// three requests.
 pub const ANONYMOUS_BURST: u32 = 30;
 pub const ANONYMOUS_REFILL_MS: u32 = 1_000;
+/// An address may send this many webhook deliveries at once, and one more each
+/// [`WEBHOOK_REFILL_MS`]: twenty a second, sustained.
+pub const WEBHOOK_BURST: u32 = 300;
+pub const WEBHOOK_REFILL_MS: u32 = 50;
 /// A session may make this many writes at once, and one more each [`WRITE_REFILL_MS`].
 pub const WRITE_BURST: u32 = 60;
 pub const WRITE_REFILL_MS: u32 = 500;
@@ -37,6 +41,10 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const LONG_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// How many requests run at once; the next waits, inside its own timeout.
 pub const MAX_CONCURRENT_REQUESTS: usize = 256;
+/// How many requests one address has running at once (ADR 0090). Without it one address could
+/// hold every place by sending its request bodies a byte at a time, and everyone else would
+/// wait. Well above what a page or GitHub's webhook sender does.
+pub const MAX_CONCURRENT_PER_ADDRESS: u32 = 32;
 /// The most keys a set of buckets remembers; past it, the one idle longest is forgotten.
 pub const MAX_BUCKETS: usize = 10_000;
 /// Reasons on `rubato.web.rejected`.
@@ -102,8 +110,14 @@ impl Buckets {
 /// What the guard holds for one server.
 pub struct Limiter {
     pub anonymous: Buckets,
+    /// Per address on `/webhooks/*`.
+    pub webhooks: Buckets,
     pub writes: Buckets,
     pub running: tokio::sync::Semaphore,
+    /// Requests running now, by the key of the address they came from.
+    pub per_address: Mutex<HashMap<String, u32>>,
+    /// [`MAX_CONCURRENT_PER_ADDRESS`]; a test lowers it.
+    pub max_per_address: u32,
     /// [`REQUEST_TIMEOUT`] and [`LONG_REQUEST_TIMEOUT`]; a test shortens them.
     pub request_timeout: Duration,
     pub long_request_timeout: Duration,
@@ -113,8 +127,11 @@ impl Default for Limiter {
     fn default() -> Self {
         Self {
             anonymous: Buckets::new(ANONYMOUS_BURST, ANONYMOUS_REFILL_MS),
+            webhooks: Buckets::new(WEBHOOK_BURST, WEBHOOK_REFILL_MS),
             writes: Buckets::new(WRITE_BURST, WRITE_REFILL_MS),
             running: tokio::sync::Semaphore::new(MAX_CONCURRENT_REQUESTS),
+            per_address: Mutex::new(HashMap::new()),
+            max_per_address: MAX_CONCURRENT_PER_ADDRESS,
             request_timeout: REQUEST_TIMEOUT,
             long_request_timeout: LONG_REQUEST_TIMEOUT,
         }
@@ -143,10 +160,60 @@ pub fn client_addr(peer: IpAddr, forwarded: Option<&str>, trusted: &[Net]) -> Ip
         .unwrap_or(peer)
 }
 
-/// Whether a path is answered without a session: login and the companion's pairing.
+/// What an address is counted as: itself for IPv4, its /64 for IPv6. One customer line holds a
+/// whole /64, so counting each of its addresses alone would give it buckets without end.
+pub fn address_key(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let s = v6.segments();
+                format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+            }
+        },
+    }
+}
+
+/// Whether a path is answered without a session: login, the companion's pairing, and GitHub's
+/// webhook, whose signature is checked only after its body is read.
 fn anonymous(path: &str) -> bool {
     use rubato_protocol::pairing::routes as pr;
-    path.starts_with("/auth/") || path == pr::PAIR_START || path == pr::PAIR_POLL
+    path.starts_with("/auth/")
+        || path.starts_with("/webhooks/")
+        || path == pr::PAIR_START
+        || path == pr::PAIR_POLL
+}
+
+/// One of an address's places among the running requests, given back when dropped.
+struct Place<'a> {
+    limiter: &'a Limiter,
+    key: String,
+}
+
+impl Limiter {
+    /// Take a place for `key`, or `None` when the address has its share running already.
+    fn place(&self, key: String) -> Option<Place<'_>> {
+        let mut held = self.per_address.lock().unwrap();
+        let n = held.entry(key.clone()).or_insert(0);
+        if *n >= self.max_per_address {
+            return None;
+        }
+        *n += 1;
+        Some(Place { limiter: self, key })
+    }
+}
+
+impl Drop for Place<'_> {
+    fn drop(&mut self) {
+        let mut held = self.limiter.per_address.lock().unwrap();
+        if let Some(n) = held.get_mut(&self.key) {
+            *n -= 1;
+            if *n == 0 {
+                held.remove(&self.key);
+            }
+        }
+    }
 }
 
 /// The routes that chain GitHub writes (ADR 0090): by the end of their template.
@@ -212,8 +279,14 @@ pub async fn guard(State(app): State<App>, mut req: Request, next: Next) -> Resp
     let path = req.uri().path();
     let now = Instant::now();
     if anonymous(path) {
-        let key = client.map_or_else(|| "unknown".to_owned(), |ip| ip.to_string());
-        if let Err(wait) = app.limiter.anonymous.take(&key, now) {
+        let key = client.map_or_else(|| "unknown".to_owned(), address_key);
+        // GitHub sends its deliveries from a few addresses, in bursts: its own, larger bucket.
+        let bucket = if path.starts_with("/webhooks/") {
+            &app.limiter.webhooks
+        } else {
+            &app.limiter.anonymous
+        };
+        if let Err(wait) = bucket.take(&key, now) {
             return too_many(&app, &route, &key, wait);
         }
     } else if !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS)
@@ -233,6 +306,14 @@ pub async fn guard(State(app): State<App>, mut req: Request, next: Next) -> Resp
         app.limiter.long_request_timeout
     } else {
         app.limiter.request_timeout
+    };
+    // One address has only its share of the places: it cannot take them all by being slow.
+    let _place = match client {
+        Some(ip) => match app.limiter.place(address_key(ip)) {
+            Some(p) => Some(p),
+            None => return unavailable(&app, &route, reason::BUSY),
+        },
+        None => None,
     };
     let run = async {
         let Ok(_permit) = app.limiter.running.acquire().await else {
@@ -546,6 +627,48 @@ mod tests {
         assert_eq!((code, body.as_str()), (503, r#"{"reason":"timeout"}"#));
         drop(held);
         assert_eq!(answer(s.request("GET", "/api/me", A)).await.0, 200);
+    }
+
+    /// The review of #345: one address holds only its share of the running requests, so it
+    /// cannot stall everyone by being slow; another address is served meanwhile.
+    #[tokio::test]
+    async fn one_address_cannot_hold_more_than_its_share_of_running_requests() {
+        let (s, app, _tmp) = guarded(|_, l| {
+            l.max_per_address = 2;
+            l.request_timeout = Duration::from_secs(5);
+        })
+        .await;
+        let slow = |client: &'static str| {
+            let req = s.request("GET", "/api/slow", client);
+            tokio::spawn(async move { answer(req).await.0 })
+        };
+        let (a, b) = (slow(A), slow(A));
+        for _ in 0..200 {
+            if app.limiter.per_address.lock().unwrap().get(A) == Some(&2) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let (code, _, body) = answer(s.request("GET", "/api/me", A)).await;
+        assert_eq!((code, body.as_str()), (503, r#"{"reason":"busy"}"#));
+        assert_eq!(
+            answer(s.request("GET", "/api/me", "198.51.100.7")).await.0,
+            200
+        );
+        assert_eq!((a.await.unwrap(), b.await.unwrap()), (200, 200));
+        // Its places come back when its requests end.
+        assert_eq!(answer(s.request("GET", "/api/me", A)).await.0, 200);
+        assert!(app.limiter.per_address.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_ipv6_address_is_counted_by_its_64_and_webhooks_are_anonymous() {
+        let key = |s: &str| address_key(s.parse().unwrap());
+        assert_eq!(key("203.0.113.9"), "203.0.113.9");
+        assert_eq!(key("::ffff:203.0.113.9"), "203.0.113.9");
+        assert_eq!(key("2001:db8:1:2:aaaa::1"), key("2001:db8:1:2:bbbb::2"));
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert!(anonymous("/webhooks/github"));
     }
 
     /// With the limits off (a test server), the guard still says whose address it is.

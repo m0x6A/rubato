@@ -95,7 +95,7 @@ pub async fn approve(
     let fits_elsewhere = match fit.as_ref().filter(|f| !f.fits) {
         Some(_) => fits_another(
             &app,
-            ws.as_str(),
+            ws.key(),
             &issue,
             row.plan.as_ref(),
             row.parse_error.as_deref(),
@@ -193,17 +193,22 @@ pub async fn approve(
     }
 }
 
-/// Whether the plan fits the map of a workspace other than `here` that holds the issue: its map
+/// Whether the plan fits the map of another workspace of `here`'s tenant that holds the issue: its map
 /// names the issue's repo, or the issue is pinned or launched there (ADR 0045).
 pub(super) async fn fits_another(
     app: &App,
-    here: &str,
+    here: &crate::kernel::tenancy::WsKey,
     issue: &rubato_protocol::IssueRef,
     plan: Option<&rubato_protocol::Plan>,
     parse_error: Option<&str>,
 ) -> anyhow::Result<bool> {
     let (entries, _) = app.workspace_entries();
-    for w in entries.iter().filter(|w| w.id != here) {
+    // Only the caller's own tenant's workspaces: another tenant's map is no reason to accept
+    // a plan here.
+    for w in entries
+        .iter()
+        .filter(|w| &w.tenant == here.tenant() && w.id != here.ws())
+    {
         let Some(m) = app.map_of(&w.key()).await else {
             continue;
         };

@@ -6,4 +6,4 @@ mod store;
 mod ws;
 
 pub use store::{all_sessions, session_snapshots};
-pub use ws::{mark_quiet, upgrade};
+pub use ws::{keep_members_sessions, mark_quiet, upgrade};

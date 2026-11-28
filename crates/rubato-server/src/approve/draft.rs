@@ -197,7 +197,7 @@ pub async fn approve_draft(
         }
     });
     if !fit.fits
-        && !fits_another(&app, ws.as_str(), &issue, rev.plan.as_ref(), parse_error)
+        && !fits_another(&app, ws.key(), &issue, rev.plan.as_ref(), parse_error)
             .await
             .map_err(internal)?
     {
